@@ -2677,7 +2677,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     <div className="terminal flex h-screen min-h-screen flex-col overflow-hidden bg-[#020107] text-[12px] text-[#e0e2ea]">
       {!livePaperMode && (
         <div className="m-3 rounded-md border border-[#3a2c08] bg-[#241a05] p-3 text-[12px] text-[#f4b400]">
-          Le mode paper n'est pas actif. Bascule sur paper depuis <a className="underline" href="/admin">/admin</a>.
+          Aucune competition active pour ce terminal. Retourne sur <a className="underline" href="/compete">BTF Arena</a> pour rejoindre une arene.
         </div>
       )}
 
@@ -2689,28 +2689,19 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
       {livePaperMode && !session && (
         <div className="flex flex-1 items-center justify-center p-6">
-          <div className="w-full max-w-md rounded-lg border border-[#231f22] bg-[#0e0c0d] p-7 shadow-2xl shadow-black/40">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#15c990]">Trader access</div>
-            <h2 className="font-rajdhani text-3xl font-bold text-white">Connexion terminal</h2>
-            <p className="mt-2 text-[12px] text-[#9498a4]">Saisis ton code trader pour accéder au terminal.</p>
-            <div className="mt-5 space-y-3">
-              <input
-                type="text"
-                value={accessCode}
-                onChange={(event) => setAccessCode(event.target.value.toUpperCase())}
-                placeholder="A7K9Q2"
-                className="w-full rounded-md border border-[#2a262a] bg-[#0b0c11] px-3 py-3 text-center font-mono text-xl tracking-[0.3em] text-white outline-none focus:border-[#15c990]"
-              />
-              {error && <div className="text-[12px] text-[#c026d3]">{error}</div>}
-              <button
-                type="button"
-                onClick={login}
-                disabled={busy || !accessCode.trim()}
-                className="w-full cursor-pointer rounded-md bg-[#15c990] py-3 text-[13px] font-semibold text-[#0e0c0d] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {busy ? 'Connexion…' : 'Accéder au terminal'}
-              </button>
-            </div>
+          <div className="w-full max-w-md rounded-2xl border border-[#231f22] bg-[#0e0c0d] p-7 shadow-2xl shadow-black/40">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#dc2626]">Acces requis</div>
+            <h2 className="font-rajdhani text-3xl font-bold text-white">Terminal de competition</h2>
+            <p className="mt-3 text-[13px] text-[#9498a4]">
+              Le terminal de trading est reserve aux joueurs inscrits a une competition. Connecte-toi sur la BTF Arena pour rejoindre une arene.
+            </p>
+            {error && <div className="mt-4 text-[12px] text-[#fda4af]">{error}</div>}
+            <a
+              href="/compete"
+              className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-[#dc2626] py-3 text-[13px] font-bold uppercase tracking-[0.18em] text-white transition-transform hover:scale-[1.01]"
+            >
+              Aller sur BTF Arena
+            </a>
           </div>
         </div>
       )}
