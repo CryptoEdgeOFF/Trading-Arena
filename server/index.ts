@@ -159,19 +159,28 @@ function getSessionToken(req: express.Request): string | null {
   return header.slice('Bearer '.length);
 }
 
-function getSessionPlayer(req: express.Request) {
+async function getSessionPlayer(req: express.Request) {
   const token = getSessionToken(req);
   if (!token) return null;
-  const info = competitionManager.getTraderSession(token);
+  let info = competitionManager.getTraderSession(token);
+  if (!info) {
+    await competitionManager.refresh();
+    info = competitionManager.getTraderSession(token);
+  }
   if (!info) return null;
   return manager.getPlayerById(info.playerId);
 }
 
-function getCompetitionUser(req: express.Request) {
+async function getCompetitionUser(req: express.Request) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
   const token = header.slice('Bearer '.length);
-  return competitionManager.getUserFromToken(token);
+  let user = competitionManager.getUserFromToken(token);
+  if (!user) {
+    await competitionManager.refresh();
+    user = competitionManager.getUserFromToken(token);
+  }
+  return user;
 }
 
 wss.on('connection', (ws) => {
@@ -434,7 +443,7 @@ app.post('/api/paper/session', (req, res) => {
 
 app.get('/api/paper/me', async (req, res) => {
   const token = getSessionToken(req);
-  const player = getSessionPlayer(req);
+  const player = await getSessionPlayer(req);
   if (!player) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -468,7 +477,7 @@ app.get('/api/paper/me', async (req, res) => {
 
 app.post('/api/paper/order', async (req, res) => {
   const token = getSessionToken(req);
-  const player = getSessionPlayer(req);
+  const player = await getSessionPlayer(req);
   if (!player) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -499,7 +508,7 @@ app.post('/api/paper/order', async (req, res) => {
 
 app.post('/api/paper/cancel', async (req, res) => {
   const token = getSessionToken(req);
-  const player = getSessionPlayer(req);
+  const player = await getSessionPlayer(req);
   if (!player) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -520,7 +529,7 @@ app.post('/api/paper/cancel', async (req, res) => {
 
 app.post('/api/paper/close', async (req, res) => {
   const token = getSessionToken(req);
-  const player = getSessionPlayer(req);
+  const player = await getSessionPlayer(req);
   if (!player) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -564,7 +573,7 @@ app.post('/api/paper/close', async (req, res) => {
 
 app.post('/api/paper/risk', async (req, res) => {
   const token = getSessionToken(req);
-  const player = getSessionPlayer(req);
+  const player = await getSessionPlayer(req);
   if (!player) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -603,6 +612,7 @@ app.post('/api/competition/auth/request', async (req, res) => {
     return;
   }
   try {
+    await competitionManager.refresh();
     const { code, expiresAt } = competitionManager.requestOtp({
       email: String(email || ''),
       name: name == null ? undefined : String(name),
@@ -633,6 +643,7 @@ app.post('/api/competition/auth/request', async (req, res) => {
 app.post('/api/competition/auth/verify', async (req, res) => {
   const { email, code } = req.body || {};
   try {
+    await competitionManager.refresh();
     const result = competitionManager.verifyOtp({
       email: String(email || ''),
       code: String(code || ''),
@@ -673,6 +684,7 @@ app.post('/api/competition/auth/verify-phone', async (req, res) => {
   const emailStr = String(email || '').trim();
   const codeStr = String(code || '').trim();
   try {
+    await competitionManager.refresh();
     const phoneInfo = competitionManager.getPendingPhoneInfo(emailStr);
     if (!phoneInfo) {
       res.status(400).json({ error: 'Aucune verification SMS en cours' });
@@ -701,17 +713,18 @@ app.post('/api/competition/auth/verify-phone', async (req, res) => {
   }
 });
 
-app.get('/api/competition/auth/exists', (req, res) => {
+app.get('/api/competition/auth/exists', async (req, res) => {
   const email = String(req.query.email || '').trim();
   if (!email) {
     res.status(400).json({ error: 'email requis' });
     return;
   }
+  await competitionManager.refresh();
   res.json({ exists: competitionManager.emailExists(email) });
 });
 
-app.get('/api/competition/me', (req, res) => {
-  const user = getCompetitionUser(req);
+app.get('/api/competition/me', async (req, res) => {
+  const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -719,8 +732,8 @@ app.get('/api/competition/me', (req, res) => {
   res.json({ user });
 });
 
-app.patch('/api/competition/me', (req, res) => {
-  const user = getCompetitionUser(req);
+app.patch('/api/competition/me', async (req, res) => {
+  const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -737,8 +750,8 @@ app.patch('/api/competition/me', (req, res) => {
   }
 });
 
-app.post('/api/competition/me/avatar', upload.single('avatar'), (req, res) => {
-  const user = getCompetitionUser(req);
+app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res) => {
+  const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -761,7 +774,7 @@ app.get('/api/competition/public', async (_req, res) => {
 });
 
 app.get('/api/competition/mine', async (req, res) => {
-  const user = getCompetitionUser(req);
+  const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -770,8 +783,8 @@ app.get('/api/competition/mine', async (req, res) => {
   res.json({ competitions: competitionManager.listUserCompetitions(user.id) });
 });
 
-app.post('/api/competition/join', (req, res) => {
-  const user = getCompetitionUser(req);
+app.post('/api/competition/join', async (req, res) => {
+  const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
     return;
@@ -785,7 +798,7 @@ app.post('/api/competition/join', (req, res) => {
 });
 
 app.post('/api/competition/trade/session', async (req, res) => {
-  const user = getCompetitionUser(req);
+  const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
     return;

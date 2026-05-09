@@ -492,6 +492,23 @@ export class CompetitionManager {
     this.save();
   }
 
+  /**
+   * Re-read the store from Postgres and overwrite in-memory state.
+   * Required on serverless platforms where multiple Lambda instances
+   * may hold stale in-memory copies of the same store.
+   */
+  async refresh(): Promise<void> {
+    if (!this.pool) return;
+    try {
+      const result = await this.pool.query('select value from competition_store where key = $1 limit 1', [STORE_DB_KEY]);
+      if (result.rows[0]?.value) {
+        this.applyStore(result.rows[0].value as CompetitionStore);
+      }
+    } catch (error) {
+      console.error('Competition store refresh failed:', error);
+    }
+  }
+
   private async ensureDbStore(): Promise<void> {
     if (!this.pool) return;
     await this.pool.query(`
