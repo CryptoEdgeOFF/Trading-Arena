@@ -60,6 +60,7 @@ interface CompetitionStore {
   users: CompetitionUser[];
   competitions: Competition[];
   sessions?: Array<{ token: string; userId: string }>;
+  pendingOtps?: PendingOtp[];
 }
 
 const STORE_FILE = path.join(process.cwd(), 'data', 'competition-platform.json');
@@ -257,6 +258,7 @@ export class CompetitionManager {
       attempts: 0,
       step: 'email',
     });
+    this.save();
 
     return { code, expiresAt };
   }
@@ -330,6 +332,7 @@ export class CompetitionManager {
     pending.code = generateOtp(); // nouveau code dedie au SMS (utilise en mode console fallback)
     pending.expiresAt = Date.now() + OTP_TTL_MS;
     pending.attempts = 0;
+    this.save();
 
     return { needsPhone: true, phoneMasked: maskPhone(pending.phone) };
   }
@@ -425,14 +428,28 @@ export class CompetitionManager {
     for (const session of parsed.sessions || []) {
       if (session.token && session.userId) this.sessions.set(session.token, session.userId);
     }
+    this.pendingOtps.clear();
+    for (const pending of parsed.pendingOtps || []) {
+      if (pending.email && pending.expiresAt > Date.now()) this.pendingOtps.set(pending.email, pending);
+    }
   }
 
   private currentStore(): CompetitionStore {
+    const now = Date.now();
     return {
       users: Array.from(this.users.values()),
       competitions: Array.from(this.competitions.values()),
       sessions: Array.from(this.sessions.entries()).map(([token, userId]) => ({ token, userId })),
+      pendingOtps: Array.from(this.pendingOtps.values()).filter((entry) => entry.expiresAt > now),
     };
+  }
+
+  async persist(): Promise<void> {
+    if (this.pool) {
+      await this.saveToDb();
+      return;
+    }
+    this.save();
   }
 
   private async ensureDbStore(): Promise<void> {

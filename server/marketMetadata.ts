@@ -162,7 +162,30 @@ export async function ensureMarketMetadataTable(): Promise<void> {
 }
 
 function fallbackMetadata(): Record<string, MarketMetadata> {
-  return Object.fromEntries(STATIC_MARKET_METADATA.map((item) => [item.pair, item]));
+  return Object.fromEntries(STATIC_MARKET_METADATA.map((item) => [item.pair, withImageFallback(item)]));
+}
+
+function svgIcon(label: string, background: string): string {
+  const safeLabel = label.slice(0, 5).replace(/[^A-Z0-9]/gi, '').toUpperCase() || 'BTF';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="${background}"/><text x="32" y="39" text-anchor="middle" font-family="Arial, sans-serif" font-size="17" font-weight="700" fill="white">${safeLabel}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function fallbackImageFor(item: MarketMetadata): string | null {
+  const category = item.category || 'crypto';
+  if (category === 'crypto') return `https://assets.coincap.io/assets/icons/${item.base.toLowerCase()}@2x.png`;
+  if (category === 'actions') return item.imageUrl || svgIcon(item.base, '#1d4ed8');
+  if (category === 'indices') return svgIcon(item.base, '#7c3aed');
+  if (category === 'commodities') return svgIcon(item.base, '#b45309');
+  if (category === 'forex') return svgIcon(item.base, '#047857');
+  return null;
+}
+
+function withImageFallback(item: MarketMetadata): MarketMetadata {
+  return {
+    ...item,
+    imageUrl: item.imageUrl || fallbackImageFor(item),
+  };
 }
 
 export async function getMarketMetadata(pairs: string[]): Promise<Record<string, MarketMetadata>> {
@@ -180,7 +203,7 @@ export async function getMarketMetadata(pairs: string[]): Promise<Record<string,
         where enabled = true
         order by sort_order asc
       `);
-      cache = Object.fromEntries(result.rows.map((row) => [row.pair, {
+      cache = Object.fromEntries(result.rows.map((row) => [row.pair, withImageFallback({
         pair: row.pair,
         base: row.base,
         quote: row.quote,
@@ -194,7 +217,7 @@ export async function getMarketMetadata(pairs: string[]): Promise<Record<string,
         tradingViewSymbol: row.tradingview_symbol,
         sortOrder: row.sort_order,
         enabled: row.enabled,
-      } satisfies MarketMetadata]));
+      } satisfies MarketMetadata)]));
       cacheLoadedAt = Date.now();
     }
 

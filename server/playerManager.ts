@@ -315,10 +315,10 @@ export class PlayerManager {
     return player;
   }
 
-  setAvatar(id: string, filename: string): Player | null {
+  setAvatar(id: string, avatarUrl: string): Player | null {
     const player = this.players.get(id);
     if (!player) return null;
-    player.avatar = `/uploads/${filename}`;
+    player.avatar = avatarUrl.startsWith('/') || avatarUrl.startsWith('data:') ? avatarUrl : `/uploads/${avatarUrl}`;
     this.saveRoster();
     return player;
   }

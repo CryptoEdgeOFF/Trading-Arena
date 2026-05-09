@@ -25,19 +25,28 @@ const UPLOADS_DIR = path.join(process.cwd(), 'data', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-    },
-  }),
+  storage: process.env.NETLIFY
+    ? multer.memoryStorage()
+    : multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+      },
+    }),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = /\.(jpg|jpeg|png|gif|webp)$/i;
     cb(null, allowed.test(path.extname(file.originalname)));
   },
 });
+
+function uploadedImageUrl(file: Express.Multer.File): string {
+  if (file.buffer?.length) {
+    return `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  }
+  return `/uploads/${file.filename}`;
+}
 
 app.use(cors());
 app.use(express.json());
@@ -268,7 +277,7 @@ app.post('/api/roster/:id/avatar', requireAdmin, upload.single('avatar'), (req, 
     res.status(400).json({ error: 'Fichier image requis' });
     return;
   }
-  const player = manager.setAvatar(req.params.id, req.file.filename);
+  const player = manager.setAvatar(req.params.id, uploadedImageUrl(req.file));
   if (!player) {
     res.status(404).json({ error: 'Joueur introuvable' });
     return;
@@ -587,6 +596,7 @@ app.post('/api/competition/auth/request', async (req, res) => {
       phone: phone == null ? undefined : String(phone),
       intent: safeIntent,
     });
+    await competitionManager.persist();
 
     const result = await sendOtpEmail(String(email || '').trim(), code, safeIntent);
 
@@ -614,6 +624,7 @@ app.post('/api/competition/auth/verify', async (req, res) => {
       email: String(email || ''),
       code: String(code || ''),
     });
+    await competitionManager.persist();
 
     // Login -> session immediate
     if ('token' in result) {
@@ -670,6 +681,7 @@ app.post('/api/competition/auth/verify-phone', async (req, res) => {
       code: codeStr,
       smsApprovedExternally: approved,
     });
+    await competitionManager.persist();
     res.json(result);
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Verification SMS impossible' });
@@ -723,7 +735,7 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), (req, res) => {
     return;
   }
   try {
-    const nextUser = competitionManager.setUserAvatar(user.id, `/uploads/${req.file.filename}`);
+    const nextUser = competitionManager.setUserAvatar(user.id, uploadedImageUrl(req.file));
     res.json({ user: nextUser });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Avatar impossible a modifier' });
