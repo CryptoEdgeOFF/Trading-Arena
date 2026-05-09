@@ -1,0 +1,33 @@
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
+import Dashboard from './components/Dashboard';
+import AdminPanel from './components/AdminPanel';
+import ExchangeTerminal from './components/ExchangeTerminal';
+import CompetitionPlatform from './components/CompetitionPlatform';
+import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderboard';
+import CompetitionSettings from './components/CompetitionSettings';
+import DemoTradingPage from './components/DemoTradingPage';
+import LegalFooter from './components/LegalFooter';
+import { LegalPage } from './components/LegalPages';
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/compete" replace />} />
+        <Route path="/btf-live-arena-2026" element={<Dashboard />} />
+        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/trade" element={<ExchangeTerminal />} />
+        <Route path="/demo-trading" element={<DemoTradingPage />} />
+        <Route path="/compete" element={<CompetitionPlatform />} />
+        <Route path="/compete/settings" element={<CompetitionSettings />} />
+        <Route path="/compete/leaderboard/:id" element={<CompetitionPublicLeaderboard />} />
+        <Route path="/cgu" element={<LegalPage type="cgu" />} />
+        <Route path="/confidentialite" element={<LegalPage type="confidentialite" />} />
+        <Route path="/mentions-legales" element={<LegalPage type="mentions" />} />
+        <Route path="/risques" element={<LegalPage type="risques" />} />
+        <Route path="*" element={<Navigate to="/compete" replace />} />
+      </Routes>
+      <LegalFooter />
+    </BrowserRouter>
+  );
+}
