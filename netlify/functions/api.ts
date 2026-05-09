@@ -1,4 +1,9 @@
 import serverless from 'serverless-http';
-import app from '../../server/index.js';
+import app, { serverReady } from '../../server/index.js';
 
-export const handler = serverless(app);
+const expressHandler = serverless(app);
+
+export const handler = async (event: unknown, context: unknown) => {
+  await serverReady;
+  return expressHandler(event, context);
+};

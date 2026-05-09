@@ -903,13 +903,17 @@ app.post('/api/admin/competitions/result', requireAdmin, (req, res) => {
   }
 });
 
-await Promise.all([competitionManager.ready, manager.ready]);
-manager.markOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
+const serverReady = Promise.all([competitionManager.ready, manager.ready]).then(() => {
+  manager.markOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
+});
 
 if (!process.env.NETLIFY) {
-  server.listen(PORT, () => {
-    console.log(`BTF Server running on http://localhost:${PORT}`);
+  serverReady.then(() => {
+    server.listen(PORT, () => {
+      console.log(`BTF Server running on http://localhost:${PORT}`);
+    });
   });
 }
 
+export { serverReady };
 export default app;
