@@ -631,7 +631,7 @@ export default function AdminPanel() {
           className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/80 p-7 shadow-2xl"
         >
           <div className="mb-5 flex items-center gap-3">
-            <img src="/src/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
+            <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
             <div>
               <h1 className="font-rajdhani text-2xl font-bold text-white">Admin Panel</h1>
               <p className="text-xs text-slate-400">Acces protege</p>
@@ -665,7 +665,7 @@ export default function AdminPanel() {
         <div className="mb-8 flex items-start justify-between gap-6">
           <div>
             <div className="mb-2 flex items-center gap-4">
-              <img src="/src/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
+              <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
               <h1 className="font-rajdhani text-4xl font-bold text-white">Admin Panel</h1>
             </div>
             <p className="text-sm text-slate-400">

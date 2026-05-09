@@ -61,6 +61,7 @@ interface CompetitionStore {
   competitions: Competition[];
   sessions?: Array<{ token: string; userId: string }>;
   pendingOtps?: PendingOtp[];
+  traderSessions?: Array<{ token: string; playerId: string; competitionId?: string | null }>;
 }
 
 const STORE_FILE = path.join(process.cwd(), 'data', 'competition-platform.json');
@@ -168,6 +169,7 @@ export class CompetitionManager {
   private competitions = new Map<string, Competition>();
   private sessions = new Map<string, string>();
   private pendingOtps = new Map<string, PendingOtp>();
+  private traderSessions = new Map<string, { playerId: string; competitionId: string | null }>();
   private pool: Pool | null = null;
   readonly ready: Promise<void>;
 
@@ -432,6 +434,15 @@ export class CompetitionManager {
     for (const pending of parsed.pendingOtps || []) {
       if (pending.email && pending.expiresAt > Date.now()) this.pendingOtps.set(pending.email, pending);
     }
+    this.traderSessions.clear();
+    for (const session of parsed.traderSessions || []) {
+      if (session.token && session.playerId) {
+        this.traderSessions.set(session.token, {
+          playerId: session.playerId,
+          competitionId: session.competitionId || null,
+        });
+      }
+    }
   }
 
   private currentStore(): CompetitionStore {
@@ -441,7 +452,36 @@ export class CompetitionManager {
       competitions: Array.from(this.competitions.values()),
       sessions: Array.from(this.sessions.entries()).map(([token, userId]) => ({ token, userId })),
       pendingOtps: Array.from(this.pendingOtps.values()).filter((entry) => entry.expiresAt > now),
+      traderSessions: Array.from(this.traderSessions.entries()).map(([token, info]) => ({
+        token,
+        playerId: info.playerId,
+        competitionId: info.competitionId,
+      })),
     };
+  }
+
+  setTraderSession(token: string, playerId: string, competitionId: string | null): void {
+    this.traderSessions.set(token, { playerId, competitionId });
+    this.save();
+  }
+
+  getTraderSession(token: string): { playerId: string; competitionId: string | null } | null {
+    return this.traderSessions.get(token) || null;
+  }
+
+  deleteTraderSession(token: string): void {
+    if (this.traderSessions.delete(token)) this.save();
+  }
+
+  deleteTraderSessionsForPlayer(playerId: string): void {
+    let changed = false;
+    for (const [token, info] of this.traderSessions.entries()) {
+      if (info.playerId === playerId) {
+        this.traderSessions.delete(token);
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   async persist(): Promise<void> {

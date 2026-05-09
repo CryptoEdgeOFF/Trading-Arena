@@ -29,7 +29,7 @@ export default function Header() {
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
         >
-          <img src="/src/assets/pictures/logoBTF.png" alt="BTF" className="w-10 h-10 rounded-lg object-contain" />
+          <img src="/assets/pictures/logoBTF.png" alt="BTF" className="w-10 h-10 rounded-lg object-contain" />
           <div>
             <h1 className="font-rajdhani text-2xl font-bold tracking-wide text-white">
               TRADING ARENA

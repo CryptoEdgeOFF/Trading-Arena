@@ -173,7 +173,7 @@ export default function TraderTerminal() {
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-4">
-              <img src="/src/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
+              <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
               <h1 className="font-rajdhani text-4xl font-bold text-white">Trader Terminal</h1>
             </div>
             <p className="text-sm text-slate-400">

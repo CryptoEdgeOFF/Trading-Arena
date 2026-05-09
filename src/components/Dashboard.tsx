@@ -57,7 +57,7 @@ export default function Dashboard() {
                 transition={{ duration: 3, repeat: Infinity, delay: 0.5 }}
               />
               <div className="absolute inset-0 flex items-center justify-center">
-                <img src="/src/assets/pictures/logoBTF.png" alt="BTF" className="w-20 h-20 rounded-2xl object-contain shadow-2xl shadow-indigo-500/30" />
+                <img src="/assets/pictures/logoBTF.png" alt="BTF" className="w-20 h-20 rounded-2xl object-contain shadow-2xl shadow-indigo-500/30" />
               </div>
             </div>
             <h2 className="font-rajdhani text-5xl font-bold text-white mb-3 tracking-wide">

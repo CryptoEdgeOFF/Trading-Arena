@@ -160,7 +160,7 @@ function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?
         <Link to="/compete" className="group flex min-w-0 items-center gap-2 sm:gap-3">
           <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#dc2626]/30 bg-[#120506] sm:h-10 sm:w-10">
             <span className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(220,38,38,0.35),transparent_62%)] opacity-80 transition-opacity group-hover:opacity-100" />
-            <img src="/src/assets/pictures/logoBTF.png" alt="BTF" className="relative h-7 w-7 object-contain sm:h-8 sm:w-8" />
+            <img src="/assets/pictures/logoBTF.png" alt="BTF" className="relative h-7 w-7 object-contain sm:h-8 sm:w-8" />
           </span>
           <div className="flex min-w-0 items-baseline gap-1.5 sm:gap-2">
             <span className="display text-lg font-bold text-white sm:text-xl">BTF</span>
@@ -466,7 +466,7 @@ export default function CompetitionPlatform() {
           {/* Background trader silhouette */}
           <div aria-hidden className="pointer-events-none absolute inset-0 -z-0">
             <img
-              src="/src/assets/pictures/Traderpng.png"
+              src="/assets/pictures/Traderpng.png"
               alt=""
               className="absolute inset-y-0 right-0 h-full w-[92%] object-cover object-[right_top] opacity-65 md:w-[68%] lg:w-[58%]"
             />

@@ -68,8 +68,6 @@ app.get('/uploads/:filename', (req, res) => {
 });
 
 const clients = new Set<WebSocket>();
-const traderSessions = new Map<string, string>();
-const competitionTraderSessions = new Map<string, string>();
 const competitionManager = new CompetitionManager();
 let finalizingEndedCompetitions: Promise<void> | null = null;
 
@@ -143,7 +141,8 @@ async function syncAllCompetitionResults(): Promise<void> {
 
 function getCompetitionIdForTraderToken(token: string | null): string | null {
   if (!token) return null;
-  return competitionTraderSessions.get(token) || null;
+  const info = competitionManager.getTraderSession(token);
+  return info?.competitionId || null;
 }
 
 async function assertCompetitionTraderCanTrade(token: string | null): Promise<string | null> {
@@ -163,9 +162,9 @@ function getSessionToken(req: express.Request): string | null {
 function getSessionPlayer(req: express.Request) {
   const token = getSessionToken(req);
   if (!token) return null;
-  const playerId = traderSessions.get(token);
-  if (!playerId) return null;
-  return manager.getPlayerById(playerId);
+  const info = competitionManager.getTraderSession(token);
+  if (!info) return null;
+  return manager.getPlayerById(info.playerId);
 }
 
 function getCompetitionUser(req: express.Request) {
@@ -428,8 +427,7 @@ app.post('/api/paper/session', (req, res) => {
   }
 
   const token = crypto.randomBytes(24).toString('hex');
-  traderSessions.set(token, player.id);
-  competitionTraderSessions.delete(token);
+  competitionManager.setTraderSession(token, player.id, null);
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
   res.json({ token, player: publicPlayer });
 });
@@ -443,7 +441,7 @@ app.get('/api/paper/me', async (req, res) => {
   }
 
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
-  const competitionId = token ? competitionTraderSessions.get(token) || null : null;
+  const competitionId = token ? (competitionManager.getTraderSession(token)?.competitionId || null) : null;
   const isCompetition = Boolean(competitionId);
 
   let competitionPayload: unknown = null;
@@ -822,8 +820,7 @@ app.post('/api/competition/trade/session', async (req, res) => {
     player = ready;
 
     const token = crypto.randomBytes(24).toString('hex');
-    traderSessions.set(token, player.id);
-    competitionTraderSessions.set(token, competition.id);
+    competitionManager.setTraderSession(token, player.id, competition.id);
     syncCompetitionResultForPlayer(player.id);
     const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 
@@ -896,16 +893,9 @@ app.delete('/api/admin/competitions/:id', requireAdmin, (req, res) => {
   try {
     const { paperPlayerIds } = competitionManager.deleteCompetition(String(req.params.id || ''));
 
-    // Cleanup the paper players that were tied to this competition.
     manager.unmarkOnlineCompetitionPlayers(paperPlayerIds);
     for (const playerId of paperPlayerIds) {
-      // Drop their trader sessions to force a re-handshake on next visit.
-      for (const [token, mappedPlayerId] of traderSessions.entries()) {
-        if (mappedPlayerId === playerId) {
-          traderSessions.delete(token);
-          competitionTraderSessions.delete(token);
-        }
-      }
+      competitionManager.deleteTraderSessionsForPlayer(playerId);
       manager.removePlayer(playerId);
     }
     res.json({ ok: true });
