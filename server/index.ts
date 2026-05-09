@@ -168,7 +168,12 @@ async function getSessionPlayer(req: express.Request) {
     info = competitionManager.getTraderSession(token);
   }
   if (!info) return null;
-  return manager.getPlayerById(info.playerId);
+  let player = manager.getPlayerById(info.playerId);
+  if (!player) {
+    await manager.refresh();
+    player = manager.getPlayerById(info.playerId);
+  }
+  return player;
 }
 
 async function getCompetitionUser(req: express.Request) {
@@ -835,6 +840,16 @@ app.post('/api/competition/trade/session', async (req, res) => {
     const token = crypto.randomBytes(24).toString('hex');
     competitionManager.setTraderSession(token, player.id, competition.id);
     syncCompetitionResultForPlayer(player.id);
+
+    // CRITICAL on serverless: ensure the player roster and the trader session
+    // are durable in Postgres BEFORE returning. Otherwise the next request
+    // (often handled by another Lambda) might 401 because the session/player
+    // are not yet visible.
+    await Promise.all([
+      manager.persist(),
+      competitionManager.persist(),
+    ]);
+
     const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 
     res.json({

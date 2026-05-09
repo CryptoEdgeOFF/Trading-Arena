@@ -200,6 +200,35 @@ export class PlayerManager {
     }
   }
 
+  /**
+   * Awaitable persist used by serverless routes to ensure the roster
+   * is durable in Postgres before responding to the client.
+   */
+  async persist(): Promise<void> {
+    if (this.pool) {
+      await this.saveRosterToDb();
+      return;
+    }
+    this.saveRoster();
+  }
+
+  /**
+   * Re-read the roster from Postgres and overwrite in-memory state.
+   * Required on serverless platforms where multiple Lambda instances
+   * may hold stale in-memory copies.
+   */
+  async refresh(): Promise<void> {
+    if (!this.pool) return;
+    try {
+      const result = await this.pool.query('select value from competition_store where key = $1 limit 1', [ROSTER_DB_KEY]);
+      if (Array.isArray(result.rows[0]?.value)) {
+        this.applyStoredRoster(result.rows[0].value as StoredPlayer[]);
+      }
+    } catch (err) {
+      console.error('Failed to refresh Postgres roster:', err);
+    }
+  }
+
   private createTraderCode(): string {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
