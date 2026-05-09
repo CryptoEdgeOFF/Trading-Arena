@@ -51,6 +51,15 @@ function uploadedImageUrl(file: Express.Multer.File): string {
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.get('/uploads/:filename', (req, res) => {
+  const label = String(req.params.filename || 'BTF')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 3)
+    .toUpperCase() || 'BTF';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="28" fill="#111827"/><circle cx="48" cy="38" r="16" fill="#64748b"/><path d="M20 82c5-18 18-28 28-28s23 10 28 28" fill="#64748b"/><text x="48" y="90" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="#e5e7eb">${label}</text></svg>`;
+  res.type('image/svg+xml').send(svg);
+});
 
 const clients = new Set<WebSocket>();
 const traderSessions = new Map<string, string>();
