@@ -139,14 +139,14 @@ async function syncAllCompetitionResults(): Promise<void> {
   }
 }
 
-function getCompetitionIdForTraderToken(token: string | null): string | null {
+async function getCompetitionIdForTraderToken(token: string | null): Promise<string | null> {
   if (!token) return null;
-  const info = competitionManager.getTraderSession(token);
+  const info = await competitionManager.getTraderSession(token);
   return info?.competitionId || null;
 }
 
 async function assertCompetitionTraderCanTrade(token: string | null): Promise<string | null> {
-  const competitionId = getCompetitionIdForTraderToken(token);
+  const competitionId = await getCompetitionIdForTraderToken(token);
   if (!competitionId) return null;
   await finalizeEndedCompetitions();
   competitionManager.assertCompetitionTradingOpen(competitionId);
@@ -162,11 +162,7 @@ function getSessionToken(req: express.Request): string | null {
 async function getSessionPlayer(req: express.Request) {
   const token = getSessionToken(req);
   if (!token) return null;
-  let info = competitionManager.getTraderSession(token);
-  if (!info) {
-    await competitionManager.refresh();
-    info = competitionManager.getTraderSession(token);
-  }
+  const info = await competitionManager.getTraderSession(token);
   if (!info) return null;
   let player = manager.getPlayerById(info.playerId);
   if (!player) {
@@ -180,12 +176,7 @@ async function getCompetitionUser(req: express.Request) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
   const token = header.slice('Bearer '.length);
-  let user = competitionManager.getUserFromToken(token);
-  if (!user) {
-    await competitionManager.refresh();
-    user = competitionManager.getUserFromToken(token);
-  }
-  return user;
+  return competitionManager.getUserFromToken(token);
 }
 
 wss.on('connection', (ws) => {
@@ -422,7 +413,7 @@ app.get('/api/paper/candles', async (req, res) => {
   }
 });
 
-app.post('/api/paper/session', (req, res) => {
+app.post('/api/paper/session', async (req, res) => {
   if (manager.getPlatformMode() !== 'paper') {
     res.status(400).json({ error: 'Le mode paper n’est pas actif' });
     return;
@@ -441,7 +432,7 @@ app.post('/api/paper/session', (req, res) => {
   }
 
   const token = crypto.randomBytes(24).toString('hex');
-  competitionManager.setTraderSession(token, player.id, null);
+  await competitionManager.setTraderSession(token, player.id, null);
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
   res.json({ token, player: publicPlayer });
 });
@@ -455,7 +446,7 @@ app.get('/api/paper/me', async (req, res) => {
   }
 
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
-  const competitionId = token ? (competitionManager.getTraderSession(token)?.competitionId || null) : null;
+  const competitionId = token ? ((await competitionManager.getTraderSession(token))?.competitionId || null) : null;
   const isCompetition = Boolean(competitionId);
 
   let competitionPayload: unknown = null;
@@ -617,14 +608,15 @@ app.post('/api/competition/auth/request', async (req, res) => {
     return;
   }
   try {
+    // Ensure we have the latest user list (signups from other Lambdas) so the
+    // duplicate email/phone checks are accurate.
     await competitionManager.refresh();
-    const { code, expiresAt } = competitionManager.requestOtp({
+    const { code, expiresAt } = await competitionManager.requestOtp({
       email: String(email || ''),
       name: name == null ? undefined : String(name),
       phone: phone == null ? undefined : String(phone),
       intent: safeIntent,
     });
-    await competitionManager.persist();
 
     const result = await sendOtpEmail(String(email || '').trim(), code, safeIntent);
 
@@ -649,11 +641,10 @@ app.post('/api/competition/auth/verify', async (req, res) => {
   const { email, code } = req.body || {};
   try {
     await competitionManager.refresh();
-    const result = competitionManager.verifyOtp({
+    const result = await competitionManager.verifyOtp({
       email: String(email || ''),
       code: String(code || ''),
     });
-    await competitionManager.persist();
 
     // Login -> session immediate
     if ('token' in result) {
@@ -662,7 +653,7 @@ app.post('/api/competition/auth/verify', async (req, res) => {
     }
 
     // Signup -> bascule en attente du SMS
-    const phoneInfo = competitionManager.getPendingPhoneInfo(String(email || ''));
+    const phoneInfo = await competitionManager.getPendingPhoneInfo(String(email || ''));
     if (!phoneInfo) {
       res.status(500).json({ error: 'Etat OTP incoherent' });
       return;
@@ -690,7 +681,7 @@ app.post('/api/competition/auth/verify-phone', async (req, res) => {
   const codeStr = String(code || '').trim();
   try {
     await competitionManager.refresh();
-    const phoneInfo = competitionManager.getPendingPhoneInfo(emailStr);
+    const phoneInfo = await competitionManager.getPendingPhoneInfo(emailStr);
     if (!phoneInfo) {
       res.status(400).json({ error: 'Aucune verification SMS en cours' });
       return;
@@ -706,12 +697,11 @@ app.post('/api/competition/auth/verify-phone', async (req, res) => {
       approved = true;
     }
 
-    const result = competitionManager.verifyPhoneOtp({
+    const result = await competitionManager.verifyPhoneOtp({
       email: emailStr,
       code: codeStr,
       smsApprovedExternally: approved,
     });
-    await competitionManager.persist();
     res.json(result);
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Verification SMS impossible' });
@@ -838,17 +828,15 @@ app.post('/api/competition/trade/session', async (req, res) => {
     player = ready;
 
     const token = crypto.randomBytes(24).toString('hex');
-    competitionManager.setTraderSession(token, player.id, competition.id);
+    // setTraderSession ecrit DIRECTEMENT dans la table comp_trader_sessions
+    // (une ligne par token), donc on ne risque pas d'etre ecrase par un
+    // autre Lambda qui ecrirait le blob global au meme moment.
+    await competitionManager.setTraderSession(token, player.id, competition.id);
     syncCompetitionResultForPlayer(player.id);
 
-    // CRITICAL on serverless: ensure the player roster and the trader session
-    // are durable in Postgres BEFORE returning. Otherwise the next request
-    // (often handled by another Lambda) might 401 because the session/player
-    // are not yet visible.
-    await Promise.all([
-      manager.persist(),
-      competitionManager.persist(),
-    ]);
+    // Le roster paper utilise toujours un blob, on le persiste pour que
+    // l'instance suivante puisse retrouver le player.
+    await manager.persist();
 
     const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 
@@ -917,13 +905,13 @@ app.patch('/api/admin/competitions/:id', requireAdmin, (req, res) => {
   }
 });
 
-app.delete('/api/admin/competitions/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   try {
     const { paperPlayerIds } = competitionManager.deleteCompetition(String(req.params.id || ''));
 
     manager.unmarkOnlineCompetitionPlayers(paperPlayerIds);
     for (const playerId of paperPlayerIds) {
-      competitionManager.deleteTraderSessionsForPlayer(playerId);
+      await competitionManager.deleteTraderSessionsForPlayer(playerId);
       manager.removePlayer(playerId);
     }
     res.json({ ok: true });

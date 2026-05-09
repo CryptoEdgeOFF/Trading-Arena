@@ -59,6 +59,8 @@ export type CompetitionStatus = 'upcoming' | 'live' | 'ended';
 interface CompetitionStore {
   users: CompetitionUser[];
   competitions: Competition[];
+  // Legacy fields kept for backwards-compatibility while migrating to dedicated
+  // tables. Not written anymore.
   sessions?: Array<{ token: string; userId: string }>;
   pendingOtps?: PendingOtp[];
   traderSessions?: Array<{ token: string; playerId: string; competitionId?: string | null }>;
@@ -167,6 +169,9 @@ function generateOtp(): string {
 export class CompetitionManager {
   private users = new Map<string, CompetitionUser>();
   private competitions = new Map<string, Competition>();
+  // In serverless, sessions/OTPs/trader-sessions use dedicated Postgres
+  // tables (one row per token/email). The maps below are only used as a
+  // local fallback when no Postgres pool is configured (development mode).
   private sessions = new Map<string, string>();
   private pendingOtps = new Map<string, PendingOtp>();
   private traderSessions = new Map<string, { playerId: string; competitionId: string | null }>();
@@ -195,13 +200,59 @@ export class CompetitionManager {
     return Array.from(this.users.values()).find((entry) => entry.phone === normalized) || null;
   }
 
-  private findPendingByPhone(phone: string, exceptEmail?: string): PendingOtp | null {
+  private async findPendingByPhone(phone: string, exceptEmail?: string): Promise<PendingOtp | null> {
     const normalized = normalizePhone(phone);
-    const normalizedEmail = exceptEmail ? normalizeEmail(exceptEmail) : '';
     if (!normalized) return null;
+    const normalizedEmail = exceptEmail ? normalizeEmail(exceptEmail) : '';
+    if (this.pool) {
+      const result = await this.pool.query(
+        `select email, data from comp_pending_otps
+         where data->>'phone' = $1 and expires_at > now()`,
+        [normalized],
+      );
+      for (const row of result.rows) {
+        if (row.email !== normalizedEmail) return row.data as PendingOtp;
+      }
+      return null;
+    }
     return Array.from(this.pendingOtps.values()).find((entry) => (
       entry.phone === normalized && entry.email !== normalizedEmail
     )) || null;
+  }
+
+  private async readPendingOtp(email: string): Promise<PendingOtp | null> {
+    const normalized = normalizeEmail(email);
+    if (this.pool) {
+      const result = await this.pool.query(
+        `select data from comp_pending_otps where email = $1 and expires_at > now()`,
+        [normalized],
+      );
+      if (!result.rows[0]?.data) return null;
+      return result.rows[0].data as PendingOtp;
+    }
+    return this.pendingOtps.get(normalized) || null;
+  }
+
+  private async writePendingOtp(otp: PendingOtp): Promise<void> {
+    if (this.pool) {
+      await this.pool.query(
+        `insert into comp_pending_otps (email, data, expires_at, updated_at)
+         values ($1, $2::jsonb, to_timestamp($3 / 1000.0), now())
+         on conflict (email) do update set data = excluded.data, expires_at = excluded.expires_at, updated_at = now()`,
+        [otp.email, JSON.stringify(otp), otp.expiresAt],
+      );
+      return;
+    }
+    this.pendingOtps.set(otp.email, otp);
+  }
+
+  private async deletePendingOtp(email: string): Promise<void> {
+    const normalized = normalizeEmail(email);
+    if (this.pool) {
+      await this.pool.query('delete from comp_pending_otps where email = $1', [normalized]);
+      return;
+    }
+    this.pendingOtps.delete(normalized);
   }
 
   emailExists(email: string): boolean {
@@ -214,7 +265,7 @@ export class CompetitionManager {
    * et son unicite verifiee tout de suite, mais le SMS n'est envoye qu'apres
    * la validation du code email (etape 2).
    */
-  requestOtp(input: { email: string; name?: string; phone?: string; intent: 'signup' | 'login' }): { code: string; expiresAt: number } {
+  async requestOtp(input: { email: string; name?: string; phone?: string; intent: 'signup' | 'login' }): Promise<{ code: string; expiresAt: number }> {
     const email = normalizeEmail(input.email);
     if (!isValidEmail(email)) {
       throw new Error('Email invalide');
@@ -242,7 +293,7 @@ export class CompetitionManager {
       if (phoneOwner) {
         throw new Error('Ce numero est deja associe a un compte');
       }
-      const pendingPhoneOwner = this.findPendingByPhone(phone, email);
+      const pendingPhoneOwner = await this.findPendingByPhone(phone, email);
       if (pendingPhoneOwner) {
         throw new Error('Ce numero est deja en cours de verification');
       }
@@ -250,7 +301,7 @@ export class CompetitionManager {
 
     const code = generateOtp();
     const expiresAt = Date.now() + OTP_TTL_MS;
-    this.pendingOtps.set(email, {
+    await this.writePendingOtp({
       email,
       name: name || undefined,
       phone,
@@ -260,7 +311,6 @@ export class CompetitionManager {
       attempts: 0,
       step: 'email',
     });
-    this.save();
 
     return { code, expiresAt };
   }
@@ -270,16 +320,17 @@ export class CompetitionManager {
    * Etape 2 (signup) : valide le code email puis bascule en attente du SMS.
    * Retourne soit { token, user } soit { needsPhone: true, phoneMasked }.
    */
-  verifyOtp(input: { email: string; code: string }):
+  async verifyOtp(input: { email: string; code: string }): Promise<
     | { token: string; user: CompetitionUser }
-    | { needsPhone: true; phoneMasked: string } {
+    | { needsPhone: true; phoneMasked: string }
+  > {
     const email = normalizeEmail(input.email);
     const code = String(input.code || '').trim();
     if (!email || !code) {
       throw new Error('Email et code requis');
     }
 
-    const pending = this.pendingOtps.get(email);
+    const pending = await this.readPendingOtp(email);
     if (!pending) {
       throw new Error('Aucune demande de code en cours pour cet email');
     }
@@ -288,45 +339,45 @@ export class CompetitionManager {
     }
 
     if (Date.now() > pending.expiresAt) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Code expire, redemande un nouveau code');
     }
 
     if (pending.attempts >= OTP_MAX_ATTEMPTS) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Trop de tentatives, redemande un nouveau code');
     }
 
     if (pending.code !== code) {
       pending.attempts += 1;
+      await this.writePendingOtp(pending);
       throw new Error('Code incorrect');
     }
 
     if (pending.intent === 'login') {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       const user = this.findUserByEmail(email);
       if (!user) throw new Error('Aucun compte trouve. Inscris-toi d abord.');
       const token = crypto.randomBytes(24).toString('hex');
-      this.sessions.set(token, user.id);
-      this.save();
+      await this.writeSession(token, user.id);
       return { token, user };
     }
 
     // Signup : email valide, on passe au SMS
     if (this.findUserByEmail(email)) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Cet email a deja un compte');
     }
     if (!pending.phone) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Telephone manquant');
     }
     if (this.findUserByPhone(pending.phone)) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Ce numero est deja associe a un compte');
     }
-    if (this.findPendingByPhone(pending.phone, email)) {
-      this.pendingOtps.delete(email);
+    if (await this.findPendingByPhone(pending.phone, email)) {
+      await this.deletePendingOtp(email);
       throw new Error('Ce numero est deja en cours de verification');
     }
 
@@ -334,7 +385,7 @@ export class CompetitionManager {
     pending.code = generateOtp(); // nouveau code dedie au SMS (utilise en mode console fallback)
     pending.expiresAt = Date.now() + OTP_TTL_MS;
     pending.attempts = 0;
-    this.save();
+    await this.writePendingOtp(pending);
 
     return { needsPhone: true, phoneMasked: maskPhone(pending.phone) };
   }
@@ -344,9 +395,8 @@ export class CompetitionManager {
    * apres validation du code email). Retourne le numero + un code local au cas
    * ou Twilio n'est pas configure.
    */
-  getPendingPhoneInfo(email: string): { phone: string; localCode: string } | null {
-    const normalized = normalizeEmail(email);
-    const pending = this.pendingOtps.get(normalized);
+  async getPendingPhoneInfo(email: string): Promise<{ phone: string; localCode: string } | null> {
+    const pending = await this.readPendingOtp(email);
     if (!pending || pending.step !== 'phone' || !pending.phone) return null;
     return { phone: pending.phone, localCode: pending.code };
   }
@@ -356,14 +406,14 @@ export class CompetitionManager {
    * le compte. `smsApprovedExternally` doit etre true si Twilio Verify a
    * confirme le code (sinon on compare au code local genere).
    */
-  verifyPhoneOtp(input: { email: string; code: string; smsApprovedExternally: boolean }): { token: string; user: CompetitionUser } {
+  async verifyPhoneOtp(input: { email: string; code: string; smsApprovedExternally: boolean }): Promise<{ token: string; user: CompetitionUser }> {
     const email = normalizeEmail(input.email);
     const code = String(input.code || '').trim();
     if (!email || !code) {
       throw new Error('Email et code requis');
     }
 
-    const pending = this.pendingOtps.get(email);
+    const pending = await this.readPendingOtp(email);
     if (!pending) {
       throw new Error('Aucune verification SMS en cours');
     }
@@ -371,21 +421,22 @@ export class CompetitionManager {
       throw new Error('Code SMS non requis a cette etape');
     }
     if (Date.now() > pending.expiresAt) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Code expire, redemande un nouveau code');
     }
     if (pending.attempts >= OTP_MAX_ATTEMPTS) {
-      this.pendingOtps.delete(email);
+      await this.deletePendingOtp(email);
       throw new Error('Trop de tentatives, redemande un nouveau code');
     }
 
     const matchesLocal = pending.code === code;
     if (!input.smsApprovedExternally && !matchesLocal) {
       pending.attempts += 1;
+      await this.writePendingOtp(pending);
       throw new Error('Code SMS incorrect');
     }
 
-    this.pendingOtps.delete(email);
+    await this.deletePendingOtp(email);
 
     if (this.findUserByEmail(email)) {
       throw new Error('Cet email a deja un compte');
@@ -406,11 +457,10 @@ export class CompetitionManager {
       createdAt: Date.now(),
     };
     this.users.set(user.id, user);
-    this.save();
+    await this.persist();
 
     const token = crypto.randomBytes(24).toString('hex');
-    this.sessions.set(token, user.id);
-    this.save();
+    await this.writeSession(token, user.id);
     return { token, user };
   }
 
@@ -426,62 +476,132 @@ export class CompetitionManager {
         executionMode: competition.executionMode === 'real' ? 'real' : 'paper',
       });
     }
-    this.sessions.clear();
-    for (const session of parsed.sessions || []) {
-      if (session.token && session.userId) this.sessions.set(session.token, session.userId);
-    }
-    this.pendingOtps.clear();
-    for (const pending of parsed.pendingOtps || []) {
-      if (pending.email && pending.expiresAt > Date.now()) this.pendingOtps.set(pending.email, pending);
-    }
-    this.traderSessions.clear();
-    for (const session of parsed.traderSessions || []) {
-      if (session.token && session.playerId) {
-        this.traderSessions.set(session.token, {
-          playerId: session.playerId,
-          competitionId: session.competitionId || null,
-        });
+    // En mode local (sans Postgres), on hydrate les sessions/OTPs/traders
+    // depuis le blob. En mode Postgres elles vivent dans leurs propres tables.
+    if (!this.pool) {
+      this.sessions.clear();
+      for (const session of parsed.sessions || []) {
+        if (session.token && session.userId) this.sessions.set(session.token, session.userId);
+      }
+      this.pendingOtps.clear();
+      for (const pending of parsed.pendingOtps || []) {
+        if (pending.email && pending.expiresAt > Date.now()) this.pendingOtps.set(pending.email, pending);
+      }
+      this.traderSessions.clear();
+      for (const session of parsed.traderSessions || []) {
+        if (session.token && session.playerId) {
+          this.traderSessions.set(session.token, {
+            playerId: session.playerId,
+            competitionId: session.competitionId || null,
+          });
+        }
       }
     }
   }
 
   private currentStore(): CompetitionStore {
-    const now = Date.now();
-    return {
+    // Le blob ne contient plus que users + competitions. Les sessions, OTPs
+    // et trader sessions ont leurs propres tables (Postgres) ou Maps locales.
+    const payload: CompetitionStore = {
       users: Array.from(this.users.values()),
       competitions: Array.from(this.competitions.values()),
-      sessions: Array.from(this.sessions.entries()).map(([token, userId]) => ({ token, userId })),
-      pendingOtps: Array.from(this.pendingOtps.values()).filter((entry) => entry.expiresAt > now),
-      traderSessions: Array.from(this.traderSessions.entries()).map(([token, info]) => ({
+    };
+    if (!this.pool) {
+      const now = Date.now();
+      payload.sessions = Array.from(this.sessions.entries()).map(([token, userId]) => ({ token, userId }));
+      payload.pendingOtps = Array.from(this.pendingOtps.values()).filter((entry) => entry.expiresAt > now);
+      payload.traderSessions = Array.from(this.traderSessions.entries()).map(([token, info]) => ({
         token,
         playerId: info.playerId,
         competitionId: info.competitionId,
-      })),
-    };
+      }));
+    }
+    return payload;
   }
 
-  setTraderSession(token: string, playerId: string, competitionId: string | null): void {
+  /**
+   * Lors du tout premier deploiement avec les nouvelles tables, on migre
+   * les anciennes sessions/OTPs/trader-sessions du blob legacy vers
+   * leurs tables dediees pour ne pas deconnecter les utilisateurs deja logges.
+   */
+  private async migrateLegacySessions(parsed: CompetitionStore): Promise<void> {
+    if (!this.pool) return;
+    try {
+      for (const session of parsed.sessions || []) {
+        if (session.token && session.userId) {
+          await this.pool.query(
+            `insert into comp_user_sessions (token, user_id) values ($1, $2)
+             on conflict (token) do nothing`,
+            [session.token, session.userId],
+          );
+        }
+      }
+      for (const otp of parsed.pendingOtps || []) {
+        if (otp.email && otp.expiresAt > Date.now()) {
+          await this.pool.query(
+            `insert into comp_pending_otps (email, data, expires_at) values ($1, $2::jsonb, to_timestamp($3 / 1000.0))
+             on conflict (email) do nothing`,
+            [otp.email, JSON.stringify(otp), otp.expiresAt],
+          );
+        }
+      }
+      for (const session of parsed.traderSessions || []) {
+        if (session.token && session.playerId) {
+          await this.pool.query(
+            `insert into comp_trader_sessions (token, player_id, competition_id) values ($1, $2, $3)
+             on conflict (token) do nothing`,
+            [session.token, session.playerId, session.competitionId || null],
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Competition legacy session migration failed:', error);
+    }
+  }
+
+  async setTraderSession(token: string, playerId: string, competitionId: string | null): Promise<void> {
+    if (this.pool) {
+      await this.pool.query(
+        `insert into comp_trader_sessions (token, player_id, competition_id) values ($1, $2, $3)
+         on conflict (token) do update set player_id = excluded.player_id, competition_id = excluded.competition_id`,
+        [token, playerId, competitionId],
+      );
+      this.traderSessions.set(token, { playerId, competitionId });
+      return;
+    }
     this.traderSessions.set(token, { playerId, competitionId });
     this.save();
   }
 
-  getTraderSession(token: string): { playerId: string; competitionId: string | null } | null {
+  async getTraderSession(token: string): Promise<{ playerId: string; competitionId: string | null } | null> {
+    if (!token) return null;
+    if (this.pool) {
+      const result = await this.pool.query(
+        'select player_id, competition_id from comp_trader_sessions where token = $1 limit 1',
+        [token],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return { playerId: row.player_id as string, competitionId: (row.competition_id as string | null) || null };
+    }
     return this.traderSessions.get(token) || null;
   }
 
-  deleteTraderSession(token: string): void {
-    if (this.traderSessions.delete(token)) this.save();
+  async deleteTraderSession(token: string): Promise<void> {
+    if (!token) return;
+    if (this.pool) {
+      await this.pool.query('delete from comp_trader_sessions where token = $1', [token]);
+    }
+    this.traderSessions.delete(token);
   }
 
-  deleteTraderSessionsForPlayer(playerId: string): void {
-    let changed = false;
-    for (const [token, info] of this.traderSessions.entries()) {
-      if (info.playerId === playerId) {
-        this.traderSessions.delete(token);
-        changed = true;
-      }
+  async deleteTraderSessionsForPlayer(playerId: string): Promise<void> {
+    if (this.pool) {
+      await this.pool.query('delete from comp_trader_sessions where player_id = $1', [playerId]);
     }
-    if (changed) this.save();
+    for (const [token, info] of this.traderSessions.entries()) {
+      if (info.playerId === playerId) this.traderSessions.delete(token);
+    }
   }
 
   async persist(): Promise<void> {
@@ -518,6 +638,31 @@ export class CompetitionManager {
         updated_at timestamptz not null default now()
       )
     `);
+    await this.pool.query(`
+      create table if not exists comp_user_sessions (
+        token text primary key,
+        user_id text not null,
+        created_at timestamptz not null default now()
+      )
+    `);
+    await this.pool.query(`
+      create table if not exists comp_trader_sessions (
+        token text primary key,
+        player_id text not null,
+        competition_id text,
+        created_at timestamptz not null default now()
+      )
+    `);
+    await this.pool.query(`
+      create table if not exists comp_pending_otps (
+        email text primary key,
+        data jsonb not null,
+        expires_at timestamptz not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
+    await this.pool.query(`create index if not exists idx_trader_sessions_player on comp_trader_sessions(player_id)`);
+    await this.pool.query(`create index if not exists idx_pending_otps_phone on comp_pending_otps((data->>'phone'))`);
   }
 
   private async load(): Promise<void> {
@@ -526,7 +671,9 @@ export class CompetitionManager {
         await this.ensureDbStore();
         const result = await this.pool.query('select value from competition_store where key = $1 limit 1', [STORE_DB_KEY]);
         if (result.rows[0]?.value) {
-          this.applyStore(result.rows[0].value as CompetitionStore);
+          const parsed = result.rows[0].value as CompetitionStore;
+          this.applyStore(parsed);
+          await this.migrateLegacySessions(parsed);
           console.log('Competition store loaded from Postgres');
           return;
         }
@@ -535,6 +682,7 @@ export class CompetitionManager {
           const raw = fs.readFileSync(STORE_FILE, 'utf-8');
           const parsed = JSON.parse(raw) as CompetitionStore;
           this.applyStore(parsed);
+          await this.migrateLegacySessions(parsed);
           await this.saveToDb();
           console.log('Competition store imported from JSON into Postgres');
           return;
@@ -583,10 +731,53 @@ export class CompetitionManager {
     }
   }
 
-  getUserFromToken(token: string): CompetitionUser | null {
+  /**
+   * Resout un session token vers un utilisateur en allant directement
+   * dans Postgres (table comp_user_sessions). Cela evite les pertes
+   * d'updates dues aux ecritures concurrentes sur le blob JSON.
+   */
+  async getUserFromToken(token: string): Promise<CompetitionUser | null> {
+    if (!token) return null;
+    if (this.pool) {
+      const result = await this.pool.query(
+        'select user_id from comp_user_sessions where token = $1 limit 1',
+        [token],
+      );
+      const userId = result.rows[0]?.user_id as string | undefined;
+      if (!userId) return null;
+      let user = this.users.get(userId) || null;
+      if (!user) {
+        // Le user a peut-etre ete cree par un autre Lambda (signup tres recent).
+        await this.refresh();
+        user = this.users.get(userId) || null;
+      }
+      return user;
+    }
     const userId = this.sessions.get(token);
     if (!userId) return null;
     return this.users.get(userId) || null;
+  }
+
+  async writeSession(token: string, userId: string): Promise<void> {
+    if (this.pool) {
+      await this.pool.query(
+        `insert into comp_user_sessions (token, user_id) values ($1, $2)
+         on conflict (token) do update set user_id = excluded.user_id`,
+        [token, userId],
+      );
+      this.sessions.set(token, userId);
+      return;
+    }
+    this.sessions.set(token, userId);
+    this.save();
+  }
+
+  async deleteSession(token: string): Promise<void> {
+    if (!token) return;
+    if (this.pool) {
+      await this.pool.query('delete from comp_user_sessions where token = $1', [token]);
+    }
+    this.sessions.delete(token);
   }
 
   updateUserProfile(userId: string, input: {
