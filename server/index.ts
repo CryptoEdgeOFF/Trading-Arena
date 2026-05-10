@@ -19,7 +19,7 @@ import { getMarketMetadata } from './marketMetadata.js';
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
-const PORT = 3001;
+const PORT = Number(process.env.PORT || 3001);
 
 const UPLOADS_DIR = process.env.NETLIFY
   ? path.join('/tmp', 'btf-uploads')
@@ -57,6 +57,13 @@ function uploadedImageUrl(file: Express.Multer.File): string {
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    runtime: process.env.NETLIFY ? 'netlify-function' : 'node-server',
+    uptime: process.uptime(),
+  });
+});
 app.get('/uploads/:filename', (req, res) => {
   const label = String(req.params.filename || 'BTF')
     .replace(/\.[a-z0-9]+$/i, '')
@@ -108,7 +115,7 @@ const manager = new PlayerManager((state: GameState) => {
   });
 });
 
-function syncCompetitionResultForPlayer(playerId: string): void {
+async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
   const player = manager.getPlayerById(playerId);
   if (!player) return;
   competitionManager.updatePaperResultByPlayerId(player.id, {
@@ -116,6 +123,7 @@ function syncCompetitionResultForPlayer(playerId: string): void {
     pnlPercent: player.pnlPercent,
     tradesCount: player.tradeCount,
   });
+  await competitionManager.persist();
 }
 
 async function finalizeEndedCompetitions(): Promise<void> {
@@ -129,9 +137,10 @@ async function finalizeEndedCompetitions(): Promise<void> {
     for (const competition of pending) {
       for (const playerId of competition.paperPlayerIds) {
         await manager.finalizeCompetitionPaperPlayer(playerId);
-        syncCompetitionResultForPlayer(playerId);
+        await syncCompetitionResultForPlayer(playerId);
       }
       competitionManager.markCompetitionFinalized(competition.competitionId);
+      await competitionManager.persist();
     }
   })();
 
@@ -145,7 +154,7 @@ async function finalizeEndedCompetitions(): Promise<void> {
 async function syncAllCompetitionResults(): Promise<void> {
   await finalizeEndedCompetitions();
   for (const playerId of competitionManager.getPaperPlayerIds()) {
-    syncCompetitionResultForPlayer(playerId);
+    await syncCompetitionResultForPlayer(playerId);
   }
 }
 
@@ -158,6 +167,7 @@ async function getCompetitionIdForTraderToken(token: string | null): Promise<str
 async function assertCompetitionTraderCanTrade(token: string | null): Promise<string | null> {
   const competitionId = await getCompetitionIdForTraderToken(token);
   if (!competitionId) return null;
+  await competitionManager.refresh();
   await finalizeEndedCompetitions();
   competitionManager.assertCompetitionTradingOpen(competitionId);
   return competitionId;
@@ -174,11 +184,8 @@ async function getSessionPlayer(req: express.Request) {
   if (!token) return null;
   const info = await competitionManager.getTraderSession(token);
   if (!info) return null;
+  await manager.refresh();
   let player = manager.getPlayerById(info.playerId);
-  if (!player) {
-    await manager.refresh();
-    player = manager.getPlayerById(info.playerId);
-  }
   return player;
 }
 
@@ -450,24 +457,27 @@ app.post('/api/paper/session', async (req, res) => {
 
 app.get('/api/paper/me', async (req, res) => {
   const token = getSessionToken(req);
-  const player = await getSessionPlayer(req);
+  let player = await getSessionPlayer(req);
   if (!player) {
     res.status(401).json({ error: 'Session invalide' });
     return;
   }
 
-  const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
   const competitionId = token ? ((await competitionManager.getTraderSession(token))?.competitionId || null) : null;
   const isCompetition = Boolean(competitionId);
 
   let competitionPayload: unknown = null;
   if (competitionId) {
+    await competitionManager.refresh();
     await finalizeEndedCompetitions();
-    syncCompetitionResultForPlayer(player.id);
+    const refreshedPlayer = await manager.refreshCompetitionPaperPlayer(player.id);
+    if (refreshedPlayer) player = refreshedPlayer;
+    await syncCompetitionResultForPlayer(player.id);
     const ctx = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id);
     competitionPayload = ctx || { id: competitionId };
   }
   const competitionStatus = competitionId ? competitionManager.getCompetitionStatus(competitionId) : null;
+  const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 
   res.json({
     player: publicPlayer,
@@ -506,7 +516,7 @@ app.post('/api/paper/order', async (req, res) => {
       stopLoss: stopLoss == null || stopLoss === '' ? null : Number(stopLoss),
       takeProfit: takeProfit == null || takeProfit === '' ? null : Number(takeProfit),
     });
-    if (competitionId) syncCompetitionResultForPlayer(player.id);
+    if (competitionId) await syncCompetitionResultForPlayer(player.id);
     res.json({ ok: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Ordre refusé' });
@@ -527,7 +537,7 @@ app.post('/api/paper/cancel', async (req, res) => {
       ? manager.cancelCompetitionPaperOrder.bind(manager)
       : async (playerId: string, orderId: string) => manager.cancelPaperOrder(playerId, orderId);
     await handler(player.id, String(req.body?.orderId || ''));
-    if (competitionId) syncCompetitionResultForPlayer(player.id);
+    if (competitionId) await syncCompetitionResultForPlayer(player.id);
     res.json({ ok: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Annulation refusée' });
@@ -571,7 +581,7 @@ app.post('/api/paper/close', async (req, res) => {
       if (position) partialSize = position.size * (pct / 100);
     }
     await handler(player.id, String(req.body?.positionId || req.body?.pair || ''), partialSize);
-    if (competitionId) syncCompetitionResultForPlayer(player.id);
+    if (competitionId) await syncCompetitionResultForPlayer(player.id);
     res.json({ ok: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Clôture refusée' });
@@ -599,7 +609,7 @@ app.post('/api/paper/risk', async (req, res) => {
     const positionRef = String(positionId || pair || '');
     if (isCompetition) {
       await manager.updateCompetitionPaperPositionRisk(player.id, positionRef, sl, tp, options);
-      syncCompetitionResultForPlayer(player.id);
+      await syncCompetitionResultForPlayer(player.id);
     } else {
       manager.updatePaperPositionRisk(player.id, positionRef, sl, tp, options);
     }
@@ -894,7 +904,7 @@ app.post('/api/competition/trade/session', async (req, res) => {
       manager.persistPlayer(player.id),
       competitionManager.persist(),
     ]);
-    syncCompetitionResultForPlayer(player.id);
+    await syncCompetitionResultForPlayer(player.id);
 
     const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 

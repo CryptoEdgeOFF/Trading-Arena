@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useGameStore } from '../stores/useGameStore';
+import { getWebSocketUrl } from '../lib/runtimeApi';
 
 export function useWebSocket(enabled = true) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -9,9 +10,7 @@ export function useWebSocket(enabled = true) {
     if (!enabled) return;
 
     function connect() {
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const wsUrl = `${protocol}://${window.location.host}/ws`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(getWebSocketUrl());
       wsRef.current = ws;
 
       ws.onmessage = (event) => {

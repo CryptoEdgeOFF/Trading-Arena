@@ -78,7 +78,10 @@ export class PlayerManager {
     this.paperEngine = new PaperTradingEngine(() => {
       this.updateRankings();
       this.checkBadges();
-      this.saveRoster();
+      // In Postgres/serverless mode, route handlers persist the touched player
+      // explicitly. Writing the whole in-memory roster from a timer/websocket
+      // can overwrite fresher rows owned by another Lambda.
+      if (!this.pool) this.saveRoster();
       this.broadcastState();
     });
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
@@ -192,7 +195,8 @@ export class PlayerManager {
 
   private saveRoster(): void {
     if (this.pool) {
-      void this.saveRosterToDb();
+      // Avoid global stale writes in serverless. Use persistPlayer(playerId)
+      // or persist() explicitly from routes after a fresh refresh.
       return;
     }
     try {
@@ -707,7 +711,7 @@ export class PlayerManager {
     await this.ensureCompetitionPaperRuntime(player);
     const result = await this.paperEngine.placeOrder(player, order);
     void result;
-    this.saveRoster();
+    await this.persistPlayer(player.id);
     this.broadcastState();
   }
 
@@ -737,7 +741,7 @@ export class PlayerManager {
     await this.ensureCompetitionPaperRuntime(player);
     const result = await this.paperEngine.closePosition(player, pair, partialSize);
     void result;
-    this.saveRoster();
+    await this.persistPlayer(player.id);
     this.broadcastState();
   }
 
@@ -763,7 +767,7 @@ export class PlayerManager {
     }
     await this.ensureCompetitionPaperRuntime(player);
     this.paperEngine.cancelOrder(player, orderId);
-    this.saveRoster();
+    await this.persistPlayer(player.id);
     this.broadcastState();
   }
 
@@ -787,7 +791,7 @@ export class PlayerManager {
 
     player.connected = false;
     player.lastUpdate = Date.now();
-    this.saveRoster();
+    await this.persistPlayer(player.id);
     this.broadcastState();
   }
 
@@ -825,8 +829,19 @@ export class PlayerManager {
     }
     await this.ensureCompetitionPaperRuntime(player);
     this.paperEngine.updatePositionRisk(player, pair, stopLoss, takeProfit, options);
-    this.saveRoster();
+    await this.persistPlayer(player.id);
     this.broadcastState();
+  }
+
+  async refreshCompetitionPaperPlayer(playerId: string): Promise<Player | null> {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+
+    await this.ensureCompetitionPaperRuntime(player);
+    await this.paperEngine.refreshMarketSnapshot();
+    await this.persistPlayer(player.id);
+    this.broadcastState();
+    return player;
   }
 
   private ensurePaperPlayerBaseline(player: Player): void {
