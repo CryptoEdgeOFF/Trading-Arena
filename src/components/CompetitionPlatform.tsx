@@ -11,7 +11,48 @@ import {
 } from './competeMetrics';
 
 const SESSION_KEY = 'btf-comp-session';
+const SESSION_USER_KEY = 'btf-comp-user';
 const PAPER_SESSION_KEY = 'btf-paper-session';
+
+function readCachedUser(): SessionUser | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_USER_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SessionUser;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUser(user: SessionUser | null) {
+  try {
+    if (user) window.localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+    else window.localStorage.removeItem(SESSION_USER_KEY);
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function readCachedJSON<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedJSON<T>(key: string, value: T): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+}
+
+const PUBLIC_CACHE_KEY = 'btf-comp-public-cache';
+const MINE_CACHE_KEY = 'btf-comp-mine-cache';
 interface CashPrize {
   currency: string;
   total: number;
@@ -201,7 +242,16 @@ function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?
 }
 
 export default function CompetitionPlatform() {
-  const [session, setSession] = useState<{ token: string; user: SessionUser } | null>(null);
+  // Initialise the session synchronously from localStorage so authenticated
+  // users see their data immediately on refresh, without waiting for the
+  // backend to come back. We then validate in the background and clear the
+  // cached state if the session is no longer accepted.
+  const [session, setSession] = useState<{ token: string; user: SessionUser } | null>(() => {
+    const token = window.localStorage.getItem(SESSION_KEY);
+    const cachedUser = readCachedUser();
+    if (token && cachedUser) return { token, user: cachedUser };
+    return null;
+  });
 
   const [intent, setIntent] = useState<AuthIntent>('login');
   const [step, setStep] = useState<AuthStep>('request');
@@ -212,8 +262,14 @@ export default function CompetitionPlatform() {
   const [smsOtp, setSmsOtp] = useState('');
   const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
 
-  const [publicCompetitions, setPublicCompetitions] = useState<CompetitionPublic[]>([]);
-  const [myCompetitions, setMyCompetitions] = useState<CompetitionMine[]>([]);
+  // Hydrate competition lists from localStorage too so the page renders
+  // populated even before the bootstrap response arrives.
+  const [publicCompetitions, setPublicCompetitions] = useState<CompetitionPublic[]>(
+    () => readCachedJSON<CompetitionPublic[]>(PUBLIC_CACHE_KEY) || [],
+  );
+  const [myCompetitions, setMyCompetitions] = useState<CompetitionMine[]>(
+    () => readCachedJSON<CompetitionMine[]>(MINE_CACHE_KEY) || [],
+  );
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -222,36 +278,60 @@ export default function CompetitionPlatform() {
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
 
+  // Single bootstrap call on mount: returns user + public + mine in one
+  // round-trip, eliminating the cascade of cold starts that used to slow
+  // down the page after a refresh.
   useEffect(() => {
-    void refreshPublicCompetitions();
-  }, []);
-
-  useEffect(() => {
+    let cancelled = false;
     const token = window.localStorage.getItem(SESSION_KEY);
-    if (!token) return;
-    fetch('/api/competition/me', { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (response) => {
-        if (!response.ok) {
-          window.localStorage.removeItem(SESSION_KEY);
-          return null;
-        }
-        return response.json();
-      })
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    fetch('/api/competition/bootstrap', { headers })
+      .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
-        if (!data?.user) return;
-        setSession({ token, user: data.user });
+        if (cancelled || !data) return;
+        const publicComps: CompetitionPublic[] = data.publicCompetitions || [];
+        const mineComps: CompetitionMine[] = data.myCompetitions || [];
+        setPublicCompetitions(publicComps);
+        setMyCompetitions(mineComps);
+        writeCachedJSON(PUBLIC_CACHE_KEY, publicComps);
+        writeCachedJSON(MINE_CACHE_KEY, mineComps);
+
+        if (token) {
+          if (data.user) {
+            setSession({ token, user: data.user });
+            writeCachedUser(data.user);
+          } else {
+            // Token rejected by server -> clear the optimistic session.
+            window.localStorage.removeItem(SESSION_KEY);
+            writeCachedUser(null);
+            setSession(null);
+            setMyCompetitions([]);
+            writeCachedJSON(MINE_CACHE_KEY, []);
+          }
+        }
+      })
+      .catch(() => {
+        // Network failure: keep the optimistic state so the UI stays usable.
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Keep the cached user in sync if it changes (e.g. profile update).
   useEffect(() => {
-    if (!session) return;
-    void refreshMyCompetitions(session.token);
-  }, [session]);
+    if (session?.user) writeCachedUser(session.user);
+  }, [session?.user]);
 
   async function refreshPublicCompetitions() {
     const response = await fetch('/api/competition/public');
     const data = await response.json();
-    setPublicCompetitions(data.competitions || []);
+    const list = data.competitions || [];
+    setPublicCompetitions(list);
+    writeCachedJSON(PUBLIC_CACHE_KEY, list);
   }
 
   async function refreshMyCompetitions(token: string) {
@@ -260,7 +340,9 @@ export default function CompetitionPlatform() {
     });
     if (!response.ok) return;
     const data = await response.json();
-    setMyCompetitions(data.competitions || []);
+    const list = data.competitions || [];
+    setMyCompetitions(list);
+    writeCachedJSON(MINE_CACHE_KEY, list);
   }
 
   function switchIntent(next: AuthIntent) {
@@ -337,7 +419,9 @@ export default function CompetitionPlatform() {
       }
 
       window.localStorage.setItem(SESSION_KEY, data.token);
+      writeCachedUser(data.user);
       setSession({ token: data.token, user: data.user });
+      void refreshMyCompetitions(data.token);
       resetAuth();
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');
@@ -359,7 +443,9 @@ export default function CompetitionPlatform() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Verification SMS impossible');
       window.localStorage.setItem(SESSION_KEY, data.token);
+      writeCachedUser(data.user);
       setSession({ token: data.token, user: data.user });
+      void refreshMyCompetitions(data.token);
       resetAuth();
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');
@@ -370,6 +456,8 @@ export default function CompetitionPlatform() {
 
   function logout() {
     window.localStorage.removeItem(SESSION_KEY);
+    writeCachedUser(null);
+    writeCachedJSON(MINE_CACHE_KEY, []);
     setSession(null);
     setMyCompetitions([]);
   }

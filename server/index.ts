@@ -774,8 +774,19 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
   }
 });
 
+/**
+ * Lightweight finalize-only sync. Fast in the common case (no ended
+ * competitions) and unavoidable: orders must close at competition end. We
+ * skip the per-player PnL push since trades and position closes already
+ * keep the paper player state in sync.
+ */
+async function maybeFinalizeEndedCompetitions(): Promise<void> {
+  if (!competitionManager.hasCompetitionsNeedingFinalization()) return;
+  await finalizeEndedCompetitions();
+}
+
 app.get('/api/competition/public', async (_req, res) => {
-  await syncAllCompetitionResults();
+  await maybeFinalizeEndedCompetitions();
   res.json({ competitions: competitionManager.listPublicCompetitions() });
 });
 
@@ -785,8 +796,29 @@ app.get('/api/competition/mine', async (req, res) => {
     res.status(401).json({ error: 'Session invalide' });
     return;
   }
-  await syncAllCompetitionResults();
+  await maybeFinalizeEndedCompetitions();
   res.json({ competitions: competitionManager.listUserCompetitions(user.id) });
+});
+
+/**
+ * Fast single-round-trip bootstrap used by the frontend on page load.
+ * Returns the public competitions (always) plus the authenticated user and
+ * their own competitions when a Bearer token is provided. Avoiding three
+ * separate Lambda invocations dramatically reduces the perceived load time
+ * on Netlify (each cold start is ~1-3s).
+ */
+app.get('/api/competition/bootstrap', async (req, res) => {
+  const [user] = await Promise.all([
+    getCompetitionUser(req),
+    maybeFinalizeEndedCompetitions(),
+  ]);
+  const publicCompetitions = competitionManager.listPublicCompetitions();
+  const myCompetitions = user ? competitionManager.listUserCompetitions(user.id) : [];
+  res.json({
+    user,
+    publicCompetitions,
+    myCompetitions,
+  });
 });
 
 app.post('/api/competition/join', async (req, res) => {

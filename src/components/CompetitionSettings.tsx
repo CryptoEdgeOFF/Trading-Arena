@@ -2,6 +2,26 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 const SESSION_KEY = 'btf-comp-session';
+const SESSION_USER_KEY = 'btf-comp-user';
+
+function readCachedUser(): SessionUser | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_USER_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SessionUser;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUser(user: SessionUser | null) {
+  try {
+    if (user) window.localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+    else window.localStorage.removeItem(SESSION_USER_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 interface SessionUser {
   id: string;
@@ -41,6 +61,22 @@ export default function CompetitionSettings() {
       return;
     }
     setToken(stored);
+
+    // Hydrate the form from the cached user immediately so the page renders
+    // populated even before the backend roundtrip lands.
+    const cached = readCachedUser();
+    if (cached) {
+      setUser(cached);
+      setName(cached.name || '');
+      setPhone(cached.phone || '');
+      setSocials({
+        x: cached.socials?.x || '',
+        instagram: cached.socials?.instagram || '',
+        discord: cached.socials?.discord || '',
+        website: cached.socials?.website || '',
+      });
+    }
+
     fetch('/api/competition/me', { headers: { Authorization: `Bearer ${stored}` } })
       .then(async (response) => {
         if (!response.ok) throw new Error('Session invalide');
@@ -49,6 +85,7 @@ export default function CompetitionSettings() {
       .then((data) => {
         const nextUser = data.user as SessionUser;
         setUser(nextUser);
+        writeCachedUser(nextUser);
         setName(nextUser.name || '');
         setPhone(nextUser.phone || '');
         setSocials({
@@ -60,6 +97,7 @@ export default function CompetitionSettings() {
       })
       .catch(() => {
         window.localStorage.removeItem(SESSION_KEY);
+        writeCachedUser(null);
         navigate('/compete');
       });
   }, [navigate]);
@@ -85,6 +123,7 @@ export default function CompetitionSettings() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Modification impossible');
       setUser(data.user);
+      writeCachedUser(data.user);
       setMessage('Profil mis a jour');
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');
@@ -109,6 +148,7 @@ export default function CompetitionSettings() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload impossible');
       setUser(data.user);
+      writeCachedUser(data.user);
       setMessage('Photo de profil mise a jour');
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');

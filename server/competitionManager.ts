@@ -1051,6 +1051,19 @@ export class CompetitionManager {
       .filter((entry) => entry.paperPlayerIds.length > 0);
   }
 
+  /**
+   * Cheap predicate used on hot read paths to short-circuit the heavier
+   * finalization routine when there is nothing to finalize.
+   */
+  hasCompetitionsNeedingFinalization(now = Date.now()): boolean {
+    for (const competition of this.competitions.values()) {
+      if (competition.finalizedAt) continue;
+      if (inferCompetitionStatus(competition.startAt, competition.endAt, now) !== 'ended') continue;
+      if (competition.entries.some((entry) => Boolean(entry.paperPlayerId))) return true;
+    }
+    return false;
+  }
+
   markCompetitionFinalized(competitionId: string): void {
     const competition = this.competitions.get(competitionId);
     if (!competition) throw new Error('Competition introuvable');
