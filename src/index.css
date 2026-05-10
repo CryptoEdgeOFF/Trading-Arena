@@ -177,6 +177,17 @@ body {
 }
 .compete [id] { scroll-margin-top: 104px; }
 
+/* When `.compete` is used to scope styles inside a modal, neutralise the
+   page-level constraints (full-viewport height, base background) that would
+   otherwise stretch the modal panel to the whole screen. The card keeps its
+   own gradient (set via Tailwind's `bg-gradient-*`) since that targets
+   `background-image`, which we leave untouched. */
+.compete.compete-modal {
+  min-height: 0;
+  background-color: transparent;
+  scroll-padding-top: 0;
+}
+
 .compete .display { font-family: 'Rajdhani', sans-serif; letter-spacing: -0.01em; }
 .compete .num { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 .compete .micro { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; }

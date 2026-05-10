@@ -1185,7 +1185,7 @@ function JoinCompetitionModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={onClose}>
       <div
-        className="compete relative w-full max-w-md overflow-hidden rounded-2xl border border-[#dc2626]/30 bg-gradient-to-b from-[#1a0a0a] to-[#0a0a0d] p-7 shadow-[0_30px_80px_-20px_rgba(220,38,38,0.4)]"
+        className="compete compete-modal relative w-full max-w-md overflow-hidden rounded-2xl border border-[#dc2626]/30 bg-gradient-to-b from-[#1a0a0a] to-[#0a0a0d] p-7 shadow-[0_30px_80px_-20px_rgba(220,38,38,0.4)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-[#dc2626]/30 blur-3xl" />
