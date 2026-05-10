@@ -20,6 +20,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const PORT = Number(process.env.PORT || 3001);
+const IS_SERVERLESS = Boolean(process.env.NETLIFY);
 
 const UPLOADS_DIR = process.env.NETLIFY
   ? path.join('/tmp', 'btf-uploads')
@@ -167,7 +168,7 @@ async function getCompetitionIdForTraderToken(token: string | null): Promise<str
 async function assertCompetitionTraderCanTrade(token: string | null): Promise<string | null> {
   const competitionId = await getCompetitionIdForTraderToken(token);
   if (!competitionId) return null;
-  await competitionManager.refresh();
+  if (IS_SERVERLESS) await competitionManager.refresh();
   await finalizeEndedCompetitions();
   competitionManager.assertCompetitionTradingOpen(competitionId);
   return competitionId;
@@ -184,8 +185,11 @@ async function getSessionPlayer(req: express.Request) {
   if (!token) return null;
   const info = await competitionManager.getTraderSession(token);
   if (!info) return null;
-  await manager.refresh();
   let player = manager.getPlayerById(info.playerId);
+  if (!player || IS_SERVERLESS) {
+    await manager.refresh();
+    player = manager.getPlayerById(info.playerId);
+  }
   return player;
 }
 
@@ -468,9 +472,12 @@ app.get('/api/paper/me', async (req, res) => {
 
   let competitionPayload: unknown = null;
   if (competitionId) {
-    await competitionManager.refresh();
+    if (IS_SERVERLESS) await competitionManager.refresh();
     await finalizeEndedCompetitions();
-    const refreshedPlayer = await manager.refreshCompetitionPaperPlayer(player.id);
+    const refreshedPlayer = await manager.refreshCompetitionPaperPlayer(player.id, {
+      forceMarketRefresh: IS_SERVERLESS,
+      persist: IS_SERVERLESS,
+    });
     if (refreshedPlayer) player = refreshedPlayer;
     await syncCompetitionResultForPlayer(player.id);
     const ctx = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id);

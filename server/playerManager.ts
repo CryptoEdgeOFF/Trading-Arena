@@ -64,6 +64,7 @@ export class PlayerManager {
   private competitionPaperRuntimeStarted = false;
   private onlineCompetitionPlayerIds = new Set<string>();
   private pool: Pool | null = null;
+  private isServerless = Boolean(process.env.NETLIFY);
   readonly ready: Promise<void>;
 
   constructor(onUpdate: (state: GameState) => void) {
@@ -78,10 +79,7 @@ export class PlayerManager {
     this.paperEngine = new PaperTradingEngine(() => {
       this.updateRankings();
       this.checkBadges();
-      // In Postgres/serverless mode, route handlers persist the touched player
-      // explicitly. Writing the whole in-memory roster from a timer/websocket
-      // can overwrite fresher rows owned by another Lambda.
-      if (!this.pool) this.saveRoster();
+      this.saveRoster();
       this.broadcastState();
     });
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
@@ -195,8 +193,10 @@ export class PlayerManager {
 
   private saveRoster(): void {
     if (this.pool) {
-      // Avoid global stale writes in serverless. Use persistPlayer(playerId)
-      // or persist() explicitly from routes after a fresh refresh.
+      // Avoid global stale writes only in serverless. On a persistent Node
+      // server there is a single long-lived trading runtime, so timer/WS ticks
+      // should persist SL/TP, limit fills and live PnL like local mode.
+      if (!this.isServerless) void this.saveRosterToDb();
       return;
     }
     try {
@@ -833,13 +833,20 @@ export class PlayerManager {
     this.broadcastState();
   }
 
-  async refreshCompetitionPaperPlayer(playerId: string): Promise<Player | null> {
+  async refreshCompetitionPaperPlayer(
+    playerId: string,
+    options: { forceMarketRefresh?: boolean; persist?: boolean } = {},
+  ): Promise<Player | null> {
     const player = this.players.get(playerId);
     if (!player) return null;
 
     await this.ensureCompetitionPaperRuntime(player);
-    await this.paperEngine.refreshMarketSnapshot();
-    await this.persistPlayer(player.id);
+    if (options.forceMarketRefresh) {
+      await this.paperEngine.refreshMarketSnapshot();
+    }
+    if (options.persist) {
+      await this.persistPlayer(player.id);
+    }
     this.broadcastState();
     return player;
   }
