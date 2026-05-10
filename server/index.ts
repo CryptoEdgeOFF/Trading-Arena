@@ -828,7 +828,12 @@ app.post('/api/competition/join', async (req, res) => {
     return;
   }
   try {
+    // Refresh first so we don't miss a competition that was just created on
+    // another Lambda, then persist the join atomically before responding so
+    // the next click ("Trader") sees the entry on any Lambda.
+    await competitionManager.refresh();
     const competition = competitionManager.joinCompetition(user.id, String(req.body?.code || ''));
+    await competitionManager.persist();
     res.json({ ok: true, competitionId: competition.id });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Join impossible' });
@@ -849,6 +854,10 @@ app.post('/api/competition/trade/session', async (req, res) => {
   }
 
   try {
+    // Always start from the freshest snapshot so we don't accidentally create
+    // a duplicate paper player when the entry was just linked by another
+    // Lambda. Both managers can be refreshed in parallel.
+    await Promise.all([competitionManager.refresh(), manager.refresh()]);
     await finalizeEndedCompetitions();
     const { competition, entry } = competitionManager.getCompetitionForUser(competitionId, user.id);
     competitionManager.assertCompetitionTradingOpen(competition.id);
@@ -856,7 +865,11 @@ app.post('/api/competition/trade/session', async (req, res) => {
       res.status(400).json({ error: 'Le mode reel de la competition n est pas encore disponible dans ce terminal' });
       return;
     }
-    let player = entry.paperPlayerId ? manager.getPlayerById(entry.paperPlayerId) : null;
+
+    let player: ReturnType<typeof manager.getPlayerById> = null;
+    if (entry.paperPlayerId) {
+      player = manager.getPlayerById(entry.paperPlayerId);
+    }
 
     if (!player) {
       player = manager.registerPlayer(user.name, '', '');
@@ -871,15 +884,17 @@ app.post('/api/competition/trade/session', async (req, res) => {
     player = ready;
 
     const token = crypto.randomBytes(24).toString('hex');
-    // setTraderSession ecrit DIRECTEMENT dans la table comp_trader_sessions
-    // (une ligne par token), donc on ne risque pas d'etre ecrase par un
-    // autre Lambda qui ecrirait le blob global au meme moment.
-    await competitionManager.setTraderSession(token, player.id, competition.id);
+    // setTraderSession writes a dedicated row in comp_trader_sessions and
+    // persistPlayer writes the player to its own row in comp_paper_players,
+    // so concurrent writes from other Lambdas can no longer wipe either of
+    // them. We also persist the competition blob so the entry's
+    // paperPlayerId link survives a cold start on the next request.
+    await Promise.all([
+      competitionManager.setTraderSession(token, player.id, competition.id),
+      manager.persistPlayer(player.id),
+      competitionManager.persist(),
+    ]);
     syncCompetitionResultForPlayer(player.id);
-
-    // Le roster paper utilise toujours un blob, on le persiste pour que
-    // l'instance suivante puisse retrouver le player.
-    await manager.persist();
 
     const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 

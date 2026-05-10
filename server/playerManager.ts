@@ -94,6 +94,13 @@ export class PlayerManager {
         updated_at timestamptz not null default now()
       )
     `);
+    await this.pool.query(`
+      create table if not exists comp_paper_players (
+        id text primary key,
+        data jsonb not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
   }
 
   private applyStoredRoster(data: StoredPlayer[]): void {
@@ -141,22 +148,35 @@ export class PlayerManager {
     try {
       if (this.pool) {
         await this.ensureDbStore();
-        const result = await this.pool.query('select value from competition_store where key = $1 limit 1', [ROSTER_DB_KEY]);
-        if (Array.isArray(result.rows[0]?.value)) {
-          this.applyStoredRoster(result.rows[0].value as StoredPlayer[]);
-          console.log(`Loaded ${this.players.size} players from Postgres roster`);
+
+        // Prefer the row-per-player table to avoid concurrent-write races
+        // that could overwrite freshly-created players in the legacy blob.
+        const rows = await this.pool.query('select id, data from comp_paper_players');
+        if (rows.rowCount && rows.rowCount > 0) {
+          const stored: StoredPlayer[] = rows.rows.map((r) => r.data as StoredPlayer);
+          this.applyStoredRoster(stored);
+          console.log(`Loaded ${this.players.size} players from comp_paper_players`);
+          return;
+        }
+
+        // Migrate from the legacy paper-roster blob if present.
+        const legacy = await this.pool.query('select value from competition_store where key = $1 limit 1', [ROSTER_DB_KEY]);
+        if (Array.isArray(legacy.rows[0]?.value)) {
+          const data = legacy.rows[0].value as StoredPlayer[];
+          this.applyStoredRoster(data);
+          await this.upsertAllPlayers();
+          console.log(`Migrated ${data.length} players from legacy blob to comp_paper_players`);
           return;
         }
 
         if (fs.existsSync(ROSTER_FILE)) {
           const data: StoredPlayer[] = JSON.parse(fs.readFileSync(ROSTER_FILE, 'utf-8'));
           this.applyStoredRoster(data);
-          await this.saveRosterToDb();
-          console.log(`Imported ${data.length} players from JSON roster into Postgres`);
+          await this.upsertAllPlayers();
+          console.log(`Imported ${data.length} players from JSON roster into comp_paper_players`);
           return;
         }
 
-        await this.saveRosterToDb();
         console.log('Initialized empty Postgres roster');
         return;
       }
@@ -185,18 +205,65 @@ export class PlayerManager {
     }
   }
 
+  /**
+   * Batched UPSERT of every in-memory player into the row-per-player table.
+   * Each row is updated independently of the others, so concurrent saves
+   * from different Lambdas can no longer wipe each other's freshly-created
+   * players.
+   */
   private async saveRosterToDb(): Promise<void> {
     if (!this.pool) return;
     try {
       await this.ensureDbStore();
-      await this.pool.query(
-        `insert into competition_store (key, value, updated_at)
-         values ($1, $2::jsonb, now())
-         on conflict (key) do update set value = excluded.value, updated_at = now()`,
-        [ROSTER_DB_KEY, JSON.stringify(this.currentRoster())],
-      );
+      await this.upsertAllPlayers();
     } catch (err) {
       console.error('Failed to save Postgres roster:', err);
+    }
+  }
+
+  private async upsertAllPlayers(): Promise<void> {
+    if (!this.pool) return;
+    const players = this.currentRoster();
+    if (players.length === 0) return;
+
+    // Build a single multi-row INSERT ... ON CONFLICT DO UPDATE so we keep a
+    // single round-trip even with many players.
+    const placeholders: string[] = [];
+    const params: string[] = [];
+    players.forEach((p, i) => {
+      placeholders.push(`($${2 * i + 1}, $${2 * i + 2}::jsonb)`);
+      params.push(p.id, JSON.stringify(p));
+    });
+    await this.pool.query(
+      `insert into comp_paper_players (id, data) values ${placeholders.join(', ')}
+       on conflict (id) do update set data = excluded.data, updated_at = now()`,
+      params,
+    );
+  }
+
+  private async upsertSinglePlayer(playerId: string): Promise<void> {
+    if (!this.pool) return;
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const stored = this.currentRoster().find((p) => p.id === playerId);
+    if (!stored) return;
+    try {
+      await this.pool.query(
+        `insert into comp_paper_players (id, data) values ($1, $2::jsonb)
+         on conflict (id) do update set data = excluded.data, updated_at = now()`,
+        [playerId, JSON.stringify(stored)],
+      );
+    } catch (err) {
+      console.error('Failed to upsert player row:', err);
+    }
+  }
+
+  private async deletePlayerRow(playerId: string): Promise<void> {
+    if (!this.pool) return;
+    try {
+      await this.pool.query('delete from comp_paper_players where id = $1', [playerId]);
+    } catch (err) {
+      console.error('Failed to delete player row:', err);
     }
   }
 
@@ -213,6 +280,18 @@ export class PlayerManager {
   }
 
   /**
+   * Targeted persist for a single player. Cheaper than rewriting the whole
+   * roster and avoids touching unrelated rows on serverless write paths.
+   */
+  async persistPlayer(playerId: string): Promise<void> {
+    if (this.pool) {
+      await this.upsertSinglePlayer(playerId);
+      return;
+    }
+    this.saveRoster();
+  }
+
+  /**
    * Re-read the roster from Postgres and overwrite in-memory state.
    * Required on serverless platforms where multiple Lambda instances
    * may hold stale in-memory copies.
@@ -220,9 +299,16 @@ export class PlayerManager {
   async refresh(): Promise<void> {
     if (!this.pool) return;
     try {
-      const result = await this.pool.query('select value from competition_store where key = $1 limit 1', [ROSTER_DB_KEY]);
-      if (Array.isArray(result.rows[0]?.value)) {
-        this.applyStoredRoster(result.rows[0].value as StoredPlayer[]);
+      const rows = await this.pool.query('select id, data from comp_paper_players');
+      if (rows.rowCount && rows.rowCount > 0) {
+        const stored: StoredPlayer[] = rows.rows.map((r) => r.data as StoredPlayer);
+        this.applyStoredRoster(stored);
+        return;
+      }
+      // Fallback to legacy blob if the new table is still empty (first boot).
+      const legacy = await this.pool.query('select value from competition_store where key = $1 limit 1', [ROSTER_DB_KEY]);
+      if (Array.isArray(legacy.rows[0]?.value)) {
+        this.applyStoredRoster(legacy.rows[0].value as StoredPlayer[]);
       }
     } catch (err) {
       console.error('Failed to refresh Postgres roster:', err);
@@ -355,7 +441,11 @@ export class PlayerManager {
   removePlayer(id: string): void {
     this.players.delete(id);
     this.playerQueue = this.playerQueue.filter((playerId) => playerId !== id);
-    this.saveRoster();
+    if (this.pool) {
+      void this.deletePlayerRow(id);
+    } else {
+      this.saveRoster();
+    }
   }
 
   togglePlayer(id: string): Player | null {
