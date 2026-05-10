@@ -73,7 +73,6 @@ let finalizingEndedCompetitions: Promise<void> | null = null;
 
 // --- Admin auth (single shared code, configurable via env) ---
 const ADMIN_CODE = (process.env.ADMIN_CODE || 'BTFb9Q6z69.9').trim();
-const adminTokens = new Set<string>();
 
 function getAdminToken(req: express.Request): string | null {
   const header = req.headers.authorization;
@@ -85,11 +84,22 @@ function getAdminToken(req: express.Request): string | null {
 
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const token = getAdminToken(req);
-  if (!token || !adminTokens.has(token)) {
+  if (!token) {
     res.status(401).json({ error: 'Acces admin requis' });
     return;
   }
-  next();
+  competitionManager
+    .hasAdminToken(token)
+    .then((ok) => {
+      if (!ok) {
+        res.status(401).json({ error: 'Acces admin requis' });
+        return;
+      }
+      next();
+    })
+    .catch(() => {
+      res.status(500).json({ error: 'Erreur verification admin' });
+    });
 }
 const manager = new PlayerManager((state: GameState) => {
   const msg = JSON.stringify({ type: 'state', data: state });
@@ -205,25 +215,26 @@ wss.on('connection', (ws) => {
 
 // --- Admin auth ---
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', async (req, res) => {
   const code = String(req.body?.code || '').trim();
   if (!code || code !== ADMIN_CODE) {
     res.status(401).json({ error: 'Code admin incorrect' });
     return;
   }
   const token = crypto.randomBytes(32).toString('hex');
-  adminTokens.add(token);
+  await competitionManager.addAdminToken(token);
   res.json({ token });
 });
 
-app.get('/api/admin/check', (req, res) => {
+app.get('/api/admin/check', async (req, res) => {
   const token = getAdminToken(req);
-  res.json({ ok: Boolean(token && adminTokens.has(token)) });
+  const ok = token ? await competitionManager.hasAdminToken(token) : false;
+  res.json({ ok });
 });
 
-app.post('/api/admin/logout', (req, res) => {
+app.post('/api/admin/logout', async (req, res) => {
   const token = getAdminToken(req);
-  if (token) adminTokens.delete(token);
+  if (token) await competitionManager.deleteAdminToken(token);
   res.json({ ok: true });
 });
 

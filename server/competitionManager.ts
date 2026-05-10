@@ -175,6 +175,7 @@ export class CompetitionManager {
   private sessions = new Map<string, string>();
   private pendingOtps = new Map<string, PendingOtp>();
   private traderSessions = new Map<string, { playerId: string; competitionId: string | null }>();
+  private localAdminTokens = new Set<string>();
   private pool: Pool | null = null;
   readonly ready: Promise<void>;
 
@@ -663,6 +664,45 @@ export class CompetitionManager {
     `);
     await this.pool.query(`create index if not exists idx_trader_sessions_player on comp_trader_sessions(player_id)`);
     await this.pool.query(`create index if not exists idx_pending_otps_phone on comp_pending_otps((data->>'phone'))`);
+    await this.pool.query(`
+      create table if not exists comp_admin_sessions (
+        token text primary key,
+        created_at timestamptz not null default now()
+      )
+    `);
+  }
+
+  async addAdminToken(token: string): Promise<void> {
+    if (!token) return;
+    if (this.pool) {
+      await this.pool.query(
+        `insert into comp_admin_sessions (token) values ($1) on conflict (token) do nothing`,
+        [token],
+      );
+      return;
+    }
+    this.localAdminTokens.add(token);
+  }
+
+  async hasAdminToken(token: string): Promise<boolean> {
+    if (!token) return false;
+    if (this.pool) {
+      const result = await this.pool.query(
+        'select 1 from comp_admin_sessions where token = $1 limit 1',
+        [token],
+      );
+      return result.rowCount! > 0;
+    }
+    return this.localAdminTokens.has(token);
+  }
+
+  async deleteAdminToken(token: string): Promise<void> {
+    if (!token) return;
+    if (this.pool) {
+      await this.pool.query('delete from comp_admin_sessions where token = $1', [token]);
+      return;
+    }
+    this.localAdminTokens.delete(token);
   }
 
   private async load(): Promise<void> {

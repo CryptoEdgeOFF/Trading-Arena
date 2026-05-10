@@ -25,6 +25,7 @@ export default function LegalFooter() {
             <Link className="transition-colors hover:text-white" to={`/confidentialite${suffix}`}>Confidentialité</Link>
             <Link className="transition-colors hover:text-white" to={`/mentions-legales${suffix}`}>Mentions légales</Link>
             <Link className="transition-colors hover:text-white" to={`/risques${suffix}`}>Risques</Link>
+            <Link className="transition-colors hover:text-white" to="/compete/admin">Admin</Link>
           </nav>
         </div>
       </div>

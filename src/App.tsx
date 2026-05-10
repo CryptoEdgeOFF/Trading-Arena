@@ -3,6 +3,7 @@ import ExchangeTerminal from './components/ExchangeTerminal';
 import CompetitionPlatform from './components/CompetitionPlatform';
 import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderboard';
 import CompetitionSettings from './components/CompetitionSettings';
+import CompetitionAdmin from './components/CompetitionAdmin';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
 
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/trade" element={<ExchangeTerminal />} />
         <Route path="/compete" element={<CompetitionPlatform />} />
         <Route path="/compete/settings" element={<CompetitionSettings />} />
+        <Route path="/compete/admin" element={<CompetitionAdmin />} />
         <Route path="/compete/leaderboard/:id" element={<CompetitionPublicLeaderboard />} />
         <Route path="/cgu" element={<LegalPage type="cgu" />} />
         <Route path="/confidentialite" element={<LegalPage type="confidentialite" />} />
