@@ -11,6 +11,7 @@ export function useWebSocket(
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const updateState = useGameStore((s) => s.updateState);
+  const applyStatePatch = useGameStore((s) => s.applyStatePatch);
   const onPaperUpdateRef = useRef(options.onPaperUpdate);
 
   useEffect(() => {
@@ -30,8 +31,12 @@ export function useWebSocket(
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'state') {
+          if (msg.type === 'state:init' || msg.type === 'state') {
+            // Full snapshot delivered on connect / fallback for legacy clients.
             updateState(msg.data);
+          } else if (msg.type === 'state:patch') {
+            // Incremental diff: only changed players, market pairs and trades.
+            applyStatePatch(msg.data);
           } else if (msg.type === 'paper:update') {
             onPaperUpdateRef.current?.(msg.data);
           }
@@ -56,5 +61,5 @@ export function useWebSocket(
       if (reconnectTimer) clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
-  }, [enabled, updateState, options.paperToken]);
+  }, [enabled, updateState, applyStatePatch, options.paperToken]);
 }

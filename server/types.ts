@@ -191,6 +191,49 @@ export interface GameState {
   spotlightTrades: SpotlightTrade[];
 }
 
+/**
+ * Lightweight player diff broadcast on every tick instead of the full
+ * Player object. Only includes scalar fields the leaderboard cares about,
+ * so a 500-trader competition stays under a few KB per broadcast.
+ */
+export interface PlayerStatePatch {
+  id: string;
+  pnl?: number;
+  pnlPercent?: number;
+  rank?: number;
+  previousRank?: number;
+  tradeCount?: number;
+  currentBalance?: number;
+  availableMargin?: number;
+  usedMargin?: number;
+  feesPaid?: number;
+  connected?: boolean;
+  lastUpdate?: number;
+}
+
+export interface StatePatch {
+  /** Players whose tracked scalar fields changed since the last broadcast. */
+  players?: PlayerStatePatch[];
+  /** New players that did not exist in the previous snapshot. */
+  addedPlayers?: Player[];
+  /** Players that disappeared from the active roster. */
+  removedPlayerIds?: string[];
+  /** Tickers whose price-related fields changed since the last broadcast. */
+  market?: Record<string, MarketTicker>;
+  /** Trades that did not exist in the previous broadcast. */
+  newTrades?: Trade[];
+  newBadges?: { playerId: string; badge: Badge }[];
+  leaderChanges?: { playerId: string; from: number; to: number }[];
+  spotlightTrades?: SpotlightTrade[];
+  eventStarted?: boolean;
+  eventStartTime?: number | null;
+  eventMode?: EventMode;
+  teams?: [TeamInfo, TeamInfo] | null;
+  platformMode?: PlatformMode;
+  paperStartingBalance?: number;
+  marketDataSource?: MarketDataSource;
+}
+
 export const BADGE_DEFS: Record<BadgeType, Omit<Badge, 'awardedAt'>> = {
   'first-blood': {
     type: 'first-blood',

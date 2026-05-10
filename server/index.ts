@@ -8,7 +8,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { PlayerManager } from './playerManager.js';
-import { GameState, EventConfig } from './types.js';
+import { EventConfig, StatePatch } from './types.js';
 import * as kraken from './kraken.js';
 import * as hyperliquid from './hyperliquid.js';
 import { CompetitionManager } from './competitionManager.js';
@@ -110,8 +110,12 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
       res.status(500).json({ error: 'Erreur verification admin' });
     });
 }
-const manager = new PlayerManager((state: GameState) => {
-  const msg = JSON.stringify({ type: 'state', data: state });
+const manager = new PlayerManager((patch: StatePatch) => {
+  // Broadcast a lightweight diff to every connected client. New trades,
+  // PnL/balance/rank deltas and one-shot signals are all carried in the
+  // patch payload so the wire size stays in the few-KB range even for a
+  // 500+ trader competition.
+  const msg = JSON.stringify({ type: 'state:patch', data: patch });
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
@@ -257,23 +261,11 @@ function broadcastPaperUpdates(): void {
 wss.on('connection', (ws, req) => {
   clients.add(ws);
 
-  const config = manager.getEventConfig();
-  const initialState: GameState = {
-    players: manager.getPublicPlayers() as any,
-    recentTrades: [],
-    market: manager.isPaperMarketActive() ? manager.getPaperMarketSnapshot() : {},
-    eventStarted: manager.isStarted(),
-    eventStartTime: manager.getEventStartTime(),
-    eventMode: config.mode,
-    teams: config.teams,
-    platformMode: config.platformMode,
-    paperStartingBalance: config.paperStartingBalance,
-    marketDataSource: config.marketDataSource,
-    newBadges: [],
-    leaderChanges: [],
-    spotlightTrades: [],
-  };
-  ws.send(JSON.stringify({ type: 'state', data: initialState }));
+  // Send a full snapshot to the freshly connected client. Subsequent
+  // updates arrive as small diffs (`state:patch`), which keeps a 500-trader
+  // competition under a few KB per broadcast.
+  const initialState = manager.getStateInit();
+  ws.send(JSON.stringify({ type: 'state:init', data: initialState }));
 
   const url = new URL(req.url || '/ws', `http://${req.headers.host || 'localhost'}`);
   const paperToken = url.searchParams.get('paperToken');

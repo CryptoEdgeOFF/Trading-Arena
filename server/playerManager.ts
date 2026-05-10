@@ -10,12 +10,16 @@ import {
   MarketDataSource,
   EventMode,
   GameState,
+  MarketTicker,
   PlatformMode,
   Player,
+  PlayerStatePatch,
   Position,
   SpotlightTrade,
+  StatePatch,
   StoredPlayer,
   TeamInfo,
+  Trade,
 } from './types.js';
 import * as kraken from './kraken.js';
 import { PaperTradingEngine, type PaperOrderInput } from './exchangePaperEngine.js';
@@ -49,7 +53,7 @@ export class PlayerManager {
   private playerQueue: string[] = [];
   private currentPollIndex = 0;
   private firstTradeAwarded = false;
-  private onUpdate: (state: GameState) => void;
+  private onUpdate: (patch: StatePatch) => void;
   private pendingBadges: { playerId: string; badge: Badge }[] = [];
   private pendingLeaderChanges: { playerId: string; from: number; to: number }[] = [];
   private pendingSpotlights: SpotlightTrade[] = [];
@@ -79,9 +83,41 @@ export class PlayerManager {
   private lastBroadcastAt = 0;
   private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly STATE_BROADCAST_INTERVAL = 200;
+  // Diff snapshots: tracking what we last broadcasted so we can compute
+  // a small patch instead of resending the full state on every tick.
+  private snapshotPlayers: Map<string, {
+    pnl: number;
+    pnlPercent: number;
+    rank: number;
+    previousRank: number;
+    tradeCount: number;
+    currentBalance: number;
+    availableMargin: number;
+    usedMargin: number;
+    feesPaid: number;
+    connected: boolean;
+    lastUpdate: number;
+  }> = new Map();
+  private snapshotMarket: Map<string, {
+    markPrice: number;
+    bidPrice: number;
+    askPrice: number;
+    change24h: number | null;
+    spreadBps: number;
+  }> = new Map();
+  private snapshotTradeIds: Set<string> = new Set();
+  private snapshotEvent = {
+    eventStarted: false as boolean,
+    eventStartTime: null as number | null,
+    eventMode: null as EventMode | null,
+    platformMode: null as PlatformMode | null,
+    paperStartingBalance: null as number | null,
+    marketDataSource: null as MarketDataSource | null,
+    teamsSignature: '' as string,
+  };
   readonly ready: Promise<void>;
 
-  constructor(onUpdate: (state: GameState) => void) {
+  constructor(onUpdate: (patch: StatePatch) => void) {
     this.onUpdate = onUpdate;
     const databaseUrl = process.env.DATABASE_URL?.trim();
     if (databaseUrl) {
@@ -1336,6 +1372,238 @@ export class PlayerManager {
     this.pendingBadges.push({ playerId: player.id, badge });
   }
 
+  /**
+   * Build the full GameState snapshot. Sent to a client as `state:init` on
+   * connect, and used internally to seed the diff snapshot.
+   */
+  getStateInit(): GameState {
+    const players = this.getPublicPlayers() as GameState['players'];
+    const allTrades = players
+      .flatMap((player) => player.trades)
+      .sort((a, b) => b.time - a.time)
+      .slice(0, 50);
+    return {
+      players,
+      recentTrades: allTrades,
+      market: this.isPaperMarketActive() ? this.getPaperMarketSnapshot() : {},
+      eventStarted: this.eventStarted,
+      eventStartTime: this.eventStartTime,
+      eventMode: this.eventMode,
+      teams: this.teams,
+      platformMode: this.platformMode,
+      paperStartingBalance: this.paperStartingBalance,
+      marketDataSource: this.marketDataSource,
+      newBadges: [],
+      leaderChanges: [],
+      spotlightTrades: [],
+    };
+  }
+
+  /** Reset the diff snapshot to the current state (used after sending init). */
+  primeSnapshotFromCurrentState(): void {
+    this.snapshotPlayers.clear();
+    this.snapshotMarket.clear();
+    this.snapshotTradeIds.clear();
+    const players = this.getPublicPlayers();
+    for (const player of players) {
+      this.snapshotPlayers.set(player.id, {
+        pnl: player.pnl,
+        pnlPercent: player.pnlPercent,
+        rank: player.rank,
+        previousRank: player.previousRank,
+        tradeCount: player.tradeCount,
+        currentBalance: player.currentBalance,
+        availableMargin: player.availableMargin,
+        usedMargin: player.usedMargin,
+        feesPaid: player.feesPaid,
+        connected: player.connected,
+        lastUpdate: player.lastUpdate,
+      });
+      for (const trade of player.trades) this.snapshotTradeIds.add(trade.id);
+    }
+    const market = this.isPaperMarketActive() ? this.getPaperMarketSnapshot() : {};
+    for (const [pair, ticker] of Object.entries(market)) {
+      this.snapshotMarket.set(pair, {
+        markPrice: ticker.markPrice,
+        bidPrice: ticker.bidPrice,
+        askPrice: ticker.askPrice,
+        change24h: ticker.change24h ?? null,
+        spreadBps: ticker.spreadBps,
+      });
+    }
+    this.snapshotEvent = {
+      eventStarted: this.eventStarted,
+      eventStartTime: this.eventStartTime,
+      eventMode: this.eventMode,
+      platformMode: this.platformMode,
+      paperStartingBalance: this.paperStartingBalance,
+      marketDataSource: this.marketDataSource,
+      teamsSignature: JSON.stringify(this.teams || null),
+    };
+  }
+
+  private computeStatePatch(): StatePatch | null {
+    const patch: StatePatch = {};
+    const players = this.getPublicPlayers();
+    const playerPatches: PlayerStatePatch[] = [];
+    const addedPlayers: Player[] = [];
+    const seenIds = new Set<string>();
+
+    for (const player of players) {
+      seenIds.add(player.id);
+      const previous = this.snapshotPlayers.get(player.id);
+      if (!previous) {
+        addedPlayers.push(player as Player);
+        this.snapshotPlayers.set(player.id, {
+          pnl: player.pnl,
+          pnlPercent: player.pnlPercent,
+          rank: player.rank,
+          previousRank: player.previousRank,
+          tradeCount: player.tradeCount,
+          currentBalance: player.currentBalance,
+          availableMargin: player.availableMargin,
+          usedMargin: player.usedMargin,
+          feesPaid: player.feesPaid,
+          connected: player.connected,
+          lastUpdate: player.lastUpdate,
+        });
+        continue;
+      }
+      const diff: PlayerStatePatch = { id: player.id };
+      let changed = false;
+      if (previous.pnl !== player.pnl) { diff.pnl = player.pnl; changed = true; }
+      if (previous.pnlPercent !== player.pnlPercent) { diff.pnlPercent = player.pnlPercent; changed = true; }
+      if (previous.rank !== player.rank) { diff.rank = player.rank; changed = true; }
+      if (previous.previousRank !== player.previousRank) { diff.previousRank = player.previousRank; changed = true; }
+      if (previous.tradeCount !== player.tradeCount) { diff.tradeCount = player.tradeCount; changed = true; }
+      if (previous.currentBalance !== player.currentBalance) { diff.currentBalance = player.currentBalance; changed = true; }
+      if (previous.availableMargin !== player.availableMargin) { diff.availableMargin = player.availableMargin; changed = true; }
+      if (previous.usedMargin !== player.usedMargin) { diff.usedMargin = player.usedMargin; changed = true; }
+      if (previous.feesPaid !== player.feesPaid) { diff.feesPaid = player.feesPaid; changed = true; }
+      if (previous.connected !== player.connected) { diff.connected = player.connected; changed = true; }
+      if (previous.lastUpdate !== player.lastUpdate) { diff.lastUpdate = player.lastUpdate; changed = true; }
+      if (changed) {
+        playerPatches.push(diff);
+        previous.pnl = player.pnl;
+        previous.pnlPercent = player.pnlPercent;
+        previous.rank = player.rank;
+        previous.previousRank = player.previousRank;
+        previous.tradeCount = player.tradeCount;
+        previous.currentBalance = player.currentBalance;
+        previous.availableMargin = player.availableMargin;
+        previous.usedMargin = player.usedMargin;
+        previous.feesPaid = player.feesPaid;
+        previous.connected = player.connected;
+        previous.lastUpdate = player.lastUpdate;
+      }
+    }
+
+    const removedPlayerIds: string[] = [];
+    for (const id of Array.from(this.snapshotPlayers.keys())) {
+      if (!seenIds.has(id)) {
+        removedPlayerIds.push(id);
+        this.snapshotPlayers.delete(id);
+      }
+    }
+
+    if (playerPatches.length > 0) patch.players = playerPatches;
+    if (addedPlayers.length > 0) patch.addedPlayers = addedPlayers;
+    if (removedPlayerIds.length > 0) patch.removedPlayerIds = removedPlayerIds;
+
+    // Market diff: only include pairs whose price-related fields changed.
+    const market: Record<string, MarketTicker> = this.isPaperMarketActive()
+      ? this.getPaperMarketSnapshot()
+      : {};
+    const marketPatch: Record<string, MarketTicker> = {};
+    const seenPairs = new Set<string>();
+    for (const [pair, ticker] of Object.entries(market)) {
+      seenPairs.add(pair);
+      const prev = this.snapshotMarket.get(pair);
+      if (
+        !prev ||
+        prev.markPrice !== ticker.markPrice ||
+        prev.bidPrice !== ticker.bidPrice ||
+        prev.askPrice !== ticker.askPrice ||
+        prev.change24h !== (ticker.change24h ?? null) ||
+        prev.spreadBps !== ticker.spreadBps
+      ) {
+        marketPatch[pair] = ticker;
+        this.snapshotMarket.set(pair, {
+          markPrice: ticker.markPrice,
+          bidPrice: ticker.bidPrice,
+          askPrice: ticker.askPrice,
+          change24h: ticker.change24h ?? null,
+          spreadBps: ticker.spreadBps,
+        });
+      }
+    }
+    for (const pair of Array.from(this.snapshotMarket.keys())) {
+      if (!seenPairs.has(pair)) this.snapshotMarket.delete(pair);
+    }
+    if (Object.keys(marketPatch).length > 0) patch.market = marketPatch;
+
+    // New trades only: each broadcast emits trades not yet sent.
+    const newTrades: Trade[] = [];
+    for (const player of players) {
+      for (const trade of player.trades) {
+        if (!this.snapshotTradeIds.has(trade.id)) {
+          this.snapshotTradeIds.add(trade.id);
+          newTrades.push(trade);
+        }
+      }
+    }
+    // Trim the trade-id snapshot to a reasonable size to bound memory growth.
+    if (this.snapshotTradeIds.size > 5000) {
+      const tail = Array.from(this.snapshotTradeIds).slice(-2500);
+      this.snapshotTradeIds = new Set(tail);
+    }
+    if (newTrades.length > 0) {
+      newTrades.sort((a, b) => b.time - a.time);
+      patch.newTrades = newTrades.slice(0, 50);
+    }
+
+    // Event-level scalars
+    if (this.snapshotEvent.eventStarted !== this.eventStarted) {
+      patch.eventStarted = this.eventStarted;
+      this.snapshotEvent.eventStarted = this.eventStarted;
+    }
+    if (this.snapshotEvent.eventStartTime !== this.eventStartTime) {
+      patch.eventStartTime = this.eventStartTime;
+      this.snapshotEvent.eventStartTime = this.eventStartTime;
+    }
+    if (this.snapshotEvent.eventMode !== this.eventMode) {
+      patch.eventMode = this.eventMode;
+      this.snapshotEvent.eventMode = this.eventMode;
+    }
+    if (this.snapshotEvent.platformMode !== this.platformMode) {
+      patch.platformMode = this.platformMode;
+      this.snapshotEvent.platformMode = this.platformMode;
+    }
+    if (this.snapshotEvent.paperStartingBalance !== this.paperStartingBalance) {
+      patch.paperStartingBalance = this.paperStartingBalance;
+      this.snapshotEvent.paperStartingBalance = this.paperStartingBalance;
+    }
+    if (this.snapshotEvent.marketDataSource !== this.marketDataSource) {
+      patch.marketDataSource = this.marketDataSource;
+      this.snapshotEvent.marketDataSource = this.marketDataSource;
+    }
+    const teamsSignature = JSON.stringify(this.teams || null);
+    if (this.snapshotEvent.teamsSignature !== teamsSignature) {
+      patch.teams = this.teams || null;
+      this.snapshotEvent.teamsSignature = teamsSignature;
+    }
+
+    // One-shot signals always go in the patch when present.
+    if (this.pendingBadges.length > 0) patch.newBadges = [...this.pendingBadges];
+    if (this.pendingLeaderChanges.length > 0) patch.leaderChanges = [...this.pendingLeaderChanges];
+    if (this.pendingSpotlights.length > 0) patch.spotlightTrades = [...this.pendingSpotlights];
+    this.pendingBadges = [];
+    this.pendingLeaderChanges = [];
+    this.pendingSpotlights = [];
+
+    return Object.keys(patch).length > 0 ? patch : null;
+  }
+
   private broadcastState(force = false): void {
     const now = Date.now();
     // Always emit immediately if there's a one-shot signal that must reach
@@ -1365,30 +1633,8 @@ export class PlayerManager {
     }
     this.lastBroadcastAt = now;
 
-    const allTrades = this.getActivePlayers()
-      .flatMap((player) => player.trades)
-      .sort((a, b) => b.time - a.time)
-      .slice(0, 50);
-
-    const state: GameState = {
-      players: this.getPublicPlayers() as GameState['players'],
-      recentTrades: allTrades,
-      market: this.isPaperMarketActive() ? this.getPaperMarketSnapshot() : {},
-      eventStarted: this.eventStarted,
-      eventStartTime: this.eventStartTime,
-      eventMode: this.eventMode,
-      teams: this.teams,
-      platformMode: this.platformMode,
-      paperStartingBalance: this.paperStartingBalance,
-      marketDataSource: this.marketDataSource,
-      newBadges: [...this.pendingBadges],
-      leaderChanges: [...this.pendingLeaderChanges],
-      spotlightTrades: [...this.pendingSpotlights],
-    };
-
-    this.pendingBadges = [];
-    this.pendingLeaderChanges = [];
-    this.pendingSpotlights = [];
-    this.onUpdate(state);
+    const patch = this.computeStatePatch();
+    if (!patch) return;
+    this.onUpdate(patch);
   }
 }
