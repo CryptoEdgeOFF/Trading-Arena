@@ -1083,7 +1083,7 @@ function MyCompetitionCard({
             disabled={busy || isEnded}
             className="blood-cta px-6 py-4 text-base sm:text-lg"
           >
-            {busy ? '...' : isEnded ? 'Compé terminée' : 'TRADER'}
+            {busy ? '...' : isEnded ? 'Arène fermée' : 'TRADER'}
           </button>
           <Link
             to={`/compete/leaderboard/${competition.id}`}
@@ -1156,7 +1156,7 @@ function PublicCompetitionCard({
               disabled={isEnded}
               className="blood-cta px-4 py-3 text-sm"
             >
-              {isEnded ? 'Terminée' : 'Rejoindre'}
+              {isEnded ? 'Arène fermée' : 'Rejoindre'}
             </button>
           )}
           <Link
