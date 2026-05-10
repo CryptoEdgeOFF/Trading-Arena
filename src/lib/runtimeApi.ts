@@ -33,12 +33,9 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response>
 
 export function getWebSocketUrl(path = '/ws'): string {
   if (API_BASE_URL) {
-    const api = new URL(API_BASE_URL);
-    api.protocol = api.protocol === 'https:' ? 'wss:' : 'ws:';
-    api.pathname = path;
-    api.search = '';
-    api.hash = '';
-    return api.toString();
+    const wsUrl = new URL(path, API_BASE_URL);
+    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    return wsUrl.toString();
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';

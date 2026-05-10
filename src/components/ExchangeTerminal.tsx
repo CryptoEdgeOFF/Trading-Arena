@@ -2049,7 +2049,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     () => (session ? players.find((entry) => entry.id === session.player.id) || null : null),
     [players, session],
   );
-  const player = demoMode ? demoPlayer : (livePlayer || wsPlayer);
+  const player = useMemo(() => {
+    if (demoMode) return demoPlayer;
+    if (!livePlayer) return wsPlayer;
+    if (!wsPlayer) return livePlayer;
+    return (wsPlayer.lastUpdate || 0) > (livePlayer.lastUpdate || 0) ? wsPlayer : livePlayer;
+  }, [demoMode, demoPlayer, livePlayer, wsPlayer]);
 
   const playerTrades = useMemo(() => {
     if (demoMode) {
