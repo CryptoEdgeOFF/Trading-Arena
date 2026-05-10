@@ -192,7 +192,15 @@ async function getSessionPlayer(req: express.Request) {
   const info = await competitionManager.getTraderSession(token);
   if (!info) return null;
   let player = manager.getPlayerById(info.playerId);
-  if (!player || IS_SERVERLESS) {
+  // On serverless every Lambda has its own in-memory state, so we always
+  // refresh from Postgres. On a persistent Node server the in-memory state
+  // is the source of truth — refreshing would clear positions/orders that
+  // were just created by a concurrent mutation. We only refresh as a
+  // last-resort fallback when the player is unknown to memory.
+  if (IS_SERVERLESS) {
+    await manager.refresh();
+    player = manager.getPlayerById(info.playerId);
+  } else if (!player) {
     await manager.refresh();
     player = manager.getPlayerById(info.playerId);
   }
@@ -600,14 +608,23 @@ app.post('/api/paper/cancel', async (req, res) => {
 
   try {
     const competitionId = await assertCompetitionTraderCanTrade(token);
-    const handler = competitionId
-      ? manager.cancelCompetitionPaperOrder.bind(manager)
-      : async (playerId: string, orderId: string) => manager.cancelPaperOrder(playerId, orderId);
-    await handler(player.id, String(req.body?.orderId || ''));
-    if (competitionId) await syncCompetitionResultForPlayer(player.id);
-    res.json({ ok: true });
+    const orderId = String(req.body?.orderId || '');
+    if (competitionId) {
+      const result = await manager.cancelCompetitionPaperOrder(player.id, orderId);
+      await syncCompetitionResultForPlayer(player.id);
+      res.json({ ok: true, alreadyClosed: result.alreadyClosed });
+    } else {
+      manager.cancelPaperOrder(player.id, orderId);
+      res.json({ ok: true });
+    }
   } catch (error: any) {
-    res.status(400).json({ error: error.message || 'Annulation refusée' });
+    const msg = error?.message || 'Annulation refusée';
+    if (typeof msg === 'string' && msg.includes('Ordre introuvable')) {
+      res.json({ ok: true, alreadyClosed: true });
+      return;
+    }
+    console.error('[paper/cancel] failed:', msg);
+    res.status(400).json({ error: msg });
   }
 });
 
@@ -621,11 +638,9 @@ app.post('/api/paper/close', async (req, res) => {
 
   try {
     const competitionId = await assertCompetitionTraderCanTrade(token);
-    const handler = competitionId
-      ? manager.closeCompetitionPaperPosition.bind(manager)
-      : manager.closePaperPosition.bind(manager);
     const rawSize = req.body?.size;
     const rawPercent = req.body?.percent;
+    const positionRef = String(req.body?.positionId || req.body?.pair || '');
     let partialSize: number | undefined;
     if (rawSize != null && rawSize !== '') {
       const numeric = Number(rawSize);
@@ -641,17 +656,30 @@ app.post('/api/paper/close', async (req, res) => {
         res.status(400).json({ error: 'Pourcentage de fermeture invalide' });
         return;
       }
-      const positionRef = String(req.body?.positionId || req.body?.pair || '');
       const playerForSize = manager.getPlayerById(player.id);
       const position = playerForSize?.openPositions.find((entry) => entry.id === positionRef)
         ?? playerForSize?.openPositions.find((entry) => entry.pair === positionRef);
       if (position) partialSize = position.size * (pct / 100);
     }
-    await handler(player.id, String(req.body?.positionId || req.body?.pair || ''), partialSize);
-    if (competitionId) await syncCompetitionResultForPlayer(player.id);
-    res.json({ ok: true });
+    if (competitionId) {
+      const result = await manager.closeCompetitionPaperPosition(player.id, positionRef, partialSize);
+      await syncCompetitionResultForPlayer(player.id);
+      res.json({ ok: true, alreadyClosed: result.alreadyClosed });
+    } else {
+      await manager.closePaperPosition(player.id, positionRef, partialSize);
+      res.json({ ok: true });
+    }
   } catch (error: any) {
-    res.status(400).json({ error: error.message || 'Clôture refusée' });
+    const msg = error?.message || 'Clôture refusée';
+    // Idempotent fallback: if the engine still rejected the close because
+    // the position vanished mid-flight (race with SL/TP trigger), tell the
+    // client it's already closed instead of surfacing a confusing error.
+    if (typeof msg === 'string' && msg.includes('Position introuvable')) {
+      res.json({ ok: true, alreadyClosed: true });
+      return;
+    }
+    console.error('[paper/close] failed:', msg);
+    res.status(400).json({ error: msg });
   }
 });
 
@@ -682,7 +710,13 @@ app.post('/api/paper/risk', async (req, res) => {
     }
     res.json({ ok: true });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || 'Modification SL/TP refusée' });
+    const msg = error?.message || 'Modification SL/TP refusée';
+    if (typeof msg === 'string' && msg.includes('Position introuvable')) {
+      res.json({ ok: true, alreadyClosed: true });
+      return;
+    }
+    console.error('[paper/risk] failed:', msg);
+    res.status(400).json({ error: msg });
   }
 });
 

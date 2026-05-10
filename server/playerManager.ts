@@ -66,7 +66,19 @@ export class PlayerManager {
   private pool: Pool | null = null;
   private isServerless = Boolean(process.env.NETLIFY);
   private dbWriteQueue: Promise<void> = Promise.resolve();
-  private rosterSaveQueued = false;
+  // Set of player IDs whose state changed since the last persistence flush.
+  // We persist these in batches every ROSTER_FLUSH_INTERVAL ms so the high
+  // frequency engine ticks (Kraken futures WS, ~30/s/pair) never overwhelm
+  // Postgres. User-driven mutations call persistPlayer() directly and bypass
+  // this throttle.
+  private dirtyPlayerIds = new Set<string>();
+  private rosterFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly ROSTER_FLUSH_INTERVAL = 2000;
+  // Throttle outbound WebSocket state broadcasts so we never push more than
+  // STATE_BROADCAST_INTERVAL ms apart, even during a market spike.
+  private lastBroadcastAt = 0;
+  private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly STATE_BROADCAST_INTERVAL = 200;
   readonly ready: Promise<void>;
 
   constructor(onUpdate: (state: GameState) => void) {
@@ -81,11 +93,50 @@ export class PlayerManager {
     this.paperEngine = new PaperTradingEngine(() => {
       this.updateRankings();
       this.checkBadges();
-      this.saveRoster();
+      this.markRosterDirty();
       this.broadcastState();
     });
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
     this.ready = this.loadRoster();
+    this.startRosterFlushLoop();
+  }
+
+  private markRosterDirty(playerId?: string): void {
+    if (playerId) {
+      this.dirtyPlayerIds.add(playerId);
+    } else {
+      for (const id of this.players.keys()) this.dirtyPlayerIds.add(id);
+    }
+  }
+
+  private startRosterFlushLoop(): void {
+    if (this.rosterFlushTimer || !this.pool) return;
+    this.rosterFlushTimer = setInterval(() => {
+      void this.flushDirtyPlayers();
+    }, PlayerManager.ROSTER_FLUSH_INTERVAL);
+    if (typeof this.rosterFlushTimer.unref === 'function') this.rosterFlushTimer.unref();
+  }
+
+  private async flushDirtyPlayers(): Promise<void> {
+    if (!this.pool) return;
+    if (this.dirtyPlayerIds.size === 0) return;
+    const ids = Array.from(this.dirtyPlayerIds);
+    this.dirtyPlayerIds.clear();
+    await this.enqueueDbWrite('Failed to flush dirty players', async () => {
+      const stored = this.currentRoster().filter((p) => ids.includes(p.id));
+      if (stored.length === 0) return;
+      const placeholders: string[] = [];
+      const params: string[] = [];
+      stored.forEach((p, i) => {
+        placeholders.push(`($${2 * i + 1}, $${2 * i + 2}::jsonb)`);
+        params.push(p.id, JSON.stringify(p));
+      });
+      await this.pool!.query(
+        `insert into comp_paper_players (id, data) values ${placeholders.join(', ')}
+         on conflict (id) do update set data = excluded.data, updated_at = now()`,
+        params,
+      );
+    });
   }
 
   private async ensureDbStore(): Promise<void> {
@@ -111,6 +162,39 @@ export class PlayerManager {
     for (const stored of data) {
       const player = this.createPlayerFromStored(stored);
       this.players.set(player.id, player);
+    }
+  }
+
+  /**
+   * Merge a stored roster from Postgres into in-memory state without losing
+   * uncommitted live mutations. Used by refresh() so a serverless re-read
+   * (or a single fallback fetch on a persistent server) cannot delete a
+   * position/order that was just created in memory.
+   */
+  private mergeStoredRoster(data: StoredPlayer[]): void {
+    const seen = new Set<string>();
+    for (const stored of data) {
+      seen.add(stored.id);
+      const existing = this.players.get(stored.id);
+      const storedUpdate = stored.lastUpdate || 0;
+      const memoryUpdate = existing?.lastUpdate || 0;
+      // Keep the freshest snapshot. If the in-memory player has a more recent
+      // lastUpdate, it has uncommitted mutations we must preserve.
+      if (existing && memoryUpdate >= storedUpdate) continue;
+      const player = this.createPlayerFromStored(stored);
+      this.players.set(player.id, player);
+    }
+    // Remove players that vanished from the database AND have no live state.
+    for (const id of Array.from(this.players.keys())) {
+      if (!seen.has(id)) {
+        const existing = this.players.get(id);
+        if (!existing) continue;
+        // Only drop if the player has no open positions/orders. This protects
+        // a freshly registered trader that hasn't been persisted yet.
+        if (existing.openPositions.length === 0 && existing.openOrders.length === 0) {
+          this.players.delete(id);
+        }
+      }
     }
   }
 
@@ -209,19 +293,18 @@ export class PlayerManager {
 
   private saveRoster(): void {
     if (this.pool) {
-      // Avoid global stale writes only in serverless. On a persistent Node
-      // server there is a single long-lived trading runtime, so timer/WS ticks
-      // should persist SL/TP, limit fills and live PnL like local mode.
-      if (!this.isServerless && !this.rosterSaveQueued) {
-        this.rosterSaveQueued = true;
+      // On a persistent server the roster is flushed every
+      // ROSTER_FLUSH_INTERVAL ms via flushDirtyPlayers(). Live ticks just
+      // mark every player dirty so we never spam Postgres mid-tick.
+      // On serverless every mutation is awaited explicitly via persistPlayer,
+      // so we still upsert the full roster synchronously here for safety.
+      if (this.isServerless) {
         void this.enqueueDbWrite('Failed to save Postgres roster', async () => {
-          try {
-            await this.ensureDbStore();
-            await this.upsertAllPlayers();
-          } finally {
-            this.rosterSaveQueued = false;
-          }
+          await this.ensureDbStore();
+          await this.upsertAllPlayers();
         });
+      } else {
+        this.markRosterDirty();
       }
       return;
     }
@@ -328,9 +411,10 @@ export class PlayerManager {
   }
 
   /**
-   * Re-read the roster from Postgres and overwrite in-memory state.
-   * Required on serverless platforms where multiple Lambda instances
-   * may hold stale in-memory copies.
+   * Re-read the roster from Postgres into in-memory state.
+   * Uses a merge strategy that preserves uncommitted live mutations so a
+   * concurrent refresh during an order placement cannot wipe a fresh
+   * position. Required on serverless to import state from sibling Lambdas.
    */
   async refresh(): Promise<void> {
     if (!this.pool) return;
@@ -338,13 +422,13 @@ export class PlayerManager {
       const rows = await this.pool.query('select id, data from comp_paper_players');
       if (rows.rowCount && rows.rowCount > 0) {
         const stored: StoredPlayer[] = rows.rows.map((r) => r.data as StoredPlayer);
-        this.applyStoredRoster(stored);
+        this.mergeStoredRoster(stored);
         return;
       }
       // Fallback to legacy blob if the new table is still empty (first boot).
       const legacy = await this.pool.query('select value from competition_store where key = $1 limit 1', [ROSTER_DB_KEY]);
       if (Array.isArray(legacy.rows[0]?.value)) {
-        this.applyStoredRoster(legacy.rows[0].value as StoredPlayer[]);
+        this.mergeStoredRoster(legacy.rows[0].value as StoredPlayer[]);
       }
     } catch (err) {
       console.error('Failed to refresh Postgres roster:', err);
@@ -765,16 +849,29 @@ export class PlayerManager {
     this.broadcastState();
   }
 
-  async closeCompetitionPaperPosition(playerId: string, pair: string, partialSize?: number): Promise<void> {
+  async closeCompetitionPaperPosition(
+    playerId: string,
+    pair: string,
+    partialSize?: number,
+  ): Promise<{ closed: boolean; alreadyClosed: boolean }> {
     const player = this.players.get(playerId);
     if (!player) {
       throw new Error('Trader introuvable');
     }
     await this.ensureCompetitionPaperRuntime(player);
-    const result = await this.paperEngine.closePosition(player, pair, partialSize);
-    void result;
+    // Idempotent close: if a SL/TP trigger or a concurrent click already
+    // closed the position, return success silently so the UI does not show a
+    // confusing "Position introuvable" error.
+    const stillOpen = player.openPositions.some(
+      (entry) => entry.id === pair || entry.pair === pair,
+    );
+    if (!stillOpen) {
+      return { closed: false, alreadyClosed: true };
+    }
+    await this.paperEngine.closePosition(player, pair, partialSize);
     await this.persistTradingMutation(player.id);
-    this.broadcastState();
+    this.broadcastState(true);
+    return { closed: true, alreadyClosed: false };
   }
 
   cancelPaperOrder(playerId: string, orderId: string): void {
@@ -792,15 +889,23 @@ export class PlayerManager {
     this.broadcastState();
   }
 
-  async cancelCompetitionPaperOrder(playerId: string, orderId: string): Promise<void> {
+  async cancelCompetitionPaperOrder(
+    playerId: string,
+    orderId: string,
+  ): Promise<{ cancelled: boolean; alreadyClosed: boolean }> {
     const player = this.players.get(playerId);
     if (!player) {
       throw new Error('Trader introuvable');
     }
     await this.ensureCompetitionPaperRuntime(player);
+    const stillOpen = player.openOrders.some((entry) => entry.id === orderId && entry.status === 'open');
+    if (!stillOpen) {
+      return { cancelled: false, alreadyClosed: true };
+    }
     this.paperEngine.cancelOrder(player, orderId);
     await this.persistTradingMutation(player.id);
-    this.broadcastState();
+    this.broadcastState(true);
+    return { cancelled: true, alreadyClosed: false };
   }
 
   async finalizeCompetitionPaperPlayer(playerId: string): Promise<void> {
@@ -1231,7 +1336,35 @@ export class PlayerManager {
     this.pendingBadges.push({ playerId: player.id, badge });
   }
 
-  private broadcastState(): void {
+  private broadcastState(force = false): void {
+    const now = Date.now();
+    // Always emit immediately if there's a one-shot signal that must reach
+    // the UI (badge unlock, leader change, spotlight). Otherwise we coalesce
+    // updates on a fixed interval to keep the WS load predictable.
+    const hasOneShot =
+      this.pendingBadges.length > 0 ||
+      this.pendingLeaderChanges.length > 0 ||
+      this.pendingSpotlights.length > 0;
+    if (!force && !hasOneShot) {
+      const elapsed = now - this.lastBroadcastAt;
+      if (elapsed < PlayerManager.STATE_BROADCAST_INTERVAL) {
+        if (!this.broadcastTimer) {
+          const delay = Math.max(0, PlayerManager.STATE_BROADCAST_INTERVAL - elapsed);
+          this.broadcastTimer = setTimeout(() => {
+            this.broadcastTimer = null;
+            this.broadcastState(true);
+          }, delay);
+          if (typeof this.broadcastTimer.unref === 'function') this.broadcastTimer.unref();
+        }
+        return;
+      }
+    }
+    if (this.broadcastTimer) {
+      clearTimeout(this.broadcastTimer);
+      this.broadcastTimer = null;
+    }
+    this.lastBroadcastAt = now;
+
     const allTrades = this.getActivePlayers()
       .flatMap((player) => player.trades)
       .sort((a, b) => b.time - a.time)

@@ -2478,6 +2478,11 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (!session) return;
     setBusy(true);
     setError('');
+    // Optimistic UI: hide the order immediately. The next /me poll or WS
+    // paper:update will reconcile the state if the server rejects the call.
+    setLivePlayer((prev) =>
+      prev ? { ...prev, openOrders: prev.openOrders.filter((o: any) => o.id !== orderId) } : prev,
+    );
     try {
       const response = await fetch('/api/paper/cancel', {
         method: 'POST',
@@ -2487,11 +2492,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         },
         body: JSON.stringify({ orderId }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Annulation refusée');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const msg = String(data?.error || 'Annulation refusée');
+        // Race with auto-execution: treat as success if the order is gone.
+        if (!msg.includes('Ordre introuvable')) throw new Error(msg);
+      }
       void refreshLive();
     } catch (err: any) {
       setError(err.message);
+      void refreshLive();
     } finally {
       setBusy(false);
     }
@@ -2505,6 +2515,31 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (!session) return;
     setBusy(true);
     setError('');
+    // Optimistic UI: remove (or shrink) the position immediately so the user
+    // gets instant feedback even if the server response is delayed by a slow
+    // network. The WS paper:update will reconcile the final state.
+    if (partialSize == null) {
+      setLivePlayer((prev) =>
+        prev
+          ? { ...prev, openPositions: prev.openPositions.filter((p: any) => p.id !== positionId) }
+          : prev,
+      );
+    } else {
+      setLivePlayer((prev) =>
+        prev
+          ? {
+              ...prev,
+              openPositions: prev.openPositions
+                .map((p: any) =>
+                  p.id === positionId
+                    ? { ...p, size: Math.max(0, p.size - partialSize) }
+                    : p,
+                )
+                .filter((p: any) => p.size > 0),
+            }
+          : prev,
+      );
+    }
     try {
       const response = await fetch('/api/paper/close', {
         method: 'POST',
@@ -2514,11 +2549,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         },
         body: JSON.stringify({ positionId, size: partialSize ?? null }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Clôture refusée');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const msg = String(data?.error || 'Clôture refusée');
+        // Race with SL/TP trigger: position is already closed, that's fine.
+        if (!msg.includes('Position introuvable')) throw new Error(msg);
+      }
       void refreshLive();
     } catch (err: any) {
       setError(err.message);
+      void refreshLive();
     } finally {
       setBusy(false);
     }
