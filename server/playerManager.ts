@@ -65,6 +65,8 @@ export class PlayerManager {
   private onlineCompetitionPlayerIds = new Set<string>();
   private pool: Pool | null = null;
   private isServerless = Boolean(process.env.NETLIFY);
+  private dbWriteQueue: Promise<void> = Promise.resolve();
+  private rosterSaveQueued = false;
   readonly ready: Promise<void>;
 
   constructor(onUpdate: (state: GameState) => void) {
@@ -145,6 +147,20 @@ export class PlayerManager {
     }));
   }
 
+  private enqueueDbWrite(label: string, work: () => Promise<void>): Promise<void> {
+    const run = this.dbWriteQueue
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await work();
+        } catch (err) {
+          console.error(`${label}:`, err);
+        }
+      });
+    this.dbWriteQueue = run.catch(() => undefined);
+    return run;
+  }
+
   private async loadRoster(): Promise<void> {
     try {
       if (this.pool) {
@@ -196,7 +212,17 @@ export class PlayerManager {
       // Avoid global stale writes only in serverless. On a persistent Node
       // server there is a single long-lived trading runtime, so timer/WS ticks
       // should persist SL/TP, limit fills and live PnL like local mode.
-      if (!this.isServerless) void this.saveRosterToDb();
+      if (!this.isServerless && !this.rosterSaveQueued) {
+        this.rosterSaveQueued = true;
+        void this.enqueueDbWrite('Failed to save Postgres roster', async () => {
+          try {
+            await this.ensureDbStore();
+            await this.upsertAllPlayers();
+          } finally {
+            this.rosterSaveQueued = false;
+          }
+        });
+      }
       return;
     }
     try {
@@ -217,12 +243,10 @@ export class PlayerManager {
    */
   private async saveRosterToDb(): Promise<void> {
     if (!this.pool) return;
-    try {
+    await this.enqueueDbWrite('Failed to save Postgres roster', async () => {
       await this.ensureDbStore();
       await this.upsertAllPlayers();
-    } catch (err) {
-      console.error('Failed to save Postgres roster:', err);
-    }
+    });
   }
 
   private async upsertAllPlayers(): Promise<void> {
@@ -247,28 +271,24 @@ export class PlayerManager {
 
   private async upsertSinglePlayer(playerId: string): Promise<void> {
     if (!this.pool) return;
-    const player = this.players.get(playerId);
-    if (!player) return;
-    const stored = this.currentRoster().find((p) => p.id === playerId);
-    if (!stored) return;
-    try {
+    await this.enqueueDbWrite('Failed to upsert player row', async () => {
+      const player = this.players.get(playerId);
+      if (!player) return;
+      const stored = this.currentRoster().find((p) => p.id === playerId);
+      if (!stored) return;
       await this.pool.query(
         `insert into comp_paper_players (id, data) values ($1, $2::jsonb)
          on conflict (id) do update set data = excluded.data, updated_at = now()`,
         [playerId, JSON.stringify(stored)],
       );
-    } catch (err) {
-      console.error('Failed to upsert player row:', err);
-    }
+    });
   }
 
   private async deletePlayerRow(playerId: string): Promise<void> {
     if (!this.pool) return;
-    try {
+    await this.enqueueDbWrite('Failed to delete player row', async () => {
       await this.pool.query('delete from comp_paper_players where id = $1', [playerId]);
-    } catch (err) {
-      console.error('Failed to delete player row:', err);
-    }
+    });
   }
 
   /**
