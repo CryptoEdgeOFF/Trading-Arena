@@ -78,6 +78,7 @@ app.get('/uploads/:filename', (req, res) => {
 const clients = new Set<WebSocket>();
 const competitionManager = new CompetitionManager();
 let finalizingEndedCompetitions: Promise<void> | null = null;
+const paperClients = new Map<WebSocket, { token: string; playerId: string; competitionId: string | null }>();
 
 // --- Admin auth (single shared code, configurable via env) ---
 const ADMIN_CODE = (process.env.ADMIN_CODE || 'BTFb9Q6z69.9').trim();
@@ -114,6 +115,7 @@ const manager = new PlayerManager((state: GameState) => {
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
+  broadcastPaperUpdates();
 });
 
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
@@ -204,7 +206,47 @@ async function getCompetitionUser(req: express.Request) {
   return competitionManager.getUserFromToken(token);
 }
 
-wss.on('connection', (ws) => {
+function publicPlayer(player: ReturnType<typeof manager.getPlayerById>) {
+  if (!player) return null;
+  const { apiKey: _k, apiSecret: _s, ...payload } = player;
+  return payload;
+}
+
+function buildPaperUpdatePayload(playerId: string, competitionId: string | null) {
+  const player = manager.getPlayerById(playerId);
+  if (!player) return null;
+
+  let competitionPayload: unknown = null;
+  let canTrade = manager.isStarted();
+  if (competitionId) {
+    const status = competitionManager.getCompetitionStatus(competitionId);
+    canTrade = status === 'live';
+    competitionPayload = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id) || { id: competitionId };
+  }
+
+  return {
+    player: publicPlayer(player),
+    market: manager.isPaperMarketActive() ? manager.getPaperMarketSnapshot() : {},
+    canTrade,
+    competition: competitionPayload,
+  };
+}
+
+function sendPaperUpdate(ws: WebSocket, sub: { playerId: string; competitionId: string | null }): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  try {
+    const payload = buildPaperUpdatePayload(sub.playerId, sub.competitionId);
+    if (payload) ws.send(JSON.stringify({ type: 'paper:update', data: payload }));
+  } catch {
+    // A stale competition/player should not break the global websocket loop.
+  }
+}
+
+function broadcastPaperUpdates(): void {
+  paperClients.forEach((sub, ws) => sendPaperUpdate(ws, sub));
+}
+
+wss.on('connection', (ws, req) => {
   clients.add(ws);
 
   const config = manager.getEventConfig();
@@ -225,7 +267,21 @@ wss.on('connection', (ws) => {
   };
   ws.send(JSON.stringify({ type: 'state', data: initialState }));
 
-  ws.on('close', () => clients.delete(ws));
+  const url = new URL(req.url || '/ws', `http://${req.headers.host || 'localhost'}`);
+  const paperToken = url.searchParams.get('paperToken');
+  if (paperToken) {
+    void competitionManager.getTraderSession(paperToken).then((info) => {
+      if (!info || ws.readyState !== WebSocket.OPEN) return;
+      const sub = { token: paperToken, playerId: info.playerId, competitionId: info.competitionId };
+      paperClients.set(ws, sub);
+      sendPaperUpdate(ws, sub);
+    }).catch(() => undefined);
+  }
+
+  ws.on('close', () => {
+    clients.delete(ws);
+    paperClients.delete(ws);
+  });
 });
 
 // --- Admin auth ---

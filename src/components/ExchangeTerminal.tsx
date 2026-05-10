@@ -1,4 +1,4 @@
-import { type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import TradingViewOverlayChart from './TradingViewOverlayChart';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -1970,8 +1970,6 @@ function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'p
 /* ------------------------------------------------------------------ MAIN */
 
 export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalProps) {
-  useWebSocket(!demoMode);
-
   const players = useGameStore((state) => state.players);
   const recentTrades = useGameStore((state) => state.recentTrades);
   const eventStarted = useGameStore((state) => state.eventStarted);
@@ -2026,6 +2024,18 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [livePlayer, setLivePlayer] = useState<Player | null>(null);
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
+
+  const applyPaperUpdate = useCallback((data: any) => {
+    if (data?.player) setLivePlayer(data.player);
+    if (data?.market) setLiveMarket(data.market);
+    if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
+    mergeCompetitionFromMe(data?.competition);
+  }, []);
+
+  useWebSocket(!demoMode, {
+    paperToken: session?.token || null,
+    onPaperUpdate: applyPaperUpdate,
+  });
 
   const market = useMemo(() => {
     if (demoMode) return demoMarket;
@@ -2196,7 +2206,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       } catch {
         // soft fail; we'll retry on the next tick.
       } finally {
-        if (!cancelled) timer = setTimeout(tick, 750);
+        // WebSocket paper:update is now the primary live feed; polling remains
+        // only as a safety net if the socket disconnects.
+        if (!cancelled) timer = setTimeout(tick, 5000);
       }
     }
 
