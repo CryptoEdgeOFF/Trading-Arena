@@ -124,7 +124,11 @@ async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
     pnlPercent: player.pnlPercent,
     tradesCount: player.tradeCount,
   });
-  await competitionManager.persist();
+  if (IS_SERVERLESS) {
+    await competitionManager.persist();
+  } else {
+    void competitionManager.persist();
+  }
 }
 
 async function finalizeEndedCompetitions(): Promise<void> {

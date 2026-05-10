@@ -2196,7 +2196,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       } catch {
         // soft fail; we'll retry on the next tick.
       } finally {
-        if (!cancelled) timer = setTimeout(tick, 1500);
+        if (!cancelled) timer = setTimeout(tick, 750);
       }
     }
 

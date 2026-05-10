@@ -315,6 +315,18 @@ export class PlayerManager {
     this.saveRoster();
   }
 
+  private persistTradingMutation(playerId: string): Promise<void> {
+    if (this.isServerless) {
+      return this.persistPlayer(playerId);
+    }
+
+    // On a persistent Node server the in-memory trading engine is the live
+    // source of truth. Persist in the background so order/close endpoints can
+    // answer immediately and the UI feels like local mode.
+    void this.persistPlayer(playerId);
+    return Promise.resolve();
+  }
+
   /**
    * Re-read the roster from Postgres and overwrite in-memory state.
    * Required on serverless platforms where multiple Lambda instances
@@ -731,7 +743,7 @@ export class PlayerManager {
     await this.ensureCompetitionPaperRuntime(player);
     const result = await this.paperEngine.placeOrder(player, order);
     void result;
-    await this.persistPlayer(player.id);
+    await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
 
@@ -761,7 +773,7 @@ export class PlayerManager {
     await this.ensureCompetitionPaperRuntime(player);
     const result = await this.paperEngine.closePosition(player, pair, partialSize);
     void result;
-    await this.persistPlayer(player.id);
+    await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
 
@@ -787,7 +799,7 @@ export class PlayerManager {
     }
     await this.ensureCompetitionPaperRuntime(player);
     this.paperEngine.cancelOrder(player, orderId);
-    await this.persistPlayer(player.id);
+    await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
 
@@ -849,7 +861,7 @@ export class PlayerManager {
     }
     await this.ensureCompetitionPaperRuntime(player);
     this.paperEngine.updatePositionRisk(player, pair, stopLoss, takeProfit, options);
-    await this.persistPlayer(player.id);
+    await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
 
