@@ -2079,12 +2079,104 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
 
+  // Tracks ids of positions/orders that the user has just closed/cancelled
+  // optimistically. Each entry expires after a short delay so an in-flight
+  // WS paper:update broadcast (which still contains the just-closed
+  // position) cannot make it visually re-appear before the server-side
+  // close has been broadcasted. Once expired, the filter releases the id
+  // either way so a real server divergence is never hidden permanently.
+  const pendingClosedPositionsRef = useRef<Map<string, number>>(new Map());
+  const pendingCancelledOrdersRef = useRef<Map<string, number>>(new Map());
+  // Partial closes track the size we've already removed locally so the
+  // visible position size keeps shrinking instead of bouncing back to its
+  // pre-close value when an old WS payload arrives.
+  const pendingPartialClosesRef = useRef<Map<string, { delta: number; expiresAt: number }>>(new Map());
+
+  const PENDING_MUTATION_TTL_MS = 4000;
+
+  const markPositionPendingClose = useCallback((positionId: string) => {
+    pendingClosedPositionsRef.current.set(positionId, Date.now() + PENDING_MUTATION_TTL_MS);
+  }, []);
+  const markOrderPendingCancel = useCallback((orderId: string) => {
+    pendingCancelledOrdersRef.current.set(orderId, Date.now() + PENDING_MUTATION_TTL_MS);
+  }, []);
+  const markPositionPendingPartial = useCallback((positionId: string, delta: number) => {
+    const existing = pendingPartialClosesRef.current.get(positionId);
+    pendingPartialClosesRef.current.set(positionId, {
+      delta: (existing?.delta || 0) + delta,
+      expiresAt: Date.now() + PENDING_MUTATION_TTL_MS,
+    });
+  }, []);
+
+  const reconcilePlayerWithPending = useCallback((incoming: Player | null): Player | null => {
+    if (!incoming) return incoming;
+    const now = Date.now();
+
+    // Drop expired entries first so they cannot mask real state divergence.
+    for (const [id, expiresAt] of pendingClosedPositionsRef.current) {
+      if (expiresAt <= now) pendingClosedPositionsRef.current.delete(id);
+    }
+    for (const [id, expiresAt] of pendingCancelledOrdersRef.current) {
+      if (expiresAt <= now) pendingCancelledOrdersRef.current.delete(id);
+    }
+    for (const [id, info] of pendingPartialClosesRef.current) {
+      if (info.expiresAt <= now) pendingPartialClosesRef.current.delete(id);
+    }
+
+    const openPositions = (incoming.openPositions || []).reduce<Position[]>((acc, position) => {
+      if (pendingClosedPositionsRef.current.has(position.id)) {
+        // Server has not yet processed (or broadcast) the close, so keep
+        // hiding the position. Once it really disappears from the payload
+        // we can release the marker.
+        return acc;
+      }
+      const partial = pendingPartialClosesRef.current.get(position.id);
+      if (partial && partial.delta > 0) {
+        const newSize = position.size - partial.delta;
+        if (newSize <= 0.000_000_1) {
+          // Effective full close while the user requested a partial: drop
+          // it entirely and clear the pending entry.
+          pendingPartialClosesRef.current.delete(position.id);
+          return acc;
+        }
+        acc.push({ ...position, size: newSize });
+        return acc;
+      }
+      acc.push(position);
+      return acc;
+    }, []);
+
+    // If the incoming payload no longer contains a pending-closed id, the
+    // optimistic update has been confirmed: drop the marker so any future
+    // payload is rendered unchanged.
+    const incomingPositionIds = new Set((incoming.openPositions || []).map((p) => p.id));
+    for (const id of Array.from(pendingClosedPositionsRef.current.keys())) {
+      if (!incomingPositionIds.has(id)) pendingClosedPositionsRef.current.delete(id);
+    }
+    for (const id of Array.from(pendingPartialClosesRef.current.keys())) {
+      if (!incomingPositionIds.has(id)) pendingPartialClosesRef.current.delete(id);
+    }
+
+    const openOrders = (incoming.openOrders || []).filter(
+      (order) => !pendingCancelledOrdersRef.current.has(order.id),
+    );
+    const incomingOrderIds = new Set((incoming.openOrders || []).map((o) => o.id));
+    for (const id of Array.from(pendingCancelledOrdersRef.current.keys())) {
+      if (!incomingOrderIds.has(id)) pendingCancelledOrdersRef.current.delete(id);
+    }
+
+    return { ...incoming, openPositions, openOrders };
+  }, []);
+
   const applyPaperUpdate = useCallback((data: any) => {
-    if (data?.player) setLivePlayer(data.player);
+    if (data?.player) {
+      const reconciled = reconcilePlayerWithPending(data.player as Player);
+      setLivePlayer(reconciled);
+    }
     if (data?.market) setLiveMarket(data.market);
     if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
     mergeCompetitionFromMe(data?.competition);
-  }, []);
+  }, [reconcilePlayerWithPending]);
 
   const applyArenaInit = useCallback((payload: any) => {
     if (!payload?.competition || !Array.isArray(payload?.leaderboard)) return;
@@ -2292,7 +2384,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       .then((data) => {
         if (data?.player) {
           setSession({ token, player: data.player });
-          setLivePlayer(data.player);
+          setLivePlayer(reconcilePlayerWithPending(data.player as Player));
           if (data.market) setLiveMarket(data.market);
           if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
           mergeCompetitionFromMe(data?.competition);
@@ -2301,6 +2393,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       .finally(() => {
         setBootstrapping(false);
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demoMode]);
 
   useEffect(() => {
@@ -2330,7 +2423,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         if (!response.ok) return;
         const data = await response.json();
         if (cancelled) return;
-        if (data?.player) setLivePlayer(data.player);
+        if (data?.player) setLivePlayer(reconcilePlayerWithPending(data.player as Player));
         if (data?.market) setLiveMarket(data.market);
         if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
         mergeCompetitionFromMe(data?.competition);
@@ -2609,6 +2702,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     setError('');
     // Optimistic UI: hide the order immediately. The next /me poll or WS
     // paper:update will reconcile the state if the server rejects the call.
+    markOrderPendingCancel(orderId);
     setLivePlayer((prev) =>
       prev ? { ...prev, openOrders: prev.openOrders.filter((o: any) => o.id !== orderId) } : prev,
     );
@@ -2646,14 +2740,18 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     setError('');
     // Optimistic UI: remove (or shrink) the position immediately so the user
     // gets instant feedback even if the server response is delayed by a slow
-    // network. The WS paper:update will reconcile the final state.
+    // network. The pending mutation marker prevents an in-flight WS
+    // paper:update from "uncoincidentally" un-closing it for a few hundred
+    // ms before the server-side close has been broadcasted.
     if (partialSize == null) {
+      markPositionPendingClose(positionId);
       setLivePlayer((prev) =>
         prev
           ? { ...prev, openPositions: prev.openPositions.filter((p: any) => p.id !== positionId) }
           : prev,
       );
     } else {
+      markPositionPendingPartial(positionId, partialSize);
       setLivePlayer((prev) =>
         prev
           ? {
@@ -2733,7 +2831,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       if (!response.ok) return;
       const data = await response.json();
-      if (data?.player) setLivePlayer(data.player);
+      if (data?.player) setLivePlayer(reconcilePlayerWithPending(data.player as Player));
       if (data?.market) setLiveMarket(data.market);
       if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
     } catch {
