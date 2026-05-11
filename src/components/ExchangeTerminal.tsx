@@ -1341,15 +1341,44 @@ function RiskModal({
             </div>
 
             <div className="px-6 pt-4">
-              <div className="flex items-start justify-between rounded-xl border border-[#1c1928] bg-[#13101e] px-4 py-3">
-                <div>
-                  <div className="text-[13px]">
-                    <span style={{ color: sideColor }} className="font-semibold">{sideLabel}</span>
-                    <span className="ml-2 num text-white">{sizeSigned > 0 ? '+' : ''}{sizeSigned.toFixed(4)} {pairBase(position.pair)} Perp</span>
+              <div className="rounded-xl border border-[#1c1928] bg-[#13101e] px-4 py-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-[13px]">
+                      <span style={{ color: sideColor }} className="font-semibold">{sideLabel}</span>
+                      <span className="ml-2 num text-white">{sizeSigned > 0 ? '+' : ''}{sizeSigned.toFixed(4)} {pairBase(position.pair)} Perp</span>
+                    </div>
+                    <div className="mt-1 text-[12px] text-[#9498a4]">Levier <span className="num text-white">x{position.leverage}</span></div>
                   </div>
-                  <div className="mt-1 text-[12px] text-[#9498a4]">@ Marche <span className="num text-white">{fmt(markPrice, 1)}</span> USD</div>
+                  <span className="rounded-md bg-[#1c1928] px-2 py-1 text-[10px] uppercase tracking-wide text-[#9498a4]">Position</span>
                 </div>
-                <span className="rounded-md bg-[#1c1928] px-2 py-1 text-[10px] uppercase tracking-wide text-[#9498a4]">Position</span>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
+                  <div className="rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">Entree</div>
+                    <div className="num mt-0.5 text-[13px] font-semibold text-white">{fmt(position.entryPrice, 1)}</div>
+                  </div>
+                  <div className="rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">Marche</div>
+                    <div className="num mt-0.5 text-[13px] font-semibold text-white">{fmt(markPrice, 1)}</div>
+                  </div>
+                  <div className="rounded-lg border border-[#f43f6e]/30 bg-[#f43f6e]/5 px-2.5 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-[#f43f6e]">Liquidation</div>
+                    <div className="num mt-0.5 text-[13px] font-semibold text-white">
+                      {(() => {
+                        // Prefer the backend value when available, otherwise
+                        // fall back to the standard isolated-margin formula
+                        // so the user always sees a reference price.
+                        let liq = position.liquidationPrice;
+                        if (liq == null && position.leverage > 0 && Number.isFinite(position.entryPrice)) {
+                          liq = isLong
+                            ? position.entryPrice * (1 - 1 / position.leverage)
+                            : position.entryPrice * (1 + 1 / position.leverage);
+                        }
+                        return liq != null && Number.isFinite(liq) ? fmt(liq, 1) : '—';
+                      })()}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
