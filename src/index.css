@@ -472,6 +472,7 @@ body {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   border-radius: 14px;
+  cursor: pointer;
   box-shadow:
     0 18px 50px -16px rgba(220, 38, 38, 0.7),
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
@@ -494,6 +495,7 @@ body {
   color: var(--text-pure);
   font-weight: 600;
   border-radius: 14px;
+  cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
 }
 .compete .ghost-cta:hover { border-color: var(--border-hot); background: rgba(220, 38, 38, 0.06); }

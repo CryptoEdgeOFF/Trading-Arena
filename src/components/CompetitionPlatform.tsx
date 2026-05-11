@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AnimatedNumber,
@@ -242,6 +242,7 @@ function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?
 }
 
 export default function CompetitionPlatform() {
+  const navigate = useNavigate();
   // Initialise the session synchronously from localStorage so authenticated
   // users see their data immediately on refresh, without waiting for the
   // backend to come back. We then validate in the background and clear the
@@ -530,7 +531,31 @@ export default function CompetitionPlatform() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Acces trading impossible');
       window.localStorage.setItem(PAPER_SESSION_KEY, data.token);
-      window.location.href = buildTradeUrl(competition);
+      // Cache the player snapshot returned by /trade/session so the
+      // ExchangeTerminal can render immediately on mount without waiting
+      // for the /api/paper/me round-trip. The terminal still revalidates
+      // in the background and patches via WebSocket.
+      if (data.player) {
+        try {
+          window.localStorage.setItem(
+            'btf-paper-bootstrap',
+            JSON.stringify({
+              token: data.token,
+              player: data.player,
+              competition: data.competition || null,
+              market: data.market || null,
+              canTrade: typeof data.canTrade === 'boolean' ? data.canTrade : null,
+              cachedAt: Date.now(),
+            }),
+          );
+        } catch {
+          // localStorage quota or privacy mode: terminal will fall back to /me.
+        }
+      }
+      // SPA navigation keeps the React tree alive (no full reload, no JS
+      // re-parse). Combined with the bootstrap cache above, the terminal
+      // mounts already populated.
+      navigate(buildTradeUrl(competition));
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');
     } finally {

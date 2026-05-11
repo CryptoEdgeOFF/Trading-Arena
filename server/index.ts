@@ -1148,10 +1148,12 @@ app.post('/api/competition/trade/session', async (req, res) => {
   }
 
   try {
-    // Always start from the freshest snapshot so we don't accidentally create
-    // a duplicate paper player when the entry was just linked by another
-    // Lambda. Both managers can be refreshed in parallel.
-    await Promise.all([competitionManager.refresh(), manager.refresh()]);
+    // On serverless we always need to merge state from sibling Lambdas.
+    // On a persistent Node server the in-memory state is the source of
+    // truth, so we skip the round-trip and answer instantly.
+    if (IS_SERVERLESS) {
+      await Promise.all([competitionManager.refresh(), manager.refresh()]);
+    }
     await finalizeEndedCompetitions();
     const { competition, entry } = competitionManager.getCompetitionForUser(competitionId, user.id);
     competitionManager.assertCompetitionTradingOpen(competition.id);
@@ -1183,19 +1185,45 @@ app.post('/api/competition/trade/session', async (req, res) => {
     // so concurrent writes from other Lambdas can no longer wipe either of
     // them. We also persist the competition blob so the entry's
     // paperPlayerId link survives a cold start on the next request.
-    await Promise.all([
-      competitionManager.setTraderSession(token, player.id, competition.id),
-      manager.persistPlayer(player.id),
-      competitionManager.persist(),
-    ]);
+    if (IS_SERVERLESS) {
+      // Awaiting these on serverless is mandatory to survive cold starts.
+      await Promise.all([
+        competitionManager.setTraderSession(token, player.id, competition.id),
+        manager.persistPlayer(player.id),
+        competitionManager.persist(),
+      ]);
+    } else {
+      // The trader session is the only thing the very next request strictly
+      // needs (so /api/paper/me does not 401). The other writes can run in
+      // the background, which shaves another DB round-trip off this endpoint.
+      await competitionManager.setTraderSession(token, player.id, competition.id);
+      void manager.persistPlayer(player.id);
+      void competitionManager.persist();
+    }
     await syncCompetitionResultForPlayer(player.id);
 
     const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
+    // Build the same payload shape /api/paper/me returns so the frontend
+    // can render the terminal immediately on mount, with no extra round
+    // trip and no flash of the "Acces requis" placeholder.
+    const competitionStatus = competitionManager.getCompetitionStatus(competition.id);
+    const competitionContext = competitionManager.getCompetitionContextForPaperPlayer(competition.id, player.id) || {
+      id: competition.id,
+      title: competition.title,
+      executionMode: competition.executionMode,
+    };
 
     res.json({
       token,
       player: publicPlayer,
-      competition: { id: competition.id, title: competition.title, executionMode: competition.executionMode },
+      market: manager.isPaperMarketActive() ? manager.getPaperMarketSnapshot() : {},
+      fees: manager.getPaperFeeRates(),
+      pairs: manager.getSupportedPaperPairs(),
+      startingBalance: manager.getPaperStartingBalance(),
+      marketDataSource: manager.getMarketDataSource(),
+      eventStarted: manager.isStarted(),
+      canTrade: competitionStatus === 'live',
+      competition: competitionContext,
     });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Session de trading competition impossible' });

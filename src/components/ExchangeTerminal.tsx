@@ -1989,11 +1989,36 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     marketMetadata: {},
     fees: { maker: DEMO_TAKER_FEE, taker: DEMO_TAKER_FEE, spreadBps: 1, minLeverage: 1, maxLeverage: 50 },
   }));
-  const [session, setSession] = useState<{ token: string; player: SessionPlayer } | null>(() => (
-    demoMode
-      ? { token: 'demo-token', player: { id: 'tradingview-demo', name: 'TradingView Demo', color: '#dc2626', avatar: null } }
-      : null
-  ));
+  // Initialize the session synchronously from the bootstrap cache deposited
+  // by CompetitionPlatform when the user clicked "TRADER". This avoids the
+  // flash of the "Acces requis" placeholder while we wait for /api/paper/me
+  // to come back. The terminal still revalidates in the background and the
+  // WebSocket pushes live updates as soon as it connects.
+  const [session, setSession] = useState<{ token: string; player: SessionPlayer } | null>(() => {
+    if (demoMode) {
+      return { token: 'demo-token', player: { id: 'tradingview-demo', name: 'TradingView Demo', color: '#dc2626', avatar: null } };
+    }
+    try {
+      const raw = window.localStorage.getItem('btf-paper-bootstrap');
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (cached?.token && cached?.player) {
+          return { token: cached.token, player: cached.player };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+  // True until we have either confirmed the session via /api/paper/me or
+  // determined that there is no token to validate. While this flag is true
+  // we never render the "Acces requis" placeholder, so a logged-in user
+  // simply sees a loading state instead of a brief error popup.
+  const [bootstrapping, setBootstrapping] = useState(() => {
+    if (demoMode) return false;
+    return Boolean(window.localStorage.getItem(SESSION_KEY));
+  });
   const [accessCode, setAccessCode] = useState('');
   const [selectedPair, setSelectedPair] = useState('BTC/USD');
   const [side, setSide] = useState<'long' | 'short'>('short');
@@ -2202,7 +2227,31 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   useEffect(() => {
     if (demoMode) return;
     const token = window.localStorage.getItem(SESSION_KEY);
-    if (!token) return;
+    if (!token) {
+      setBootstrapping(false);
+      return;
+    }
+
+    // Consume the bootstrap cache deposited by CompetitionPlatform when the
+    // user clicked "TRADER" so the terminal renders populated immediately.
+    try {
+      const raw = window.localStorage.getItem('btf-paper-bootstrap');
+      if (raw) {
+        const cached = JSON.parse(raw);
+        const fresh = cached?.cachedAt && Date.now() - cached.cachedAt < 30_000;
+        if (fresh && cached?.token === token && cached.player) {
+          setLivePlayer(cached.player);
+          if (cached.market) setLiveMarket(cached.market);
+          if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
+          mergeCompetitionFromMe(cached.competition);
+        }
+        // Single-use cache: drop it now so a refresh always re-validates.
+        window.localStorage.removeItem('btf-paper-bootstrap');
+      }
+    } catch {
+      // ignore
+    }
+
     fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } })
       .then(async (response) => {
         if (!response.ok) {
@@ -2219,6 +2268,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
           if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
           mergeCompetitionFromMe(data?.competition);
         }
+      })
+      .finally(() => {
+        setBootstrapping(false);
       });
   }, [demoMode]);
 
@@ -2792,7 +2844,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         </div>
       )}
 
-      {livePaperMode && !session && (
+      {livePaperMode && !session && bootstrapping && (
+        <div className="flex flex-1 items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 text-[#9498a4]">
+            <div className="h-7 w-7 animate-spin rounded-full border-2 border-[#dc2626] border-t-transparent" />
+            <div className="text-[12px] uppercase tracking-[0.25em]">Chargement du terminal</div>
+          </div>
+        </div>
+      )}
+
+      {livePaperMode && !session && !bootstrapping && (
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="w-full max-w-md rounded-2xl border border-[#231f22] bg-[#0e0c0d] p-7 shadow-2xl shadow-black/40">
             <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#dc2626]">Acces requis</div>
