@@ -1320,4 +1320,63 @@ export class CompetitionManager {
       leaderboard,
     };
   }
+
+  /**
+   * Same shape as getPublicLeaderboard but does not check isPublic.
+   * Used to push live leaderboard diffs over WS to authenticated traders
+   * regardless of the competition's listing status.
+   */
+  getLiveLeaderboard(competitionId: string): {
+    competition: {
+      id: string;
+      title: string;
+      code: string;
+      startAt: number;
+      endAt: number;
+      status: 'upcoming' | 'live' | 'ended';
+      participants: number;
+      cashPrize: CashPrize | null;
+    };
+    leaderboard: Array<{
+      rank: number;
+      userId: string;
+      name: string;
+      pnlPercent: number;
+      pnlUsd: number;
+      tradesCount: number;
+      updatedAt: number;
+    }>;
+  } | null {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return null;
+
+    const leaderboard = competition.entries
+      .map((entry) => {
+        const user = this.users.get(entry.userId);
+        return {
+          userId: entry.userId,
+          name: user?.name || 'Participant',
+          pnlPercent: entry.pnlPercent,
+          pnlUsd: entry.pnlUsd,
+          tradesCount: entry.tradesCount,
+          updatedAt: entry.updatedAt,
+        };
+      })
+      .sort((a, b) => b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd)
+      .map((entry, index) => ({ rank: index + 1, ...entry }));
+
+    return {
+      competition: {
+        id: competition.id,
+        title: competition.title,
+        code: competition.code,
+        startAt: competition.startAt,
+        endAt: competition.endAt,
+        status: inferCompetitionStatus(competition.startAt, competition.endAt),
+        participants: competition.entries.length,
+        cashPrize: competition.cashPrize ?? null,
+      },
+      leaderboard,
+    };
+  }
 }

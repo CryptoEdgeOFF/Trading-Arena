@@ -18,7 +18,24 @@ import { getMarketMetadata } from './marketMetadata.js';
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+// permessage-deflate compresses every WS frame natively. With state:patch
+// payloads being mostly repetitive JSON keys, gzip typically yields a 3-5x
+// reduction on the wire. We tune it to favor latency over CPU: small window,
+// no compression for tiny frames, and an explicit memory budget so a burst
+// of 500+ clients does not blow up RAM.
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  perMessageDeflate: {
+    zlibDeflateOptions: { chunkSize: 1024, memLevel: 7, level: 3 },
+    zlibInflateOptions: { chunkSize: 10 * 1024 },
+    clientNoContextTakeover: true,
+    serverNoContextTakeover: true,
+    serverMaxWindowBits: 10,
+    concurrencyLimit: 10,
+    threshold: 1024,
+  },
+});
 const PORT = Number(process.env.PORT || 3001);
 const IS_SERVERLESS = Boolean(process.env.NETLIFY);
 
@@ -79,6 +96,19 @@ const clients = new Set<WebSocket>();
 const competitionManager = new CompetitionManager();
 let finalizingEndedCompetitions: Promise<void> | null = null;
 const paperClients = new Map<WebSocket, { token: string; playerId: string; competitionId: string | null }>();
+// Per-competition shard: every paperClient is also tracked under its
+// competitionId so we can broadcast a leaderboard diff only to the
+// traders of that arena, not to every connected client.
+const arenaClients = new Map<string, Set<WebSocket>>();
+// Last broadcast snapshot per arena for diff computation. Indexed by
+// competitionId then by userId.
+const arenaSnapshots = new Map<string, Map<string, {
+  rank: number;
+  pnlPercent: number;
+  pnlUsd: number;
+  tradesCount: number;
+  updatedAt: number;
+}>>();
 
 // --- Admin auth (single shared code, configurable via env) ---
 const ADMIN_CODE = (process.env.ADMIN_CODE || 'BTFb9Q6z69.9').trim();
@@ -119,6 +149,18 @@ const manager = new PlayerManager((patch: StatePatch) => {
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
+  // Sync online-competition (paper) traders whose PnL changed into their
+  // competition.entries before pushing arena diffs. This keeps the
+  // arena leaderboard live (rank changes when prices move) without
+  // walking every player on every tick.
+  const dirtyPaperPlayers = manager.drainDirtyPaperPlayers();
+  for (const player of dirtyPaperPlayers) {
+    competitionManager.updatePaperResultByPlayerId(player.id, {
+      pnlUsd: player.pnl,
+      pnlPercent: player.pnlPercent,
+      tradesCount: player.tradeCount,
+    });
+  }
   broadcastPaperUpdates();
 });
 
@@ -256,6 +298,153 @@ function sendPaperUpdate(ws: WebSocket, sub: { playerId: string; competitionId: 
 
 function broadcastPaperUpdates(): void {
   paperClients.forEach((sub, ws) => sendPaperUpdate(ws, sub));
+  broadcastArenaPatches();
+}
+
+type ArenaLeaderboardEntry = {
+  rank: number;
+  userId: string;
+  name: string;
+  pnlPercent: number;
+  pnlUsd: number;
+  tradesCount: number;
+  updatedAt: number;
+};
+
+type ArenaPatchEntry = {
+  userId: string;
+  name?: string;
+  rank?: number;
+  pnlPercent?: number;
+  pnlUsd?: number;
+  tradesCount?: number;
+  updatedAt?: number;
+};
+
+function buildArenaInit(competitionId: string) {
+  const data = competitionManager.getLiveLeaderboard(competitionId);
+  if (!data) return null;
+  return {
+    competitionId,
+    competition: data.competition,
+    leaderboard: data.leaderboard as ArenaLeaderboardEntry[],
+  };
+}
+
+function computeArenaPatch(
+  competitionId: string,
+  data: ReturnType<typeof competitionManager.getLiveLeaderboard>,
+): {
+  competitionId: string;
+  competition: NonNullable<ReturnType<typeof competitionManager.getLiveLeaderboard>>['competition'];
+  upserts: ArenaPatchEntry[];
+  removed: string[];
+} | null {
+  if (!data) return null;
+  const previous = arenaSnapshots.get(competitionId) || new Map();
+  const next = new Map<string, ArenaLeaderboardEntry>();
+  const upserts: ArenaPatchEntry[] = [];
+  for (const entry of data.leaderboard) {
+    next.set(entry.userId, entry);
+    const prev = previous.get(entry.userId);
+    if (
+      !prev ||
+      prev.rank !== entry.rank ||
+      prev.pnlPercent !== entry.pnlPercent ||
+      prev.pnlUsd !== entry.pnlUsd ||
+      prev.tradesCount !== entry.tradesCount ||
+      prev.updatedAt !== entry.updatedAt
+    ) {
+      const diff: ArenaPatchEntry = { userId: entry.userId };
+      if (!prev) diff.name = entry.name;
+      if (!prev || prev.rank !== entry.rank) diff.rank = entry.rank;
+      if (!prev || prev.pnlPercent !== entry.pnlPercent) diff.pnlPercent = entry.pnlPercent;
+      if (!prev || prev.pnlUsd !== entry.pnlUsd) diff.pnlUsd = entry.pnlUsd;
+      if (!prev || prev.tradesCount !== entry.tradesCount) diff.tradesCount = entry.tradesCount;
+      if (!prev || prev.updatedAt !== entry.updatedAt) diff.updatedAt = entry.updatedAt;
+      upserts.push(diff);
+    }
+  }
+  const removed: string[] = [];
+  for (const userId of previous.keys()) {
+    if (!next.has(userId)) removed.push(userId);
+  }
+  // Persist the new snapshot for the next diff computation.
+  arenaSnapshots.set(
+    competitionId,
+    new Map(
+      Array.from(next.entries()).map(([k, v]) => [k, {
+        rank: v.rank,
+        pnlPercent: v.pnlPercent,
+        pnlUsd: v.pnlUsd,
+        tradesCount: v.tradesCount,
+        updatedAt: v.updatedAt,
+      }]),
+    ),
+  );
+  if (upserts.length === 0 && removed.length === 0) return null;
+  return {
+    competitionId,
+    competition: data.competition,
+    upserts,
+    removed,
+  };
+}
+
+function broadcastArenaPatches(): void {
+  if (arenaClients.size === 0) return;
+  for (const [competitionId, sockets] of arenaClients) {
+    if (sockets.size === 0) continue;
+    const data = competitionManager.getLiveLeaderboard(competitionId);
+    if (!data) continue;
+    const patch = computeArenaPatch(competitionId, data);
+    if (!patch) continue;
+    const msg = JSON.stringify({ type: 'arena:patch', data: patch });
+    sockets.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+    });
+  }
+}
+
+function attachArenaClient(ws: WebSocket, competitionId: string): void {
+  let bucket = arenaClients.get(competitionId);
+  if (!bucket) {
+    bucket = new Set();
+    arenaClients.set(competitionId, bucket);
+  }
+  bucket.add(ws);
+  // Send full snapshot so the client can render the leaderboard immediately.
+  const init = buildArenaInit(competitionId);
+  if (init && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'arena:init', data: init }));
+    // Prime the diff baseline with the snapshot we just sent.
+    const baseline = new Map<string, {
+      rank: number; pnlPercent: number; pnlUsd: number; tradesCount: number; updatedAt: number;
+    }>();
+    for (const entry of init.leaderboard) {
+      baseline.set(entry.userId, {
+        rank: entry.rank,
+        pnlPercent: entry.pnlPercent,
+        pnlUsd: entry.pnlUsd,
+        tradesCount: entry.tradesCount,
+        updatedAt: entry.updatedAt,
+      });
+    }
+    // Only refresh the snapshot if we have nothing yet. Other concurrent
+    // shards may already keep their own up-to-date baseline.
+    if (!arenaSnapshots.has(competitionId)) {
+      arenaSnapshots.set(competitionId, baseline);
+    }
+  }
+}
+
+function detachArenaClient(ws: WebSocket): void {
+  for (const [competitionId, sockets] of arenaClients) {
+    if (sockets.delete(ws) && sockets.size === 0) {
+      arenaClients.delete(competitionId);
+      arenaSnapshots.delete(competitionId);
+    }
+  }
 }
 
 wss.on('connection', (ws, req) => {
@@ -275,12 +464,14 @@ wss.on('connection', (ws, req) => {
       const sub = { token: paperToken, playerId: info.playerId, competitionId: info.competitionId };
       paperClients.set(ws, sub);
       sendPaperUpdate(ws, sub);
+      if (info.competitionId) attachArenaClient(ws, info.competitionId);
     }).catch(() => undefined);
   }
 
   ws.on('close', () => {
     clients.delete(ws);
     paperClients.delete(ws);
+    detachArenaClient(ws);
   });
 });
 

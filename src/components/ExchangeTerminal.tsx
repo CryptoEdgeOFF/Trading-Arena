@@ -2032,9 +2032,54 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     mergeCompetitionFromMe(data?.competition);
   }, []);
 
+  const applyArenaInit = useCallback((payload: any) => {
+    if (!payload?.competition || !Array.isArray(payload?.leaderboard)) return;
+    setLeaderboardData({
+      competition: payload.competition,
+      leaderboard: payload.leaderboard,
+    } as LeaderboardResponse);
+    setLeaderboardError('');
+  }, []);
+
+  const applyArenaPatch = useCallback((payload: any) => {
+    if (!payload?.competitionId) return;
+    setLeaderboardData((prev) => {
+      if (!prev) return prev;
+      if (prev.competition.id !== payload.competitionId) return prev;
+      const upserts = Array.isArray(payload.upserts) ? payload.upserts : [];
+      const removed: string[] = Array.isArray(payload.removed) ? payload.removed : [];
+      const byUserId = new Map<string, LeaderboardRow>();
+      for (const row of prev.leaderboard) byUserId.set(row.userId, row);
+      for (const id of removed) byUserId.delete(id);
+      for (const upsert of upserts) {
+        if (!upsert?.userId) continue;
+        const existing = byUserId.get(upsert.userId);
+        const merged: LeaderboardRow = {
+          rank: upsert.rank ?? existing?.rank ?? 0,
+          userId: upsert.userId,
+          name: upsert.name ?? existing?.name ?? 'Participant',
+          pnlPercent: upsert.pnlPercent ?? existing?.pnlPercent ?? 0,
+          pnlUsd: upsert.pnlUsd ?? existing?.pnlUsd ?? 0,
+          tradesCount: upsert.tradesCount ?? existing?.tradesCount ?? 0,
+          updatedAt: upsert.updatedAt ?? existing?.updatedAt ?? Date.now(),
+        };
+        byUserId.set(upsert.userId, merged);
+      }
+      const next = Array.from(byUserId.values()).sort(
+        (a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent,
+      );
+      return {
+        competition: payload.competition || prev.competition,
+        leaderboard: next,
+      };
+    });
+  }, []);
+
   useWebSocket(!demoMode, {
     paperToken: session?.token || null,
     onPaperUpdate: applyPaperUpdate,
+    onArenaInit: applyArenaInit,
+    onArenaPatch: applyArenaPatch,
   });
 
   const market = useMemo(() => {
@@ -2240,18 +2285,21 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    // The arena WS shard is now the primary feed for the leaderboard.
+    // We still poll the HTTP endpoint as a safety net at a much lower
+    // frequency (30s) so the UI recovers if the socket drops.
     async function tick() {
       try {
         const response = await fetch(`/api/competition/leaderboard/${competitionId}`);
         const payload = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(payload.error || 'Leaderboard indisponible');
-        setLeaderboardData(payload as LeaderboardResponse);
+        setLeaderboardData((prev) => prev || (payload as LeaderboardResponse));
         setLeaderboardError('');
       } catch (err: unknown) {
         if (!cancelled) setLeaderboardError(err instanceof Error ? err.message : 'Leaderboard indisponible');
       } finally {
-        if (!cancelled) timer = setTimeout(tick, 2500);
+        if (!cancelled) timer = setTimeout(tick, 30000);
       }
     }
 

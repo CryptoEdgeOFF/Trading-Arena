@@ -7,16 +7,28 @@ export function useWebSocket(
   options: {
     paperToken?: string | null;
     onPaperUpdate?: (payload: any) => void;
+    onArenaInit?: (payload: any) => void;
+    onArenaPatch?: (payload: any) => void;
   } = {},
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const updateState = useGameStore((s) => s.updateState);
   const applyStatePatch = useGameStore((s) => s.applyStatePatch);
   const onPaperUpdateRef = useRef(options.onPaperUpdate);
+  const onArenaInitRef = useRef(options.onArenaInit);
+  const onArenaPatchRef = useRef(options.onArenaPatch);
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
   }, [options.onPaperUpdate]);
+
+  useEffect(() => {
+    onArenaInitRef.current = options.onArenaInit;
+  }, [options.onArenaInit]);
+
+  useEffect(() => {
+    onArenaPatchRef.current = options.onArenaPatch;
+  }, [options.onArenaPatch]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -39,6 +51,12 @@ export function useWebSocket(
             applyStatePatch(msg.data);
           } else if (msg.type === 'paper:update') {
             onPaperUpdateRef.current?.(msg.data);
+          } else if (msg.type === 'arena:init') {
+            // Full leaderboard snapshot for the trader's competition shard.
+            onArenaInitRef.current?.(msg.data);
+          } else if (msg.type === 'arena:patch') {
+            // Incremental leaderboard diff scoped to the trader's arena.
+            onArenaPatchRef.current?.(msg.data);
           }
         } catch {
           // ignore parse errors

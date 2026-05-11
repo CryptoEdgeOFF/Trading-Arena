@@ -79,10 +79,15 @@ export class PlayerManager {
   private rosterFlushTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly ROSTER_FLUSH_INTERVAL = 2000;
   // Throttle outbound WebSocket state broadcasts so we never push more than
-  // STATE_BROADCAST_INTERVAL ms apart, even during a market spike.
+  // getBroadcastInterval() ms apart, even during a market spike. The
+  // interval is computed dynamically based on the number of active traders
+  // tracked by the engine: small competitions get sub-100ms responsiveness,
+  // very large competitions slow down to keep the pipe healthy.
   private lastBroadcastAt = 0;
   private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly STATE_BROADCAST_INTERVAL = 200;
+  private static readonly BROADCAST_INTERVAL_LOW = 100;
+  private static readonly BROADCAST_INTERVAL_MID = 200;
+  private static readonly BROADCAST_INTERVAL_HIGH = 500;
   // Diff snapshots: tracking what we last broadcasted so we can compute
   // a small patch instead of resending the full state on every tick.
   private snapshotPlayers: Map<string, {
@@ -106,6 +111,16 @@ export class PlayerManager {
     spreadBps: number;
   }> = new Map();
   private snapshotTradeIds: Set<string> = new Set();
+  // Paper-player snapshot used to detect PnL changes for online competition
+  // traders (which are excluded from the public state and from
+  // computeStatePatch). Index.ts uses this to push live leaderboard diffs
+  // to the matching arena shard.
+  private snapshotPaperPlayers: Map<string, {
+    pnl: number;
+    pnlPercent: number;
+    tradeCount: number;
+    currentBalance: number;
+  }> = new Map();
   private snapshotEvent = {
     eventStarted: false as boolean,
     eventStartTime: null as number | null,
@@ -1604,8 +1619,59 @@ export class PlayerManager {
     return Object.keys(patch).length > 0 ? patch : null;
   }
 
+  /**
+   * Returns the list of online-competition (paper) players whose
+   * PnL/balance/tradeCount changed since the last call. The result is
+   * consumed by the arena WS shard to push leaderboard diffs to the
+   * traders of that competition without re-walking every player on
+   * every tick.
+   */
+  drainDirtyPaperPlayers(): Player[] {
+    const dirty: Player[] = [];
+    for (const playerId of this.onlineCompetitionPlayerIds) {
+      const player = this.players.get(playerId);
+      if (!player) continue;
+      const previous = this.snapshotPaperPlayers.get(playerId);
+      if (
+        !previous ||
+        previous.pnl !== player.pnl ||
+        previous.pnlPercent !== player.pnlPercent ||
+        previous.tradeCount !== player.tradeCount ||
+        previous.currentBalance !== player.currentBalance
+      ) {
+        dirty.push(player);
+        this.snapshotPaperPlayers.set(playerId, {
+          pnl: player.pnl,
+          pnlPercent: player.pnlPercent,
+          tradeCount: player.tradeCount,
+          currentBalance: player.currentBalance,
+        });
+      }
+    }
+    // Drop snapshots for players that left the competition.
+    for (const id of Array.from(this.snapshotPaperPlayers.keys())) {
+      if (!this.onlineCompetitionPlayerIds.has(id)) {
+        this.snapshotPaperPlayers.delete(id);
+      }
+    }
+    return dirty;
+  }
+
+  /**
+   * Pick the broadcast interval based on the current load. Small lobbies
+   * get sub-100ms PnL refresh; huge tournaments back off to 500ms so the
+   * WS pipe + client React reconciliation stay healthy.
+   */
+  private getBroadcastInterval(): number {
+    const count = this.players.size;
+    if (count >= 200) return PlayerManager.BROADCAST_INTERVAL_HIGH;
+    if (count >= 50) return PlayerManager.BROADCAST_INTERVAL_MID;
+    return PlayerManager.BROADCAST_INTERVAL_LOW;
+  }
+
   private broadcastState(force = false): void {
     const now = Date.now();
+    const interval = this.getBroadcastInterval();
     // Always emit immediately if there's a one-shot signal that must reach
     // the UI (badge unlock, leader change, spotlight). Otherwise we coalesce
     // updates on a fixed interval to keep the WS load predictable.
@@ -1615,9 +1681,9 @@ export class PlayerManager {
       this.pendingSpotlights.length > 0;
     if (!force && !hasOneShot) {
       const elapsed = now - this.lastBroadcastAt;
-      if (elapsed < PlayerManager.STATE_BROADCAST_INTERVAL) {
+      if (elapsed < interval) {
         if (!this.broadcastTimer) {
-          const delay = Math.max(0, PlayerManager.STATE_BROADCAST_INTERVAL - elapsed);
+          const delay = Math.max(0, interval - elapsed);
           this.broadcastTimer = setTimeout(() => {
             this.broadcastTimer = null;
             this.broadcastState(true);
