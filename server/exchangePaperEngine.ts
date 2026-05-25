@@ -2,7 +2,9 @@ import crypto from 'crypto';
 import WebSocket from 'ws';
 import type { MarketDataSource, MarketTicker, Order, OrderType, Player, Position, SpotlightTrade, Trade } from './types.js';
 import * as kraken from './kraken.js';
-import * as hyperliquid from './hyperliquid.js';
+import * as oanda from './oanda.js';
+import * as binance from './binance.js';
+import { OANDA_TRADFI_PAIRS } from './oandaInstruments.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -20,27 +22,31 @@ export interface PaperOrderResult {
   spotlight: SpotlightTrade;
 }
 
-type PaperPairSource = 'kraken_futures' | 'hyperliquid_spot';
+type PaperPairSource = 'kraken_futures' | 'oanda';
 type PaperPairDef = {
   pair: string;
   source: PaperPairSource;
   sourceSymbol: string;
   krakenSymbol?: string;
   hyperliquidCoin?: string;
+  binanceSymbol?: string;
+  oandaInvert?: boolean;
 };
 
-const cryptoPair = (pair: string, krakenSymbol: string, hyperliquidCoin: string): PaperPairDef => ({
+const cryptoPair = (pair: string, krakenSymbol: string, hyperliquidCoin: string, binanceSymbol?: string): PaperPairDef => ({
   pair,
   source: 'kraken_futures',
   sourceSymbol: krakenSymbol,
   krakenSymbol,
   hyperliquidCoin,
+  binanceSymbol: binanceSymbol || binance.pairToBinanceSymbol(pair) || undefined,
 });
 
-const hyperSpotPair = (pair: string, sourceSymbol: string): PaperPairDef => ({
+const oandaPair = (pair: string, instrument: string, invert = false): PaperPairDef => ({
   pair,
-  source: 'hyperliquid_spot',
-  sourceSymbol,
+  source: 'oanda',
+  sourceSymbol: instrument,
+  oandaInvert: invert,
 });
 
 export const PAPER_PAIRS: PaperPairDef[] = [
@@ -94,50 +100,8 @@ export const PAPER_PAIRS: PaperPairDef[] = [
   cryptoPair('JUP/USD', 'PF_JUPUSD', 'JUP'),
   cryptoPair('PYTH/USD', 'PF_PYTHUSD', 'PYTH'),
   cryptoPair('BONK/USD', 'PF_BONKUSD', 'BONK'),
-  hyperSpotPair('TSLA/USD', 'xyz:TSLA'),
-  hyperSpotPair('GOOGL/USD', 'xyz:GOOGL'),
-  hyperSpotPair('AAPL/USD', 'xyz:AAPL'),
-  hyperSpotPair('MSFT/USD', 'xyz:MSFT'),
-  hyperSpotPair('NVDA/USD', 'xyz:NVDA'),
-  hyperSpotPair('MSTR/USD', 'xyz:MSTR'),
-  hyperSpotPair('META/USD', 'xyz:META'),
-  hyperSpotPair('AMZN/USD', 'xyz:AMZN'),
-  hyperSpotPair('AMD/USD', 'xyz:AMD'),
-  hyperSpotPair('INTC/USD', 'xyz:INTC'),
-  hyperSpotPair('COIN/USD', 'xyz:COIN'),
-  hyperSpotPair('BABA/USD', 'xyz:BABA'),
-  hyperSpotPair('NFLX/USD', 'xyz:NFLX'),
-  hyperSpotPair('ORCL/USD', 'xyz:ORCL'),
-  hyperSpotPair('PLTR/USD', 'xyz:PLTR'),
-  hyperSpotPair('HOOD/USD', 'xyz:HOOD'),
-  hyperSpotPair('GME/USD', 'xyz:GME'),
-  hyperSpotPair('COST/USD', 'xyz:COST'),
-  hyperSpotPair('LLY/USD', 'xyz:LLY'),
-  hyperSpotPair('TSM/USD', 'xyz:TSM'),
-  hyperSpotPair('MU/USD', 'xyz:MU'),
-  hyperSpotPair('SP500/USD', 'xyz:SP500'),
-  hyperSpotPair('JP225/USD', 'xyz:JP225'),
-  hyperSpotPair('KR200/USD', 'xyz:KR200'),
-  hyperSpotPair('DXY/USD', 'xyz:DXY'),
-  hyperSpotPair('VIX/USD', 'xyz:VIX'),
-  hyperSpotPair('EWJ/USD', 'xyz:EWJ'),
-  hyperSpotPair('EWY/USD', 'xyz:EWY'),
-  hyperSpotPair('EWZ/USD', 'xyz:EWZ'),
-  hyperSpotPair('GOLD/USD', 'xyz:GOLD'),
-  hyperSpotPair('SILVER/USD', 'xyz:SILVER'),
-  hyperSpotPair('COPPER/USD', 'xyz:COPPER'),
-  hyperSpotPair('ALUMINIUM/USD', 'xyz:ALUMINIUM'),
-  hyperSpotPair('BRENTOIL/USD', 'xyz:BRENTOIL'),
-  hyperSpotPair('NATGAS/USD', 'xyz:NATGAS'),
-  hyperSpotPair('CORN/USD', 'xyz:CORN'),
-  hyperSpotPair('WHEAT/USD', 'xyz:WHEAT'),
-  hyperSpotPair('URANIUM/USD', 'xyz:URANIUM'),
-  hyperSpotPair('PALLADIUM/USD', 'xyz:PALLADIUM'),
-  hyperSpotPair('PLATINUM/USD', 'xyz:PLATINUM'),
-  hyperSpotPair('EUR/USD', 'xyz:EUR'),
-  hyperSpotPair('JPY/USD', 'xyz:JPY'),
-  hyperSpotPair('KRW/USD', 'xyz:KRW'),
-] as const;
+  ...OANDA_TRADFI_PAIRS.map(({ pair, instrument, invert }) => oandaPair(pair, instrument, Boolean(invert))),
+];
 
 const SPREAD_BPS = 0.1;
 const TAKER_FEE_RATE = 0.00005;
@@ -145,10 +109,12 @@ const MAKER_FEE_RATE = 0.00002;
 const MAX_LEVERAGE = 50;
 const MIN_LEVERAGE = 1;
 const KRAKEN_FUTURES_WS = 'wss://futures.kraken.com/ws/v1';
+const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream?streams=';
 
 const pairToDefinition = new Map(PAPER_PAIRS.map((item) => [item.pair, item]));
 const pairToKrakenSymbol = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map((item) => [item.pair, item.krakenSymbol as string]));
 const symbolToPair = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map((item) => [item.krakenSymbol as string, item.pair]));
+const symbolToBinancePair = new Map(PAPER_PAIRS.filter((item) => item.binanceSymbol).map((item) => [item.binanceSymbol as string, item.pair]));
 
 function computePositionPnl(position: Position): number {
   return position.side === 'long'
@@ -230,7 +196,7 @@ export class PaperTradingEngine {
   }
 
   getSupportedPairs(): string[] {
-    return PAPER_PAIRS.map((item) => item.pair);
+    return this.getActivePairDefs().map((item) => item.pair);
   }
 
   getMarketSnapshot(): Record<string, MarketTicker> {
@@ -240,6 +206,13 @@ export class PaperTradingEngine {
   async refreshMarketSnapshot(): Promise<Record<string, MarketTicker>> {
     await this.refreshTickers(this.playersRef);
     return this.market;
+  }
+
+  private getActivePairDefs(): PaperPairDef[] {
+    if (this.marketDataSource === 'binance') {
+      return PAPER_PAIRS.filter((item) => Boolean(item.binanceSymbol) || item.source === 'oanda');
+    }
+    return PAPER_PAIRS;
   }
 
   getFeeRates() {
@@ -287,7 +260,7 @@ export class PaperTradingEngine {
     this.startMarketFeed();
 
     // Low-frequency fallback keeps the market alive if the public WS drops.
-    const fallbackMs = this.marketDataSource === 'hyperliquid' ? 2000 : 30000;
+    const fallbackMs = this.marketDataSource === 'binance' ? 5000 : 30000;
     this.tickerInterval = setInterval(() => {
       this.refreshTickers(players).catch((error) => {
         console.error('Paper fallback ticker refresh failed:', (error as Error).message);
@@ -596,31 +569,45 @@ export class PaperTradingEngine {
   }
 
   private async refreshTickers(players: Player[]): Promise<void> {
-    const [krakenPrices, hyperliquidPrices] = await Promise.all([
+    const [krakenPrices, oandaPrices, binancePrices] = await Promise.all([
       kraken.getTickerStats().catch(() => ({})),
-      hyperliquid.getAllMids().catch(() => ({})),
+      oanda.getPricing().catch(() => ({})),
+      binance.getTickerStats().catch(() => ({})),
     ]);
     const now = Date.now();
 
-    this.market = Object.fromEntries(PAPER_PAIRS.map((item) => {
-      const sourceKey = item.source === 'hyperliquid_spot'
+    const activePairs = this.getActivePairDefs();
+    this.market = Object.fromEntries(activePairs.map((item) => {
+      const sourceKey = item.source === 'oanda'
         ? item.sourceSymbol
-        : this.marketDataSource === 'hyperliquid'
-          ? item.hyperliquidCoin || item.pair
+        : this.marketDataSource === 'binance'
+          ? item.binanceSymbol || item.krakenSymbol || item.sourceSymbol
           : item.krakenSymbol || item.sourceSymbol;
-      const sourcePrices = item.source === 'hyperliquid_spot' || this.marketDataSource === 'hyperliquid'
-        ? hyperliquidPrices
-        : krakenPrices;
+      const sourcePrices = item.source === 'oanda'
+        ? oandaPrices
+        : this.marketDataSource === 'binance'
+          ? binancePrices
+          : krakenPrices;
       const rawTicker = sourcePrices[sourceKey];
-      const markPrice = (typeof rawTicker === 'number' ? rawTicker : rawTicker?.markPrice) || this.market[item.pair]?.markPrice || 0;
+      let markPrice = (typeof rawTicker === 'number' ? rawTicker : rawTicker?.markPrice) || this.market[item.pair]?.markPrice || 0;
+      let bidPrice = typeof rawTicker === 'number'
+        ? Math.max(0, markPrice * (1 - SPREAD_BPS / 10000))
+        : (rawTicker?.bidPrice ?? Math.max(0, markPrice - markPrice * (SPREAD_BPS / 10000)));
+      let askPrice = typeof rawTicker === 'number'
+        ? markPrice * (1 + SPREAD_BPS / 10000)
+        : (rawTicker?.askPrice ?? markPrice + markPrice * (SPREAD_BPS / 10000));
+      if (item.source === 'oanda' && rawTicker && typeof rawTicker !== 'number') {
+        markPrice = rawTicker.markPrice || markPrice;
+        bidPrice = rawTicker.bidPrice || bidPrice;
+        askPrice = rawTicker.askPrice || askPrice;
+      }
       const change24h = typeof rawTicker === 'number' ? (this.market[item.pair]?.change24h ?? null) : (rawTicker?.change24h ?? null);
-      const halfSpread = markPrice * (SPREAD_BPS / 10000);
       return [item.pair, {
         pair: item.pair,
         symbol: sourceKey,
         markPrice,
-        bidPrice: Math.max(0, markPrice - halfSpread),
-        askPrice: markPrice + halfSpread,
+        bidPrice,
+        askPrice,
         change24h,
         spreadBps: SPREAD_BPS,
         updatedAt: now,
@@ -642,6 +629,10 @@ export class PaperTradingEngine {
   private startMarketFeed(): void {
     if (this.marketDataSource === 'kraken') {
       this.startTickerSocket();
+      return;
+    }
+    if (this.marketDataSource === 'binance') {
+      this.startBinanceTickerSocket();
       return;
     }
     if (this.websocket) {
@@ -694,14 +685,69 @@ export class PaperTradingEngine {
   }
 
   private scheduleReconnect(): void {
-    if (this.marketDataSource !== 'kraken') return;
+    if (this.marketDataSource !== 'kraken' && this.marketDataSource !== 'binance') return;
     if (this.playersRef.length === 0 || this.reconnectTimeout) return;
     const delay = Math.min(15000, 1000 * 2 ** this.reconnectAttempts);
     this.reconnectAttempts += 1;
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
-      this.startTickerSocket();
+      if (this.marketDataSource === 'binance') this.startBinanceTickerSocket();
+      else this.startTickerSocket();
     }, delay);
+  }
+
+  private startBinanceTickerSocket(): void {
+    if (this.marketDataSource !== 'binance') return;
+    if (this.websocket) {
+      this.websocket.removeAllListeners();
+      this.websocket.close();
+      this.websocket = null;
+    }
+
+    const streams = this.getActivePairDefs()
+      .filter((item): item is PaperPairDef & { binanceSymbol: string } => Boolean(item.binanceSymbol))
+      .map((item) => `${item.binanceSymbol.toLowerCase()}@markPrice@1s`);
+
+    if (streams.length === 0) return;
+
+    const ws = new WebSocket(`${BINANCE_FUTURES_WS}${streams.join('/')}`);
+    this.websocket = ws;
+
+    ws.on('open', () => {
+      this.reconnectAttempts = 0;
+    });
+
+    ws.on('message', (raw) => {
+      try {
+        const payload = JSON.parse(raw.toString());
+        this.handleBinanceTickerMessage(payload?.data ?? payload);
+      } catch (error) {
+        console.error('Binance ticker WS parse failed:', (error as Error).message);
+      }
+    });
+
+    ws.on('error', (error) => {
+      console.error('Binance ticker WS error:', error.message);
+    });
+
+    ws.on('close', () => {
+      if (this.websocket !== ws) return;
+      this.websocket = null;
+      this.scheduleReconnect();
+    });
+  }
+
+  private handleBinanceTickerMessage(payload: any): void {
+    const symbol = String(payload?.s || payload?.symbol || '').toUpperCase();
+    const pair = symbolToBinancePair.get(symbol);
+    if (!pair) return;
+
+    const mark = asNumber(payload?.p)
+      ?? asNumber(payload?.markPrice)
+      ?? asNumber(payload?.c);
+    if (!mark) return;
+
+    this.applyTicker(pair, symbol, mark);
   }
 
   private handleTickerMessage(payload: any): void {
@@ -978,4 +1024,8 @@ export class PaperTradingEngine {
     player.pnl = player.currentBalance - initialBalance;
     player.pnlPercent = initialBalance > 0 ? (player.pnl / initialBalance) * 100 : 0;
   }
+}
+
+export function getPaperPairDefinition(pair: string): PaperPairDef | undefined {
+  return pairToDefinition.get(pair);
 }

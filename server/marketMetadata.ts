@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { getOandaMapping } from './oandaInstruments.js';
 
 export interface MarketMetadata {
   pair: string;
@@ -9,7 +10,7 @@ export interface MarketMetadata {
   imageUrl: string | null;
   krakenSymbol: string;
   category?: 'crypto' | 'actions' | 'indices' | 'commodities' | 'forex';
-  source?: 'kraken_futures' | 'hyperliquid_perp' | 'hyperliquid_spot';
+  source?: 'kraken_futures' | 'hyperliquid_perp' | 'hyperliquid_spot' | 'oanda';
   sourceSymbol?: string;
   tradingViewSymbol?: string | null;
   sortOrder: number;
@@ -126,6 +127,9 @@ function getPool(): Pool | null {
     connectionString: databaseUrl,
     ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
   });
+  pool.on('error', (err) => {
+    console.error('[market metadata pool] idle client error:', err.message || err);
+  });
   return pool;
 }
 
@@ -182,9 +186,17 @@ function fallbackImageFor(item: MarketMetadata): string | null {
 }
 
 function withImageFallback(item: MarketMetadata): MarketMetadata {
+  const oandaMapping = getOandaMapping(item.pair);
+  const normalized = oandaMapping
+    ? {
+        ...item,
+        source: 'oanda' as const,
+        sourceSymbol: oandaMapping.instrument,
+      }
+    : item;
   return {
-    ...item,
-    imageUrl: item.imageUrl || fallbackImageFor(item),
+    ...normalized,
+    imageUrl: normalized.imageUrl || fallbackImageFor(normalized),
   };
 }
 

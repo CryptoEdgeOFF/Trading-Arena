@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 
-declare global {
-  interface Window {
-    TradingView?: {
-      widget: new (config: Record<string, unknown>) => unknown;
-    };
-  }
+interface LegacyTradingViewWindow {
+  TradingView?: {
+    widget: new (config: Record<string, unknown>) => unknown;
+  };
 }
 
 function toTradingViewSymbol(pair: string): string {
@@ -17,7 +15,8 @@ let tradingViewLoader: Promise<void> | null = null;
 
 function loadTradingViewScript(): Promise<void> {
   if (typeof window === 'undefined') return Promise.resolve();
-  if (window.TradingView) return Promise.resolve();
+  const legacyWindow = window as unknown as LegacyTradingViewWindow;
+  if (legacyWindow.TradingView) return Promise.resolve();
   if (tradingViewLoader) return tradingViewLoader;
 
   tradingViewLoader = new Promise((resolve, reject) => {
@@ -41,7 +40,7 @@ export default function TradingViewChart({
   interval?: string;
   tradingViewSymbol?: string | null;
   // Kept for API compatibility with parent component.
-  marketDataSource?: 'kraken' | 'hyperliquid';
+  marketDataSource?: 'kraken' | 'binance';
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const containerId = useMemo(() => `tv-chart-${pair.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`, [pair]);
@@ -52,9 +51,10 @@ export default function TradingViewChart({
 
     loadTradingViewScript()
       .then(() => {
-        if (cancelled || !containerRef.current || !window.TradingView) return;
+        const legacyWindow = window as unknown as LegacyTradingViewWindow;
+        if (cancelled || !containerRef.current || !legacyWindow.TradingView) return;
         containerRef.current.innerHTML = '';
-        new window.TradingView.widget({
+        new legacyWindow.TradingView.widget({
           autosize: true,
           symbol,
           interval,

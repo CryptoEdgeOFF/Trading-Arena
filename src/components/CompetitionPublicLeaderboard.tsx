@@ -27,6 +27,8 @@ interface CashPrize {
   currency: string;
   total: number;
   breakdown?: Array<{ rank: number; amount: number }>;
+  label?: string;
+  imageUrl?: string;
 }
 
 interface LeaderboardResponse {
@@ -82,6 +84,14 @@ function StatusPill({ status }: { status: 'upcoming' | 'live' | 'ended' }) {
 function formatPrizeAmount(amount: number, currency: string): string {
   const value = Math.round(amount).toLocaleString('en-US').replace(/,/g, ' ');
   return `${value} ${currency}`;
+}
+
+function getPrizeTitle(prize: CashPrize): string {
+  return prize.label || (prize.total > 0 ? formatPrizeAmount(prize.total, prize.currency) : 'Récompense');
+}
+
+function hasPrize(prize: CashPrize | null | undefined): prize is CashPrize {
+  return Boolean(prize && (prize.label || prize.imageUrl || prize.total > 0));
 }
 
 const RANK_TIER_LABEL: Record<number, string> = {
@@ -277,8 +287,8 @@ export default function CompetitionPublicLeaderboard() {
                 </div>
               </section>
 
-              {/* CASH PRIZE */}
-              {data.competition.cashPrize && data.competition.cashPrize.total > 0 && (
+              {/* PRIZE */}
+              {hasPrize(data.competition.cashPrize) && (
                 <CashPrizeSection prize={data.competition.cashPrize} />
               )}
 
@@ -370,10 +380,11 @@ export default function CompetitionPublicLeaderboard() {
 
 function CashPrizeSection({ prize }: { prize: CashPrize }) {
   const breakdown = prize.breakdown && prize.breakdown.length > 0 ? prize.breakdown.slice(0, 6) : null;
+  const prizeTitle = getPrizeTitle(prize);
   return (
     <section className="mt-12">
       <div className="border-b border-[#1a1a20] pb-4">
-        <div className="micro text-[10px] text-amber-400/90">Cash Prize</div>
+        <div className="micro text-[10px] text-amber-400/90">Récompense</div>
         <h2 className="display mt-1 text-2xl font-bold text-white md:text-3xl">A gagner</h2>
       </div>
 
@@ -381,17 +392,34 @@ function CashPrizeSection({ prize }: { prize: CashPrize }) {
         <div className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-br from-[#241a05] via-[#0f0a04] to-[#0a0a0d] p-7 md:p-9">
           <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-amber-500/15 blur-3xl" />
           <div className="pointer-events-none absolute -left-24 -bottom-24 h-72 w-72 rounded-full bg-[#dc2626]/15 blur-3xl" />
-          <div className="relative">
-            <div className="micro text-[10px] text-amber-300/80">Pool total</div>
-            <div className="mt-2 flex items-baseline gap-3">
-              <span className="display text-5xl font-bold leading-none text-white md:text-6xl">
-                {Math.round(prize.total).toLocaleString('en-US').replace(/,/g, ' ')}
-              </span>
-              <span className="display text-2xl font-bold text-amber-300/80 md:text-3xl">{prize.currency}</span>
+          <div className="relative grid gap-6 sm:grid-cols-[150px_1fr] sm:items-center">
+            <div className="overflow-hidden rounded-2xl border border-amber-400/25 bg-[#0a0a0d] shadow-[0_24px_80px_-45px_rgba(245,158,11,0.9)]">
+              {prize.imageUrl ? (
+                <img src={prize.imageUrl} alt={prizeTitle} className="aspect-square w-full object-cover" loading="lazy" />
+              ) : (
+                <div className="flex aspect-square w-full items-center justify-center text-amber-200">
+                  <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M20 12v8H4v-8" />
+                    <path d="M2 7h20v5H2z" />
+                    <path d="M12 22V7" />
+                    <path d="M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85C10.6 4.55 12 7 12 7Z" />
+                    <path d="M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85C13.4 4.55 12 7 12 7Z" />
+                  </svg>
+                </div>
+              )}
             </div>
-            <p className="mt-4 max-w-md text-sm text-[#b8b8c2]">
-              Distribue aux meilleurs traders a la fin de la competition. Plus tu grimpes dans le ranking, plus la part est grosse.
-            </p>
+            <div>
+              <div className="micro text-[10px] text-amber-300/80">Lot principal</div>
+              <div className="display mt-2 text-4xl font-bold leading-tight text-white md:text-5xl">{prizeTitle}</div>
+              {prize.total > 0 && prize.label && (
+                <div className="mt-3 inline-flex rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-sm font-semibold text-amber-200">
+                  Valeur cash {formatPrizeAmount(prize.total, prize.currency)}
+                </div>
+              )}
+              <p className="mt-4 max-w-md text-sm text-[#b8b8c2]">
+                Remis aux meilleurs traders à la fin de la compétition. Plus tu grimpes dans le ranking, plus tu te rapproches du lot.
+              </p>
+            </div>
           </div>
         </div>
 

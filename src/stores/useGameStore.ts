@@ -116,7 +116,7 @@ export interface MarketTicker {
 
 export type EventMode = '1v1' | '1v1v1' | '1v1v1v1' | '4v4';
 export type PlatformMode = 'kraken' | 'paper';
-export type MarketDataSource = 'kraken' | 'hyperliquid';
+export type MarketDataSource = 'kraken' | 'binance';
 
 export interface TeamInfo {
   name: string;

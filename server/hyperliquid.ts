@@ -1,4 +1,5 @@
 import type { OhlcCandle } from './kraken.js';
+import { STATIC_MARKET_METADATA } from './marketMetadata.js';
 
 const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
 
@@ -65,8 +66,14 @@ export async function getAllMids(): Promise<Record<string, number>> {
   return prices;
 }
 
+function pairToHyperliquidCoin(pair: string): string | null {
+  if (PAIR_TO_COIN[pair]) return PAIR_TO_COIN[pair];
+  const meta = STATIC_MARKET_METADATA.find((item) => item.pair === pair && item.source === 'hyperliquid_spot');
+  return meta?.sourceSymbol ?? null;
+}
+
 export async function getOhlcCandles(pair: string, interval = 1): Promise<OhlcCandle[]> {
-  const coin = PAIR_TO_COIN[pair];
+  const coin = pairToHyperliquidCoin(pair);
   if (!coin) {
     throw new Error('Pair non supportee pour historique Hyperliquid');
   }

@@ -15,6 +15,11 @@ dist-ssr
 # Player data (contains API keys)
 data/
 
+# TradingView Advanced Charts (private library — must not be committed)
+charting_library-master/
+public/charting_library/
+public/datafeeds/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { EventMode, MarketDataSource } from '../stores/useGameStore';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -21,6 +22,8 @@ interface AdminCashPrize {
   currency: string;
   total: number;
   breakdown?: Array<{ rank: number; amount: number }>;
+  label?: string;
+  imageUrl?: string;
 }
 
 interface AdminCompetition {
@@ -44,6 +47,8 @@ interface PrizeDraft {
   first: string;
   second: string;
   third: string;
+  label: string;
+  imageUrl: string;
 }
 
 interface CompetitionDraft {
@@ -63,7 +68,20 @@ const EMPTY_DRAFT: CompetitionDraft = {
   startAt: '',
   endAt: '',
   isPublic: true,
-  prize: { currency: 'USD', total: '', first: '', second: '', third: '' },
+  prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '' },
+};
+
+const DATA_SOURCE_LABELS: Record<MarketDataSource, { label: string; desc: string; accent: string }> = {
+  kraken: {
+    label: 'Kraken',
+    desc: 'Source historique existante. Utile en fallback crypto.',
+    accent: 'border-indigo-500 bg-indigo-500/10 text-indigo-200',
+  },
+  binance: {
+    label: 'Binance Futures',
+    desc: 'USDT-M Futures, meilleure liquidité pour les cryptos.',
+    accent: 'border-amber-400 bg-amber-400/10 text-amber-200',
+  },
 };
 
 function toLocalInput(value: number): string {
@@ -74,24 +92,38 @@ function toLocalInput(value: number): string {
 }
 
 function buildCashPrizePayload(input: PrizeDraft):
-  | { currency: string; total: number; breakdown?: Array<{ rank: number; amount: number }> }
+  | { currency: string; total: number; breakdown?: Array<{ rank: number; amount: number }>; label?: string; imageUrl?: string }
   | null {
   const total = Number(input.total);
   const first = Number(input.first);
   const second = Number(input.second);
   const third = Number(input.third);
   const currency = (input.currency || 'USD').trim().toUpperCase().slice(0, 6) || 'USD';
+  const label = input.label.trim().slice(0, 80);
+  const imageUrl = input.imageUrl.trim();
   const breakdown: Array<{ rank: number; amount: number }> = [];
   if (Number.isFinite(first) && first > 0) breakdown.push({ rank: 1, amount: first });
   if (Number.isFinite(second) && second > 0) breakdown.push({ rank: 2, amount: second });
   if (Number.isFinite(third) && third > 0) breakdown.push({ rank: 3, amount: third });
 
   if (!Number.isFinite(total) || total <= 0) {
-    if (breakdown.length === 0) return null;
+    if (breakdown.length === 0 && !label && !imageUrl) return null;
     const computed = breakdown.reduce((acc, row) => acc + row.amount, 0);
-    return { currency, total: computed, breakdown };
+    return {
+      currency,
+      total: computed,
+      ...(breakdown.length > 0 ? { breakdown } : {}),
+      ...(label ? { label } : {}),
+      ...(imageUrl ? { imageUrl } : {}),
+    };
   }
-  return breakdown.length > 0 ? { currency, total, breakdown } : { currency, total };
+  return {
+    currency,
+    total,
+    ...(breakdown.length > 0 ? { breakdown } : {}),
+    ...(label ? { label } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+  };
 }
 
 function formatDate(value: number): string {
@@ -128,6 +160,10 @@ export default function CompetitionAdmin() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<CompetitionDraft | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [arenaMarketDataSource, setArenaMarketDataSource] = useState<MarketDataSource>('binance');
+  const [arenaStartingBalance, setArenaStartingBalance] = useState(10000);
+  const [arenaEventMode, setArenaEventMode] = useState<EventMode>('1v1');
+  const [savingArenaSettings, setSavingArenaSettings] = useState(false);
 
   const adminFetch = useCallback(
     async (url: string, init: RequestInit = {}) => {
@@ -157,6 +193,22 @@ export default function CompetitionAdmin() {
     }
   }, [adminFetch, adminToken]);
 
+  const fetchArenaSettings = useCallback(async () => {
+    if (!adminToken) return;
+    try {
+      const res = await adminFetch('/api/event/config');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.marketDataSource) {
+        setArenaMarketDataSource(data.marketDataSource === 'hyperliquid' ? 'binance' : data.marketDataSource);
+      }
+      if (data.paperStartingBalance) setArenaStartingBalance(data.paperStartingBalance);
+      if (data.mode) setArenaEventMode(data.mode);
+    } catch {
+      // ignore; the competitions list remains usable.
+    }
+  }, [adminFetch, adminToken]);
+
   useEffect(() => {
     if (!adminToken) return;
     let cancelled = false;
@@ -169,12 +221,54 @@ export default function CompetitionAdmin() {
         setAdminToken('');
       } else {
         fetchCompetitions();
+        fetchArenaSettings();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [adminToken, fetchCompetitions]);
+  }, [adminToken, fetchArenaSettings, fetchCompetitions]);
+
+  async function saveArenaSettings(next?: Partial<{ marketDataSource: MarketDataSource; paperStartingBalance: number }>) {
+    setSavingArenaSettings(true);
+    setError('');
+    setInfo('');
+    const nextSource = next?.marketDataSource || arenaMarketDataSource;
+    const nextBalance = next?.paperStartingBalance ?? arenaStartingBalance;
+    try {
+      const res = await adminFetch('/api/event/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: arenaEventMode,
+          platformMode: 'paper',
+          paperStartingBalance: nextBalance,
+          marketDataSource: nextSource,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Réglages arène impossibles');
+      setArenaMarketDataSource(nextSource);
+      setArenaStartingBalance(nextBalance);
+      setInfo('Réglages paper arène sauvegardés');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingArenaSettings(false);
+    }
+  }
+
+  async function uploadPrizeImage(file: File): Promise<string> {
+    const formData = new FormData();
+    formData.append('image', file);
+    const res = await adminFetch('/api/admin/prize-image', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Upload de la photo impossible');
+    return String(data.imageUrl || '');
+  }
 
   async function loginAdmin(e: React.FormEvent) {
     e.preventDefault();
@@ -266,6 +360,8 @@ export default function CompetitionAdmin() {
         first: findAmount(1) != null ? String(findAmount(1)) : '',
         second: findAmount(2) != null ? String(findAmount(2)) : '',
         third: findAmount(3) != null ? String(findAmount(3)) : '',
+        label: competition.cashPrize?.label || '',
+        imageUrl: competition.cashPrize?.imageUrl || '',
       },
     });
   }
@@ -341,47 +437,50 @@ export default function CompetitionAdmin() {
 
   if (!adminToken) {
     return (
-      <main className="min-h-screen bg-[#020617] px-4 py-12 text-slate-100">
-        <div className="mx-auto w-full max-w-md">
-          <Link to="/compete" className="mb-6 inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400 hover:text-white">
-            <span aria-hidden>←</span> Retour à BTF Arena
-          </Link>
-          <form
-            onSubmit={loginAdmin}
-            className="rounded-2xl border border-slate-800 bg-slate-900/80 p-7 shadow-2xl"
-          >
-            <div className="mb-5 flex items-center gap-3">
-              <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
-              <div>
-                <h1 className="font-rajdhani text-2xl font-bold text-white">Admin Arènes</h1>
-                <p className="text-xs text-slate-400">Gestion des compétitions en ligne</p>
-              </div>
-            </div>
-            <label className="mb-1 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Code admin</label>
-            <input
-              type="password"
-              value={adminCode}
-              onChange={(e) => setAdminCode(e.target.value)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-amber-400"
-              placeholder="••••••••"
-              autoFocus
-            />
-            {loginError && <p className="mt-3 text-sm text-rose-400">{loginError}</p>}
-            <button
-              type="submit"
-              className="mt-5 w-full rounded-lg bg-amber-500 px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-black hover:bg-amber-400"
+      <div className="h-screen overflow-y-auto bg-[#020617] text-slate-100">
+        <main className="min-h-full px-4 py-12">
+          <div className="mx-auto w-full max-w-md">
+            <Link to="/compete" className="mb-6 inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400 hover:text-white">
+              <span aria-hidden>←</span> Retour à BTF Arena
+            </Link>
+            <form
+              onSubmit={loginAdmin}
+              className="rounded-2xl border border-slate-800 bg-slate-900/80 p-7 shadow-2xl"
             >
-              Connexion
-            </button>
-          </form>
-        </div>
-      </main>
+              <div className="mb-5 flex items-center gap-3">
+                <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
+                <div>
+                  <h1 className="font-rajdhani text-2xl font-bold text-white">Admin Arènes</h1>
+                  <p className="text-xs text-slate-400">Gestion des compétitions en ligne</p>
+                </div>
+              </div>
+              <label className="mb-1 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Code admin</label>
+              <input
+                type="password"
+                value={adminCode}
+                onChange={(e) => setAdminCode(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-amber-400"
+                placeholder="••••••••"
+                autoFocus
+              />
+              {loginError && <p className="mt-3 text-sm text-rose-400">{loginError}</p>}
+              <button
+                type="submit"
+                className="mt-5 w-full rounded-lg bg-amber-500 px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-black hover:bg-amber-400"
+              >
+                Connexion
+              </button>
+            </form>
+          </div>
+        </main>
+      </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#020617] px-4 py-8 text-slate-100 md:px-8">
-      <div className="mx-auto w-full max-w-6xl">
+    <div className="h-screen overflow-y-auto bg-[#020617] text-slate-100">
+      <main className="min-h-full px-4 py-8 md:px-8">
+        <div className="mx-auto w-full max-w-6xl">
         <header className="mb-8 flex flex-col gap-4 border-b border-slate-800 pb-6 md:flex-row md:items-center md:justify-between">
           <div>
             <Link to="/compete" className="mb-2 inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-slate-400 hover:text-white">
@@ -404,6 +503,63 @@ export default function CompetitionAdmin() {
             {error || info}
           </div>
         )}
+
+        <section className="mb-8 rounded-2xl border border-amber-400/20 bg-slate-900/60 p-6">
+          <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="font-rajdhani text-xl font-semibold text-white">Réglages paper trading des arènes online</h2>
+              <p className="text-xs text-slate-400">
+                Ces paramètres concernent uniquement les joueurs qui rejoignent une arène depuis `/compete`.
+                Le terminal/dashboard réel reste géré séparément via `/admin`.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => saveArenaSettings()}
+              disabled={savingArenaSettings}
+              className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-amber-200 hover:bg-amber-400/15 disabled:opacity-50"
+            >
+              {savingArenaSettings ? 'Sauvegarde…' : 'Sauvegarder'}
+            </button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-[1.4fr_0.8fr]">
+            <div>
+              <p className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">Datafeed crypto</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(['binance', 'kraken'] as MarketDataSource[]).map((source) => {
+                  const active = arenaMarketDataSource === source;
+                  return (
+                    <button
+                      key={source}
+                      type="button"
+                      onClick={() => saveArenaSettings({ marketDataSource: source })}
+                      disabled={savingArenaSettings}
+                      className={`rounded-xl border px-4 py-3 text-left transition-all ${
+                        active ? DATA_SOURCE_LABELS[source].accent : 'border-slate-700 bg-slate-950/70 text-slate-300 hover:border-slate-500'
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <div className="font-semibold text-white">{DATA_SOURCE_LABELS[source].label}</div>
+                      <div className="mt-1 text-xs text-slate-400">{DATA_SOURCE_LABELS[source].desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Field label="Balance initiale par joueur">
+              <input
+                type="number"
+                min={100}
+                step={100}
+                value={arenaStartingBalance}
+                onChange={(e) => setArenaStartingBalance(Number(e.target.value))}
+                onBlur={() => saveArenaSettings({ paperStartingBalance: arenaStartingBalance })}
+                className="admin-input"
+              />
+            </Field>
+          </div>
+        </section>
 
         <section className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
           <h2 className="font-rajdhani text-xl font-semibold text-white">Nouvelle arène</h2>
@@ -430,20 +586,18 @@ export default function CompetitionAdmin() {
               />
             </Field>
             <Field label="Début">
-              <input
-                type="datetime-local"
+              <DateTimePicker
                 value={createDraft.startAt}
                 onChange={(e) => setCreateDraft({ ...createDraft, startAt: e.target.value })}
-                className="admin-input"
+                placeholder="Choisir date et heure de début"
                 required
               />
             </Field>
             <Field label="Fin">
-              <input
-                type="datetime-local"
+              <DateTimePicker
                 value={createDraft.endAt}
                 onChange={(e) => setCreateDraft({ ...createDraft, endAt: e.target.value })}
-                className="admin-input"
+                placeholder="Choisir date et heure de fin"
                 required
               />
             </Field>
@@ -472,6 +626,7 @@ export default function CompetitionAdmin() {
             <PrizeFields
               draft={createDraft.prize}
               onChange={(prize) => setCreateDraft({ ...createDraft, prize })}
+              onUploadImage={uploadPrizeImage}
             />
 
             <div className="md:col-span-2 flex justify-end">
@@ -527,9 +682,24 @@ export default function CompetitionAdmin() {
                         <p className="mt-1 text-xs text-slate-400">
                           {competition.participants} participant{competition.participants > 1 ? 's' : ''}
                           {competition.cashPrize && (
-                            <> · Prize pool {competition.cashPrize.total.toLocaleString('en-US')} {competition.cashPrize.currency}</>
+                            <> · À gagner {competition.cashPrize.label || `${competition.cashPrize.total.toLocaleString('en-US')} ${competition.cashPrize.currency}`}</>
                           )}
                         </p>
+                        {competition.cashPrize?.imageUrl && (
+                          <div className="mt-3 flex items-center gap-3 rounded-xl border border-amber-400/15 bg-amber-400/5 p-2">
+                            <img
+                              src={competition.cashPrize.imageUrl}
+                              alt={competition.cashPrize.label || 'Récompense'}
+                              className="h-12 w-12 rounded-lg border border-amber-400/20 object-cover"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-amber-300/80">Récompense</p>
+                              <p className="truncate text-sm font-semibold text-white">
+                                {competition.cashPrize.label || `${competition.cashPrize.total.toLocaleString('en-US')} ${competition.cashPrize.currency}`}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -578,19 +748,17 @@ export default function CompetitionAdmin() {
                             />
                           </Field>
                           <Field label="Début">
-                            <input
-                              type="datetime-local"
+                            <DateTimePicker
                               value={editDraft.startAt}
                               onChange={(e) => setEditDraft({ ...editDraft, startAt: e.target.value })}
-                              className="admin-input"
+                              placeholder="Choisir date et heure de début"
                             />
                           </Field>
                           <Field label="Fin">
-                            <input
-                              type="datetime-local"
+                            <DateTimePicker
                               value={editDraft.endAt}
                               onChange={(e) => setEditDraft({ ...editDraft, endAt: e.target.value })}
-                              className="admin-input"
+                              placeholder="Choisir date et heure de fin"
                             />
                           </Field>
                           <Field label="Mode">
@@ -617,6 +785,7 @@ export default function CompetitionAdmin() {
                           <PrizeFields
                             draft={editDraft.prize}
                             onChange={(prize) => setEditDraft({ ...editDraft, prize })}
+                            onUploadImage={uploadPrizeImage}
                           />
                         </div>
                         <div className="mt-5 flex justify-end gap-2">
@@ -686,8 +855,9 @@ export default function CompetitionAdmin() {
             </div>
           )}
         </section>
-      </div>
-    </main>
+        </div>
+      </main>
+    </div>
   );
 }
 
@@ -700,12 +870,147 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function PrizeFields({ draft, onChange }: { draft: PrizeDraft; onChange: (next: PrizeDraft) => void }) {
+function DateTimePicker({
+  value,
+  onChange,
+  placeholder,
+  required = false,
+}: {
+  value: string;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder: string;
+  required?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  function openPicker() {
+    const input = inputRef.current;
+    if (!input) return;
+    const nativePicker = (input as HTMLInputElement & { showPicker?: () => void }).showPicker;
+    if (nativePicker) {
+      nativePicker.call(input);
+      return;
+    }
+    input.focus();
+  }
+
+  return (
+    <div className="group flex h-11 items-center overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition-colors focus-within:border-amber-400 hover:border-slate-600">
+      <button
+        type="button"
+        onClick={openPicker}
+        className="flex h-full w-11 shrink-0 items-center justify-center border-r border-slate-800 text-amber-300 transition-colors hover:bg-amber-400/10 hover:text-amber-200"
+        aria-label={placeholder}
+      >
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 14h.01M12 14h.01M15 14h.01M9 17h.01M12 17h.01" />
+        </svg>
+      </button>
+      <input
+        ref={inputRef}
+        type="datetime-local"
+        value={value}
+        onChange={onChange}
+        required={required}
+        className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm text-white outline-none [color-scheme:dark]"
+        aria-label={placeholder}
+      />
+    </div>
+  );
+}
+
+function PrizeFields({
+  draft,
+  onChange,
+  onUploadImage,
+}: {
+  draft: PrizeDraft;
+  onChange: (next: PrizeDraft) => void;
+  onUploadImage: (file: File) => Promise<string>;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+
+  async function handleFile(file: File | null) {
+    if (!file) return;
+    setUploading(true);
+    setUploadError('');
+    try {
+      const imageUrl = await onUploadImage(file);
+      onChange({ ...draft, imageUrl });
+    } catch (err: any) {
+      setUploadError(err.message || 'Upload impossible');
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div className="md:col-span-2 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-      <h3 className="mb-3 text-[11px] uppercase tracking-[0.2em] text-slate-500">Cash prize (optionnel)</h3>
-      <div className="grid gap-3 md:grid-cols-5">
-        <Field label="Devise">
+      <div className="mb-4 flex flex-col gap-1">
+        <h3 className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Récompense à gagner (optionnel)</h3>
+        <p className="text-xs text-slate-500">Tu peux mettre du cash, un lot physique comme une PS5, ou les deux avec une photo.</p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[160px_1fr]">
+        <div className="rounded-xl border border-amber-400/15 bg-amber-400/5 p-3">
+          <div className="aspect-square overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
+            {draft.imageUrl ? (
+              <img src={draft.imageUrl} alt={draft.label || 'Récompense'} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-slate-600">
+                <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 12v8H4v-8" />
+                  <path d="M2 7h20v5H2z" />
+                  <path d="M12 22V7" />
+                  <path d="M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85C10.6 4.55 12 7 12 7Z" />
+                  <path d="M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85C13.4 4.55 12 7 12 7Z" />
+                </svg>
+              </div>
+            )}
+          </div>
+          <label className="mt-3 flex cursor-pointer items-center justify-center rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200 transition-colors hover:bg-amber-400/15">
+            {uploading ? 'Upload...' : 'Photo'}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+              className="sr-only"
+              onChange={(e) => {
+                void handleFile(e.target.files?.[0] || null);
+                e.currentTarget.value = '';
+              }}
+            />
+          </label>
+          {uploadError && <p className="mt-2 text-xs text-rose-300">{uploadError}</p>}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-5">
+          <div className="md:col-span-3">
+            <Field label="Nom du lot">
+              <input
+                type="text"
+                value={draft.label}
+                onChange={(e) => onChange({ ...draft, label: e.target.value })}
+                className="admin-input"
+                placeholder="PS5, iPhone, Voyage, Prop firm challenge..."
+                maxLength={80}
+              />
+            </Field>
+          </div>
+          <div className="md:col-span-2">
+            <Field label="URL photo">
+              <input
+                type="url"
+                value={draft.imageUrl}
+                onChange={(e) => onChange({ ...draft, imageUrl: e.target.value })}
+                className="admin-input"
+                placeholder="https://..."
+              />
+            </Field>
+          </div>
+
+          <Field label="Devise">
           <input
             type="text"
             value={draft.currency}
@@ -749,7 +1054,8 @@ function PrizeFields({ draft, onChange }: { draft: PrizeDraft; onChange: (next: 
             onChange={(e) => onChange({ ...draft, third: e.target.value })}
             className="admin-input"
           />
-        </Field>
+          </Field>
+        </div>
       </div>
     </div>
   );

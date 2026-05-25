@@ -1,9 +1,12 @@
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import ExchangeTerminal from './components/ExchangeTerminal';
+import Dashboard from './components/Dashboard';
+import TraderTerminal from './components/TraderTerminal';
 import CompetitionPlatform from './components/CompetitionPlatform';
 import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderboard';
 import CompetitionSettings from './components/CompetitionSettings';
 import CompetitionAdmin from './components/CompetitionAdmin';
+import AdminPanel from './components/AdminPanel';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
 
@@ -12,6 +15,10 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/compete" replace />} />
+        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/btf-live-arena-2026" element={<Dashboard />} />
+        <Route path="/live-dashboard" element={<Dashboard />} />
+        <Route path="/trader" element={<TraderTerminal />} />
         <Route path="/trade" element={<ExchangeTerminal />} />
         <Route path="/compete" element={<CompetitionPlatform />} />
         <Route path="/compete/settings" element={<CompetitionSettings />} />

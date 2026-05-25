@@ -10,7 +10,9 @@ import fs from 'fs';
 import { PlayerManager } from './playerManager.js';
 import { EventConfig, StatePatch } from './types.js';
 import * as kraken from './kraken.js';
-import * as hyperliquid from './hyperliquid.js';
+import * as binance from './binance.js';
+import * as oanda from './oanda.js';
+import { getPaperPairDefinition } from './exchangePaperEngine.js';
 import { CompetitionManager } from './competitionManager.js';
 import { sendOtpEmail } from './mailer.js';
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
@@ -587,7 +589,10 @@ app.get('/api/players', (_req, res) => {
 // --- Event config (mode & teams) ---
 
 app.post('/api/event/config', requireAdmin, (req, res) => {
-  const { mode, teams, platformMode, paperStartingBalance, marketDataSource } = req.body as EventConfig;
+  const { mode, teams, platformMode, paperStartingBalance } = req.body as EventConfig;
+  const marketDataSource = req.body?.marketDataSource === 'hyperliquid'
+    ? 'binance'
+    : req.body?.marketDataSource;
   if (!mode || !['1v1', '1v1v1', '1v1v1v1', '4v4'].includes(mode)) {
     res.status(400).json({ error: 'Mode invalide' });
     return;
@@ -596,7 +601,7 @@ app.post('/api/event/config', requireAdmin, (req, res) => {
     res.status(400).json({ error: 'Plateforme invalide' });
     return;
   }
-  if (!marketDataSource || !['kraken', 'hyperliquid'].includes(marketDataSource)) {
+  if (!marketDataSource || !['kraken', 'binance'].includes(marketDataSource)) {
     res.status(400).json({ error: 'Source de data invalide' });
     return;
   }
@@ -676,10 +681,12 @@ app.get('/api/paper/candles', async (req, res) => {
   const interval = Number(req.query.interval || 1);
 
   try {
-    const source = manager.getMarketDataSource();
-    const candles = source === 'hyperliquid'
-      ? await hyperliquid.getOhlcCandles(pair, interval)
-      : await kraken.getOhlcCandles(pair, interval);
+    const pairDef = getPaperPairDefinition(pair);
+    const candles = pairDef?.source === 'oanda'
+      ? await oanda.getOhlcCandles(pair, interval)
+      : manager.getMarketDataSource() === 'binance'
+        ? await binance.getOhlcCandles(pair, interval)
+        : await kraken.getOhlcCandles(pair, interval);
     res.json({ pair, interval, candles });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Historique indisponible' });
@@ -1068,6 +1075,14 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
   }
 });
 
+app.post('/api/admin/prize-image', requireAdmin, upload.single('image'), (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  res.json({ imageUrl: uploadedImageUrl(req.file) });
+});
+
 /**
  * Lightweight finalize-only sync. Fast in the common case (no ended
  * competitions) and unavoidable: orders must close at competition end. We
@@ -1324,6 +1339,7 @@ if (!process.env.NETLIFY) {
   serverReady.then(() => {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
+      void oanda.validateConnection();
     });
   });
 }

@@ -11,7 +11,7 @@ interface PaperMeta {
   enabled: boolean;
   eventStarted: boolean;
   startingBalance: number;
-  marketDataSource: 'kraken' | 'hyperliquid';
+  marketDataSource: 'kraken' | 'binance';
   pairs: string[];
 }
 
@@ -409,7 +409,7 @@ export default function TraderTerminal() {
                 <ul className="mt-4 space-y-3 text-sm text-slate-300">
                   <li>Ordres au marché uniquement.</li>
                   <li>Une position maximum par paire.</li>
-                  <li>Les prix sont alimentés par le flux public {meta.marketDataSource === 'hyperliquid' ? 'Hyperliquid' : 'Kraken'}.</li>
+                  <li>Les prix sont alimentés par le flux public {meta.marketDataSource === 'binance' ? 'Binance Futures' : 'Kraken'}.</li>
                   <li>Le classement global reste visible sur le dashboard principal.</li>
                 </ul>
               </div>

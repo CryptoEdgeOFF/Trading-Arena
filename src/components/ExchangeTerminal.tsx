@@ -1,6 +1,6 @@
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import TradingViewOverlayChart from './TradingViewOverlayChart';
+import AdvancedChart, { type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, timeAgo } from '../utils/formatters';
@@ -38,7 +38,7 @@ interface MarketMetadata {
   imageUrl: string | null;
   krakenSymbol: string;
   category?: 'crypto' | 'actions' | 'indices' | 'commodities' | 'forex';
-  source?: 'kraken_futures' | 'hyperliquid_perp' | 'hyperliquid_spot';
+  source?: 'kraken_futures' | 'binance_futures' | 'hyperliquid_perp' | 'hyperliquid_spot' | 'oanda';
   sourceSymbol?: string;
   tradingViewSymbol?: string | null;
   sortOrder: number;
@@ -296,6 +296,12 @@ function fmt(value: number | null | undefined, frac = 1): string {
   });
 }
 
+function priceInputValue(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '';
+  const decimals = value >= 100 ? 2 : value >= 1 ? 4 : 6;
+  return value.toFixed(decimals).replace(/\.?0+$/, '');
+}
+
 function fmtSigned(value: number, frac = 2): string {
   const prefix = value > 0 ? '+' : '';
   return `${prefix}${fmt(value, frac)}`;
@@ -415,6 +421,13 @@ interface OrderFormProps {
   eventStarted: boolean;
   error: string;
   onSubmit: (extras?: { stopLoss: number | null; takeProfit: number | null }) => void;
+  onPreviewChange: (preview: ChartOrderPreview | null) => void;
+  tpSlEnabled: boolean;
+  setTpSlEnabled: (enabled: boolean | ((value: boolean) => boolean)) => void;
+  takeProfitInput: string;
+  setTakeProfitInput: (value: string) => void;
+  stopLossInput: string;
+  setStopLossInput: (value: string) => void;
 }
 
 function OrderForm(props: OrderFormProps) {
@@ -423,16 +436,16 @@ function OrderForm(props: OrderFormProps) {
     side, setSide, orderType, setOrderType,
     size, setSize, limitPrice, setLimitPrice,
     leverage, setLeverage: _setLeverage, ticker, player,
-    busy, eventStarted, error, onSubmit,
+    busy, eventStarted, error, onSubmit, onPreviewChange,
+    tpSlEnabled, setTpSlEnabled,
+    takeProfitInput, setTakeProfitInput,
+    stopLossInput, setStopLossInput,
   } = props;
 
   const isSell = side === 'short';
   const SELL = '#f43f6e';
   const BUY = '#18c98e';
   const accent = isSell ? SELL : BUY;
-  const [tpSlEnabled, setTpSlEnabled] = useState(false);
-  const [takeProfitInput, setTakeProfitInput] = useState('');
-  const [stopLossInput, setStopLossInput] = useState('');
   const [accountPercent, setAccountPercent] = useState(0);
   const [usdAmount, setUsdAmount] = useState('');
   const [lastEditedAmount, setLastEditedAmount] = useState<'qty' | 'usd'>('qty');
@@ -494,6 +507,40 @@ function OrderForm(props: OrderFormProps) {
     if (!Number.isFinite(usd) || usd <= 0 || refPrice <= 0) return;
     setSize((usd / refPrice).toFixed(5));
   }, [lastEditedAmount, refPrice, setSize, usdAmount]);
+
+  useEffect(() => {
+    const tpRaw = Number(takeProfitInput);
+    const slRaw = Number(stopLossInput);
+    const takeProfit = tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
+    const stopLoss = tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
+
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(refPrice) || refPrice <= 0) {
+      onPreviewChange(null);
+      return;
+    }
+
+    onPreviewChange({
+      pair: selectedPair,
+      side,
+      orderType,
+      entryPrice: refPrice,
+      size: qty,
+      stopLoss,
+      takeProfit,
+    });
+
+    return () => onPreviewChange(null);
+  }, [
+    onPreviewChange,
+    orderType,
+    qty,
+    refPrice,
+    selectedPair,
+    side,
+    stopLossInput,
+    takeProfitInput,
+    tpSlEnabled,
+  ]);
 
   function applyAccountPercent(percent: number) {
     const clamped = Math.max(0, Math.min(100, percent));
@@ -640,9 +687,13 @@ function OrderForm(props: OrderFormProps) {
               </div>
             )}
           </div>
-          <div className="ml-auto flex items-center gap-1 rounded-xl border border-[#241e30] bg-[#171320] px-2 py-0.5">
-            <img src="/logo-bull.png" alt="Bull logo" className="h-4 w-4 object-contain opacity-85" />
-            <img src="/logo-m.png" alt="M logo" className="h-4 w-4 object-contain opacity-85" />
+          <div className="ml-auto flex items-center gap-1.5 rounded-xl border border-[#241e30] bg-[#171320] px-2.5 py-1">
+            <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-[#7a8090]">Powered by</span>
+            <img
+              src="/assets/pictures/Kraken%20Logo_White.png"
+              alt="Kraken"
+              className="h-4 object-contain opacity-90"
+            />
           </div>
         </div>
 
@@ -912,44 +963,73 @@ function OrderForm(props: OrderFormProps) {
 
 function ChartArea({
   pair,
-  marketDataSource,
-  tradingViewSymbol,
+  pairs,
+  pairLabels,
   ticker,
+  market,
   player,
-  onRiskChange,
-  interval: _interval,
-  setInterval: _setInterval,
-  indicators: _indicators,
-  setIndicators: _setIndicators,
-  fitRequest: _fitRequest,
-  onFit: _onFit,
+  orderPreview,
+  onPreviewRiskChange,
+  onUpdateRisk,
+  onCancelOrder,
+  onPairChange,
+  interval,
+  setInterval,
+  isMobile = false,
 }: {
   pair: string;
-  marketDataSource: MarketDataSource;
+  pairs: string[];
+  pairLabels?: Record<string, string>;
+  marketDataSource?: MarketDataSource;
   tradingViewSymbol?: string | null;
   ticker: MarketTicker | undefined;
+  market?: Record<string, MarketTicker>;
   player: Player | null;
-  onRiskChange: (pair: string, stopLoss: number | null, takeProfit: number | null) => void;
+  orderPreview?: ChartOrderPreview | null;
+  onPreviewRiskChange?: (patch: { stopLoss?: number | null; takeProfit?: number | null }) => void;
+  onUpdateRisk: (
+    positionId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ) => Promise<void> | void;
+  onCancelOrder: (orderId: string) => Promise<void> | void;
+  onPairChange?: (pair: string) => void;
   interval: number;
   setInterval: (interval: number) => void;
-  indicators: { ema20: boolean; ema50: boolean };
-  setIndicators: (next: { ema20: boolean; ema50: boolean }) => void;
-  fitRequest: number;
-  onFit: () => void;
+  isMobile?: boolean;
 }) {
-  const position = player?.openPositions.find((entry) => entry.pair === pair);
-  void position;
+  const positions = player?.openPositions ?? [];
+  const pendingOrders = (player?.openOrders ?? [])
+    .filter((order) => order.status === 'open' && order.limitPrice != null)
+    .map((order) => ({
+      id: order.id,
+      pair: order.pair,
+      side: order.side,
+      type: order.orderType as 'limit' | 'market' | 'stop' | 'stop_limit',
+      price: order.limitPrice as number,
+      size: order.size,
+      status: order.status,
+    }));
+
   return (
     <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c]">
-      <div className="pointer-events-none absolute bottom-2 right-2 z-10 rounded-full border border-white/10 bg-black/45 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.12em] text-[#9ca3af] shadow-lg shadow-black/30 backdrop-blur-md sm:right-3 sm:top-3 sm:bottom-auto sm:px-3 sm:py-1 sm:text-[10px] sm:tracking-[0.16em] sm:text-[#d7dae3]">
-        Powered by TradingView
-      </div>
       <div className="relative min-h-0 flex-1">
-        <TradingViewOverlayChart
+        <AdvancedChart
           pair={pair}
-          interval={_interval}
-          marketDataSource={marketDataSource}
-          tradingViewSymbol={tradingViewSymbol}
+          pairs={pairs}
+          pairLabels={pairLabels}
+          ticker={ticker}
+          market={market}
+          positions={positions}
+          pendingOrders={pendingOrders}
+          orderPreview={orderPreview}
+          onPreviewRiskChange={onPreviewRiskChange}
+          intervalMinutes={interval}
+          onIntervalChange={setInterval}
+          onPairChange={onPairChange}
+          onUpdateRisk={onUpdateRisk}
+          onCancelOrder={onCancelOrder}
+          isMobile={isMobile}
         />
       </div>
     </section>
@@ -2069,8 +2149,22 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     previousUserSelect: string;
   } | null>(null);
   const [chartInterval, setChartInterval] = useState(1);
-  const [chartIndicators, setChartIndicators] = useState({ ema20: false, ema50: false });
-  const [fitRequest, setFitRequest] = useState(0);
+  const [orderPreview, setOrderPreview] = useState<ChartOrderPreview | null>(null);
+  const [tpSlEnabled, setTpSlEnabled] = useState(false);
+  const [takeProfitInput, setTakeProfitInput] = useState('');
+  const [stopLossInput, setStopLossInput] = useState('');
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 1023px)').matches;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia('(max-width: 1023px)');
+    const handler = (event: MediaQueryListEvent) => setIsMobileViewport(event.matches);
+    setIsMobileViewport(mql.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
   const [competitionContext, setCompetitionContext] = useState<CompetitionContext | null>(null);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardResponse | null>(null);
   const [leaderboardError, setLeaderboardError] = useState('');
@@ -2078,6 +2172,13 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [livePlayer, setLivePlayer] = useState<Player | null>(null);
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
+
+  const clearOrderDraftRisk = useCallback(() => {
+    setOrderPreview(null);
+    setTpSlEnabled(false);
+    setTakeProfitInput('');
+    setStopLossInput('');
+  }, []);
 
   // Tracks ids of positions/orders that the user has just closed/cancelled
   // optimistically. Each entry expires after a short delay so an in-flight
@@ -2575,6 +2676,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       openPositions: [position, ...current.openPositions],
       trades: [trade, ...current.trades].slice(0, 60),
     }));
+    clearOrderDraftRisk();
   }
 
   function closeDemoPosition(positionId: string, partialSize?: number) {
@@ -2687,6 +2789,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Ordre refusé');
+      clearOrderDraftRisk();
       void refreshLive();
     } catch (err: any) {
       setError(err.message);
@@ -2886,6 +2989,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     : (demoMode ? true : (competitionContext ? competitionContext.mode === 'paper' : eventStarted));
   void paperStartingBalance;
 
+  const updateOrderPreviewRisk = useCallback((patch: { stopLoss?: number | null; takeProfit?: number | null }) => {
+    setTpSlEnabled(true);
+    if ('stopLoss' in patch) setStopLossInput(priceInputValue(patch.stopLoss));
+    if ('takeProfit' in patch) setTakeProfitInput(priceInputValue(patch.takeProfit));
+  }, []);
+
   const orderPanel = (
     <OrderForm
       meta={meta}
@@ -2908,23 +3017,45 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       eventStarted={canTradeNow}
       error={error}
       onSubmit={submitOrder}
+      onPreviewChange={setOrderPreview}
+      tpSlEnabled={tpSlEnabled}
+      setTpSlEnabled={setTpSlEnabled}
+      takeProfitInput={takeProfitInput}
+      setTakeProfitInput={setTakeProfitInput}
+      stopLossInput={stopLossInput}
+      setStopLossInput={setStopLossInput}
     />
   );
+
+  const pairLabels = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const p of meta.pairs) {
+      const md = meta.marketMetadata?.[p];
+      out[p] = md?.name || p;
+    }
+    return out;
+  }, [meta.pairs, meta.marketMetadata]);
 
   const chartPanel = (
     <ChartArea
       pair={selectedPair}
+      pairs={meta.pairs}
+      pairLabels={pairLabels}
       marketDataSource={meta.marketDataSource}
       tradingViewSymbol={meta.marketMetadata[selectedPair]?.tradingViewSymbol}
       ticker={ticker}
+      market={market}
       player={player}
-      onRiskChange={updateRisk}
+      orderPreview={orderPreview}
+      onPreviewRiskChange={updateOrderPreviewRisk}
+      onUpdateRisk={updateRisk}
+      onCancelOrder={cancelOrder}
+      onPairChange={(p) => {
+        if (meta.pairs.includes(p)) setSelectedPair(p);
+      }}
       interval={chartInterval}
       setInterval={setChartInterval}
-      indicators={chartIndicators}
-      setIndicators={setChartIndicators}
-      fitRequest={fitRequest}
-      onFit={() => setFitRequest((value) => value + 1)}
+      isMobile={isMobileViewport}
     />
   );
 

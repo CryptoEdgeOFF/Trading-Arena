@@ -38,6 +38,8 @@ export interface CashPrize {
   currency: string;
   total: number;
   breakdown?: CashPrizeBreakdownEntry[];
+  label?: string;
+  imageUrl?: string;
 }
 
 export interface Competition {
@@ -121,10 +123,12 @@ function inferCompetitionStatus(startAt: number, endAt: number, now = Date.now()
 function normalizeCashPrize(input: unknown): CashPrize | null {
   if (input === null || input === undefined) return null;
   if (typeof input !== 'object') return null;
-  const data = input as { currency?: unknown; total?: unknown; breakdown?: unknown };
+  const data = input as { currency?: unknown; total?: unknown; breakdown?: unknown; label?: unknown; imageUrl?: unknown };
   const total = Number(data.total);
-  if (!Number.isFinite(total) || total < 0) return null;
+  const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
   const currency = String(data.currency || 'USD').trim().toUpperCase().slice(0, 6) || 'USD';
+  const label = String(data.label || '').trim().slice(0, 80);
+  const imageUrl = String(data.imageUrl || '').trim().slice(0, 5000);
 
   let breakdown: CashPrizeBreakdownEntry[] | undefined;
   if (Array.isArray(data.breakdown)) {
@@ -142,9 +146,15 @@ function normalizeCashPrize(input: unknown): CashPrize | null {
     if (breakdown.length === 0) breakdown = undefined;
   }
 
-  if (total === 0 && (!breakdown || breakdown.length === 0)) return null;
+  if (safeTotal === 0 && (!breakdown || breakdown.length === 0) && !label && !imageUrl) return null;
 
-  return { currency, total, breakdown };
+  return {
+    currency,
+    total: safeTotal,
+    breakdown,
+    ...(label ? { label } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+  };
 }
 
 interface PendingOtp {
@@ -185,6 +195,11 @@ export class CompetitionManager {
       this.pool = new Pool({
         connectionString: databaseUrl,
         ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+      });
+      // Prevent the entire process from crashing when the Postgres pool emits
+      // an asynchronous error (e.g. transient network drops on Neon).
+      this.pool.on('error', (err) => {
+        console.error('[competition pool] idle client error:', err.message || err);
       });
     }
     this.ready = this.load();

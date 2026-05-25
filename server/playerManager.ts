@@ -140,6 +140,9 @@ export class PlayerManager {
         connectionString: databaseUrl,
         ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
       });
+      this.pool.on('error', (err) => {
+        console.error('[player pool] idle client error:', err.message || err);
+      });
     }
     this.paperEngine = new PaperTradingEngine(() => {
       this.updateRankings();

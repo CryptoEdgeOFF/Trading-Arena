@@ -76,10 +76,10 @@ const DATA_SOURCE_LABELS: Record<MarketDataSource, { label: string; desc: string
     desc: 'Flux prix + bougies depuis Kraken',
     accent: 'border-indigo-500 bg-indigo-500/10 text-indigo-300',
   },
-  hyperliquid: {
-    label: 'Hyperliquid',
-    desc: 'Flux prix + bougies depuis Hyperliquid',
-    accent: 'border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-300',
+  binance: {
+    label: 'Binance Futures',
+    desc: 'Flux prix + bougies depuis Binance USDT-M Futures',
+    accent: 'border-yellow-500 bg-yellow-500/10 text-yellow-200',
   },
 };
 
@@ -243,7 +243,6 @@ export default function AdminPanel() {
     fetchRoster();
     fetchStatus();
     fetchConfig();
-    fetchAdminCompetitions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken]);
 
@@ -294,7 +293,7 @@ export default function AdminPanel() {
     const data = await res.json();
     setEventStarted(Boolean(data.started));
     if (data.platformMode) setPlatformMode(data.platformMode);
-    if (data.marketDataSource) setMarketDataSource(data.marketDataSource);
+    if (data.marketDataSource) setMarketDataSource(data.marketDataSource === 'hyperliquid' ? 'binance' : data.marketDataSource);
     if (data.paperStartingBalance) setPaperStartingBalance(data.paperStartingBalance);
   }
 
@@ -303,7 +302,7 @@ export default function AdminPanel() {
     const data = await res.json();
     if (data.mode) setMode(data.mode);
     if (data.platformMode) setPlatformMode(data.platformMode);
-    if (data.marketDataSource) setMarketDataSource(data.marketDataSource);
+    if (data.marketDataSource) setMarketDataSource(data.marketDataSource === 'hyperliquid' ? 'binance' : data.marketDataSource);
     if (data.paperStartingBalance) setPaperStartingBalance(data.paperStartingBalance);
     if (data.teams) {
       setTeamA(data.teams[0]);
@@ -403,6 +402,15 @@ export default function AdminPanel() {
     setMarketDataSource(nextSource);
     setError('');
     await saveConfig({ marketDataSource: nextSource });
+  }
+
+  async function handlePaperStartingBalanceBlur() {
+    const safeBalance = Number.isFinite(paperStartingBalance) && paperStartingBalance > 0
+      ? paperStartingBalance
+      : 10000;
+    if (safeBalance !== paperStartingBalance) setPaperStartingBalance(safeBalance);
+    setError('');
+    await saveConfig({ paperStartingBalance: safeBalance });
   }
 
   async function toggleEvent() {
@@ -680,7 +688,7 @@ export default function AdminPanel() {
               Ouvrir dashboard live
             </a>
             <a
-              href="/trade"
+              href="/trader"
               className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm font-medium text-green-300 transition-colors hover:bg-green-500/15"
             >
               Ouvrir le terminal trader
@@ -697,9 +705,9 @@ export default function AdminPanel() {
 
         <div className="mb-8 grid gap-6 lg:grid-cols-[1.3fr_1fr]">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
-            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Source d’exécution</p>
+            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Source d’exécution live</p>
             <div className="grid gap-3 sm:grid-cols-2">
-              {(['kraken', 'paper'] as PlatformMode[]).map((option) => {
+              {(['paper', 'kraken'] as PlatformMode[]).map((option) => {
                 const isActive = platformMode === option;
                 return (
                   <button
@@ -715,13 +723,35 @@ export default function AdminPanel() {
                 );
               })}
             </div>
+            {platformMode === 'paper' && (
+              <div className="mt-5 rounded-2xl border border-green-500/15 bg-green-500/5 p-4">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-green-300">
+                  Capital paper par trader
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={paperStartingBalance}
+                    onChange={(event) => setPaperStartingBalance(Number(event.target.value))}
+                    onBlur={handlePaperStartingBalanceBlur}
+                    disabled={eventStarted}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-white outline-none transition-colors focus:border-green-500 disabled:opacity-60"
+                  />
+                  <span className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-300">USD</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Même logique que les arènes paper : les traders reçoivent un code et tradent en simulé sur le terminal live.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Paper setup</p>
-            <label className="mb-2 mt-4 block text-sm text-slate-300">Source data marché (paper)</label>
-            <div className="mb-4 grid gap-2 sm:grid-cols-2">
-              {(['kraken', 'hyperliquid'] as MarketDataSource[]).map((option) => {
+            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Source du datafeed</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+              {(['binance', 'kraken'] as MarketDataSource[]).map((option) => {
                 const isActive = marketDataSource === option;
                 return (
                   <button
@@ -729,27 +759,24 @@ export default function AdminPanel() {
                     type="button"
                     onClick={() => handleDataSourceChange(option)}
                     disabled={eventStarted}
-                    className={`cursor-pointer rounded-xl border px-3 py-2 text-left text-sm transition-all ${isActive ? DATA_SOURCE_LABELS[option].accent : 'border-slate-700 bg-slate-800/70 hover:border-slate-600'} ${eventStarted ? 'cursor-not-allowed opacity-60' : ''}`}
+                    className={`cursor-pointer rounded-2xl border p-4 text-left transition-all ${isActive ? DATA_SOURCE_LABELS[option].accent : 'border-slate-700 bg-slate-800/70 hover:border-slate-600'} ${eventStarted ? 'cursor-not-allowed opacity-60' : ''}`}
                   >
-                    <div className="font-semibold text-white">{DATA_SOURCE_LABELS[option].label}</div>
-                    <div className="text-xs text-slate-400">{DATA_SOURCE_LABELS[option].desc}</div>
+                    <div className="mb-1 font-rajdhani text-2xl font-bold text-white">{DATA_SOURCE_LABELS[option].label}</div>
+                    <p className="text-sm text-slate-400">{DATA_SOURCE_LABELS[option].desc}</p>
                   </button>
                 );
               })}
             </div>
-            <label className="mb-2 block text-sm text-slate-300">Balance initiale standard</label>
-            <input
-              type="number"
-              min={100}
-              step={100}
-              value={paperStartingBalance}
-              disabled={eventStarted || platformMode !== 'paper'}
-              onChange={(e) => setPaperStartingBalance(Number(e.target.value))}
-              onBlur={() => saveConfig({ paperStartingBalance }).catch((err: Error) => setError(err.message))}
-              className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none transition-colors focus:border-green-500 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-            <p className="mt-3 text-sm text-slate-500">
-              En paper, chaque trader reçoit ce capital au lancement et se connecte avec un code unique sur <span className="font-mono text-slate-300">/trade</span>. La source de data active est <span className="font-semibold text-slate-300">{DATA_SOURCE_LABELS[marketDataSource].label}</span>.
+            <p className="mt-3 text-xs text-slate-500">
+              Pour une room paper crypto, Binance Futures est recommandé pour une meilleure liquidité.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
+            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Séparation des admins</p>
+            <p className="text-sm text-slate-400">
+              Cette page pilote uniquement la room live reliée au dashboard : paper trading événementiel ou lecture de comptes Kraken.
+              Les arènes online, les règles d’inscription publiques et les lots se gèrent dans <a href="/compete/admin" className="font-semibold text-amber-300 hover:text-amber-200">/compete/admin</a>.
             </p>
           </div>
         </div>
@@ -1007,363 +1034,6 @@ export default function AdminPanel() {
             </div>
           </>
         )}
-
-        <div className="mb-8 space-y-6">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
-            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Competition platform (2 jours)</p>
-            <form onSubmit={createCompetition} className="grid gap-3 md:grid-cols-2">
-              <input
-                type="text"
-                value={competitionTitle}
-                onChange={(e) => setCompetitionTitle(e.target.value)}
-                placeholder="Titre competition"
-                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500"
-                required
-              />
-              <input
-                type="text"
-                value={competitionCode}
-                onChange={(e) => setCompetitionCode(e.target.value.toUpperCase())}
-                placeholder="Code (ex: BTF2026)"
-                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500"
-                required
-              />
-              <input
-                type="datetime-local"
-                value={competitionStartAt}
-                onChange={(e) => setCompetitionStartAt(e.target.value)}
-                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500"
-                required
-              />
-              <input
-                type="datetime-local"
-                value={competitionEndAt}
-                onChange={(e) => setCompetitionEndAt(e.target.value)}
-                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500"
-                required
-              />
-              <select
-                value={competitionExecutionMode}
-                onChange={(e) => setCompetitionExecutionMode(e.target.value as 'paper' | 'real')}
-                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-indigo-500"
-              >
-                <option value="paper">Mode paper</option>
-                <option value="real">Mode reel (Kraken API)</option>
-              </select>
-              <label className="flex items-center gap-2 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={competitionIsPublic}
-                  onChange={(e) => setCompetitionIsPublic(e.target.checked)}
-                />
-                Leaderboard public
-              </label>
-
-              <div className="md:col-span-2 mt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">Cash prize (optionnel)</p>
-                    <p className="mt-1 text-[11px] text-slate-500">Laisser vide si pas de prize. La somme par rang remplit automatiquement le total.</p>
-                  </div>
-                  <input
-                    type="text"
-                    value={competitionPrizeCurrency}
-                    onChange={(e) => setCompetitionPrizeCurrency(e.target.value.toUpperCase().slice(0, 6))}
-                    placeholder="USD"
-                    className="w-20 rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-center text-xs uppercase tracking-[0.16em] text-white outline-none focus:border-amber-400"
-                  />
-                </div>
-                <div className="grid gap-3 md:grid-cols-4">
-                  <label className="text-xs text-slate-400">
-                    Total pool
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={competitionPrizeTotal}
-                      onChange={(e) => setCompetitionPrizeTotal(e.target.value)}
-                      placeholder="ex: 1500"
-                      className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-amber-400"
-                    />
-                  </label>
-                  <label className="text-xs text-slate-400">
-                    1er
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={competitionPrizeFirst}
-                      onChange={(e) => setCompetitionPrizeFirst(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-amber-400"
-                    />
-                  </label>
-                  <label className="text-xs text-slate-400">
-                    2eme
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={competitionPrizeSecond}
-                      onChange={(e) => setCompetitionPrizeSecond(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-amber-400"
-                    />
-                  </label>
-                  <label className="text-xs text-slate-400">
-                    3eme
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={competitionPrizeThird}
-                      onChange={(e) => setCompetitionPrizeThird(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-amber-400"
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <button type="submit" className="md:col-span-2 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-500">
-                Creer competition
-              </button>
-            </form>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Competitions creees</p>
-              <a href="/compete" className="text-sm text-indigo-300 hover:text-indigo-200">Ouvrir plateforme users</a>
-            </div>
-            {adminCompetitions.length === 0 ? (
-              <p className="text-sm text-slate-500">Aucune competition pour le moment.</p>
-            ) : (
-              <div className="space-y-4">
-                {adminCompetitions.map((competition) => (
-                  <div key={competition.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="font-semibold text-white">{competition.title}</div>
-                        <div className="text-xs text-slate-500">
-                          Code {competition.code} • {competition.executionMode === 'paper' ? 'paper' : 'reel'} • {competition.status} • {competition.participants} participants
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <a href={`/compete/leaderboard/${competition.id}`} className="text-xs text-indigo-300 hover:text-indigo-200">
-                          Leaderboard public
-                        </a>
-                        {editingCompetitionId === competition.id ? (
-                          <button
-                            type="button"
-                            onClick={cancelEditCompetition}
-                            className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-500"
-                          >
-                            Annuler
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => startEditCompetition(competition)}
-                            className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-500"
-                          >
-                            Editer
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => deleteCompetition(competition)}
-                          className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/20"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-                    </div>
-
-                    {editingCompetitionId === competition.id && competitionEditDraft && (
-                      <div className="mb-4 grid gap-3 rounded-lg border border-slate-800 bg-slate-900/60 p-4 md:grid-cols-2">
-                        <label className="text-xs text-slate-400">
-                          Titre
-                          <input
-                            type="text"
-                            value={competitionEditDraft.title}
-                            onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, title: e.target.value } : cur)}
-                            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                          />
-                        </label>
-                        <label className="text-xs text-slate-400">
-                          Code
-                          <input
-                            type="text"
-                            value={competitionEditDraft.code}
-                            onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, code: e.target.value.toUpperCase() } : cur)}
-                            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                          />
-                        </label>
-                        <label className="text-xs text-slate-400">
-                          Debut
-                          <input
-                            type="datetime-local"
-                            value={competitionEditDraft.startAt}
-                            onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, startAt: e.target.value } : cur)}
-                            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                          />
-                        </label>
-                        <label className="text-xs text-slate-400">
-                          Fin
-                          <input
-                            type="datetime-local"
-                            value={competitionEditDraft.endAt}
-                            onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, endAt: e.target.value } : cur)}
-                            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                          />
-                        </label>
-                        <label className="text-xs text-slate-400">
-                          Mode execution
-                          <select
-                            value={competitionEditDraft.executionMode}
-                            onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, executionMode: e.target.value as 'paper' | 'real' } : cur)}
-                            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                          >
-                            <option value="paper">Paper trading</option>
-                            <option value="real">Reel (Kraken)</option>
-                          </select>
-                        </label>
-                        <label className="flex items-end gap-2 text-xs text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={competitionEditDraft.isPublic}
-                            onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, isPublic: e.target.checked } : cur)}
-                          />
-                          Leaderboard public
-                        </label>
-
-                        <div className="md:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-                          <div className="mb-2 flex items-center justify-between">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-300">Cash prize</p>
-                            <input
-                              type="text"
-                              value={competitionEditDraft.prizeCurrency}
-                              onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, prizeCurrency: e.target.value.toUpperCase().slice(0, 6) } : cur)}
-                              placeholder="USD"
-                              className="w-16 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-center text-[11px] uppercase tracking-[0.16em] text-white outline-none focus:border-amber-400"
-                            />
-                          </div>
-                          <div className="grid grid-cols-4 gap-2">
-                            <label className="text-[11px] text-slate-500">
-                              Total
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={competitionEditDraft.prizeTotal}
-                                onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, prizeTotal: e.target.value } : cur)}
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-amber-400"
-                              />
-                            </label>
-                            <label className="text-[11px] text-slate-500">
-                              1er
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={competitionEditDraft.prizeFirst}
-                                onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, prizeFirst: e.target.value } : cur)}
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-amber-400"
-                              />
-                            </label>
-                            <label className="text-[11px] text-slate-500">
-                              2eme
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={competitionEditDraft.prizeSecond}
-                                onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, prizeSecond: e.target.value } : cur)}
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-amber-400"
-                              />
-                            </label>
-                            <label className="text-[11px] text-slate-500">
-                              3eme
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={competitionEditDraft.prizeThird}
-                                onChange={(e) => setCompetitionEditDraft((cur) => cur ? { ...cur, prizeThird: e.target.value } : cur)}
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-white outline-none focus:border-amber-400"
-                              />
-                            </label>
-                          </div>
-                          <p className="mt-2 text-[10px] text-slate-500">Vide → pas de cashprize. Total auto-calcule depuis les rangs si laisse vide.</p>
-                        </div>
-
-                        <div className="md:col-span-2 flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => saveCompetitionEdit(competition.id)}
-                            className="rounded-md bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
-                          >
-                            Sauvegarder
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {competition.entriesDetailed.length === 0 ? (
-                      <p className="text-xs text-slate-500">Aucun participant inscrit.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {competition.entriesDetailed.map((entry) => {
-                          const key = `${competition.id}:${entry.userId}`;
-                          const draft = resultDrafts[key] || {
-                            pnlPercent: String(entry.pnlPercent),
-                            pnlUsd: String(entry.pnlUsd),
-                            tradesCount: String(entry.tradesCount),
-                          };
-                          return (
-                            <div key={key} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
-                              <div className="text-sm text-slate-300">
-                                {entry.user?.name || 'Participant'} <span className="text-xs text-slate-500">({entry.user?.email || 'n/a'})</span>
-                              </div>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={draft.pnlPercent}
-                                onChange={(e) => setResultDrafts((cur) => ({ ...cur, [key]: { ...draft, pnlPercent: e.target.value } }))}
-                                className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                                placeholder="PnL %"
-                              />
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={draft.pnlUsd}
-                                onChange={(e) => setResultDrafts((cur) => ({ ...cur, [key]: { ...draft, pnlUsd: e.target.value } }))}
-                                className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                                placeholder="PnL USD"
-                              />
-                              <input
-                                type="number"
-                                step="1"
-                                value={draft.tradesCount}
-                                onChange={(e) => setResultDrafts((cur) => ({ ...cur, [key]: { ...draft, tradesCount: e.target.value } }))}
-                                className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-white outline-none"
-                                placeholder="Trades"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => saveParticipantResult(competition.id, entry)}
-                                className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
 
         <button
           onClick={toggleEvent}

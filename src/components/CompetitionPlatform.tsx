@@ -57,6 +57,8 @@ interface CashPrize {
   currency: string;
   total: number;
   breakdown?: Array<{ rank: number; amount: number }>;
+  label?: string;
+  imageUrl?: string;
 }
 
 interface CompetitionPublic {
@@ -147,16 +149,61 @@ function formatPrizeAmount(amount: number, currency: string): string {
   return `${value} ${currency}`;
 }
 
+function getPrizeTitle(prize: CashPrize | null | undefined): string {
+  if (!prize) return '';
+  if (prize.label) return prize.label;
+  if (prize.total > 0) return formatPrizeAmount(prize.total, prize.currency);
+  return '';
+}
+
+function hasPrize(prize: CashPrize | null | undefined): prize is CashPrize {
+  return Boolean(prize && (prize.label || prize.imageUrl || prize.total > 0));
+}
+
 function CashPrizePill({ prize }: { prize: CashPrize | null | undefined }) {
-  if (!prize || prize.total <= 0) return null;
+  if (!hasPrize(prize)) return null;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/8 px-2 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-amber-200/90">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="8" r="6" />
         <path d="M8.21 13.89L7 22l5-3 5 3-1.21-8.11" />
       </svg>
-      {formatPrizeAmount(prize.total, prize.currency)}
+      {getPrizeTitle(prize)}
     </span>
+  );
+}
+
+function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | undefined; compact?: boolean }) {
+  if (!hasPrize(prize)) return null;
+  const title = getPrizeTitle(prize);
+  return (
+    <div className={`flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/8 ${compact ? 'mt-3 p-2.5' : 'mt-4 p-3'}`}>
+      {prize.imageUrl ? (
+        <img
+          src={prize.imageUrl}
+          alt={title || 'Récompense'}
+          className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} shrink-0 rounded-xl border border-amber-400/25 object-cover`}
+          loading="lazy"
+        />
+      ) : (
+        <div className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} flex shrink-0 items-center justify-center rounded-xl border border-amber-400/25 bg-[#241a05] text-amber-200`}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M20 12v8H4v-8" />
+            <path d="M2 7h20v5H2z" />
+            <path d="M12 22V7" />
+            <path d="M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85C10.6 4.55 12 7 12 7Z" />
+            <path d="M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85C13.4 4.55 12 7 12 7Z" />
+          </svg>
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="micro text-[9px] text-amber-300/85">À gagner</div>
+        <div className="truncate text-sm font-bold text-white sm:text-base">{title}</div>
+        {prize.total > 0 && prize.label && (
+          <div className="mt-0.5 text-[11px] text-amber-100/60">{formatPrizeAmount(prize.total, prize.currency)}</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -575,7 +622,7 @@ export default function CompetitionPlatform() {
 
       <main className="compete-bg pb-20">
         {/* HERO */}
-        <section className="relative -mt-[58px] overflow-hidden pt-[58px] sm:-mt-[76px] sm:pt-[76px]">
+        <section id="signup" className="relative -mt-[58px] overflow-hidden pt-[58px] sm:-mt-[76px] sm:pt-[76px]">
           {/* Background trader silhouette */}
           <div aria-hidden className="pointer-events-none absolute inset-0 -z-0">
             <img
@@ -715,6 +762,7 @@ export default function CompetitionPlatform() {
             </div>
           )}
         </section>
+
       </main>
 
       {joinTarget && (
@@ -1140,6 +1188,7 @@ function MyCompetitionCard({
         <h3 className="display mt-3 break-words text-lg font-bold leading-tight text-white sm:text-2xl">
           {competition.title}
         </h3>
+        <PrizePreview prize={competition.cashPrize} compact />
         <div className="mt-1 text-[11px] text-[#71717a] sm:text-xs">
           {fmtDateShort(competition.startAt)} <span className="text-[#52525b]">→</span> {fmtDateShort(competition.endAt)}
         </div>
@@ -1237,9 +1286,7 @@ function PublicCompetitionCard({
         </div>
 
         <h3 className="display mt-4 break-words text-lg font-bold leading-tight text-white sm:text-xl">{competition.title}</h3>
-        {competition.cashPrize && competition.cashPrize.total > 0 && (
-          <div className="mt-2"><CashPrizePill prize={competition.cashPrize} /></div>
-        )}
+        <PrizePreview prize={competition.cashPrize} />
 
         <div className="mt-5 grid grid-cols-2 gap-2.5 sm:gap-3">
           <div className="metric">
