@@ -14,6 +14,7 @@ import * as binance from './binance.js';
 import { pairToBinanceSymbol } from './binance.js';
 import * as oanda from './oanda.js';
 import * as hyperliquid from './hyperliquid.js';
+import * as engineCandlesCache from './engineCandlesCache.js';
 import * as mt5Feed from './mt5Feed.js';
 import * as mt5Candles from './mt5Candles.js';
 import { getPaperPairDefinition } from './exchangePaperEngine.js';
@@ -845,14 +846,32 @@ app.get('/api/paper/candles', async (req, res) => {
           source = 'hyperliquid';
         }
       } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
-        // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
-        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        // Historique crypto via cache mémoire (Binance amont). Le 1er hit
+        // après boot Railway coûte ~7s pour 40k bougies, les suivants sont
+        // instantanés. Les ticks live (paperEngine.applyTicker) maintiennent
+        // la dernière bougie à jour dans le cache.
+        try {
+          candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+        } catch (err) {
+          console.warn(`[candles] cache miss ${pair}, direct Binance:`, (err as Error).message);
+          candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        }
         source = 'binance';
       } else if (manager.getMarketDataSource() === 'binance') {
-        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        try {
+          candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+        } catch (err) {
+          console.warn(`[candles] cache miss ${pair}, direct Binance:`, (err as Error).message);
+          candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        }
         source = 'binance';
       } else {
-        candles = await kraken.getOhlcCandles(pair, interval);
+        try {
+          candles = await engineCandlesCache.getCachedCandles(pair, interval, 'kraken', candleOpts);
+        } catch (err) {
+          console.warn(`[candles] cache miss ${pair}, direct Kraken:`, (err as Error).message);
+          candles = await kraken.getOhlcCandles(pair, interval);
+        }
         source = 'kraken';
       }
     }
@@ -1517,9 +1536,26 @@ if (!process.env.NETLIFY) {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
       void oanda.validateConnection();
+      // Préchauffer le cache des paires les plus consultées en arrière-plan.
+      // Le 1er chart BTC/ETH après redémarrage Railway sera ainsi instantané.
+      engineCandlesCache.prewarm(
+        [
+          { pair: 'BTC/USD', source: 'binance' },
+          { pair: 'ETH/USD', source: 'binance' },
+          { pair: 'SOL/USD', source: 'binance' },
+        ],
+        [1, 5, 15, 60],
+      );
     });
   });
 }
+
+// Catch-all: log unhandled rejections instead of letting Node 22 crash the
+// process. Most rejections come from background fetches (Binance prewarm,
+// stale-revalidate) where the user request has already been served.
+process.on('unhandledRejection', (reason) => {
+  console.warn('[unhandledRejection]', reason);
+});
 
 export { serverReady };
 export default app;
