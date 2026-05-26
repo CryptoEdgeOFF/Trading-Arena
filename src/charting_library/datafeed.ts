@@ -209,9 +209,15 @@ export class BtfDatafeed implements IBasicDataFeed {
         pair,
         interval: String(intervalMin),
       });
-      if (Number.isFinite(from) && from > 0) params.set('from', String(Math.floor(from)));
+      // NB: TradingView envoie un `from` correspondant à la fenêtre visible
+      // (souvent ~1 jour au premier chargement). Si on le transmet au serveur,
+      // la requête SQL filtre `bar_time >= from` et ne renvoie qu'un petit
+      // sous-ensemble — d'où un chart vide au démarrage. On ignore donc `from`
+      // et on laisse le serveur prendre les `countBack` dernières bougies
+      // avant `to` (couvre à la fois le 1er load et le scroll vers le passé).
       if (Number.isFinite(to) && to > 0) params.set('to', String(Math.floor(to)));
       params.set('countBack', String(Math.floor(fetchCountBack)));
+      void from;
 
       const response = await fetch(`/api/paper/candles?${params.toString()}`);
       if (!response.ok) {
