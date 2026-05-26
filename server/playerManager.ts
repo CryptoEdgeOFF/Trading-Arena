@@ -799,9 +799,16 @@ export class PlayerManager {
     return this.paperEngine.refreshMarketSnapshot();
   }
 
-  /** Apply MT5 quotes from memory only (no external HTTP). */
+  /**
+   * Apply MT5 quotes from memory only (no external HTTP).
+   *
+   * We deliberately ignore `isPaperMarketActive()` here: live tick streaming
+   * for chart consumers should not depend on an active competition runtime.
+   * MT5 ticks are pure market data (no player state), so always-on application
+   * keeps EUR/USD/GOLD live for read-only viewers and survives Railway
+   * restarts that wipe `competitionPaperRuntimeStarted`.
+   */
   applyMt5MarketTicks(hintPairs?: string[]): string[] {
-    if (!this.isPaperMarketActive()) return [];
     const pricing = mt5Feed.getPricing();
     if (!hintPairs?.length) {
       return this.paperEngine.applyMt5Quotes(pricing);

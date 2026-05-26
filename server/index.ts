@@ -186,7 +186,7 @@ function requireMt5FeedAuth(req: express.Request, res: express.Response, next: e
 }
 
 function broadcastMarketTicks(pairs: string[]): void {
-  if (pairs.length === 0 || paperClients.size === 0) return;
+  if (pairs.length === 0 || clients.size === 0) return;
   const market = manager.getPaperMarketSnapshot();
   const ticks = pairs
     .map((pair) => market[pair])
@@ -200,7 +200,9 @@ function broadcastMarketTicks(pairs: string[]): void {
     }));
   if (ticks.length === 0) return;
   const msg = JSON.stringify({ type: 'market:tick', data: { ticks } });
-  paperClients.forEach((ws) => {
+  // Broadcast to every connected client: market prices are public data and
+  // every chart consumer (logged-in or not) should see a live last-bar.
+  clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
