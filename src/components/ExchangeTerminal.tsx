@@ -4,6 +4,18 @@ import AdvancedChart, { type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, timeAgo } from '../utils/formatters';
+import {
+  engineSizeFromInput,
+  fmtMarketPrice,
+  formatEngineSizeDisplay,
+  formatInputSize,
+  inputSizeFromEngine,
+  isForexCategory,
+  isValidStopLoss,
+  isValidTakeProfit,
+  priceToInputString,
+  sizeUnitLabel,
+} from '../utils/positionSizing';
 import logoBtf from '../assets/pictures/logoBTF.png';
 
 const SESSION_KEY = 'btf-paper-session';
@@ -296,10 +308,8 @@ function fmt(value: number | null | undefined, frac = 1): string {
   });
 }
 
-function priceInputValue(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return '';
-  const decimals = value >= 100 ? 2 : value >= 1 ? 4 : 6;
-  return value.toFixed(decimals).replace(/\.?0+$/, '');
+function priceInputValue(value: number | null | undefined, category?: string): string {
+  return priceToInputString(value, category);
 }
 
 function fmtSigned(value: number, frac = 2): string {
@@ -453,18 +463,25 @@ function OrderForm(props: OrderFormProps) {
   const [pairSearch, setPairSearch] = useState('');
   const [activeMarketCategory, setActiveMarketCategory] = useState<MarketCategory>('crypto');
 
+  const category = meta.marketMetadata[selectedPair]?.category || 'crypto';
   const qty = Number(size) || 0;
+  const engineQty = engineSizeFromInput(category, qty);
   const refPrice = orderType === 'market'
     ? (side === 'long' ? ticker?.askPrice ?? ticker?.markPrice ?? 0 : ticker?.bidPrice ?? ticker?.markPrice ?? 0)
     : Number(limitPrice) || 0;
-  const total = refPrice * qty;
+  const total = refPrice * engineQty;
   const margin = leverage > 0 ? total / leverage : 0;
   const fee = total * (orderType === 'market' ? meta.fees.taker : meta.fees.maker);
   const available = (player?.availableMargin ?? 0);
   const maxNotional = available * leverage;
-  const availableBase = ticker?.markPrice ? available / ticker.markPrice : 0;
+  const maxEngineQty = refPrice > 0 ? maxNotional / refPrice : 0;
+  const approxSizeLabel = isForexCategory(category)
+    ? `${inputSizeFromEngine(category, maxEngineQty).toFixed(2)} lots`
+    : `${maxEngineQty.toFixed(5)} ${pairBase(selectedPair)}`;
   const usedRatio = available > 0 ? Math.min(1, margin / available) : 0;
   const base = pairBase(selectedPair);
+  const sizeLabel = isForexCategory(category) ? 'Lots' : 'Quantité';
+  const sizeUnit = sizeUnitLabel(category, base);
   const canSubmit = eventStarted && Number.isFinite(qty) && qty > 0;
   const availableCategories = MARKET_CATEGORIES.filter((category) => (
     pairs.some((pair) => (meta.marketMetadata[pair]?.category || 'crypto') === category.id)
@@ -505,16 +522,35 @@ function OrderForm(props: OrderFormProps) {
     if (lastEditedAmount !== 'usd') return;
     const usd = Number(usdAmount);
     if (!Number.isFinite(usd) || usd <= 0 || refPrice <= 0) return;
-    setSize((usd / refPrice).toFixed(5));
-  }, [lastEditedAmount, refPrice, setSize, usdAmount]);
+    const nextEngineQty = usd / refPrice;
+    setSize(formatInputSize(category, inputSizeFromEngine(category, nextEngineQty)));
+  }, [category, lastEditedAmount, refPrice, setSize, usdAmount]);
+
+  useEffect(() => {
+    setAccountPercent(0);
+    setUsdAmount('');
+    setLastEditedAmount('qty');
+    const nextCategory = meta.marketMetadata[selectedPair]?.category || 'crypto';
+    if (nextCategory === 'forex') setSize('0.01');
+    else if (nextCategory === 'crypto') setSize('0.00005');
+    else setSize('1');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reset sizing only when the pair changes
+  }, [selectedPair]);
 
   useEffect(() => {
     const tpRaw = Number(takeProfitInput);
     const slRaw = Number(stopLossInput);
-    const takeProfit = tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
-    const stopLoss = tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
+    const tpCandidate = tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
+    const slCandidate = tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
+    const takeProfit = isValidTakeProfit(side, refPrice, tpCandidate) ? tpCandidate : null;
+    const stopLoss = isValidStopLoss(side, refPrice, slCandidate) ? slCandidate : null;
 
     if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(refPrice) || refPrice <= 0) {
+      onPreviewChange(null);
+      return;
+    }
+
+    if (orderType === 'market' && stopLoss == null && takeProfit == null) {
       onPreviewChange(null);
       return;
     }
@@ -524,7 +560,7 @@ function OrderForm(props: OrderFormProps) {
       side,
       orderType,
       entryPrice: refPrice,
-      size: qty,
+      size: engineQty,
       stopLoss,
       takeProfit,
     });
@@ -533,7 +569,7 @@ function OrderForm(props: OrderFormProps) {
   }, [
     onPreviewChange,
     orderType,
-    qty,
+    engineQty,
     refPrice,
     selectedPair,
     side,
@@ -554,9 +590,9 @@ function OrderForm(props: OrderFormProps) {
     // Percent controls margin usage; position notional scales with leverage.
     const targetMargin = available * (clamped / 100);
     const targetNotional = targetMargin * leverage;
-    const nextQty = targetNotional / refPrice;
+    const nextEngineQty = targetNotional / refPrice;
     setLastEditedAmount('qty');
-    setSize(nextQty > 0 ? nextQty.toFixed(5) : '0');
+    setSize(formatInputSize(category, inputSizeFromEngine(category, nextEngineQty)));
   }
 
   function applyUsdAmount(value: string) {
@@ -567,7 +603,8 @@ function OrderForm(props: OrderFormProps) {
       setSize('');
       return;
     }
-    setSize((usd / refPrice).toFixed(5));
+    const nextEngineQty = usd / refPrice;
+    setSize(formatInputSize(category, inputSizeFromEngine(category, nextEngineQty)));
   }
 
   return (
@@ -748,7 +785,7 @@ function OrderForm(props: OrderFormProps) {
           </div>
           <div className="mt-1 flex justify-between text-[9.5px] text-[#6f687f]">
             <span>Utilisé par l’ordre: {fmt(margin, 2)} USD</span>
-            <span>≈ {availableBase.toFixed(5)} {base}</span>
+            <span>≈ {approxSizeLabel}</span>
           </div>
         </div>
 
@@ -758,7 +795,7 @@ function OrderForm(props: OrderFormProps) {
           {orderType === 'market' ? (
             <div className="mt-1 flex h-9 items-center gap-1 rounded-md border border-[#1f1a2b] bg-[#15121f] px-3">
               <span className="text-[12px] text-[#7a8090]">≈</span>
-              <span className="flex-1 text-[13px] text-[#9498a4]">{fmt(ticker?.markPrice, 1)}</span>
+              <span className="flex-1 text-[13px] text-[#9498a4]">{fmtMarketPrice(ticker?.markPrice, category)}</span>
               <span className="text-[10px] text-[#7a8090]">USD</span>
             </div>
           ) : (
@@ -777,12 +814,12 @@ function OrderForm(props: OrderFormProps) {
         {/* Quantité / Total */}
         <div className="mt-3 grid grid-cols-2 gap-2 px-1">
           <div>
-            <div className="text-[12px] text-[#7a8090]">Quantité</div>
+            <div className="text-[12px] text-[#7a8090]">{sizeLabel}</div>
             <div className={`mt-1 flex h-9 items-center gap-1 rounded-md border bg-[#15121f] px-3 ${qty <= 0 ? 'border-[#f43f6e]/45' : 'border-[#1f1a2b]'}`}>
               <input
                 type="number"
-                min="0.00001"
-                step="0.00001"
+                min={isForexCategory(category) ? '0.01' : '0.00001'}
+                step={isForexCategory(category) ? '0.01' : '0.00001'}
                 value={size}
                 onChange={(event) => {
                   setLastEditedAmount('qty');
@@ -790,7 +827,7 @@ function OrderForm(props: OrderFormProps) {
                 }}
                 className="w-full bg-transparent text-[13px] font-semibold text-white outline-none"
               />
-              <span className="text-[10px] text-[#7a8090]">{base}</span>
+              <span className="text-[10px] text-[#7a8090]">{sizeUnit}</span>
             </div>
           </div>
           <div>
@@ -847,15 +884,21 @@ function OrderForm(props: OrderFormProps) {
         {tpSlEnabled && (() => {
           const tp = Number(takeProfitInput);
           const sl = Number(stopLossInput);
-          const tpPct = (Number.isFinite(tp) && tp > 0 && refPrice > 0)
+          const tpEntered = Number.isFinite(tp) && tp > 0;
+          const slEntered = Number.isFinite(sl) && sl > 0;
+          const tpValid = !tpEntered || isValidTakeProfit(side, refPrice, tp);
+          const slValid = !slEntered || isValidStopLoss(side, refPrice, sl);
+          const tpPct = (tpEntered && refPrice > 0)
             ? ((isSell ? (refPrice - tp) : (tp - refPrice)) / refPrice) * 100
             : null;
-          const slPct = (Number.isFinite(sl) && sl > 0 && refPrice > 0)
+          const slPct = (slEntered && refPrice > 0)
             ? ((isSell ? (sl - refPrice) : (refPrice - sl)) / refPrice) * 100
             : null;
+          const tpHint = isSell ? 'TP doit être < prix de ref pour un short' : 'TP doit être > prix de ref pour un long';
+          const slHint = isSell ? 'SL doit être > prix de ref pour un short' : 'SL doit être < prix de ref pour un long';
           return (
             <div className="mt-2 grid grid-cols-2 gap-1.5 px-1">
-              <div className="rounded-lg border border-[#241e30] bg-[#151221] px-2 py-1.5">
+              <div className={`rounded-lg border bg-[#151221] px-2 py-1.5 ${tpValid ? 'border-[#241e30]' : 'border-[#f43f6e]/60'}`}>
                 <div className="text-[10px] text-[#8f899e]">Take profit</div>
                 <div className="mt-0.5 flex items-center justify-between">
                   <input
@@ -867,6 +910,7 @@ function OrderForm(props: OrderFormProps) {
                   />
                   <span className="text-[10px] font-semibold text-[#8f899e]">USD</span>
                 </div>
+                {!tpValid && <div className="mt-0.5 text-[9px] leading-tight text-[#ff8ab9]">{tpHint}</div>}
               </div>
               <div className="rounded-lg border border-[#241e30] bg-[#151221] px-2 py-1.5">
                 <div className="text-[10px] text-[#8f899e]">Distance entry</div>
@@ -877,7 +921,7 @@ function OrderForm(props: OrderFormProps) {
                   <span className="text-[10px] font-semibold text-[#8f899e]">%</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-[#241e30] bg-[#151221] px-2 py-1.5">
+              <div className={`rounded-lg border bg-[#151221] px-2 py-1.5 ${slValid ? 'border-[#241e30]' : 'border-[#f43f6e]/60'}`}>
                 <div className="text-[10px] text-[#8f899e]">Stop loss</div>
                 <div className="mt-0.5 flex items-center justify-between">
                   <input
@@ -889,6 +933,7 @@ function OrderForm(props: OrderFormProps) {
                   />
                   <span className="text-[10px] font-semibold text-[#8f899e]">USD</span>
                 </div>
+                {!slValid && <div className="mt-0.5 text-[9px] leading-tight text-[#ff8ab9]">{slHint}</div>}
               </div>
               <div className="rounded-lg border border-[#241e30] bg-[#151221] px-2 py-1.5">
                 <div className="text-[10px] text-[#8f899e]">Distance entry</div>
@@ -911,9 +956,13 @@ function OrderForm(props: OrderFormProps) {
             if (!Number.isFinite(qty) || qty <= 0) return;
             const tpRaw = Number(takeProfitInput);
             const slRaw = Number(stopLossInput);
+            const tpCandidate = tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
+            const slCandidate = tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
+            if (tpSlEnabled && tpCandidate != null && !isValidTakeProfit(side, refPrice, tpCandidate)) return;
+            if (tpSlEnabled && slCandidate != null && !isValidStopLoss(side, refPrice, slCandidate)) return;
             onSubmit({
-              stopLoss: tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null,
-              takeProfit: tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null,
+              stopLoss: slCandidate,
+              takeProfit: tpCandidate,
             });
           }}
           disabled={busy || !canSubmit}
@@ -937,7 +986,9 @@ function OrderForm(props: OrderFormProps) {
               Side total
             </span>
             <div className="flex items-baseline gap-2">
-              <span className="text-[#e0e2ea]">{availableBase.toFixed(11)} {base}</span>
+              <span className="text-[#e0e2ea]">
+                {isForexCategory(category) ? `${qty.toFixed(2)} lots` : `${engineQty.toFixed(5)} ${base}`}
+              </span>
             </div>
           </div>
           <div className="flex items-center justify-between gap-2">
@@ -965,11 +1016,13 @@ function ChartArea({
   pair,
   pairs,
   pairLabels,
+  pairCategories,
   ticker,
   market,
   player,
   orderPreview,
   onPreviewRiskChange,
+  onPreviewEntryChange,
   onUpdateRisk,
   onCancelOrder,
   onPairChange,
@@ -980,6 +1033,7 @@ function ChartArea({
   pair: string;
   pairs: string[];
   pairLabels?: Record<string, string>;
+  pairCategories?: Record<string, string>;
   marketDataSource?: MarketDataSource;
   tradingViewSymbol?: string | null;
   ticker: MarketTicker | undefined;
@@ -987,6 +1041,7 @@ function ChartArea({
   player: Player | null;
   orderPreview?: ChartOrderPreview | null;
   onPreviewRiskChange?: (patch: { stopLoss?: number | null; takeProfit?: number | null }) => void;
+  onPreviewEntryChange?: (price: number) => void;
   onUpdateRisk: (
     positionId: string,
     stopLoss: number | null,
@@ -1018,12 +1073,14 @@ function ChartArea({
           pair={pair}
           pairs={pairs}
           pairLabels={pairLabels}
+          pairCategories={pairCategories}
           ticker={ticker}
           market={market}
           positions={positions}
           pendingOrders={pendingOrders}
           orderPreview={orderPreview}
           onPreviewRiskChange={onPreviewRiskChange}
+          onPreviewEntryChange={onPreviewEntryChange}
           intervalMinutes={interval}
           onIntervalChange={setInterval}
           onPairChange={onPairChange}
@@ -1040,12 +1097,14 @@ function ChartArea({
 
 function PositionRow({
   position,
+  category,
   ticker,
   busy,
   onClosePosition,
   onUpdateRisk,
 }: {
   position: Position;
+  category?: MarketCategory;
   ticker: MarketTicker | undefined;
   busy: boolean;
   onClosePosition: (positionId: string, partialSize?: number) => void;
@@ -1070,12 +1129,13 @@ function PositionRow({
     return isLong ? raw : -raw;
   }
 
-  const tpDisplay = position.takeProfit != null ? `${fmt(position.takeProfit, 1)}` : '–';
-  const slDisplay = position.stopLoss != null ? `${fmt(position.stopLoss, 1)}` : '–';
+  const tpDisplay = position.takeProfit != null ? fmtMarketPrice(position.takeProfit, category) : '–';
+  const slDisplay = position.stopLoss != null ? fmtMarketPrice(position.stopLoss, category) : '–';
   const tpPct = pctFromPrice(position.takeProfit);
   const slPct = pctFromPrice(position.stopLoss);
   const tpIsPartial = position.takeProfitSize != null && position.takeProfitSize > 0 && position.takeProfitSize < position.size;
   const slIsPartial = position.stopLossSize != null && position.stopLossSize > 0 && position.stopLossSize < position.size;
+  const sizeDisplay = formatEngineSizeDisplay(category, position.size, pairBase(position.pair));
 
   const PRESETS = [25, 50, 75, 100];
   const partialSize = Math.max(0, position.size * (closePercent / 100));
@@ -1097,11 +1157,11 @@ function PositionRow({
           </div>
         </Td>
         <Td><span style={{ color: accent }}>{isLong ? 'Long' : 'Short'}</span></Td>
-        <Td>{position.size.toFixed(5)} <span className="text-[10px] text-[#7a8090]">{pairBase(position.pair)}</span></Td>
-        <Td>{fmt(position.entryPrice, 1)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
-        <Td>{fmt(currentPrice, 1)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
+        <Td>{sizeDisplay.text} <span className="text-[10px] text-[#7a8090]">{sizeDisplay.unit}</span></Td>
+        <Td>{fmtMarketPrice(position.entryPrice, category)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
+        <Td>{fmtMarketPrice(currentPrice, category)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
         <Td>{fmt(currentPrice * position.size, 2)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
-        <Td>{fmt(position.liquidationPrice, 1)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
+        <Td>{fmtMarketPrice(position.liquidationPrice, category)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
         <Td>{fmt(position.margin, 2)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
         <Td>
           <span style={{ color: pnlPos ? '#15c990' : '#c026d3' }}>
@@ -1365,6 +1425,25 @@ function RiskModal({
       const slPrice = slPriceDraft.trim() === '' ? null : Number(slPriceDraft);
       if (tpPrice != null && (!Number.isFinite(tpPrice) || tpPrice <= 0)) throw new Error('Take profit invalide');
       if (slPrice != null && (!Number.isFinite(slPrice) || slPrice <= 0)) throw new Error('Stop loss invalide');
+
+      // Validate against the LIVE mark price (not the entry price): a SL/TP
+      // can be placed anywhere as long as it would not trigger immediately.
+      // This lets the user move the SL into profit on a winning trade.
+      const ref = Number.isFinite(markPrice) && markPrice > 0 ? markPrice : position.entryPrice;
+      if (slPrice != null && !isValidStopLoss(position.side, ref, slPrice)) {
+        throw new Error(
+          position.side === 'long'
+            ? 'Le stop loss doit etre sous le prix actuel'
+            : 'Le stop loss doit etre au-dessus du prix actuel',
+        );
+      }
+      if (tpPrice != null && !isValidTakeProfit(position.side, ref, tpPrice)) {
+        throw new Error(
+          position.side === 'long'
+            ? 'Le take profit doit etre au-dessus du prix actuel'
+            : 'Le take profit doit etre sous le prix actuel',
+        );
+      }
 
       let tpSize: number | null = null;
       let slSize: number | null = null;
@@ -1681,6 +1760,7 @@ function BottomTabs({
   onUpdateRisk,
   onCancelOrder,
   busy,
+  marketMetadata,
 }: {
   tab: 'positions' | 'ordres' | 'historique';
   setTab: (tab: 'positions' | 'ordres' | 'historique') => void;
@@ -1703,6 +1783,7 @@ function BottomTabs({
   ) => Promise<void> | void;
   onCancelOrder: (orderId: string) => void;
   busy: boolean;
+  marketMetadata: Record<string, MarketMetadata>;
 }) {
   const positions = player?.openPositions ?? [];
   const orders = player?.openOrders ?? [];
@@ -1785,6 +1866,7 @@ function BottomTabs({
                   <PositionRow
                     key={position.id}
                     position={position}
+                    category={marketMetadata[position.pair]?.category}
                     ticker={ticker}
                     busy={busy}
                     onClosePosition={onClosePosition}
@@ -1808,13 +1890,16 @@ function BottomTabs({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1c181a] text-[#e0e2ea]">
-                {orders.map((order) => (
+                {orders.map((order) => {
+                  const orderCategory = marketMetadata[order.pair]?.category;
+                  const orderSizeDisplay = formatEngineSizeDisplay(orderCategory, order.size, pairBase(order.pair));
+                  return (
                   <tr key={order.id} className="hover:bg-[#181517]">
                     <Td>{pairBase(order.pair)}/USD</Td>
                     <Td><span style={{ color: order.side === 'long' ? '#15c990' : '#c026d3' }}>{order.side === 'long' ? 'Long' : 'Short'}</span></Td>
                     <Td className="capitalize">{order.orderType === 'market' ? 'Marché' : 'Limite'}</Td>
-                    <Td>{order.limitPrice ? fmt(order.limitPrice, 1) : '–'}</Td>
-                    <Td>{order.size.toFixed(5)}</Td>
+                    <Td>{order.limitPrice ? fmtMarketPrice(order.limitPrice, orderCategory) : '–'}</Td>
+                    <Td>{orderSizeDisplay.text} <span className="text-[10px] text-[#7a8090]">{orderSizeDisplay.unit}</span></Td>
                     <Td>{order.leverage}x</Td>
                     <Td>{fmt(order.marginReserved + order.feeEstimate, 2)} USD</Td>
                     <Td className="text-right">
@@ -1823,7 +1908,8 @@ function BottomTabs({
                       </button>
                     </Td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )
@@ -2546,9 +2632,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useEffect(() => {
     if (orderType === 'limit' && ticker && !limitPrice) {
-      setLimitPrice(String(Number(ticker.markPrice.toFixed(2))));
+      const category = meta.marketMetadata[selectedPair]?.category;
+      const price = ticker.markPrice;
+      let formatted: string;
+      if (category === 'forex') formatted = price.toFixed(5);
+      else if (price >= 1000) formatted = price.toFixed(2);
+      else if (price >= 1) formatted = price.toFixed(4);
+      else formatted = Number(price.toPrecision(6)).toString();
+      setLimitPrice(formatted);
     }
-  }, [orderType, ticker, limitPrice]);
+  }, [orderType, ticker, limitPrice, meta.marketMetadata, selectedPair]);
 
   useEffect(() => {
     const competitionId = competitionContext?.id;
@@ -2614,7 +2707,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     const currentTicker = demoMarket[selectedPair];
     if (!currentTicker) return;
 
-    const qty = Number(size);
+    const category = meta.marketMetadata[selectedPair]?.category;
+    const qty = engineSizeFromInput(category, Number(size));
     const price = orderType === 'limit' && Number(limitPrice) > 0
       ? Number(limitPrice)
       : (side === 'long' ? currentTicker.askPrice : currentTicker.bidPrice);
@@ -2677,6 +2771,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       trades: [trade, ...current.trades].slice(0, 60),
     }));
     clearOrderDraftRisk();
+    setOrderPreview(null);
   }
 
   function closeDemoPosition(positionId: string, partialSize?: number) {
@@ -2757,7 +2852,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   }
 
   async function submitOrder(extras?: { stopLoss: number | null; takeProfit: number | null }) {
-    const qty = Number(size);
+    const category = meta.marketMetadata[selectedPair]?.category;
+    const qty = engineSizeFromInput(category, Number(size));
     if (!Number.isFinite(qty) || qty <= 0) {
       setError('Quantité invalide. Entre une quantité supérieure à 0.');
       return;
@@ -2790,6 +2886,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Ordre refusé');
       clearOrderDraftRisk();
+      setOrderPreview(null);
       void refreshLive();
     } catch (err: any) {
       setError(err.message);
@@ -2989,11 +3086,18 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     : (demoMode ? true : (competitionContext ? competitionContext.mode === 'paper' : eventStarted));
   void paperStartingBalance;
 
+  const selectedCategory = meta.marketMetadata[selectedPair]?.category;
+
   const updateOrderPreviewRisk = useCallback((patch: { stopLoss?: number | null; takeProfit?: number | null }) => {
     setTpSlEnabled(true);
-    if ('stopLoss' in patch) setStopLossInput(priceInputValue(patch.stopLoss));
-    if ('takeProfit' in patch) setTakeProfitInput(priceInputValue(patch.takeProfit));
-  }, []);
+    if ('stopLoss' in patch) setStopLossInput(priceInputValue(patch.stopLoss, selectedCategory));
+    if ('takeProfit' in patch) setTakeProfitInput(priceInputValue(patch.takeProfit, selectedCategory));
+  }, [selectedCategory]);
+
+  const updateOrderPreviewEntry = useCallback((price: number) => {
+    if (!Number.isFinite(price) || price <= 0) return;
+    setLimitPrice(priceInputValue(price, selectedCategory) || String(price));
+  }, [selectedCategory]);
 
   const orderPanel = (
     <OrderForm
@@ -3036,11 +3140,20 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     return out;
   }, [meta.pairs, meta.marketMetadata]);
 
+  const pairCategories = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const p of meta.pairs) {
+      out[p] = meta.marketMetadata?.[p]?.category || 'crypto';
+    }
+    return out;
+  }, [meta.pairs, meta.marketMetadata]);
+
   const chartPanel = (
     <ChartArea
       pair={selectedPair}
       pairs={meta.pairs}
       pairLabels={pairLabels}
+      pairCategories={pairCategories}
       marketDataSource={meta.marketDataSource}
       tradingViewSymbol={meta.marketMetadata[selectedPair]?.tradingViewSymbol}
       ticker={ticker}
@@ -3048,6 +3161,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       player={player}
       orderPreview={orderPreview}
       onPreviewRiskChange={updateOrderPreviewRisk}
+      onPreviewEntryChange={updateOrderPreviewEntry}
       onUpdateRisk={updateRisk}
       onCancelOrder={cancelOrder}
       onPairChange={(p) => {
@@ -3076,6 +3190,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       onUpdateRisk={updateRisk}
       onCancelOrder={cancelOrder}
       busy={busy}
+      marketMetadata={meta.marketMetadata}
     />
   );
 

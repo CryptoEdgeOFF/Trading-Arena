@@ -173,6 +173,13 @@ export async function validateConnection(): Promise<void> {
   await ensureReady();
 }
 
+export async function isInstrumentAvailable(pair: string): Promise<boolean> {
+  if (!(await ensureReady())) return false;
+  const mapping = getOandaMapping(pair);
+  if (!mapping || !availableInstruments) return false;
+  return availableInstruments.has(mapping.instrument);
+}
+
 export async function getPricing(): Promise<Record<string, OandaPriceQuote>> {
   if (!(await ensureReady())) return {};
 

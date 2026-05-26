@@ -11,7 +11,10 @@ import { PlayerManager } from './playerManager.js';
 import { EventConfig, StatePatch } from './types.js';
 import * as kraken from './kraken.js';
 import * as binance from './binance.js';
+import { pairToBinanceSymbol } from './binance.js';
 import * as oanda from './oanda.js';
+import * as hyperliquid from './hyperliquid.js';
+import * as mt5Feed from './mt5Feed.js';
 import { getPaperPairDefinition } from './exchangePaperEngine.js';
 import { CompetitionManager } from './competitionManager.js';
 import { sendOtpEmail } from './mailer.js';
@@ -164,6 +167,77 @@ const manager = new PlayerManager((patch: StatePatch) => {
     });
   }
   broadcastPaperUpdates();
+});
+
+function requireMt5FeedAuth(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  const secret = process.env.MT5_FEED_SECRET?.trim();
+  if (!secret) {
+    next();
+    return;
+  }
+  const header = String(req.headers.authorization || '');
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : header.trim();
+  if (token !== secret) {
+    res.status(401).json({ error: 'MT5 feed non autorisé' });
+    return;
+  }
+  next();
+}
+
+mt5Feed.setOnTick(() => {
+  void manager.refreshPaperMarketSnapshot();
+});
+
+app.get('/api/mt5/status', (_req, res) => {
+  res.json({
+    ok: true,
+    authRequired: Boolean(process.env.MT5_FEED_SECRET?.trim()),
+    ...mt5Feed.getStatus(),
+  });
+});
+
+app.post('/api/mt5/tick', requireMt5FeedAuth, (req, res) => {
+  const result = mt5Feed.ingestTick({
+    symbol: String(req.body?.symbol || ''),
+    bid: Number(req.body?.bid),
+    ask: Number(req.body?.ask),
+    ts_ms: req.body?.ts_ms != null ? Number(req.body.ts_ms) : undefined,
+  });
+  if (!result.ok) {
+    res.status(400).json(result);
+    return;
+  }
+  res.json(result);
+});
+
+app.post('/api/mt5/tick-line', requireMt5FeedAuth, express.text({ type: '*/*' }), (req, res) => {
+  const result = mt5Feed.ingestTickLine(String(req.body || ''));
+  if (!result.ok) {
+    res.status(400).json(result);
+    return;
+  }
+  res.json(result);
+});
+
+app.post('/api/mt5/ticks', requireMt5FeedAuth, (req, res) => {
+  const rows = Array.isArray(req.body) ? req.body : req.body?.ticks;
+  if (!Array.isArray(rows)) {
+    res.status(400).json({ error: 'Corps attendu: { ticks: [...] } ou [...]' });
+    return;
+  }
+  const accepted: string[] = [];
+  const errors: string[] = [];
+  for (const row of rows) {
+    const result = mt5Feed.ingestTick({
+      symbol: String(row?.symbol || ''),
+      bid: Number(row?.bid),
+      ask: Number(row?.ask),
+      ts_ms: row?.ts_ms != null ? Number(row.ts_ms) : undefined,
+    });
+    if (result.ok && result.pair) accepted.push(result.pair);
+    else if (result.error) errors.push(result.error);
+  }
+  res.json({ ok: true, accepted, errors });
 });
 
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
@@ -679,14 +753,32 @@ app.get('/api/paper/meta', async (_req, res) => {
 app.get('/api/paper/candles', async (req, res) => {
   const pair = String(req.query.pair || 'BTC/USD');
   const interval = Number(req.query.interval || 1);
+  const from = Number(req.query.from);
+  const to = Number(req.query.to);
+  const countBack = Number(req.query.countBack);
+  const candleOpts = {
+    from: Number.isFinite(from) && from > 0 ? from : undefined,
+    to: Number.isFinite(to) && to > 0 ? to : undefined,
+    countBack: Number.isFinite(countBack) && countBack > 0 ? countBack : undefined,
+  };
 
   try {
     const pairDef = getPaperPairDefinition(pair);
-    const candles = pairDef?.source === 'oanda'
-      ? await oanda.getOhlcCandles(pair, interval)
-      : manager.getMarketDataSource() === 'binance'
-        ? await binance.getOhlcCandles(pair, interval)
-        : await kraken.getOhlcCandles(pair, interval);
+    let candles;
+    if (pairDef?.source === 'oanda') {
+      if (await oanda.isInstrumentAvailable(pair)) {
+        candles = await oanda.getOhlcCandles(pair, interval);
+      } else {
+        candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
+      }
+    } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
+      // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
+      candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+    } else if (manager.getMarketDataSource() === 'binance') {
+      candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+    } else {
+      candles = await kraken.getOhlcCandles(pair, interval);
+    }
     res.json({ pair, interval, candles });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Historique indisponible' });
@@ -1262,7 +1354,7 @@ app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
   res.json({ competitions: competitionManager.listAdminCompetitions() });
 });
 
-app.post('/api/admin/competitions', requireAdmin, (req, res) => {
+app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
   const { title, code, executionMode, startAt, endAt, isPublic, cashPrize } = req.body || {};
   try {
     const competition = competitionManager.createCompetition({
@@ -1274,13 +1366,14 @@ app.post('/api/admin/competitions', requireAdmin, (req, res) => {
       isPublic: Boolean(isPublic),
       cashPrize,
     });
+    await competitionManager.persist();
     res.json({ ok: true, competition });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Creation competition impossible' });
   }
 });
 
-app.patch('/api/admin/competitions/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   const body = req.body || {};
   const { title, code, executionMode, startAt, endAt, isPublic, cashPrize } = body;
   try {
@@ -1294,6 +1387,7 @@ app.patch('/api/admin/competitions/:id', requireAdmin, (req, res) => {
     if ('cashPrize' in body) patch.cashPrize = cashPrize;
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);
+    await competitionManager.persist();
     res.json({ ok: true, competition });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Mise a jour competition impossible' });
@@ -1309,13 +1403,14 @@ app.delete('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
       await competitionManager.deleteTraderSessionsForPlayer(playerId);
       manager.removePlayer(playerId);
     }
+    await competitionManager.persist();
     res.json({ ok: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Suppression competition impossible' });
   }
 });
 
-app.post('/api/admin/competitions/result', requireAdmin, (req, res) => {
+app.post('/api/admin/competitions/result', requireAdmin, async (req, res) => {
   const { competitionId, userId, pnlUsd, pnlPercent, tradesCount } = req.body || {};
   try {
     competitionManager.upsertResult({
@@ -1325,6 +1420,7 @@ app.post('/api/admin/competitions/result', requireAdmin, (req, res) => {
       pnlPercent: Number(pnlPercent),
       tradesCount: Number(tradesCount),
     });
+    await competitionManager.persist();
     res.json({ ok: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Mise a jour resultat impossible' });

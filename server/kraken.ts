@@ -11,6 +11,12 @@ export interface OhlcCandle {
   close: number;
 }
 
+export interface OhlcQueryOptions {
+  from?: number;
+  to?: number;
+  countBack?: number;
+}
+
 const SPOT_PAIR_MAP: Record<string, string> = {
   'BTC/USD': 'XBTUSD',
   'ETH/USD': 'ETHUSD',

@@ -1,7 +1,12 @@
-import type { OhlcCandle } from './kraken.js';
-import { STATIC_MARKET_METADATA } from './marketMetadata.js';
+import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
+import { getHyperliquidTradfiSymbol } from './oandaInstruments.js';
 
 const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
+const MAX_CANDLES = 50000;
+const HL_CHUNK_LIMIT = 5000;
+const DEFAULT_LOOKBACK_DAYS = 30;
+/** Hyperliquid caps ~5165 x 1m candles per symbol. */
+const HL_1M_MAX_BARS = 5165;
 
 const PAIR_TO_COIN: Record<string, string> = {
   'BTC/USD': 'BTC',
@@ -68,11 +73,31 @@ export async function getAllMids(): Promise<Record<string, number>> {
 
 function pairToHyperliquidCoin(pair: string): string | null {
   if (PAIR_TO_COIN[pair]) return PAIR_TO_COIN[pair];
-  const meta = STATIC_MARKET_METADATA.find((item) => item.pair === pair && item.source === 'hyperliquid_spot');
-  return meta?.sourceSymbol ?? null;
+  return getHyperliquidTradfiSymbol(pair);
 }
 
-export async function getOhlcCandles(pair: string, interval = 1): Promise<OhlcCandle[]> {
+function parseCandleRow(row: any): OhlcCandle | null {
+  const rawTime = Number(row?.t ?? row?.time ?? row?.T);
+  const time = rawTime > 1e12 ? Math.floor(rawTime / 1000) : rawTime;
+  const open = Number(row?.o ?? row?.open);
+  const high = Number(row?.h ?? row?.high);
+  const low = Number(row?.l ?? row?.low);
+  const close = Number(row?.c ?? row?.close);
+  if (
+    !Number.isFinite(time) || time <= 0
+    || !Number.isFinite(open) || !Number.isFinite(high)
+    || !Number.isFinite(low) || !Number.isFinite(close)
+  ) {
+    return null;
+  }
+  return { time, open, high, low, close };
+}
+
+export async function getOhlcCandles(
+  pair: string,
+  interval = 1,
+  opts: OhlcQueryOptions = {},
+): Promise<OhlcCandle[]> {
   const coin = pairToHyperliquidCoin(pair);
   if (!coin) {
     throw new Error('Pair non supportee pour historique Hyperliquid');
@@ -80,40 +105,58 @@ export async function getOhlcCandles(pair: string, interval = 1): Promise<OhlcCa
 
   const safeInterval = INTERVAL_MAP[interval] ? interval : 1;
   const intervalKey = INTERVAL_MAP[safeInterval];
-  const now = Date.now();
-  const lookbackMs = Math.max(240, Math.ceil(24 * 60 / safeInterval)) * safeInterval * 60 * 1000;
-  const startTime = now - lookbackMs;
+  const intervalMs = safeInterval * 60 * 1000;
+  const nowMs = Date.now();
+  const toMs = opts.to && opts.to > 0 ? opts.to * 1000 : nowMs;
 
-  const rows = await postInfo({
-    type: 'candleSnapshot',
-    req: {
-      coin,
-      interval: intervalKey,
-      startTime,
-      endTime: now,
-    },
-  });
+  const thirtyDayBars = Math.ceil((DEFAULT_LOOKBACK_DAYS * 24 * 60) / safeInterval);
+  const defaultCount = safeInterval === 1
+    ? HL_1M_MAX_BARS
+    : Math.min(MAX_CANDLES, thirtyDayBars);
 
-  if (!Array.isArray(rows)) return [];
+  const targetCount = Math.min(
+    MAX_CANDLES,
+    opts.countBack && opts.countBack > 0
+      ? opts.countBack
+      : defaultCount,
+  );
 
-  return rows
-    .map((row: any) => {
-      const rawTime = Number(row?.t ?? row?.time ?? row?.T);
-      const time = rawTime > 1e12 ? Math.floor(rawTime / 1000) : rawTime;
-      return {
-        time,
-        open: Number(row?.o ?? row?.open),
-        high: Number(row?.h ?? row?.high),
-        low: Number(row?.l ?? row?.low),
-        close: Number(row?.c ?? row?.close),
-      };
-    })
-    .filter((candle) => (
-      Number.isFinite(candle.time)
-      && Number.isFinite(candle.open)
-      && Number.isFinite(candle.high)
-      && Number.isFinite(candle.low)
-      && Number.isFinite(candle.close)
-      && candle.time > 0
-    ));
+  const fromMs = opts.countBack && opts.countBack > 0
+    ? toMs - targetCount * intervalMs
+    : opts.from && opts.from > 0
+      ? opts.from * 1000
+      : toMs - targetCount * intervalMs;
+
+  const byTime = new Map<number, OhlcCandle>();
+  let endMs = toMs;
+
+  while (byTime.size < targetCount && endMs > fromMs) {
+    const rows = await postInfo({
+      type: 'candleSnapshot',
+      req: {
+        coin,
+        interval: intervalKey,
+        startTime: fromMs,
+        endTime: endMs,
+      },
+    });
+
+    if (!Array.isArray(rows) || rows.length === 0) break;
+
+    let oldestMs = endMs;
+    for (const row of rows) {
+      const candle = parseCandleRow(row);
+      if (!candle) continue;
+      const candleMs = candle.time * 1000;
+      if (candleMs >= toMs || candleMs < fromMs) continue;
+      oldestMs = Math.min(oldestMs, candleMs);
+      byTime.set(candle.time, candle);
+    }
+
+    if (rows.length < HL_CHUNK_LIMIT) break;
+    if (oldestMs >= endMs || oldestMs <= fromMs) break;
+    endMs = oldestMs - 1;
+  }
+
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
 }

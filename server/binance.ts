@@ -1,6 +1,9 @@
-import type { OhlcCandle } from './kraken.js';
+import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 
 const FUTURES_REST_BASE = 'https://fapi.binance.com';
+const MAX_CANDLES = 50000;
+const DEFAULT_LOOKBACK_DAYS = 30;
+const INTRADAY_DEFAULT_BARS = 10000;
 
 const INTERVAL_MAP: Record<number, string> = {
   1: '1m',
@@ -24,6 +27,23 @@ async function requestJson<T>(path: string): Promise<T> {
     throw new Error(`Binance Futures API ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+function parseKlineRow(row: unknown): OhlcCandle | null {
+  const values = row as unknown[];
+  const time = Math.floor(Number(values?.[0]) / 1000);
+  const open = Number(values?.[1]);
+  const high = Number(values?.[2]);
+  const low = Number(values?.[3]);
+  const close = Number(values?.[4]);
+  if (
+    !Number.isFinite(time) || time <= 0
+    || !Number.isFinite(open) || !Number.isFinite(high)
+    || !Number.isFinite(low) || !Number.isFinite(close)
+  ) {
+    return null;
+  }
+  return { time, open, high, low, close };
 }
 
 export async function getTickerStats(): Promise<Record<string, { markPrice: number; change24h: number | null }>> {
@@ -60,33 +80,64 @@ export async function getTickers(): Promise<Record<string, number>> {
   return Object.fromEntries(Object.entries(stats).map(([symbol, ticker]) => [symbol, ticker.markPrice]));
 }
 
-export async function getOhlcCandles(pair: string, interval = 1): Promise<OhlcCandle[]> {
+export async function getOhlcCandles(
+  pair: string,
+  interval = 1,
+  opts: OhlcQueryOptions = {},
+): Promise<OhlcCandle[]> {
   const symbol = pairToBinanceSymbol(pair);
   if (!symbol) throw new Error('Pair non supportee pour historique Binance');
 
   const safeInterval = INTERVAL_MAP[interval] ? interval : 1;
   const intervalKey = INTERVAL_MAP[safeInterval];
-  const limit = Math.min(1500, Math.max(240, Math.ceil(24 * 60 / safeInterval)));
-  const rows = await requestJson<unknown[]>(
-    `/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${intervalKey}&limit=${limit}`,
+  const intervalSec = safeInterval * 60;
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const toSec = opts.to && opts.to > 0 ? opts.to : nowSec;
+  const thirtyDayBars = Math.ceil((DEFAULT_LOOKBACK_DAYS * 24 * 60) / safeInterval);
+  const defaultCount = safeInterval <= 5
+    ? Math.min(MAX_CANDLES, INTRADAY_DEFAULT_BARS)
+    : Math.min(MAX_CANDLES, thirtyDayBars);
+  const targetCount = Math.min(
+    MAX_CANDLES,
+    opts.countBack && opts.countBack > 0
+      ? opts.countBack
+      : opts.from && opts.from > 0
+        ? Math.ceil((toSec - opts.from) / intervalSec) + 2
+        : defaultCount,
   );
 
-  if (!Array.isArray(rows)) return [];
+  // countBack has priority over TV's `from` (often years in the past on first load).
+  const fromSec = opts.countBack && opts.countBack > 0
+    ? Math.max(0, toSec - targetCount * intervalSec)
+    : opts.from && opts.from > 0
+      ? opts.from
+      : Math.max(0, toSec - targetCount * intervalSec);
 
-  return rows
-    .map((row: any) => ({
-      time: Math.floor(Number(row?.[0]) / 1000),
-      open: Number(row?.[1]),
-      high: Number(row?.[2]),
-      low: Number(row?.[3]),
-      close: Number(row?.[4]),
-    }))
-    .filter((candle) => (
-      Number.isFinite(candle.time)
-      && Number.isFinite(candle.open)
-      && Number.isFinite(candle.high)
-      && Number.isFinite(candle.low)
-      && Number.isFinite(candle.close)
-      && candle.time > 0
-    ));
+  const byTime = new Map<number, OhlcCandle>();
+  let endMs = toSec * 1000 - 1;
+
+  while (byTime.size < targetCount && endMs > fromSec * 1000) {
+    const limit = Math.min(1500, targetCount - byTime.size);
+    const rows = await requestJson<unknown[]>(
+      `/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${intervalKey}&limit=${limit}&endTime=${endMs}`,
+    );
+    if (!Array.isArray(rows) || rows.length === 0) break;
+
+    let oldestMs = endMs;
+    for (const row of rows) {
+      const candle = parseKlineRow(row);
+      if (!candle) continue;
+      oldestMs = Math.min(oldestMs, candle.time * 1000);
+      if (candle.time >= toSec || candle.time < fromSec) continue;
+      byTime.set(candle.time, candle);
+    }
+
+    if (rows.length < limit) break;
+    if (oldestMs >= endMs) break;
+    endMs = oldestMs - 1;
+    if (oldestMs <= fromSec * 1000) break;
+  }
+
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
 }

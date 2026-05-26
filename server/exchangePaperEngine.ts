@@ -4,6 +4,8 @@ import type { MarketDataSource, MarketTicker, Order, OrderType, Player, Position
 import * as kraken from './kraken.js';
 import * as oanda from './oanda.js';
 import * as binance from './binance.js';
+import * as hyperliquid from './hyperliquid.js';
+import * as mt5Feed from './mt5Feed.js';
 import { OANDA_TRADFI_PAIRS } from './oandaInstruments.js';
 
 export interface PaperOrderInput {
@@ -42,10 +44,11 @@ const cryptoPair = (pair: string, krakenSymbol: string, hyperliquidCoin: string,
   binanceSymbol: binanceSymbol || binance.pairToBinanceSymbol(pair) || undefined,
 });
 
-const oandaPair = (pair: string, instrument: string, invert = false): PaperPairDef => ({
+const oandaPair = (pair: string, instrument: string, hyperliquidSymbol: string, invert = false): PaperPairDef => ({
   pair,
   source: 'oanda',
   sourceSymbol: instrument,
+  hyperliquidCoin: hyperliquidSymbol,
   oandaInvert: invert,
 });
 
@@ -100,10 +103,10 @@ export const PAPER_PAIRS: PaperPairDef[] = [
   cryptoPair('JUP/USD', 'PF_JUPUSD', 'JUP'),
   cryptoPair('PYTH/USD', 'PF_PYTHUSD', 'PYTH'),
   cryptoPair('BONK/USD', 'PF_BONKUSD', 'BONK'),
-  ...OANDA_TRADFI_PAIRS.map(({ pair, instrument, invert }) => oandaPair(pair, instrument, Boolean(invert))),
+  ...OANDA_TRADFI_PAIRS.map(({ pair, instrument, hyperliquidSymbol, invert }) => oandaPair(pair, instrument, hyperliquidSymbol, Boolean(invert))),
 ];
 
-const SPREAD_BPS = 0.1;
+const SPREAD_BPS = 0;
 const TAKER_FEE_RATE = 0.00005;
 const MAKER_FEE_RATE = 0.00002;
 const MAX_LEVERAGE = 50;
@@ -120,6 +123,11 @@ function computePositionPnl(position: Position): number {
   return position.side === 'long'
     ? (position.markPrice - position.entryPrice) * position.size
     : (position.entryPrice - position.markPrice) * position.size;
+}
+
+/** Bid/ask compétition : exécution au mark (futures), pas le spread CFD MT5/OANDA. */
+function applyPaperMarkSpread(markPrice: number): { bidPrice: number; askPrice: number } {
+  return { bidPrice: markPrice, askPrice: markPrice };
 }
 
 function validateRiskLevels(
@@ -569,10 +577,12 @@ export class PaperTradingEngine {
   }
 
   private async refreshTickers(players: Player[]): Promise<void> {
-    const [krakenPrices, oandaPrices, binancePrices] = await Promise.all([
+    const [krakenPrices, oandaPrices, binancePrices, hyperliquidPrices, mt5Prices] = await Promise.all([
       kraken.getTickerStats().catch(() => ({})),
       oanda.getPricing().catch(() => ({})),
       binance.getTickerStats().catch(() => ({})),
+      hyperliquid.getAllMids().catch(() => ({})),
+      Promise.resolve(mt5Feed.getPricing()),
     ]);
     const now = Date.now();
 
@@ -596,11 +606,29 @@ export class PaperTradingEngine {
       let askPrice = typeof rawTicker === 'number'
         ? markPrice * (1 + SPREAD_BPS / 10000)
         : (rawTicker?.askPrice ?? markPrice + markPrice * (SPREAD_BPS / 10000));
-      if (item.source === 'oanda' && rawTicker && typeof rawTicker !== 'number') {
-        markPrice = rawTicker.markPrice || markPrice;
-        bidPrice = rawTicker.bidPrice || bidPrice;
-        askPrice = rawTicker.askPrice || askPrice;
+      let updatedAt = now;
+
+      if (item.source === 'oanda') {
+        const mt5Quote = mt5Prices[item.pair];
+        if (mt5Quote) {
+          markPrice = mt5Quote.markPrice;
+          updatedAt = mt5Quote.updatedAt;
+        } else if (rawTicker && typeof rawTicker !== 'number') {
+          markPrice = rawTicker.markPrice || markPrice;
+          if (markPrice <= 0 && rawTicker.bidPrice && rawTicker.askPrice) {
+            markPrice = (rawTicker.bidPrice + rawTicker.askPrice) / 2;
+          }
+        } else if (markPrice <= 0 && item.hyperliquidCoin) {
+          const hlPrice = hyperliquidPrices[item.hyperliquidCoin];
+          if (typeof hlPrice === 'number' && hlPrice > 0) {
+            markPrice = hlPrice;
+          }
+        }
+        if (markPrice > 0) {
+          ({ bidPrice, askPrice } = applyPaperMarkSpread(markPrice));
+        }
       }
+
       const change24h = typeof rawTicker === 'number' ? (this.market[item.pair]?.change24h ?? null) : (rawTicker?.change24h ?? null);
       return [item.pair, {
         pair: item.pair,
@@ -609,8 +637,8 @@ export class PaperTradingEngine {
         bidPrice,
         askPrice,
         change24h,
-        spreadBps: SPREAD_BPS,
-        updatedAt: now,
+        spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
+        updatedAt,
       } satisfies MarketTicker];
     }));
 

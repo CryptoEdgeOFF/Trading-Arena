@@ -15,6 +15,7 @@ import type {
 export interface BtfDatafeedConfig {
   pairs: string[];
   description?: Record<string, string>;
+  categories?: Record<string, string>;
   marketDataSource?: 'kraken' | 'binance';
 }
 
@@ -40,6 +41,10 @@ const RESOLUTION_TO_INTERVAL: Record<string, number> = {
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as ResolutionString[];
 
+/** Bars loaded on first paint — TV only asks ~300 by default (≈5h en 1m). */
+const FIRST_LOAD_BARS = 10000;
+const SCROLL_LOAD_BARS = 1500;
+
 interface Subscription {
   pair: string;
   intervalMin: number;
@@ -48,18 +53,45 @@ interface Subscription {
   lastBar: Bar | null;
 }
 
-function buildSymbolInfo(pair: string, description: string): LibrarySymbolInfo {
+function tvSymbolType(pair: string, category?: string): string {
+  if (category === 'forex') return 'forex';
+  if (category === 'actions') return 'stock';
+  if (category === 'indices') return 'index';
+  if (category === 'commodities') return 'commodity';
+  if (category) return 'crypto';
+  if (pair === 'EUR/USD' || pair === 'JPY/USD' || pair === 'KRW/USD') return 'forex';
+  return 'crypto';
+}
+
+/** TradingView pricescale = 10^decimal_places (minmov=1). */
+function pricescaleForPair(pair: string, category?: string, samplePrice?: number): number {
+  if (pair === 'EUR/USD') return 100_000;
+  if (pair === 'JPY/USD' || pair === 'KRW/USD') return 10_000_000;
+  if (category === 'forex') return 100_000;
+  if (category === 'commodities') return 100;
+  if (category === 'indices' || category === 'actions') return 100;
+  if (samplePrice && samplePrice > 0) return inferPriceScale(samplePrice);
+  return 100;
+}
+
+function buildSymbolInfo(
+  pair: string,
+  description: string,
+  category?: string,
+  samplePrice?: number,
+): LibrarySymbolInfo {
+  const pricescale = pricescaleForPair(pair, category, samplePrice);
   return {
     name: pair,
     description,
     ticker: pair,
-    type: pair.includes('USD') && !pair.includes('/USD') ? 'forex' : 'crypto',
+    type: tvSymbolType(pair, category),
     session: '24x7',
     timezone: 'Etc/UTC',
     exchange: 'BTF',
     listed_exchange: 'BTF',
     format: 'price',
-    pricescale: 100,
+    pricescale,
     minmov: 1,
     has_intraday: true,
     has_daily: true,
@@ -92,6 +124,11 @@ export class BtfDatafeed implements IBasicDataFeed {
     this.config = { ...this.config, pairs };
   }
 
+  updateCategories(categories: Record<string, string>) {
+    this.config = { ...this.config, categories };
+    this.symbolCache.clear();
+  }
+
   onReady(callback: (config: DatafeedConfiguration) => void): void {
     setTimeout(() => {
       callback({
@@ -119,6 +156,7 @@ export class BtfDatafeed implements IBasicDataFeed {
   ): void {
     const query = userInput.replace(/\s+/g, '').toUpperCase();
     const description = this.config.description ?? {};
+    const category = this.config.categories?.[symbolName];
     const matches: SearchSymbolResultItem[] = this.config.pairs
       .filter((pair) => pair.replace('/', '').toUpperCase().includes(query))
       .slice(0, 30)
@@ -128,7 +166,7 @@ export class BtfDatafeed implements IBasicDataFeed {
         description: description[pair] ?? pair,
         exchange: 'BTF',
         ticker: pair,
-        type: pair.includes('/USD') ? 'crypto' : 'forex',
+        type: tvSymbolType(pair, this.config.categories?.[pair]),
       }));
     onResult(matches);
   }
@@ -139,13 +177,8 @@ export class BtfDatafeed implements IBasicDataFeed {
     onError: (reason: string) => void,
   ): void {
     const description = this.config.description?.[symbolName] ?? symbolName;
-    const cached = this.symbolCache.get(symbolName);
-    if (cached) {
-      setTimeout(() => onResolve(cached), 0);
-      return;
-    }
-
-    const info = buildSymbolInfo(symbolName, description);
+    const category = this.config.categories?.[symbolName];
+    const info = buildSymbolInfo(symbolName, description, category);
     this.symbolCache.set(symbolName, info);
     setTimeout(() => onResolve(info), 0);
     void onError;
@@ -160,15 +193,30 @@ export class BtfDatafeed implements IBasicDataFeed {
   ): Promise<void> {
     const pair = symbolInfo.ticker || symbolInfo.name;
     const intervalMin = RESOLUTION_TO_INTERVAL[String(resolution)] ?? 1;
-    const { from, to, firstDataRequest } = periodParams;
+    const { from, to, firstDataRequest, countBack } = periodParams;
+    const fetchCountBack = firstDataRequest
+      ? Math.max(countBack || 0, FIRST_LOAD_BARS)
+      : Math.max(countBack || 0, SCROLL_LOAD_BARS);
 
     try {
-      const response = await fetch(`/api/paper/candles?pair=${encodeURIComponent(pair)}&interval=${intervalMin}`);
+      const params = new URLSearchParams({
+        pair,
+        interval: String(intervalMin),
+      });
+      if (Number.isFinite(from) && from > 0) params.set('from', String(Math.floor(from)));
+      if (Number.isFinite(to) && to > 0) params.set('to', String(Math.floor(to)));
+      params.set('countBack', String(Math.floor(fetchCountBack)));
+
+      const response = await fetch(`/api/paper/candles?${params.toString()}`);
       if (!response.ok) {
-        onResult([], { noData: true });
+        onError(`Historique indisponible (${response.status})`);
         return;
       }
-      const payload = (await response.json()) as { candles?: ApiCandle[] };
+      const payload = (await response.json()) as { candles?: ApiCandle[]; error?: string };
+      if (payload.error) {
+        onError(payload.error);
+        return;
+      }
       const raw = Array.isArray(payload.candles) ? payload.candles : [];
 
       const bars: Bar[] = raw
@@ -187,10 +235,6 @@ export class BtfDatafeed implements IBasicDataFeed {
           close: candle.close,
           volume: candle.volume,
         }))
-        .filter((bar) => {
-          const timeSec = bar.time / 1000;
-          return timeSec >= from && timeSec < to;
-        })
         .sort((a, b) => a.time - b.time);
 
       if (bars.length === 0) {
@@ -198,19 +242,28 @@ export class BtfDatafeed implements IBasicDataFeed {
         return;
       }
 
-      if (firstDataRequest && bars.length > 0) {
-        const sampleClose = bars[bars.length - 1].close;
-        const cached = this.symbolCache.get(pair);
-        if (cached) {
-          const next: LibrarySymbolInfo = {
-            ...cached,
-            pricescale: inferPriceScale(sampleClose),
-          };
-          this.symbolCache.set(pair, next);
-        }
+      // Keep bars the library can render; exclude only future/incomplete buckets.
+      const visibleTo = Number.isFinite(to) && to > 0 ? to : Number.POSITIVE_INFINITY;
+      const visible = bars.filter((bar) => bar.time / 1000 < visibleTo);
+
+      if (visible.length === 0) {
+        onResult([], { noData: true, nextTime: bars[0].time });
+        return;
       }
 
-      onResult(bars, { noData: false });
+      if (firstDataRequest && visible.length > 0) {
+        const sampleClose = visible[visible.length - 1].close;
+        const category = this.config.categories?.[pair];
+        this.symbolCache.set(pair, buildSymbolInfo(
+          pair,
+          this.config.description?.[pair] ?? pair,
+          category,
+          sampleClose,
+        ));
+      }
+
+      const reachedHistoryStart = visible.length < fetchCountBack;
+      onResult(visible, { noData: reachedHistoryStart });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Historique indisponible';
       onError(message);
