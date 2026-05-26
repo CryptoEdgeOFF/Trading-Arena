@@ -1,4 +1,4 @@
-import type { OhlcCandle } from './kraken.js';
+import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 import {
   OANDA_INSTRUMENT_MAP,
   OANDA_TRADFI_PAIRS,
@@ -219,34 +219,13 @@ export async function getPricing(): Promise<Record<string, OandaPriceQuote>> {
   }
 }
 
-export async function getOhlcCandles(pair: string, interval = 1): Promise<OhlcCandle[]> {
-  const mapping = getOandaMapping(pair);
-  if (!mapping) throw new Error('Pair non supportée pour historique OANDA');
-  if (!isConfigured()) throw new Error('OANDA_API_TOKEN manquant');
+const OANDA_MAX_CANDLES_PER_REQUEST = 5000;
 
-  const accountId = await resolveAccountId();
-  const available = await loadAvailableInstruments();
-  if (!available.has(mapping.instrument)) {
-    throw new Error(`Instrument OANDA indisponible: ${mapping.instrument}`);
-  }
-
-  const safeInterval = GRANULARITY_MAP[interval] ? interval : 1;
-  const granularity = GRANULARITY_MAP[safeInterval];
-  const count = Math.min(5000, Math.max(240, Math.ceil(24 * 60 / safeInterval)));
-
-  const payload = await oandaRequest(
-    `/v3/accounts/${accountId}/instruments/${encodeURIComponent(mapping.instrument)}/candles`,
-    {
-      granularity,
-      count: String(count),
-      price: 'M',
-    },
-  );
-
-  if (!Array.isArray(payload?.candles)) return [];
-
-  return payload.candles
+function parseOandaCandleRows(rows: unknown[], mapping: OandaPairMapping): OhlcCandle[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
     .map((row: any) => {
+      if (row?.complete === false) return null;
       const rawTime = Date.parse(String(row?.time || ''));
       const time = Number.isFinite(rawTime) ? Math.floor(rawTime / 1000) : 0;
       const open = asNumber(row?.mid?.o);
@@ -264,4 +243,73 @@ export async function getOhlcCandles(pair: string, interval = 1): Promise<OhlcCa
       } satisfies OhlcCandle;
     })
     .filter((candle: OhlcCandle | null): candle is OhlcCandle => Boolean(candle));
+}
+
+export async function getOhlcCandles(
+  pair: string,
+  interval = 1,
+  opts: OhlcQueryOptions = {},
+): Promise<OhlcCandle[]> {
+  const mapping = getOandaMapping(pair);
+  if (!mapping) throw new Error('Pair non supportée pour historique OANDA');
+  if (!isConfigured()) throw new Error('OANDA_API_TOKEN manquant');
+
+  const accountId = await resolveAccountId();
+  const available = await loadAvailableInstruments();
+  if (!available.has(mapping.instrument)) {
+    throw new Error(`Instrument OANDA indisponible: ${mapping.instrument}`);
+  }
+
+  const safeInterval = GRANULARITY_MAP[interval] ? interval : 1;
+  const granularity = GRANULARITY_MAP[safeInterval];
+  const intervalSec = safeInterval * 60;
+  const intervalMs = intervalSec * 1000;
+  const nowMs = Date.now();
+  const toMs = opts.to && opts.to > 0 ? opts.to * 1000 : nowMs;
+
+  const defaultCount = Math.min(OANDA_MAX_CANDLES_PER_REQUEST, Math.ceil((7 * 24 * 60) / safeInterval));
+  const targetCount = Math.min(
+    OANDA_MAX_CANDLES_PER_REQUEST,
+    opts.countBack && opts.countBack > 0 ? opts.countBack : defaultCount,
+  );
+
+  const fromMs = opts.from && opts.from > 0
+    ? opts.from * 1000
+    : toMs - targetCount * intervalMs;
+
+  const byTime = new Map<number, OhlcCandle>();
+  let endMs = toMs;
+
+  while (byTime.size < targetCount && endMs > fromMs) {
+    const remaining = targetCount - byTime.size;
+    const chunkCount = Math.min(OANDA_MAX_CANDLES_PER_REQUEST, remaining);
+
+    const payload = await oandaRequest(
+      `/v3/accounts/${accountId}/instruments/${encodeURIComponent(mapping.instrument)}/candles`,
+      {
+        granularity,
+        count: String(chunkCount),
+        price: 'M',
+        to: new Date(endMs).toISOString(),
+      },
+    );
+
+    const batch = parseOandaCandleRows(payload?.candles, mapping);
+    if (batch.length === 0) break;
+
+    let oldestMs = endMs;
+    for (const candle of batch) {
+      const candleMs = candle.time * 1000;
+      if (candleMs >= toMs) continue;
+      if (candleMs < fromMs) continue;
+      oldestMs = Math.min(oldestMs, candleMs);
+      byTime.set(candle.time, candle);
+    }
+
+    if (batch.length < chunkCount) break;
+    if (oldestMs >= endMs) break;
+    endMs = oldestMs - intervalMs;
+  }
+
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
 }

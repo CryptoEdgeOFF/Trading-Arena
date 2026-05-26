@@ -786,21 +786,35 @@ app.get('/api/paper/candles', async (req, res) => {
   try {
     const pairDef = getPaperPairDefinition(pair);
     let candles;
+    let source: 'oanda' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
+
     if (pairDef?.source === 'oanda') {
-      if (await oanda.isInstrumentAvailable(pair)) {
-        candles = await oanda.getOhlcCandles(pair, interval);
-      } else {
+      if (oanda.isConfigured() && await oanda.isInstrumentAvailable(pair)) {
+        candles = await oanda.getOhlcCandles(pair, interval, candleOpts);
+        source = 'oanda';
+      } else if (!oanda.isConfigured()) {
+        // Pas de token OANDA sur ce déploiement → secours HL (peut avoir des trous).
+        console.warn(`[candles] OANDA non configuré, fallback Hyperliquid pour ${pair}`);
         candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
+        source = 'hyperliquid';
+      } else {
+        res.status(503).json({
+          error: `Historique OANDA indisponible pour ${pair}. Vérifiez OANDA_API_TOKEN sur le serveur.`,
+        });
+        return;
       }
     } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
       // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
       candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+      source = 'binance';
     } else if (manager.getMarketDataSource() === 'binance') {
       candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+      source = 'binance';
     } else {
       candles = await kraken.getOhlcCandles(pair, interval);
+      source = 'kraken';
     }
-    res.json({ pair, interval, candles });
+    res.json({ pair, interval, candles, source });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Historique indisponible' });
   }
