@@ -290,6 +290,33 @@ export async function getCandles(
 
   if (pool) {
     await schemaReady;
+
+    // Sans `from` explicite (ouverture du chart) : renvoyer les N dernières
+    // bougies avant `to`, pas les N plus anciennes de la fenêtre.
+    if (!opts.from || opts.from <= 0) {
+      const result = await pool.query(
+        `SELECT bar_time AS time, open, high, low, close
+         FROM (
+           SELECT bar_time, open, high, low, close
+           FROM mt5_candles
+           WHERE pair = $1
+             AND timeframe = $2
+             AND bar_time < $3
+           ORDER BY bar_time DESC
+           LIMIT $4
+         ) recent
+         ORDER BY bar_time ASC`,
+        [pair, safeInterval, toSec, targetCount],
+      );
+      return result.rows.map((row) => ({
+        time: Number(row.time),
+        open: Number(row.open),
+        high: Number(row.high),
+        low: Number(row.low),
+        close: Number(row.close),
+      }));
+    }
+
     const result = await pool.query(
       `SELECT bar_time AS time, open, high, low, close
        FROM mt5_candles
@@ -314,11 +341,17 @@ export async function getCandles(
   if (!series || series.bars.size === 0) return [];
 
   const bars = [...series.bars.values()]
-    .filter((bar) => bar.time >= fromSec && bar.time < toSec)
+    .filter((bar) => bar.time < toSec)
     .sort((a, b) => a.time - b.time);
 
-  if (bars.length <= targetCount) return bars;
-  return bars.slice(bars.length - targetCount);
+  if (!opts.from || opts.from <= 0) {
+    if (bars.length <= targetCount) return bars;
+    return bars.slice(bars.length - targetCount);
+  }
+
+  const ranged = bars.filter((bar) => bar.time >= fromSec);
+  if (ranged.length <= targetCount) return ranged;
+  return ranged.slice(0, targetCount);
 }
 
 export async function getCandlesStatus(): Promise<Mt5CandleSeriesStatus[]> {
