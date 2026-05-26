@@ -15,10 +15,8 @@ dist-ssr
 # Player data (contains API keys)
 data/
 
-# TradingView Advanced Charts (private library — must not be committed)
+# TradingView Advanced Charts (private repo — committed so Netlify auto-build has the lib)
 charting_library-master/
-public/charting_library/
-public/datafeeds/
 
 # Editor directories and files
 .vscode/*
