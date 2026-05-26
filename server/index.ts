@@ -789,19 +789,25 @@ app.get('/api/paper/candles', async (req, res) => {
     let source: 'oanda' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
 
     if (pairDef?.source === 'oanda') {
-      if (oanda.isConfigured() && await oanda.isInstrumentAvailable(pair)) {
-        candles = await oanda.getOhlcCandles(pair, interval, candleOpts);
-        source = 'oanda';
-      } else if (!oanda.isConfigured()) {
-        // Pas de token OANDA sur ce déploiement → secours HL (peut avoir des trous).
-        console.warn(`[candles] OANDA non configuré, fallback Hyperliquid pour ${pair}`);
+      // OANDA practice ne couvre que le forex sur la plupart des comptes
+      // gratuits. Pour les commodités/indices (GOLD, SILVER, SP500, …),
+      // l'instrument n'est pas disponible et on retombe sur Hyperliquid
+      // qui propose un historique 24/7 propre via xyz:GOLD, xyz:SP500, …
+      let oandaTried = false;
+      if (oanda.isConfigured()) {
+        try {
+          if (await oanda.isInstrumentAvailable(pair)) {
+            candles = await oanda.getOhlcCandles(pair, interval, candleOpts);
+            source = 'oanda';
+            oandaTried = true;
+          }
+        } catch (err) {
+          console.warn(`[candles] OANDA ${pair} échec, fallback HL:`, (err as Error).message);
+        }
+      }
+      if (!oandaTried || !candles || candles.length === 0) {
         candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
         source = 'hyperliquid';
-      } else {
-        res.status(503).json({
-          error: `Historique OANDA indisponible pour ${pair}. Vérifiez OANDA_API_TOKEN sur le serveur.`,
-        });
-        return;
       }
     } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
       // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
