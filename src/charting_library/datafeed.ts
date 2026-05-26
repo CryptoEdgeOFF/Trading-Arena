@@ -11,6 +11,7 @@ import type {
   SearchSymbolsCallback,
   SubscribeBarsCallback,
 } from './charting_library';
+import { API_BASE_URL } from '../lib/runtimeApi';
 
 export interface BtfDatafeedConfig {
   pairs: string[];
@@ -44,12 +45,12 @@ const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as Resol
 /**
  * Netlify Functions coupe les réponses > ~6 Mo (≈ 60k bougies M1) → 502.
  * Sans VITE_API_URL (proxy Netlify), on reste sous ce seuil.
- * Avec VITE_API_URL → Railway direct, on peut charger tout l'historique MT5.
+ * Avec Railway direct : ~40k barres (~3 Mo) pour que TradingView affiche vite ;
+ * le scroll charge le reste par tranches de SCROLL_LOAD_BARS.
  */
-const USES_REMOTE_API = Boolean((import.meta.env.VITE_API_URL || '').trim());
-const FIRST_LOAD_BARS = USES_REMOTE_API ? 100_000 : 25_000;
+const USES_REMOTE_API = Boolean(API_BASE_URL);
+const FIRST_LOAD_BARS = USES_REMOTE_API ? 40_000 : 25_000;
 const SCROLL_LOAD_BARS = 5000;
-const MAX_HISTORY_BARS = USES_REMOTE_API ? 100_000 : 60_000;
 
 interface Subscription {
   pair: string;
