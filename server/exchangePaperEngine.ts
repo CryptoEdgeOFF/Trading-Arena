@@ -6,6 +6,7 @@ import * as oanda from './oanda.js';
 import * as binance from './binance.js';
 import * as hyperliquid from './hyperliquid.js';
 import * as mt5Feed from './mt5Feed.js';
+import * as engineCandlesCache from './engineCandlesCache.js';
 import { OANDA_TRADFI_PAIRS } from './oandaInstruments.js';
 
 export interface PaperOrderInput {
@@ -870,6 +871,10 @@ export class PaperTradingEngine {
       spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
       updatedAt: now,
     };
+
+    // Tenir la bougie courante du cache à jour pour que la prochaine
+    // requête historique reflète immédiatement le dernier tick.
+    engineCandlesCache.updateLastCandleFromTick(pair, markPrice, now);
 
     this.processOpenOrders(this.playersRef);
     this.processRiskTriggers(this.playersRef);

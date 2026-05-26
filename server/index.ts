@@ -14,6 +14,7 @@ import * as binance from './binance.js';
 import { pairToBinanceSymbol } from './binance.js';
 import * as oanda from './oanda.js';
 import * as hyperliquid from './hyperliquid.js';
+import * as engineCandlesCache from './engineCandlesCache.js';
 import * as mt5Feed from './mt5Feed.js';
 import * as mt5Candles from './mt5Candles.js';
 import { getPaperPairDefinition } from './exchangePaperEngine.js';
@@ -845,14 +846,17 @@ app.get('/api/paper/candles', async (req, res) => {
           source = 'hyperliquid';
         }
       } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
-        // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
-        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        // Historique crypto via cache mémoire (Binance amont). Le 1er hit
+        // après boot Railway coûte ~7s pour 40k bougies, les suivants sont
+        // instantanés. Les ticks live (paperEngine.applyTicker) maintiennent
+        // la dernière bougie à jour dans le cache.
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
         source = 'binance';
       } else if (manager.getMarketDataSource() === 'binance') {
-        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
         source = 'binance';
       } else {
-        candles = await kraken.getOhlcCandles(pair, interval);
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'kraken', candleOpts);
         source = 'kraken';
       }
     }
@@ -1517,6 +1521,16 @@ if (!process.env.NETLIFY) {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
       void oanda.validateConnection();
+      // Préchauffer le cache des paires les plus consultées en arrière-plan.
+      // Le 1er chart BTC/ETH après redémarrage Railway sera ainsi instantané.
+      engineCandlesCache.prewarm(
+        [
+          { pair: 'BTC/USD', source: 'binance' },
+          { pair: 'ETH/USD', source: 'binance' },
+          { pair: 'SOL/USD', source: 'binance' },
+        ],
+        [1, 5, 15, 60],
+      );
     });
   });
 }
