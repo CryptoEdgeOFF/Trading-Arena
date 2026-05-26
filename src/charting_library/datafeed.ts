@@ -272,6 +272,12 @@ export class BtfDatafeed implements IBasicDataFeed {
           category,
           sampleClose,
         ));
+
+        // Seed la dernière bougie connue dans toutes les souscriptions actives
+        // pour ce pair afin que le prochain tick continue cette bougie au lieu
+        // d'en ouvrir une nouvelle décalée (ce qui crée un gap visuel à
+        // l'ouverture du chart).
+        this.primeLastBar(pair, visible[visible.length - 1]);
       }
 
       const reachedHistoryStart = visible.length < fetchCountBack;

@@ -39,6 +39,7 @@ export interface Mt5CandleSeriesStatus {
 
 /** Intervalles minutes acceptés (alignés sur le script VPS Python). */
 export const MT5_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
+export const MT5_INTERVALS_SORTED = [1, 5, 15, 30, 60, 240, 1440] as const;
 const MAX_HISTORY_BARS = 100_000;
 
 type SeriesKey = `${string}:${number}`;
@@ -53,6 +54,17 @@ interface StoredSeries {
 
 const memorySeries = new Map<SeriesKey, StoredSeries>();
 const mt5SymbolBySeries = new Map<SeriesKey, string>();
+
+/**
+ * In-flight bougies construites en temps réel à partir des ticks MT5.
+ * Map<pair, Map<intervalMin, OhlcCandle>>. La bougie "courante" pour la
+ * minute actuelle est mise à jour à chaque tick et persistée en DB lors
+ * de la rotation de bucket (changement de minute / 5min / etc.). Cela
+ * évite tout gap entre la dernière bougie historique persistée et
+ * l'instant présent.
+ */
+const inflightCandles = new Map<string, Map<number, OhlcCandle>>();
+const inflightSymbols = new Map<string, string>();
 
 let pool: Pool | null = null;
 let schemaReady: Promise<void> = Promise.resolve();
@@ -255,7 +267,83 @@ export async function ingestCandles(input: Mt5CandlesIngestInput): Promise<Mt5Ca
   };
 }
 
+/**
+ * Met à jour les bougies "in-flight" pour toutes les timeframes supportées
+ * à partir d'un tick MT5. Persiste la bougie précédente quand le bucket
+ * change (rotation de minute / 5min / etc.) — ainsi la DB reste alignée
+ * avec le présent à la seconde près, sans attendre la sync incrémentale
+ * du VPS Python.
+ */
+export async function updateInflight(
+  pair: string,
+  mt5Symbol: string,
+  price: number,
+  tsMs: number,
+): Promise<void> {
+  if (!Number.isFinite(price) || price <= 0) return;
+  const tsSec = Math.floor(tsMs / 1000);
+  if (!Number.isFinite(tsSec) || tsSec <= 0) return;
+
+  inflightSymbols.set(pair, mt5Symbol);
+  let pairMap = inflightCandles.get(pair);
+  if (!pairMap) {
+    pairMap = new Map();
+    inflightCandles.set(pair, pairMap);
+  }
+
+  const rotated: Array<{ interval: number; candle: OhlcCandle }> = [];
+
+  for (const interval of MT5_INTERVALS_SORTED) {
+    const intervalSec = interval * 60;
+    const bucket = Math.floor(tsSec / intervalSec) * intervalSec;
+    const current = pairMap.get(interval);
+
+    if (!current || current.time !== bucket) {
+      if (current && current.time < bucket) {
+        rotated.push({ interval, candle: { ...current } });
+      }
+      pairMap.set(interval, {
+        time: bucket,
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+      });
+    } else {
+      current.high = Math.max(current.high, price);
+      current.low = Math.min(current.low, price);
+      current.close = price;
+    }
+  }
+
+  if (rotated.length === 0) return;
+
+  // Persistance fire-and-forget : on ne bloque pas le tick. Une rotation
+  // ratée sera de toute façon recouverte par la sync incrémentale du VPS.
+  for (const { interval, candle } of rotated) {
+    if (pool) {
+      persistCandles(pair, interval, [candle]).catch((err) => {
+        console.error('[mt5Candles] inflight persist failed:', (err as Error).message);
+      });
+    } else {
+      mergeIntoMemory(pair, interval, mt5Symbol, [candle]);
+    }
+  }
+}
+
+/**
+ * Retourne la bougie courante (in-flight) pour (pair, interval) si elle
+ * couvre `nowSec`. Utilisé par `getCandles` pour combler le delta entre
+ * la dernière bougie persistée et l'instant présent.
+ */
+export function getInflight(pair: string, intervalMin: number): OhlcCandle | null {
+  const candle = inflightCandles.get(pair)?.get(intervalMin);
+  if (!candle) return null;
+  return { ...candle };
+}
+
 export async function hasCandles(pair: string, intervalMin: number): Promise<boolean> {
+  if (inflightCandles.get(pair)?.has(intervalMin)) return true;
   if (pool) {
     await schemaReady;
     const result = await pool.query(
@@ -287,6 +375,8 @@ export async function getCandles(
 
   const fromSec = opts.from && opts.from > 0 ? Math.floor(opts.from) : null;
 
+  let bars: OhlcCandle[];
+
   if (pool) {
     await schemaReady;
 
@@ -307,28 +397,43 @@ export async function getCandles(
        ORDER BY bar_time ASC`,
       [pair, safeInterval, toSec, fromSec, targetCount],
     );
-    return result.rows.map((row) => ({
+    bars = result.rows.map((row) => ({
       time: Number(row.time),
       open: Number(row.open),
       high: Number(row.high),
       low: Number(row.low),
       close: Number(row.close),
     }));
+  } else {
+    const series = memorySeries.get(seriesKey(pair, safeInterval));
+    if (!series || series.bars.size === 0) {
+      bars = [];
+    } else {
+      let memBars = [...series.bars.values()]
+        .filter((bar) => bar.time < toSec)
+        .sort((a, b) => a.time - b.time);
+      if (fromSec != null) {
+        memBars = memBars.filter((bar) => bar.time >= fromSec);
+      }
+      bars = memBars.length <= targetCount ? memBars : memBars.slice(memBars.length - targetCount);
+    }
   }
 
-  const series = memorySeries.get(seriesKey(pair, safeInterval));
-  if (!series || series.bars.size === 0) return [];
-
-  let bars = [...series.bars.values()]
-    .filter((bar) => bar.time < toSec)
-    .sort((a, b) => a.time - b.time);
-
-  if (fromSec != null) {
-    bars = bars.filter((bar) => bar.time >= fromSec);
+  // Combler le delta entre la dernière bougie persistée et l'instant présent
+  // avec la bougie "in-flight" tenue à jour par les ticks MT5. Sans cette
+  // étape, l'ouverture du chart laisse un trou visuel qui se rebouche après
+  // quelques secondes quand le premier tick arrive.
+  const inflight = getInflight(pair, safeInterval);
+  if (inflight && inflight.time < toSec) {
+    const lastTime = bars.length > 0 ? bars[bars.length - 1].time : -1;
+    if (inflight.time > lastTime && (fromSec == null || inflight.time >= fromSec)) {
+      bars.push(inflight);
+    } else if (inflight.time === lastTime) {
+      bars[bars.length - 1] = inflight;
+    }
   }
 
-  if (bars.length <= targetCount) return bars;
-  return bars.slice(bars.length - targetCount);
+  return bars;
 }
 
 export async function getCandlesStatus(): Promise<Mt5CandleSeriesStatus[]> {

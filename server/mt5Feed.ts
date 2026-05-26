@@ -1,4 +1,5 @@
 import { mt5SymbolToPair } from './mt5Instruments.js';
+import * as mt5Candles from './mt5Candles.js';
 
 export interface Mt5Quote {
   pair: string;
@@ -85,14 +86,19 @@ export function ingestTick(input: Mt5TickInput): Mt5IngestResult {
   }
 
   const updatedAt = normalizeTimestamp(input.ts_ms);
+  const mt5Symbol = String(input.symbol).trim().toUpperCase();
+  const markPrice = (bid + ask) / 2;
   quotes.set(pair, {
     pair,
-    mt5Symbol: String(input.symbol).trim().toUpperCase(),
-    markPrice: (bid + ask) / 2,
+    mt5Symbol,
+    markPrice,
     bidPrice: bid,
     askPrice: ask,
     updatedAt,
   });
+  // Maintenir la bougie courante (toutes timeframes) à partir des ticks
+  // pour combler le gap entre l'historique persisté et l'instant présent.
+  void mt5Candles.updateInflight(pair, mt5Symbol, markPrice, updatedAt);
   scheduleNotify(pair);
   return { ok: true, pair };
 }
