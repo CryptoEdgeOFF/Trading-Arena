@@ -210,13 +210,17 @@ mt5Feed.setOnTick((hintPairs) => {
   broadcastMarketTicks(updated);
 });
 
-app.get('/api/mt5/status', (_req, res) => {
-  res.json({
-    ok: true,
-    authRequired: Boolean(process.env.MT5_FEED_SECRET?.trim()),
-    ...mt5Feed.getStatus(),
-    candleSeries: mt5Candles.getCandlesStatus(),
-  });
+app.get('/api/mt5/status', async (_req, res) => {
+  try {
+    res.json({
+      ok: true,
+      authRequired: Boolean(process.env.MT5_FEED_SECRET?.trim()),
+      ...mt5Feed.getStatus(),
+      candleSeries: await mt5Candles.getCandlesStatus(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message || 'Statut MT5 indisponible' });
+  }
 });
 
 app.post('/api/mt5/tick', requireMt5FeedAuth, (req, res) => {
@@ -263,17 +267,21 @@ app.post('/api/mt5/ticks', requireMt5FeedAuth, (req, res) => {
   res.json({ ok: true, accepted, errors });
 });
 
-app.post('/api/mt5/candles', requireMt5FeedAuth, (req, res) => {
-  const result = mt5Candles.ingestCandles({
-    symbol: String(req.body?.symbol || ''),
-    timeframe: Number(req.body?.timeframe),
-    candles: Array.isArray(req.body?.candles) ? req.body.candles : [],
-  });
-  if (!result.ok) {
-    res.status(400).json(result);
-    return;
+app.post('/api/mt5/candles', requireMt5FeedAuth, async (req, res) => {
+  try {
+    const result = await mt5Candles.ingestCandles({
+      symbol: String(req.body?.symbol || ''),
+      timeframe: Number(req.body?.timeframe),
+      candles: Array.isArray(req.body?.candles) ? req.body.candles : [],
+    });
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message || 'Ingestion candles MT5 impossible' });
   }
-  res.json(result);
 });
 
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
@@ -804,8 +812,8 @@ app.get('/api/paper/candles', async (req, res) => {
     let source: 'mt5' | 'oanda' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
 
     // Historique MT5 (VPS Python) — prioritaire pour les paires TradFi feedées par MT5.
-    if (mt5Candles.hasCandles(pair, interval)) {
-      const mt5Bars = mt5Candles.getCandles(pair, interval, candleOpts);
+    if (await mt5Candles.hasCandles(pair, interval)) {
+      const mt5Bars = await mt5Candles.getCandles(pair, interval, candleOpts);
       if (mt5Bars.length > 0) {
         candles = mt5Bars;
         source = 'mt5';
@@ -1494,7 +1502,11 @@ app.post('/api/admin/competitions/result', requireAdmin, async (req, res) => {
   }
 });
 
-const serverReady = Promise.all([competitionManager.ready, manager.ready]).then(() => {
+const serverReady = Promise.all([
+  competitionManager.ready,
+  manager.ready,
+  mt5Candles.initMt5CandlesStore(),
+]).then(() => {
   manager.markOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
 });
 
