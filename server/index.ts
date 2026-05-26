@@ -15,6 +15,7 @@ import { pairToBinanceSymbol } from './binance.js';
 import * as oanda from './oanda.js';
 import * as hyperliquid from './hyperliquid.js';
 import * as mt5Feed from './mt5Feed.js';
+import * as mt5Candles from './mt5Candles.js';
 import { getPaperPairDefinition } from './exchangePaperEngine.js';
 import { CompetitionManager } from './competitionManager.js';
 import { sendOtpEmail } from './mailer.js';
@@ -214,6 +215,7 @@ app.get('/api/mt5/status', (_req, res) => {
     ok: true,
     authRequired: Boolean(process.env.MT5_FEED_SECRET?.trim()),
     ...mt5Feed.getStatus(),
+    candleSeries: mt5Candles.getCandlesStatus(),
   });
 });
 
@@ -259,6 +261,19 @@ app.post('/api/mt5/ticks', requireMt5FeedAuth, (req, res) => {
     else if (result.error) errors.push(result.error);
   }
   res.json({ ok: true, accepted, errors });
+});
+
+app.post('/api/mt5/candles', requireMt5FeedAuth, (req, res) => {
+  const result = mt5Candles.ingestCandles({
+    symbol: String(req.body?.symbol || ''),
+    timeframe: Number(req.body?.timeframe),
+    candles: Array.isArray(req.body?.candles) ? req.body.candles : [],
+  });
+  if (!result.ok) {
+    res.status(400).json(result);
+    return;
+  }
+  res.json(result);
 });
 
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
@@ -786,39 +801,50 @@ app.get('/api/paper/candles', async (req, res) => {
   try {
     const pairDef = getPaperPairDefinition(pair);
     let candles;
-    let source: 'oanda' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
+    let source: 'mt5' | 'oanda' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
 
-    if (pairDef?.source === 'oanda') {
-      // OANDA practice ne couvre que le forex sur la plupart des comptes
-      // gratuits. Pour les commodités/indices (GOLD, SILVER, SP500, …),
-      // l'instrument n'est pas disponible et on retombe sur Hyperliquid
-      // qui propose un historique 24/7 propre via xyz:GOLD, xyz:SP500, …
-      let oandaTried = false;
-      if (oanda.isConfigured()) {
-        try {
-          if (await oanda.isInstrumentAvailable(pair)) {
-            candles = await oanda.getOhlcCandles(pair, interval, candleOpts);
-            source = 'oanda';
-            oandaTried = true;
+    // Historique MT5 (VPS Python) — prioritaire pour les paires TradFi feedées par MT5.
+    if (mt5Candles.hasCandles(pair, interval)) {
+      const mt5Bars = mt5Candles.getCandles(pair, interval, candleOpts);
+      if (mt5Bars.length > 0) {
+        candles = mt5Bars;
+        source = 'mt5';
+      }
+    }
+
+    if (!candles) {
+      if (pairDef?.source === 'oanda') {
+        // OANDA practice ne couvre que le forex sur la plupart des comptes
+        // gratuits. Pour les commodités/indices (GOLD, SILVER, SP500, …),
+        // l'instrument n'est pas disponible et on retombe sur Hyperliquid
+        // qui propose un historique 24/7 propre via xyz:GOLD, xyz:SP500, …
+        let oandaTried = false;
+        if (oanda.isConfigured()) {
+          try {
+            if (await oanda.isInstrumentAvailable(pair)) {
+              candles = await oanda.getOhlcCandles(pair, interval, candleOpts);
+              source = 'oanda';
+              oandaTried = true;
+            }
+          } catch (err) {
+            console.warn(`[candles] OANDA ${pair} échec, fallback HL:`, (err as Error).message);
           }
-        } catch (err) {
-          console.warn(`[candles] OANDA ${pair} échec, fallback HL:`, (err as Error).message);
         }
+        if (!oandaTried || !candles || candles.length === 0) {
+          candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
+          source = 'hyperliquid';
+        }
+      } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
+        // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
+        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        source = 'binance';
+      } else if (manager.getMarketDataSource() === 'binance') {
+        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+        source = 'binance';
+      } else {
+        candles = await kraken.getOhlcCandles(pair, interval);
+        source = 'kraken';
       }
-      if (!oandaTried || !candles || candles.length === 0) {
-        candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
-        source = 'hyperliquid';
-      }
-    } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
-      // Historique crypto via Binance (toutes les paires), indépendamment du feed live.
-      candles = await binance.getOhlcCandles(pair, interval, candleOpts);
-      source = 'binance';
-    } else if (manager.getMarketDataSource() === 'binance') {
-      candles = await binance.getOhlcCandles(pair, interval, candleOpts);
-      source = 'binance';
-    } else {
-      candles = await kraken.getOhlcCandles(pair, interval);
-      source = 'kraken';
     }
     res.json({ pair, interval, candles, source });
   } catch (error: any) {
