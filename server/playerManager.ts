@@ -22,6 +22,7 @@ import {
   Trade,
 } from './types.js';
 import * as kraken from './kraken.js';
+import * as mt5Feed from './mt5Feed.js';
 import { PaperTradingEngine, type PaperOrderInput } from './exchangePaperEngine.js';
 
 const PLAYER_COLORS = [
@@ -796,6 +797,21 @@ export class PlayerManager {
 
   async refreshPaperMarketSnapshot() {
     return this.paperEngine.refreshMarketSnapshot();
+  }
+
+  /** Apply MT5 quotes from memory only (no external HTTP). */
+  applyMt5MarketTicks(hintPairs?: string[]): string[] {
+    if (!this.isPaperMarketActive()) return [];
+    const pricing = mt5Feed.getPricing();
+    if (!hintPairs?.length) {
+      return this.paperEngine.applyMt5Quotes(pricing);
+    }
+    const filtered: Record<string, mt5Feed.Mt5Quote> = {};
+    for (const pair of hintPairs) {
+      const quote = pricing[pair];
+      if (quote) filtered[pair] = quote;
+    }
+    return this.paperEngine.applyMt5Quotes(filtered);
   }
 
   getPaperFeeRates() {

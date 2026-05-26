@@ -76,6 +76,8 @@ export interface ChartOrderPreview {
   takeProfit: number | null;
 }
 
+export type ChartLiveTickHandler = (pair: string, price: number, timestampMs: number) => void;
+
 export interface AdvancedChartProps {
   pair: string;
   pairs: string[];
@@ -100,6 +102,8 @@ export interface AdvancedChartProps {
   onPreviewEntryChange?: (price: number) => void;
   onCancelOrder?: (orderId: string) => Promise<void> | void;
   isMobile?: boolean;
+  /** Optional bridge for high-frequency market:tick WS events (bypasses React market state). */
+  chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
 }
 
 const TV_RESOLUTION_TO_MIN: Record<string, number> = {
@@ -270,6 +274,7 @@ export default function AdvancedChart({
   onPreviewEntryChange,
   onCancelOrder,
   isMobile = false,
+  chartLiveTickRef,
 }: AdvancedChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const widgetContainerRef = useRef<HTMLDivElement | null>(null);
@@ -620,8 +625,9 @@ export default function AdvancedChart({
     try {
       const chart = widget.activeChart();
       if (chart.symbol() !== pair) {
-        chart.setSymbol(pair, intervalMinutesToResolution(intervalMinutes), () => {
+        chart.setSymbol(pair, () => {
           try {
+            chart.setResolution(intervalMinutesToResolution(intervalMinutes));
             chart.resetData();
           } catch {
             // ignore
@@ -671,7 +677,18 @@ export default function AdvancedChart({
     }
   }, [intervalMinutes, chartReady]);
 
-  // Live ticker → push to datafeed for streaming candles.
+  // High-frequency ticks from market:tick WS → chart datafeed (no React re-render).
+  useEffect(() => {
+    if (!chartLiveTickRef) return;
+    chartLiveTickRef.current = (pairKey, price, timestampMs) => {
+      datafeedRef.current?.pushTick(pairKey, price, timestampMs);
+    };
+    return () => {
+      chartLiveTickRef.current = null;
+    };
+  }, [chartLiveTickRef]);
+
+  // Live ticker → push to datafeed for streaming candles (paper:update / poll fallback).
   useEffect(() => {
     const datafeed = datafeedRef.current;
     if (!datafeed) return;

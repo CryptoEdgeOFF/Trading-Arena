@@ -25,8 +25,11 @@ export interface Mt5IngestResult {
 const STALE_MS = 15_000;
 const quotes = new Map<string, Mt5Quote>();
 
-let onTickListener: (() => void) | null = null;
+let onTickListener: ((pairs: string[]) => void) | null = null;
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingNotifyPairs = new Set<string>();
+/** Coalesce bursts of MT5 ticks before notifying the paper engine. */
+const NOTIFY_DEBOUNCE_MS = 50;
 
 function normalizeTimestamp(ts_ms?: number): number {
   if (!Number.isFinite(ts_ms) || !ts_ms || ts_ms <= 0) return Date.now();
@@ -48,16 +51,20 @@ function isFresh(updatedAt: number, now = Date.now()): boolean {
   return ageMs >= 0 && ageMs <= STALE_MS;
 }
 
-function scheduleNotify(): void {
+function scheduleNotify(pair: string): void {
   if (!onTickListener) return;
+  pendingNotifyPairs.add(pair);
   if (notifyTimer) return;
   notifyTimer = setTimeout(() => {
     notifyTimer = null;
-    onTickListener?.();
-  }, 200);
+    const pairs = [...pendingNotifyPairs];
+    pendingNotifyPairs.clear();
+    if (pairs.length > 0) onTickListener?.(pairs);
+  }, NOTIFY_DEBOUNCE_MS);
+  if (typeof notifyTimer.unref === 'function') notifyTimer.unref();
 }
 
-export function setOnTick(listener: (() => void) | null): void {
+export function setOnTick(listener: ((pairs: string[]) => void) | null): void {
   onTickListener = listener;
 }
 
@@ -86,7 +93,7 @@ export function ingestTick(input: Mt5TickInput): Mt5IngestResult {
     askPrice: ask,
     updatedAt,
   });
-  scheduleNotify();
+  scheduleNotify(pair);
   return { ok: true, pair };
 }
 

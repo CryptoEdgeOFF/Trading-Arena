@@ -1,6 +1,6 @@
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import AdvancedChart, { type ChartOrderPreview } from './AdvancedChart';
+import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, timeAgo } from '../utils/formatters';
@@ -1029,6 +1029,7 @@ function ChartArea({
   interval,
   setInterval,
   isMobile = false,
+  chartLiveTickRef,
 }: {
   pair: string;
   pairs: string[];
@@ -1052,6 +1053,7 @@ function ChartArea({
   interval: number;
   setInterval: (interval: number) => void;
   isMobile?: boolean;
+  chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
 }) {
   const positions = player?.openPositions ?? [];
   const pendingOrders = (player?.openOrders ?? [])
@@ -1087,6 +1089,7 @@ function ChartArea({
           onUpdateRisk={onUpdateRisk}
           onCancelOrder={onCancelOrder}
           isMobile={isMobile}
+          chartLiveTickRef={chartLiveTickRef}
         />
       </div>
     </section>
@@ -2258,6 +2261,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [livePlayer, setLivePlayer] = useState<Player | null>(null);
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
+  const chartLiveTickRef = useRef<ChartLiveTickHandler | null>(null);
 
   const clearOrderDraftRisk = useCallback(() => {
     setOrderPreview(null);
@@ -2365,6 +2369,39 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     mergeCompetitionFromMe(data?.competition);
   }, [reconcilePlayerWithPending]);
 
+  const applyMarketTick = useCallback((data: {
+    ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number }>;
+  }) => {
+    const ticks = data?.ticks;
+    if (!Array.isArray(ticks) || ticks.length === 0) return;
+
+    for (const tick of ticks) {
+      if (!tick?.pair || !Number.isFinite(tick.markPrice) || tick.markPrice <= 0) continue;
+      chartLiveTickRef.current?.(tick.pair, tick.markPrice, tick.updatedAt || Date.now());
+    }
+
+    setLiveMarket((prev) => {
+      const base = prev ? { ...prev } : {};
+      let changed = false;
+      for (const tick of ticks) {
+        if (!tick?.pair || !Number.isFinite(tick.markPrice) || tick.markPrice <= 0) continue;
+        const existing = base[tick.pair];
+        base[tick.pair] = {
+          pair: tick.pair,
+          symbol: existing?.symbol ?? tick.pair,
+          markPrice: tick.markPrice,
+          bidPrice: tick.bidPrice ?? tick.markPrice,
+          askPrice: tick.askPrice ?? tick.markPrice,
+          change24h: existing?.change24h ?? null,
+          spreadBps: existing?.spreadBps ?? 0,
+          updatedAt: tick.updatedAt || Date.now(),
+        };
+        changed = true;
+      }
+      return changed ? base : prev;
+    });
+  }, []);
+
   const applyArenaInit = useCallback((payload: any) => {
     if (!payload?.competition || !Array.isArray(payload?.leaderboard)) return;
     setLeaderboardData({
@@ -2411,6 +2448,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   useWebSocket(!demoMode, {
     paperToken: session?.token || null,
     onPaperUpdate: applyPaperUpdate,
+    onMarketTick: applyMarketTick,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
   });
@@ -3170,6 +3208,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       interval={chartInterval}
       setInterval={setChartInterval}
       isMobile={isMobileViewport}
+      chartLiveTickRef={chartLiveTickRef}
     />
   );
 

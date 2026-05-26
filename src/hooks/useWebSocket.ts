@@ -7,6 +7,7 @@ export function useWebSocket(
   options: {
     paperToken?: string | null;
     onPaperUpdate?: (payload: any) => void;
+    onMarketTick?: (payload: { ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number }> }) => void;
     onArenaInit?: (payload: any) => void;
     onArenaPatch?: (payload: any) => void;
   } = {},
@@ -15,12 +16,17 @@ export function useWebSocket(
   const updateState = useGameStore((s) => s.updateState);
   const applyStatePatch = useGameStore((s) => s.applyStatePatch);
   const onPaperUpdateRef = useRef(options.onPaperUpdate);
+  const onMarketTickRef = useRef(options.onMarketTick);
   const onArenaInitRef = useRef(options.onArenaInit);
   const onArenaPatchRef = useRef(options.onArenaPatch);
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
   }, [options.onPaperUpdate]);
+
+  useEffect(() => {
+    onMarketTickRef.current = options.onMarketTick;
+  }, [options.onMarketTick]);
 
   useEffect(() => {
     onArenaInitRef.current = options.onArenaInit;
@@ -51,6 +57,8 @@ export function useWebSocket(
             applyStatePatch(msg.data);
           } else if (msg.type === 'paper:update') {
             onPaperUpdateRef.current?.(msg.data);
+          } else if (msg.type === 'market:tick') {
+            onMarketTickRef.current?.(msg.data);
           } else if (msg.type === 'arena:init') {
             // Full leaderboard snapshot for the trader's competition shard.
             onArenaInitRef.current?.(msg.data);

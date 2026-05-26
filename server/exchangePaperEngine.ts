@@ -216,6 +216,62 @@ export class PaperTradingEngine {
     return this.market;
   }
 
+  /**
+   * Fast path for MT5 ticks: update in-memory quotes only (no Kraken/OANDA HTTP).
+   * Returns pairs whose ticker actually changed.
+   */
+  applyMt5Quotes(mt5Prices: Record<string, mt5Feed.Mt5Quote>): string[] {
+    const changed: string[] = [];
+    const now = Date.now();
+
+    for (const [pair, quote] of Object.entries(mt5Prices)) {
+      const pairDef = PAPER_PAIRS.find((item) => item.pair === pair);
+      if (!pairDef || pairDef.source !== 'oanda') continue;
+
+      const prev = this.market[pair];
+      const markPrice = quote.markPrice;
+      if (!Number.isFinite(markPrice) || markPrice <= 0) continue;
+
+      const { bidPrice, askPrice } = applyPaperMarkSpread(markPrice);
+      const updatedAt = quote.updatedAt || now;
+      if (
+        prev
+        && prev.markPrice === markPrice
+        && prev.bidPrice === bidPrice
+        && prev.askPrice === askPrice
+        && prev.updatedAt === updatedAt
+      ) {
+        continue;
+      }
+
+      this.market[pair] = {
+        pair,
+        symbol: prev?.symbol ?? pairDef.sourceSymbol,
+        markPrice,
+        bidPrice,
+        askPrice,
+        change24h: prev?.change24h ?? null,
+        spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
+        updatedAt,
+      };
+      changed.push(pair);
+    }
+
+    if (changed.length === 0) return changed;
+
+    this.processOpenOrders(this.playersRef);
+    this.processRiskTriggers(this.playersRef);
+
+    for (const player of this.playersRef) {
+      this.updatePlayerEquity(player);
+      player.connected = true;
+      player.lastUpdate = now;
+    }
+
+    this.onTick();
+    return changed;
+  }
+
   private getActivePairDefs(): PaperPairDef[] {
     if (this.marketDataSource === 'binance') {
       return PAPER_PAIRS.filter((item) => Boolean(item.binanceSymbol) || item.source === 'oanda');

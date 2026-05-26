@@ -184,8 +184,29 @@ function requireMt5FeedAuth(req: express.Request, res: express.Response, next: e
   next();
 }
 
-mt5Feed.setOnTick(() => {
-  void manager.refreshPaperMarketSnapshot();
+function broadcastMarketTicks(pairs: string[]): void {
+  if (pairs.length === 0 || paperClients.size === 0) return;
+  const market = manager.getPaperMarketSnapshot();
+  const ticks = pairs
+    .map((pair) => market[pair])
+    .filter((ticker): ticker is NonNullable<typeof ticker> => Boolean(ticker))
+    .map((ticker) => ({
+      pair: ticker.pair,
+      markPrice: ticker.markPrice,
+      bidPrice: ticker.bidPrice,
+      askPrice: ticker.askPrice,
+      updatedAt: ticker.updatedAt,
+    }));
+  if (ticks.length === 0) return;
+  const msg = JSON.stringify({ type: 'market:tick', data: { ticks } });
+  paperClients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  });
+}
+
+mt5Feed.setOnTick((hintPairs) => {
+  const updated = manager.applyMt5MarketTicks(hintPairs);
+  broadcastMarketTicks(updated);
 });
 
 app.get('/api/mt5/status', (_req, res) => {
