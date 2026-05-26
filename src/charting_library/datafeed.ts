@@ -41,11 +41,15 @@ const RESOLUTION_TO_INTERVAL: Record<string, number> = {
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as ResolutionString[];
 
-/** First paint: load as much MT5/OANDA history as the API allows (~3 mois en M1). */
-const FIRST_LOAD_BARS = 100_000;
+/**
+ * Netlify Functions coupe les réponses > ~6 Mo (≈ 60k bougies M1) → 502.
+ * Sans VITE_API_URL (proxy Netlify), on reste sous ce seuil.
+ * Avec VITE_API_URL → Railway direct, on peut charger tout l'historique MT5.
+ */
+const USES_REMOTE_API = Boolean((import.meta.env.VITE_API_URL || '').trim());
+const FIRST_LOAD_BARS = USES_REMOTE_API ? 100_000 : 25_000;
 const SCROLL_LOAD_BARS = 5000;
-/** Doit rester aligné avec mt5Candles.getCandles max limit. */
-const MAX_HISTORY_BARS = 100_000;
+const MAX_HISTORY_BARS = USES_REMOTE_API ? 100_000 : 60_000;
 
 interface Subscription {
   pair: string;
