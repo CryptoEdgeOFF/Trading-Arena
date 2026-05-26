@@ -39,6 +39,7 @@ export interface Mt5CandleSeriesStatus {
 
 /** Intervalles minutes acceptés (alignés sur le script VPS Python). */
 export const MT5_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
+const MAX_HISTORY_BARS = 100_000;
 
 type SeriesKey = `${string}:${number}`;
 
@@ -280,53 +281,31 @@ export async function getCandles(
 
   const defaultCount = 5000;
   const targetCount = Math.min(
-    50000,
+    MAX_HISTORY_BARS,
     opts.countBack && opts.countBack > 0 ? Math.floor(opts.countBack) : defaultCount,
   );
 
-  const fromSec = opts.from && opts.from > 0
-    ? Math.floor(opts.from)
-    : toSec - targetCount * intervalSec;
+  const fromSec = opts.from && opts.from > 0 ? Math.floor(opts.from) : null;
 
   if (pool) {
     await schemaReady;
 
-    // Sans `from` explicite (ouverture du chart) : renvoyer les N dernières
-    // bougies avant `to`, pas les N plus anciennes de la fenêtre.
-    if (!opts.from || opts.from <= 0) {
-      const result = await pool.query(
-        `SELECT bar_time AS time, open, high, low, close
-         FROM (
-           SELECT bar_time, open, high, low, close
-           FROM mt5_candles
-           WHERE pair = $1
-             AND timeframe = $2
-             AND bar_time < $3
-           ORDER BY bar_time DESC
-           LIMIT $4
-         ) recent
-         ORDER BY bar_time ASC`,
-        [pair, safeInterval, toSec, targetCount],
-      );
-      return result.rows.map((row) => ({
-        time: Number(row.time),
-        open: Number(row.open),
-        high: Number(row.high),
-        low: Number(row.low),
-        close: Number(row.close),
-      }));
-    }
-
+    // Toujours renvoyer les `targetCount` dernières bougies avant `to` (optionnellement
+    // après `from`). Couvre l'ouverture du chart ET le scroll vers le passé.
     const result = await pool.query(
       `SELECT bar_time AS time, open, high, low, close
-       FROM mt5_candles
-       WHERE pair = $1
-         AND timeframe = $2
-         AND bar_time >= $3
-         AND bar_time < $4
-       ORDER BY bar_time ASC
-       LIMIT $5`,
-      [pair, safeInterval, fromSec, toSec, targetCount],
+       FROM (
+         SELECT bar_time, open, high, low, close
+         FROM mt5_candles
+         WHERE pair = $1
+           AND timeframe = $2
+           AND bar_time < $3
+           AND ($4::bigint IS NULL OR bar_time >= $4)
+         ORDER BY bar_time DESC
+         LIMIT $5
+       ) recent
+       ORDER BY bar_time ASC`,
+      [pair, safeInterval, toSec, fromSec, targetCount],
     );
     return result.rows.map((row) => ({
       time: Number(row.time),
@@ -340,18 +319,16 @@ export async function getCandles(
   const series = memorySeries.get(seriesKey(pair, safeInterval));
   if (!series || series.bars.size === 0) return [];
 
-  const bars = [...series.bars.values()]
+  let bars = [...series.bars.values()]
     .filter((bar) => bar.time < toSec)
     .sort((a, b) => a.time - b.time);
 
-  if (!opts.from || opts.from <= 0) {
-    if (bars.length <= targetCount) return bars;
-    return bars.slice(bars.length - targetCount);
+  if (fromSec != null) {
+    bars = bars.filter((bar) => bar.time >= fromSec);
   }
 
-  const ranged = bars.filter((bar) => bar.time >= fromSec);
-  if (ranged.length <= targetCount) return ranged;
-  return ranged.slice(0, targetCount);
+  if (bars.length <= targetCount) return bars;
+  return bars.slice(bars.length - targetCount);
 }
 
 export async function getCandlesStatus(): Promise<Mt5CandleSeriesStatus[]> {

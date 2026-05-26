@@ -41,9 +41,11 @@ const RESOLUTION_TO_INTERVAL: Record<string, number> = {
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as ResolutionString[];
 
-/** Bars loaded on first paint — TV only asks ~300 by default (≈5h en 1m). */
-const FIRST_LOAD_BARS = 10000;
-const SCROLL_LOAD_BARS = 1500;
+/** First paint: load as much MT5/OANDA history as the API allows (~3 mois en M1). */
+const FIRST_LOAD_BARS = 100_000;
+const SCROLL_LOAD_BARS = 5000;
+/** Doit rester aligné avec mt5Candles.getCandles max limit. */
+const MAX_HISTORY_BARS = 100_000;
 
 interface Subscription {
   pair: string;
@@ -156,7 +158,6 @@ export class BtfDatafeed implements IBasicDataFeed {
   ): void {
     const query = userInput.replace(/\s+/g, '').toUpperCase();
     const description = this.config.description ?? {};
-    const category = this.config.categories?.[symbolName];
     const matches: SearchSymbolResultItem[] = this.config.pairs
       .filter((pair) => pair.replace('/', '').toUpperCase().includes(query))
       .slice(0, 30)
