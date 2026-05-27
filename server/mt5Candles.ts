@@ -510,8 +510,11 @@ export async function getCandles(
   if (pool) {
     await schemaReady;
 
-    // Toujours renvoyer les `targetCount` dernières bougies avant `to` (optionnellement
-    // après `from`). Couvre l'ouverture du chart ET le scroll vers le passé.
+    // Renvoie les `targetCount` dernières bougies persistées en DB.
+    // L'ingestion live se fait via le VPS Python qui push directement les
+    // bougies MT5 (POST /api/mt5/candles) chaque seconde — on ne
+    // reconstruit plus depuis les ticks pour éviter d'envoyer des bougies
+    // décalées (open au mauvais prix sur H1, H4, D1…).
     const result = await pool.query(
       `SELECT bar_time AS time, open, high, low, close
        FROM (
@@ -549,11 +552,13 @@ export async function getCandles(
     }
   }
 
-  // Combler le delta entre la dernière bougie persistée et l'instant présent
-  // avec la bougie "in-flight" tenue à jour par les ticks MT5. Sans cette
-  // étape, l'ouverture du chart laisse un trou visuel qui se rebouche après
-  // quelques secondes quand le premier tick arrive.
-  const inflight = getInflight(pair, safeInterval);
+  // L'in-flight bar (reconstruite depuis les ticks) n'est plus appendée :
+  // sur les timeframes longs (H1, H4…) elle ouvrait au mauvais prix car
+  // le serveur n'avait pas tous les ticks depuis le début du bucket. Le
+  // VPS Python pousse maintenant la bougie courante chaque seconde via
+  // POST /api/mt5/candles, ce qui est plus précis. On ne garde l'in-flight
+  // que comme fallback strict (M1 uniquement) si rien d'autre n'est dispo.
+  const inflight = safeInterval === 1 ? getInflight(pair, safeInterval) : null;
   if (inflight && inflight.time < toSec) {
     const lastTime = bars.length > 0 ? bars[bars.length - 1].time : -1;
     if (inflight.time > lastTime && (fromSec == null || inflight.time >= fromSec)) {

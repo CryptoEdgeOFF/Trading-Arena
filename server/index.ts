@@ -1536,15 +1536,13 @@ if (!process.env.NETLIFY) {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
       void oanda.validateConnection();
-      // Préchauffer le cache des paires les plus consultées en arrière-plan.
-      // Le 1er chart BTC/ETH après redémarrage Railway sera ainsi instantané.
+      // Préchauffer uniquement BTC/M1 (le pair le plus consulté). Charger
+      // plus de paires en parallèle au boot provoque des bursts qui ban
+      // l'IP Railway côté Binance (HTTP 418) — le cache reste vide et
+      // les requêtes utilisateur échouent.
       engineCandlesCache.prewarm(
-        [
-          { pair: 'BTC/USD', source: 'binance' },
-          { pair: 'ETH/USD', source: 'binance' },
-          { pair: 'SOL/USD', source: 'binance' },
-        ],
-        [1, 5, 15, 60],
+        [{ pair: 'BTC/USD', source: 'binance' }],
+        [1],
       );
       // Boucle de backfill MT5 : comble en continu le gap entre la
       // dernière sync VPS Python (~30 min) et l'instant présent en

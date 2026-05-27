@@ -1,5 +1,6 @@
 import * as binance from './binance.js';
 import * as kraken from './kraken.js';
+import * as hyperliquid from './hyperliquid.js';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 
 /**
@@ -37,7 +38,24 @@ async function fetchFromUpstream(
   source: Source,
 ): Promise<OhlcCandle[]> {
   if (source === 'binance') {
-    return binance.getOhlcCandles(pair, interval, { countBack: MAX_CACHE_BARS });
+    try {
+      return await binance.getOhlcCandles(pair, interval, { countBack: MAX_CACHE_BARS });
+    } catch (err) {
+      const msg = (err as Error).message;
+      // Binance Futures occasionally rate-limits with HTTP 418 (IP ban) or
+      // 429. When that happens we transparently fall back to Hyperliquid
+      // which serves the same crypto pairs without rate limits.
+      if (/4(18|29)/.test(msg)) {
+        console.warn(`[candles cache] Binance ${pair} ${interval}m KO (${msg}), fallback Hyperliquid`);
+        try {
+          return await hyperliquid.getOhlcCandles(pair, interval, { countBack: MAX_CACHE_BARS });
+        } catch (hlErr) {
+          console.warn(`[candles cache] Hyperliquid ${pair} ${interval}m KO:`, (hlErr as Error).message);
+          throw err; // propagate the original Binance error
+        }
+      }
+      throw err;
+    }
   }
   return kraken.getOhlcCandles(pair, interval);
 }
