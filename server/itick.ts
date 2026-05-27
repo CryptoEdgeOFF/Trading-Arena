@@ -287,8 +287,10 @@ class ItickClusterManager extends EventEmitter {
       asset: this.asset,
       connected: this.ws?.readyState === WebSocket.OPEN,
       authenticated: this.authenticated,
+      wsUrl: wsUrlFor(this.asset),
       symbols: [...this.subscribedSymbols],
       cooldownRemainingMs: Math.max(0, this.cooldownUntil - Date.now()),
+      rateLimitHits: this.rateLimitHits,
       lastError: this.lastError,
       latest: [...this.latest.entries()].map(([sym, t]) => ({
         symbol: sym,
