@@ -1,7 +1,20 @@
 import serverless from 'serverless-http';
 import app, { serverReady } from '../../server/index.js';
 
-const expressHandler = serverless(app);
+/**
+ * Sans cette option, serverless-http sérialise le body Express en
+ * latin-1, ce qui corrompt les bytes des images servies par
+ * /api/avatars/:id. Avec la liste binary ci-dessous, le response body
+ * est encodé en base64 et `isBase64Encoded: true` est renvoyé à Netlify
+ * qui re-décode côté CDN avant d'envoyer au client.
+ */
+const expressHandler = serverless(app, {
+  binary: [
+    'image/*',
+    'application/octet-stream',
+    'application/pdf',
+  ],
+});
 
 function normalizeNetlifyPath(event: unknown): unknown {
   if (!event || typeof event !== 'object') return event;

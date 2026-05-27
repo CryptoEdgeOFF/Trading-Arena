@@ -1380,16 +1380,20 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
  * change à chaque upload (cf. setUserAvatarBlob), donc pas de stale.
  */
 app.get('/api/avatars/:userId', async (req, res) => {
+  const userId = String(req.params.userId);
   try {
-    const blob = await competitionManager.getUserAvatarBlob(String(req.params.userId));
+    const blob = await competitionManager.getUserAvatarBlob(userId);
     if (!blob) {
+      console.warn(`[avatars] not found userId=${userId}`);
       res.status(404).json({ error: 'Avatar introuvable' });
       return;
     }
     res.setHeader('Content-Type', blob.mime);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.send(blob.data);
+    res.setHeader('Content-Length', String(blob.data.length));
+    res.end(blob.data);
   } catch (error: any) {
+    console.error(`[avatars] failed userId=${userId}:`, error?.message);
     res.status(500).json({ error: error.message || 'Lecture impossible' });
   }
 });
