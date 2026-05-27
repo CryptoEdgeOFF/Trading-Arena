@@ -1107,9 +1107,17 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pn
       <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#dc2626]/15 blur-3xl hero-glow" />
       <div className="relative">
         <div className="flex items-center gap-2">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-sm font-bold uppercase text-white shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]">
-            {user.name.slice(0, 2)}
-          </span>
+          {user.avatarUrl ? (
+            <img
+              src={user.avatarUrl}
+              alt=""
+              className="h-9 w-9 shrink-0 rounded-xl object-cover shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]"
+            />
+          ) : (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-sm font-bold uppercase text-white shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]">
+              {user.name.slice(0, 2)}
+            </span>
+          )}
           <div className="min-w-0">
             <div className="micro text-[10px] text-[#dc2626]">Mon profil</div>
             <h3 className="display break-words text-xl font-bold leading-tight text-white sm:text-2xl">Salut {user.name}</h3>

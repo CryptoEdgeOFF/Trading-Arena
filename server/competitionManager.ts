@@ -1141,6 +1141,19 @@ export class CompetitionManager {
     ));
   }
 
+  /** Tous les paperPlayerId associés à un user (1 par compétition rejointe). */
+  getPaperPlayerIdsForUser(userId: string): string[] {
+    const out: string[] = [];
+    for (const competition of this.competitions.values()) {
+      for (const entry of competition.entries) {
+        if (entry.userId === userId && entry.paperPlayerId) {
+          out.push(entry.paperPlayerId);
+        }
+      }
+    }
+    return out;
+  }
+
   getCompetitionsNeedingFinalization(now = Date.now()): Array<{ competitionId: string; paperPlayerIds: string[] }> {
     return Array.from(this.competitions.values())
       .filter((competition) => (
@@ -1387,6 +1400,7 @@ export class CompetitionManager {
       rank: number;
       userId: string;
       name: string;
+      avatarUrl: string | null;
       pnlPercent: number;
       pnlUsd: number;
       tradesCount: number;
@@ -1402,6 +1416,7 @@ export class CompetitionManager {
         return {
           userId: entry.userId,
           name: user?.name || 'Participant',
+          avatarUrl: user?.avatarUrl || null,
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
@@ -1446,6 +1461,7 @@ export class CompetitionManager {
       rank: number;
       userId: string;
       name: string;
+      avatarUrl: string | null;
       pnlPercent: number;
       pnlUsd: number;
       tradesCount: number;
@@ -1461,6 +1477,7 @@ export class CompetitionManager {
         return {
           userId: entry.userId,
           name: user?.name || 'Participant',
+          avatarUrl: user?.avatarUrl || null,
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,

@@ -1368,6 +1368,13 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
       req.file.mimetype || 'image/jpeg',
       buffer,
     );
+    // Propage l'avatar à tous les paper players (1 par compétition) pour
+    // que `/api/paper/me` renvoie la bonne URL — utilisée par le terminal
+    // (TopBar) et le panel leaderboard côté terminal.
+    const paperPlayerIds = competitionManager.getPaperPlayerIdsForUser(user.id);
+    for (const playerId of paperPlayerIds) {
+      manager.setAvatar(playerId, nextUser.avatarUrl || '');
+    }
     res.json({ user: nextUser });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Avatar impossible a modifier' });

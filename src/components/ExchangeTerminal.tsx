@@ -93,6 +93,7 @@ interface LeaderboardRow {
   rank: number;
   userId: string;
   name: string;
+  avatarUrl?: string | null;
   pnlPercent: number;
   pnlUsd: number;
   tradesCount: number;
@@ -401,7 +402,15 @@ function TopBar({
           Leaderboard
         </a>
         <div className="hidden items-center gap-2 px-2 text-[11.5px] text-[#e0e2ea] xl:flex">
-          <span className="h-6 w-6 shrink-0 rounded-full" style={{ background: trader.color }} />
+          {trader.avatar ? (
+            <img
+              src={trader.avatar}
+              alt=""
+              className="h-6 w-6 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <span className="h-6 w-6 shrink-0 rounded-full" style={{ background: trader.color }} />
+          )}
           <span className="max-w-[110px] truncate">{trader.name}</span>
         </div>
       </div>
@@ -2073,6 +2082,13 @@ function LeaderboardMiniRow({ row, isMe, compact = false }: { row: LeaderboardRo
       <div className={`num font-bold ${isMe ? 'text-white' : 'text-[#8f899e]'}`}>#{row.rank}</div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
+          {row.avatarUrl ? (
+            <img src={row.avatarUrl} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+          ) : (
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-[8px] font-bold uppercase text-white">
+              {row.name.slice(0, 2)}
+            </span>
+          )}
           <span className="truncate font-bold text-white">{row.name}</span>
           {isMe && (
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#dc2626]/45 bg-[#dc2626]/18 text-[#fca5a5]" title="Ton classement" aria-label="Ton classement">
