@@ -685,6 +685,59 @@ export class CompetitionManager {
         created_at timestamptz not null default now()
       )
     `);
+    // Avatars stockés directement en Postgres (BYTEA) — survivent aux
+    // redéploiements Railway et n'ont pas besoin d'un disk volume. Servis
+    // via GET /api/avatars/:userId.
+    await this.pool.query(`
+      create table if not exists comp_user_avatars (
+        user_id text primary key,
+        mime text not null,
+        data bytea not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
+  }
+
+  /**
+   * Persiste l'image en DB et met à jour `avatarUrl` du user vers une URL
+   * relative servie par GET /api/avatars/:userId. La query string `v=…`
+   * casse le cache navigateur quand l'utilisateur change sa photo.
+   */
+  async setUserAvatarBlob(
+    userId: string,
+    mime: string,
+    data: Buffer,
+  ): Promise<CompetitionUser> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('Utilisateur introuvable');
+    if (this.pool) {
+      await this.pool.query(
+        `insert into comp_user_avatars (user_id, mime, data, updated_at)
+         values ($1, $2, $3, now())
+         on conflict (user_id) do update
+           set mime = excluded.mime,
+               data = excluded.data,
+               updated_at = now()`,
+        [userId, mime, data],
+      );
+    }
+    const version = Date.now();
+    const avatarUrl = `/api/avatars/${userId}?v=${version}`;
+    const nextUser = { ...user, avatarUrl };
+    this.users.set(user.id, nextUser);
+    this.save();
+    return nextUser;
+  }
+
+  async getUserAvatarBlob(userId: string): Promise<{ mime: string; data: Buffer } | null> {
+    if (!this.pool) return null;
+    const result = await this.pool.query(
+      'select mime, data from comp_user_avatars where user_id = $1 limit 1',
+      [userId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { mime: String(row.mime), data: row.data as Buffer };
   }
 
   async addAdminToken(token: string): Promise<void> {

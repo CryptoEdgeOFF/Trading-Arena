@@ -1350,10 +1350,47 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
     return;
   }
   try {
-    const nextUser = competitionManager.setUserAvatar(user.id, uploadedImageUrl(req.file));
+    // Memory storage (Netlify) → buffer is in req.file.buffer.
+    // Disk storage (Railway/local) → on relit le fichier puis on le supprime
+    // pour garder le blob comme seule source de vérité (Postgres survit
+    // aux redéploiements, le disk Railway non).
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const nextUser = await competitionManager.setUserAvatarBlob(
+      user.id,
+      req.file.mimetype || 'image/jpeg',
+      buffer,
+    );
     res.json({ user: nextUser });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Avatar impossible a modifier' });
+  }
+});
+
+/**
+ * Sert l'avatar d'un utilisateur depuis le blob Postgres.
+ * Cache long côté navigateur car l'URL contient `?v=<timestamp>` qui
+ * change à chaque upload (cf. setUserAvatarBlob), donc pas de stale.
+ */
+app.get('/api/avatars/:userId', async (req, res) => {
+  try {
+    const blob = await competitionManager.getUserAvatarBlob(String(req.params.userId));
+    if (!blob) {
+      res.status(404).json({ error: 'Avatar introuvable' });
+      return;
+    }
+    res.setHeader('Content-Type', blob.mime);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(blob.data);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
   }
 });
 
