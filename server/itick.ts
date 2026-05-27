@@ -139,7 +139,10 @@ export async function getKline(
     region,
     code,
     kType,
-    limit: Math.max(1, Math.min(1000, limit)),
+    // iTick caps each /kline call at 500 bars regardless of `limit`
+    // (verified live: limit=2000 still returns 500). We pin the upper
+    // bound here so callers don't think they got fewer bars than asked.
+    limit: Math.max(1, Math.min(500, limit)),
   };
   if (endTs && endTs > 0) params.et = endTs;
 

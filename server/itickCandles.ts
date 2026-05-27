@@ -28,25 +28,30 @@ const MAX_HISTORY_BARS = 100_000;
 
 /**
  * Profondeur cible (en bougies) à conserver dans Postgres pour chaque
- * timeframe. iTick limite à 1000 bars par appel REST, donc on pagine
- * pour atteindre ces volumes (cf. `backfillSeries`).
+ * timeframe. iTick plafonne à 500 bars par appel REST `/kline` (vérifié
+ * en live : limit=2000 ou 5000 renvoie quand même 500 bars max), donc
+ * on pagine via `et` pour atteindre ces volumes.
  *
- *   1m   → 3000 bars (~2 j)
- *   5m   → 3000 bars (~10 j)
- *   15m  → 3000 bars (~31 j)
- *   30m  → 2000 bars (~41 j)
- *   60m  → 2000 bars (~83 j)
- *   240m → 500 bars (~83 j) — dérivé du 60m
- *   1d   → 1000 bars (~2.7 ans)
+ *   1m   → 5000 bars   (~3.5 j)   — 10 pages
+ *   5m   → 5000 bars   (~17 j)    — 10 pages
+ *   15m  → 5000 bars   (~52 j)    — 10 pages
+ *   30m  → 3000 bars   (~62 j)    — 6 pages
+ *   60m  → 3000 bars   (~125 j)   — 6 pages
+ *   240m → 750 bars    (~125 j)   — dérivé du 60m
+ *   1d   → 2000 bars   (~5.5 ans) — 4 pages
+ *
+ * Coût total au boot par paire : ~46 appels iTick. Avec 11 paires =
+ * ~506 appels (≈ 3 min de backfill background). Effectué une seule
+ * fois grâce au skip `existing >= target` au prochain redémarrage.
  */
 const HISTORY_DEPTH: Record<number, number> = {
-  1: 3000,
-  5: 3000,
-  15: 3000,
-  30: 2000,
-  60: 2000,
-  240: 500,
-  1440: 1000,
+  1: 5000,
+  5: 5000,
+  15: 5000,
+  30: 3000,
+  60: 3000,
+  240: 750,
+  1440: 2000,
 };
 
 /* -------------------------------------------------------------------------- */
