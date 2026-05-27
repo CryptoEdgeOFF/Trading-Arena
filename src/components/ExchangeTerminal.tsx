@@ -17,7 +17,7 @@ import {
   priceToInputString,
   sizeUnitLabel,
 } from '../utils/positionSizing';
-import logoBtf from '../assets/pictures/logoBTF.png';
+import logoBtf from '../assets/pictures/logoBTF.webp';
 
 const SESSION_KEY = 'btf-paper-session';
 const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
@@ -1817,8 +1817,12 @@ function BottomTabs({
 
   return (
     <section
-      className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c] ${expanded || mobileMode ? 'flex-1' : 'shrink-0'}`}
-      style={expanded || mobileMode ? undefined : { height }}
+      className={`flex min-h-0 flex-col rounded-2xl border border-[#2a2236] bg-[#10091c] ${
+        mobileMode
+          ? 'shrink-0 overflow-visible'
+          : `overflow-hidden ${expanded ? 'flex-1' : 'shrink-0'}`
+      }`}
+      style={mobileMode || expanded ? undefined : { height }}
     >
       {!expanded && !mobileMode && (
         <div
@@ -1860,7 +1864,7 @@ function BottomTabs({
         </span>
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className={mobileMode ? 'overflow-x-auto' : 'flex-1 overflow-auto'}>
         {tab === 'positions' && (
           positions.length === 0 ? (
             <EmptyState lines={['Aucune position. Commencez à trader avec un effet de levier ↗']} />
@@ -2470,6 +2474,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
           rank: upsert.rank ?? existing?.rank ?? 0,
           userId: upsert.userId,
           name: upsert.name ?? existing?.name ?? 'Participant',
+          // Patches don't always carry the avatar; preserve the previous one
+          // unless the diff explicitly provides a new value (incl. null reset).
+          avatarUrl: upsert.avatarUrl !== undefined ? upsert.avatarUrl : existing?.avatarUrl ?? null,
           pnlPercent: upsert.pnlPercent ?? existing?.pnlPercent ?? 0,
           pnlUsd: upsert.pnlUsd ?? existing?.pnlUsd ?? 0,
           tradesCount: upsert.tradesCount ?? existing?.tradesCount ?? 0,
@@ -3335,8 +3342,30 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
           <div className="flex min-h-0 flex-1 flex-col lg:hidden">
             {mobileTab === 'orders' && (
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pb-2">
                 {orderPanel}
+                {/* Positions / Ordres en attente / Historique : visibles en
+                    scrollant sous le formulaire d'ordre, comme sur desktop. */}
+                <BottomTabs
+                  tab={tab}
+                  setTab={setTab}
+                  height={bottomTabsHeight}
+                  expanded={false}
+                  mobileMode
+                  onResizeStart={startBottomResize}
+                  onResizeMove={moveBottomResize}
+                  onResizeEnd={endBottomResize}
+                  onToggleExpanded={() => setBottomTabsExpanded((value) => !value)}
+                  player={player}
+                  recentTrades={playerTrades}
+                  ticker={ticker}
+                  onClosePosition={closePosition}
+                  onUpdateRisk={updateRisk}
+                  onCancelOrder={cancelOrder}
+                  onSelectPair={setSelectedPair}
+                  busy={busy}
+                  marketMetadata={meta.marketMetadata}
+                />
               </div>
             )}
             {mobileTab === 'chart' && (
