@@ -237,6 +237,28 @@ export class PlayerManager {
       if (existing && memoryUpdate >= storedUpdate) continue;
       const player = this.createPlayerFromStored(stored);
       this.players.set(player.id, player);
+      // Trace les positions/ordres restaurés au boot pour qu'une position
+      // "fantôme" puisse être corrélée avec son origine (importée depuis
+      // Postgres au démarrage vs créée pendant la session).
+      const positions = player.openPositions ?? [];
+      const orders = (player.openOrders ?? []).filter((o) => o.status === 'open');
+      if (positions.length > 0 || orders.length > 0) {
+        console.log(
+          `[paper] hydrate ${player.name} positions=${positions.length} orders=${orders.length}`,
+        );
+        for (const p of positions) {
+          console.log(
+            `[paper]   pos ${p.pair} ${p.side} size=${p.size} entry=${p.entryPrice} `
+            + `id=${p.id} openedAt=${p.openedAt ?? '?'}`,
+          );
+        }
+        for (const o of orders) {
+          console.log(
+            `[paper]   ord ${o.pair} ${o.side} ${o.orderType} size=${o.size} `
+            + `limit=${o.limitPrice} id=${o.id} createdAt=${o.createdAt}`,
+          );
+        }
+      }
     }
     // Remove players that vanished from the database AND have no live state.
     for (const id of Array.from(this.players.keys())) {

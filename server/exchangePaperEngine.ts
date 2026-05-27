@@ -196,9 +196,19 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
 
+/**
+ * Pendant les `LIMIT_WARMUP_MS` premières millisecondes après un boot,
+ * `processOpenOrders` ignore les ordres limites pour éviter qu'un tick
+ * iTick stale (premier batch reçu après reconnect WS) ne déclenche une
+ * exécution sur un mark price erroné. Une fois le warmup terminé, le
+ * matching reprend normalement à chaque applyTicker / applyItickQuotes.
+ */
+const LIMIT_WARMUP_MS = 10_000;
+
 export class PaperTradingEngine {
   private market: Record<string, MarketTicker> = {};
   private tickerInterval: ReturnType<typeof setInterval> | null = null;
+  private bootedAt = Date.now();
   private websocket: WebSocket | null = null;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
@@ -374,6 +384,16 @@ export class PaperTradingEngine {
     const orderType = input.orderType;
     const leverage = clampLeverage(Number(input.leverage));
     const pairDefinition = pairToDefinition.get(pair);
+
+    // Trace tout placeOrder pour pouvoir corréler avec les logs Railway
+    // si une position "fantôme" apparaît : on a la pair, le side, le size,
+    // et l'identité du player. Si jamais quelque chose appelle placeOrder
+    // sans clic utilisateur, on le verra ici avec la stack trace.
+    console.log(
+      `[paper] placeOrder ${player.name} ${pair} ${side} ${orderType} `
+      + `size=${size} leverage=${leverage} `
+      + `limit=${input.limitPrice ?? '–'} sl=${input.stopLoss ?? '–'} tp=${input.takeProfit ?? '–'}`,
+    );
 
     if (!pairDefinition) throw new Error('Pair non supportée');
     if (!Number.isFinite(size) || size <= 0) throw new Error('Taille de position invalide');
@@ -912,6 +932,12 @@ export class PaperTradingEngine {
   }
 
   private processOpenOrders(players: Player[]): void {
+    // Warmup : pendant les 10 premières secondes après boot on ne match
+    // aucun ordre limite. Évite les exécutions parasites sur les premiers
+    // ticks iTick reçus juste après la reconnexion WS (parfois stale ou
+    // décorrélés du marché réel pendant 1-2 ticks).
+    if (Date.now() - this.bootedAt < LIMIT_WARMUP_MS) return;
+
     for (const player of players) {
       const executable = player.openOrders.filter((order) => {
         if (order.status !== 'open' || order.limitPrice == null) return false;
@@ -923,6 +949,11 @@ export class PaperTradingEngine {
       });
 
       for (const order of executable) {
+        console.log(
+          `[paper] limit fill ${player.name} ${order.pair} ${order.side} `
+          + `limit=${order.limitPrice} mark=${this.market[order.pair]?.markPrice} `
+          + `size=${order.size} orderId=${order.id} placedAt=${order.createdAt ?? '?'}`,
+        );
         player.openOrders = player.openOrders.filter((entry) => entry.id !== order.id);
         this.executeOrder(player, order, order.limitPrice || 0, MAKER_FEE_RATE);
       }
@@ -1037,6 +1068,11 @@ export class PaperTradingEngine {
   }
 
   private executeOrder(player: Player, order: Order, executionPrice: number, feeRate: number): PaperOrderResult {
+    console.log(
+      `[paper] executeOrder ${player.name} ${order.pair} ${order.side} `
+      + `${order.orderType} size=${order.size} @ ${executionPrice} `
+      + `(orderId=${order.id} createdAt=${order.createdAt})`,
+    );
     const notional = executionPrice * order.size;
     const margin = notional / order.leverage;
     const fee = notional * feeRate;
