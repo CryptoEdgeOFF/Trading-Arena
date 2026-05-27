@@ -10,7 +10,8 @@ import {
   formatEngineSizeDisplay,
   formatInputSize,
   inputSizeFromEngine,
-  isForexCategory,
+  inputSizeStep,
+  isLotBased,
   isValidStopLoss,
   isValidTakeProfit,
   priceToInputString,
@@ -464,8 +465,9 @@ function OrderForm(props: OrderFormProps) {
   const [activeMarketCategory, setActiveMarketCategory] = useState<MarketCategory>('crypto');
 
   const category = meta.marketMetadata[selectedPair]?.category || 'crypto';
+  const lotBased = isLotBased(selectedPair);
   const qty = Number(size) || 0;
-  const engineQty = engineSizeFromInput(category, qty);
+  const engineQty = engineSizeFromInput(selectedPair, qty);
   const refPrice = orderType === 'market'
     ? (side === 'long' ? ticker?.askPrice ?? ticker?.markPrice ?? 0 : ticker?.bidPrice ?? ticker?.markPrice ?? 0)
     : Number(limitPrice) || 0;
@@ -475,13 +477,14 @@ function OrderForm(props: OrderFormProps) {
   const available = (player?.availableMargin ?? 0);
   const maxNotional = available * leverage;
   const maxEngineQty = refPrice > 0 ? maxNotional / refPrice : 0;
-  const approxSizeLabel = isForexCategory(category)
-    ? `${inputSizeFromEngine(category, maxEngineQty).toFixed(2)} lots`
+  const approxSizeLabel = lotBased
+    ? `${inputSizeFromEngine(selectedPair, maxEngineQty).toFixed(2)} lots`
     : `${maxEngineQty.toFixed(5)} ${pairBase(selectedPair)}`;
   const usedRatio = available > 0 ? Math.min(1, margin / available) : 0;
   const base = pairBase(selectedPair);
-  const sizeLabel = isForexCategory(category) ? 'Lots' : 'Quantité';
-  const sizeUnit = sizeUnitLabel(category, base);
+  const sizeLabel = lotBased ? 'Lots' : 'Quantité';
+  const sizeUnit = sizeUnitLabel(selectedPair, base);
+  const sizeStep = inputSizeStep(selectedPair);
   const canSubmit = eventStarted && Number.isFinite(qty) && qty > 0;
   const availableCategories = MARKET_CATEGORIES.filter((category) => (
     pairs.some((pair) => (meta.marketMetadata[pair]?.category || 'crypto') === category.id)
@@ -523,17 +526,15 @@ function OrderForm(props: OrderFormProps) {
     const usd = Number(usdAmount);
     if (!Number.isFinite(usd) || usd <= 0 || refPrice <= 0) return;
     const nextEngineQty = usd / refPrice;
-    setSize(formatInputSize(category, inputSizeFromEngine(category, nextEngineQty)));
-  }, [category, lastEditedAmount, refPrice, setSize, usdAmount]);
+    setSize(formatInputSize(selectedPair, inputSizeFromEngine(selectedPair, nextEngineQty)));
+  }, [selectedPair, lastEditedAmount, refPrice, setSize, usdAmount]);
 
   useEffect(() => {
     setAccountPercent(0);
     setUsdAmount('');
     setLastEditedAmount('qty');
-    const nextCategory = meta.marketMetadata[selectedPair]?.category || 'crypto';
-    if (nextCategory === 'forex') setSize('0.01');
-    else if (nextCategory === 'crypto') setSize('0.00005');
-    else setSize('1');
+    if (isLotBased(selectedPair)) setSize('0.01');
+    else setSize('0.00005');
   // eslint-disable-next-line react-hooks/exhaustive-deps -- reset sizing only when the pair changes
   }, [selectedPair]);
 
@@ -592,7 +593,7 @@ function OrderForm(props: OrderFormProps) {
     const targetNotional = targetMargin * leverage;
     const nextEngineQty = targetNotional / refPrice;
     setLastEditedAmount('qty');
-    setSize(formatInputSize(category, inputSizeFromEngine(category, nextEngineQty)));
+    setSize(formatInputSize(selectedPair, inputSizeFromEngine(selectedPair, nextEngineQty)));
   }
 
   function applyUsdAmount(value: string) {
@@ -604,7 +605,7 @@ function OrderForm(props: OrderFormProps) {
       return;
     }
     const nextEngineQty = usd / refPrice;
-    setSize(formatInputSize(category, inputSizeFromEngine(category, nextEngineQty)));
+    setSize(formatInputSize(selectedPair, inputSizeFromEngine(selectedPair, nextEngineQty)));
   }
 
   return (
@@ -818,8 +819,8 @@ function OrderForm(props: OrderFormProps) {
             <div className={`mt-1 flex h-9 items-center gap-1 rounded-md border bg-[#15121f] px-3 ${qty <= 0 ? 'border-[#f43f6e]/45' : 'border-[#1f1a2b]'}`}>
               <input
                 type="number"
-                min={isForexCategory(category) ? '0.01' : '0.00001'}
-                step={isForexCategory(category) ? '0.01' : '0.00001'}
+                min={sizeStep.min}
+                step={sizeStep.step}
                 value={size}
                 onChange={(event) => {
                   setLastEditedAmount('qty');
@@ -987,7 +988,7 @@ function OrderForm(props: OrderFormProps) {
             </span>
             <div className="flex items-baseline gap-2">
               <span className="text-[#e0e2ea]">
-                {isForexCategory(category) ? `${qty.toFixed(2)} lots` : `${engineQty.toFixed(5)} ${base}`}
+                {lotBased ? `${qty.toFixed(2)} lots` : `${engineQty.toFixed(5)} ${base}`}
               </span>
             </div>
           </div>
@@ -1138,7 +1139,7 @@ function PositionRow({
   const slPct = pctFromPrice(position.stopLoss);
   const tpIsPartial = position.takeProfitSize != null && position.takeProfitSize > 0 && position.takeProfitSize < position.size;
   const slIsPartial = position.stopLossSize != null && position.stopLossSize > 0 && position.stopLossSize < position.size;
-  const sizeDisplay = formatEngineSizeDisplay(category, position.size, pairBase(position.pair));
+  const sizeDisplay = formatEngineSizeDisplay(position.pair, position.size, pairBase(position.pair));
 
   const PRESETS = [25, 50, 75, 100];
   const partialSize = Math.max(0, position.size * (closePercent / 100));
@@ -1152,7 +1153,7 @@ function PositionRow({
             <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: PAIR_COLOR[position.pair] || '#f7931a' }}>
               {pairBase(position.pair).slice(0, 1)}
             </span>
-            <span className="text-white">{pairBase(position.pair)}/USD</span>
+            <span className="text-white">{position.pair}</span>
             <span className="rounded-sm bg-[#231f22] px-1 py-px text-[9px] text-[#9498a4]">{position.leverage}x</span>
             <span className="rounded-sm border border-[#2a2635] bg-[#15121f] px-1 py-px text-[9px] text-[#7a8090]">
               #{position.id.slice(0, 4)}
@@ -1894,14 +1895,13 @@ function BottomTabs({
               </thead>
               <tbody className="divide-y divide-[#1c181a] text-[#e0e2ea]">
                 {orders.map((order) => {
-                  const orderCategory = marketMetadata[order.pair]?.category;
-                  const orderSizeDisplay = formatEngineSizeDisplay(orderCategory, order.size, pairBase(order.pair));
+                  const orderSizeDisplay = formatEngineSizeDisplay(order.pair, order.size, pairBase(order.pair));
                   return (
                   <tr key={order.id} className="hover:bg-[#181517]">
-                    <Td>{pairBase(order.pair)}/USD</Td>
+                    <Td>{order.pair}</Td>
                     <Td><span style={{ color: order.side === 'long' ? '#15c990' : '#c026d3' }}>{order.side === 'long' ? 'Long' : 'Short'}</span></Td>
                     <Td className="capitalize">{order.orderType === 'market' ? 'Marché' : 'Limite'}</Td>
-                    <Td>{order.limitPrice ? fmtMarketPrice(order.limitPrice, orderCategory) : '–'}</Td>
+                    <Td>{order.limitPrice ? fmtMarketPrice(order.limitPrice, marketMetadata[order.pair]?.category) : '–'}</Td>
                     <Td>{orderSizeDisplay.text} <span className="text-[10px] text-[#7a8090]">{orderSizeDisplay.unit}</span></Td>
                     <Td>{order.leverage}x</Td>
                     <Td>{fmt(order.marginReserved + order.feeEstimate, 2)} USD</Td>
@@ -1933,7 +1933,7 @@ function BottomTabs({
                 {allTrades.map((trade) => (
                   <tr key={trade.id} className="hover:bg-[#181517]">
                     <Td className="text-[#9498a4]">{timeAgo(trade.time)}</Td>
-                    <Td>{pairBase(trade.pair)}/USD</Td>
+                    <Td>{trade.pair}</Td>
                     <Td><span style={{ color: trade.side === 'long' ? '#15c990' : '#c026d3' }}>{trade.side === 'long' ? 'Long' : 'Short'}</span></Td>
                     <Td className="capitalize">{trade.action}</Td>
                     <Td>{fmt(trade.price, 1)}</Td>
@@ -2745,8 +2745,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     const currentTicker = demoMarket[selectedPair];
     if (!currentTicker) return;
 
-    const category = meta.marketMetadata[selectedPair]?.category;
-    const qty = engineSizeFromInput(category, Number(size));
+    const qty = engineSizeFromInput(selectedPair, Number(size));
     const price = orderType === 'limit' && Number(limitPrice) > 0
       ? Number(limitPrice)
       : (side === 'long' ? currentTicker.askPrice : currentTicker.bidPrice);
@@ -2890,8 +2889,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   }
 
   async function submitOrder(extras?: { stopLoss: number | null; takeProfit: number | null }) {
-    const category = meta.marketMetadata[selectedPair]?.category;
-    const qty = engineSizeFromInput(category, Number(size));
+    const qty = engineSizeFromInput(selectedPair, Number(size));
     if (!Number.isFinite(qty) || qty <= 0) {
       setError('Quantité invalide. Entre une quantité supérieure à 0.');
       return;
