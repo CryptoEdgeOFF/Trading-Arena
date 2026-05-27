@@ -22,8 +22,7 @@ import {
   Trade,
 } from './types.js';
 import * as kraken from './kraken.js';
-import * as mt5Feed from './mt5Feed.js';
-import { PaperTradingEngine, type PaperOrderInput } from './exchangePaperEngine.js';
+import { PaperTradingEngine, type ExternalQuote, type PaperOrderInput } from './exchangePaperEngine.js';
 
 const PLAYER_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
@@ -800,25 +799,17 @@ export class PlayerManager {
   }
 
   /**
-   * Apply MT5 quotes from memory only (no external HTTP).
+   * Applique des prix iTick au paper engine. Source unique pour les
+   * pairs forex / commodities / indices (PAPER_PAIRS source='itick').
    *
-   * We deliberately ignore `isPaperMarketActive()` here: live tick streaming
-   * for chart consumers should not depend on an active competition runtime.
-   * MT5 ticks are pure market data (no player state), so always-on application
-   * keeps EUR/USD/GOLD live for read-only viewers and survives Railway
-   * restarts that wipe `competitionPaperRuntimeStarted`.
+   * On ignore volontairement `isPaperMarketActive()` : le streaming de
+   * prix pour les consommateurs du chart ne doit pas dépendre d'une
+   * compétition active. Les ticks iTick sont de la donnée de marché
+   * pure (pas d'état joueur), donc l'application always-on garde le
+   * chart vivant pour les viewers et survit aux restarts Railway.
    */
-  applyMt5MarketTicks(hintPairs?: string[]): string[] {
-    const pricing = mt5Feed.getPricing();
-    if (!hintPairs?.length) {
-      return this.paperEngine.applyMt5Quotes(pricing);
-    }
-    const filtered: Record<string, mt5Feed.Mt5Quote> = {};
-    for (const pair of hintPairs) {
-      const quote = pricing[pair];
-      if (quote) filtered[pair] = quote;
-    }
-    return this.paperEngine.applyMt5Quotes(filtered);
+  applyItickMarketTicks(quotes: Record<string, ExternalQuote>): string[] {
+    return this.paperEngine.applyItickQuotes(quotes);
   }
 
   getPaperFeeRates() {

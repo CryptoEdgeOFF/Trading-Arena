@@ -12,6 +12,10 @@ export default defineConfig({
         target: 'ws://localhost:3001',
         ws: true,
       },
+      '/ws/itick': {
+        target: 'ws://localhost:3001',
+        ws: true,
+      },
     },
   },
 })

@@ -12,11 +12,12 @@ import { EventConfig, StatePatch } from './types.js';
 import * as kraken from './kraken.js';
 import * as binance from './binance.js';
 import { pairToBinanceSymbol } from './binance.js';
-import * as oanda from './oanda.js';
 import * as hyperliquid from './hyperliquid.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
-import * as mt5Feed from './mt5Feed.js';
-import * as mt5Candles from './mt5Candles.js';
+import * as itick from './itick.js';
+import * as itickCandles from './itickCandles.js';
+import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair } from './itickInstruments.js';
+import { startItickToPaperBridge } from './itickToPaperBridge.js';
 import { getPaperPairDefinition } from './exchangePaperEngine.js';
 import { CompetitionManager } from './competitionManager.js';
 import { sendOtpEmail } from './mailer.js';
@@ -31,8 +32,7 @@ const server = http.createServer(app);
 // no compression for tiny frames, and an explicit memory budget so a burst
 // of 500+ clients does not blow up RAM.
 const wss = new WebSocketServer({
-  server,
-  path: '/ws',
+  noServer: true,
   perMessageDeflate: {
     zlibDeflateOptions: { chunkSize: 1024, memLevel: 7, level: 3 },
     zlibInflateOptions: { chunkSize: 10 * 1024 },
@@ -42,6 +42,58 @@ const wss = new WebSocketServer({
     concurrencyLimit: 10,
     threshold: 1024,
   },
+});
+
+// Canal WS isolé pour /feed-test : forward des ticks iTick live aux
+// navigateurs sans toucher au pipeline /ws principal (compétition).
+const itickWss = new WebSocketServer({ noServer: true });
+
+// Dispatcher manuel : ws.js fait un startsWith(path) qui ferait intercepter
+// /ws/itick par le serveur principal /ws. On route nous-mêmes selon le
+// pathname exact pour éviter ce conflit.
+server.on('upgrade', (req, socket, head) => {
+  let pathname: string;
+  try {
+    pathname = new URL(req.url || '', 'http://localhost').pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
+  if (pathname === '/ws') {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } else if (pathname === '/ws/itick') {
+    itickWss.handleUpgrade(req, socket, head, (ws) => itickWss.emit('connection', ws, req));
+  } else {
+    socket.destroy();
+  }
+});
+const itickClients = new Set<WebSocket>();
+itickWss.on('connection', (ws) => {
+  itickClients.add(ws);
+  // Greeting + replay du dernier tick connu pour chaque symbole abonné côté
+  // serveur, pour que le navigateur reçoive immédiatement la valeur courante.
+  try {
+    const status = itick.getLiveTickStatus();
+    ws.send(JSON.stringify({ type: 'itick:status', data: status }));
+    for (const entry of status.latest) {
+      ws.send(JSON.stringify({
+        type: 'itick:tick',
+        data: { symbol: entry.symbol, price: entry.price, ts: Date.now() - entry.ageMs },
+      }));
+    }
+  } catch {
+    // noop
+  }
+  ws.on('close', () => itickClients.delete(ws));
+});
+itick.itickFeed.on('tick', (tick) => {
+  if (itickClients.size === 0) return;
+  const msg = JSON.stringify({ type: 'itick:tick', data: tick });
+  for (const client of itickClients) {
+    if (client.readyState === WebSocket.OPEN) {
+      try { client.send(msg); } catch { /* noop */ }
+    }
+  }
 });
 const PORT = Number(process.env.PORT || 3001);
 const IS_SERVERLESS = Boolean(process.env.NETLIFY);
@@ -171,21 +223,6 @@ const manager = new PlayerManager((patch: StatePatch) => {
   broadcastPaperUpdates();
 });
 
-function requireMt5FeedAuth(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  const secret = process.env.MT5_FEED_SECRET?.trim();
-  if (!secret) {
-    next();
-    return;
-  }
-  const header = String(req.headers.authorization || '');
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : header.trim();
-  if (token !== secret) {
-    res.status(401).json({ error: 'MT5 feed non autorisé' });
-    return;
-  }
-  next();
-}
-
 function broadcastMarketTicks(pairs: string[]): void {
   if (pairs.length === 0 || clients.size === 0) return;
   const market = manager.getPaperMarketSnapshot();
@@ -208,139 +245,149 @@ function broadcastMarketTicks(pairs: string[]): void {
   });
 }
 
-mt5Feed.setOnTick((hintPairs) => {
-  const updated = manager.applyMt5MarketTicks(hintPairs);
-  broadcastMarketTicks(updated);
-});
-
-app.get('/api/mt5/status', async (_req, res) => {
-  try {
-    res.json({
-      ok: true,
-      authRequired: Boolean(process.env.MT5_FEED_SECRET?.trim()),
-      ...mt5Feed.getStatus(),
-      candleSeries: await mt5Candles.getCandlesStatus(),
-    });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message || 'Statut MT5 indisponible' });
-  }
-});
-
 /**
- * Purge ciblée des bougies MT5 récentes en DB. Utilisé pour effacer un
- * historique pollué (par ex après un mix de sources OANDA / VPS, ou un
- * mauvais offset broker). Le VPS Python re-pushera ensuite naturellement
- * via POST /api/mt5/candles. Protégé par le secret MT5 (même que le feed).
- *
- * body: { pair?: string, hours?: number }
- *  - pair  : si fourni, ne purge que cette paire ; sinon toutes.
- *  - hours : fenêtre à effacer (défaut 24h, max 720h).
+ * Routes iTick (https://docs.itick.org/).
+ * Lecture seule, pas d'auth (le token reste serveur-side via ITICK_TOKEN).
+ * Source unique pour les pairs forex / commodities / indices ; le live
+ * arrive via WS upstream et alimente le paper engine via le bridge.
  */
-/**
- * Backfill one-shot via OANDA pour combler un trou récent en DB.
- * body: { pair?: string, hours?: number }
- *   - pair  : paire à backfill ; si absent, fait tous les symboles MT5.
- *   - hours : profondeur à reconstruire (défaut 24h, max 168h).
- * Mode fillGap : n'écrase JAMAIS une bougie VPS bid FTMO déjà présente.
- */
-app.post('/api/mt5/backfill', requireMt5FeedAuth, async (req, res) => {
-  try {
-    const { listMt5Symbols } = await import('./mt5Instruments.js');
-    const requested = typeof req.body?.pair === 'string' && req.body.pair.trim()
-      ? [String(req.body.pair).trim()]
-      : listMt5Symbols();
-    const hoursRaw = Number(req.body?.hours ?? 24);
-    const hours = Math.max(1, Math.min(168, Number.isFinite(hoursRaw) ? hoursRaw : 24));
-    const toSec = Math.floor(Date.now() / 1000);
-    const fromSec = toSec - hours * 3600;
-    const intervals = [1, 5, 15, 30, 60, 240, 1440];
-    const summary: Record<string, Record<string, number>> = {};
-    for (const pair of requested) {
-      summary[pair] = {};
-      for (const intervalMin of intervals) {
-        const inserted = await mt5Candles.backfillRange(pair, intervalMin, fromSec, toSec);
-        summary[pair][`m${intervalMin}`] = inserted;
-      }
-    }
-    res.json({ ok: true, hours, summary });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message || 'Backfill MT5 impossible' });
-  }
-});
-
-app.post('/api/mt5/purge', requireMt5FeedAuth, async (req, res) => {
-  try {
-    const pair = typeof req.body?.pair === 'string' && req.body.pair.trim()
-      ? String(req.body.pair).trim()
-      : null;
-    const hoursRaw = Number(req.body?.hours ?? 24);
-    const hours = Math.max(1, Math.min(720, Number.isFinite(hoursRaw) ? hoursRaw : 24));
-    const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
-    const removed = await mt5Candles.purgeRecentBars(pair, sinceSec);
-    res.json({ ok: true, removed, pair, hours, sinceSec });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message || 'Purge MT5 impossible' });
-  }
-});
-
-app.post('/api/mt5/tick', requireMt5FeedAuth, (req, res) => {
-  const result = mt5Feed.ingestTick({
-    symbol: String(req.body?.symbol || ''),
-    bid: Number(req.body?.bid),
-    ask: Number(req.body?.ask),
-    ts_ms: req.body?.ts_ms != null ? Number(req.body.ts_ms) : undefined,
+app.get('/api/itick/status', (_req, res) => {
+  res.json({
+    ok: true,
+    configured: itick.isConfigured(),
+    feed: itick.getLiveTickStatus(),
   });
-  if (!result.ok) {
-    res.status(400).json(result);
-    return;
-  }
-  res.json(result);
 });
 
-app.post('/api/mt5/tick-line', requireMt5FeedAuth, express.text({ type: '*/*' }), (req, res) => {
-  const result = mt5Feed.ingestTickLine(String(req.body || ''));
-  if (!result.ok) {
-    res.status(400).json(result);
-    return;
-  }
-  res.json(result);
-});
+function parseAsset(raw: unknown): itick.ItickAssetClass {
+  const v = String(raw || 'forex').toLowerCase();
+  if (v === 'indices' || v === 'crypto' || v === 'stock' || v === 'forex') return v;
+  return 'forex';
+}
 
-app.post('/api/mt5/ticks', requireMt5FeedAuth, (req, res) => {
-  const rows = Array.isArray(req.body) ? req.body : req.body?.ticks;
-  if (!Array.isArray(rows)) {
-    res.status(400).json({ error: 'Corps attendu: { ticks: [...] } ou [...]' });
-    return;
-  }
-  const accepted: string[] = [];
-  const errors: string[] = [];
-  for (const row of rows) {
-    const result = mt5Feed.ingestTick({
-      symbol: String(row?.symbol || ''),
-      bid: Number(row?.bid),
-      ask: Number(row?.ask),
-      ts_ms: row?.ts_ms != null ? Number(row.ts_ms) : undefined,
-    });
-    if (result.ok && result.pair) accepted.push(result.pair);
-    else if (result.error) errors.push(result.error);
-  }
-  res.json({ ok: true, accepted, errors });
-});
-
-app.post('/api/mt5/candles', requireMt5FeedAuth, async (req, res) => {
+/**
+ * GET /api/itick/candles — bougies historiques.
+ *
+ * Modes :
+ *   1. `?pair=EUR/USD&interval=1&countBack=500` — lit le store iTick local
+ *      (Postgres `itick_candles`), le plus rapide. Si aucune bougie n'est
+ *      en cache, déclenche un backfill REST iTick (avec fallback Hyperliquid).
+ *   2. `?code=EURUSD&asset=forex&interval=1` — appel direct iTick REST,
+ *      utilisé par la page /feed-test pour debug pure source.
+ */
+app.get('/api/itick/candles', async (req, res) => {
   try {
-    const result = await mt5Candles.ingestCandles({
-      symbol: String(req.body?.symbol || ''),
-      timeframe: Number(req.body?.timeframe),
-      candles: Array.isArray(req.body?.candles) ? req.body.candles : [],
-    });
-    if (!result.ok) {
-      res.status(400).json(result);
+    const interval = Number(req.query.interval || 1);
+    const limit = Number(req.query.limit || req.query.countBack || 500);
+    const to = req.query.to ? Number(req.query.to) : undefined;
+    const endTs = to && to > 0 ? Math.floor(to) * 1000 : undefined;
+
+    // Mode 1 : pair-based (production)
+    const pairParam = req.query.pair ? String(req.query.pair) : null;
+    if (pairParam) {
+      const inst = findItickByPair(pairParam);
+      if (!inst) {
+        res.status(404).json({ error: `Pair iTick inconnue: ${pairParam}` });
+        return;
+      }
+      let bars = await itickCandles.getCandles(inst.pair, interval, {
+        countBack: limit,
+        to: to ? Math.floor(to) : undefined,
+      });
+      if (bars.length === 0) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const targetTo = to ? Math.floor(to) : nowSec;
+        const targetFrom = targetTo - interval * 60 * limit;
+        await itickCandles.backfillRange(inst.pair, interval, targetFrom, targetTo);
+        bars = await itickCandles.getCandles(inst.pair, interval, {
+          countBack: limit,
+          to: to ? Math.floor(to) : undefined,
+        });
+      }
+      res.json({ candles: bars, pair: inst.pair, asset: inst.asset });
       return;
     }
-    res.json(result);
+
+    // Mode 2 : raw code (legacy /feed-test)
+    const code = String(req.query.code || 'EURUSD').toUpperCase();
+    const asset = parseAsset(req.query.asset);
+    const bars = await itick.getKline(code, interval, limit, endTs, asset);
+    res.json({ candles: bars });
   } catch (err) {
-    res.status(500).json({ ok: false, error: (err as Error).message || 'Ingestion candles MT5 impossible' });
+    res.status(500).json({ error: (err as Error).message || 'iTick candles indisponibles' });
+  }
+});
+
+app.get('/api/itick/tick', async (req, res) => {
+  try {
+    const code = String(req.query.code || 'EURUSD').toUpperCase();
+    const asset = parseAsset(req.query.asset);
+    const tick = await itick.getLatestTick(code, asset);
+    res.json(tick);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message || 'iTick tick indisponible' });
+  }
+});
+
+/**
+ * GET /api/itick/instruments — liste des paires production iTick avec
+ * leur asset class et le code iTick. Utilisé par la page /feed-test pour
+ * peupler le sélecteur d'instruments.
+ */
+app.get('/api/itick/instruments', (_req, res) => {
+  res.json({
+    instruments: ITICK_INSTRUMENTS.map((inst) => ({
+      pair: inst.pair,
+      asset: inst.asset,
+      code: inst.code,
+      category: inst.category,
+      pricescale: inst.pricescale,
+      label: inst.label,
+    })),
+  });
+});
+
+/**
+ * GET /api/itick/series — état du store de bougies (count + age par pair/tf).
+ * Utilisé par /feed-test pour voir la santé globale du feed.
+ */
+app.get('/api/itick/series', async (_req, res) => {
+  try {
+    const series = await itickCandles.getCandlesStatus();
+    res.json({ series });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message || 'series indisponibles' });
+  }
+});
+
+/**
+ * Bascule la subscription WS upstream (1 connexion / 3 syms max sur le
+ * plan free) vers une nouvelle paire (asset, symbols). Utilisé par la
+ * page /feed-test pour changer d'instrument à la volée.
+ */
+app.post('/api/itick/reset', (_req, res) => {
+  itick.itickFeed.resetCooldown();
+  res.json({ ok: true });
+});
+
+app.post('/api/itick/subscribe', (req, res) => {
+  try {
+    const asset = parseAsset(req.body?.asset);
+    const rawSymbols = Array.isArray(req.body?.symbols)
+      ? req.body.symbols
+      : (req.body?.symbol ? [req.body.symbol] : []);
+    const symbols = rawSymbols
+      .map((s: unknown) => String(s).toUpperCase().trim())
+      .filter((s: string) => s.length > 0)
+      .slice(0, 3);
+    if (symbols.length === 0) {
+      res.status(400).json({ error: 'symbols vide' });
+      return;
+    }
+    itick.itickFeed.setSubscription(asset, symbols);
+    res.json({ ok: true, asset, symbols });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message || 'subscribe impossible' });
   }
 });
 
@@ -869,68 +916,58 @@ app.get('/api/paper/candles', async (req, res) => {
   try {
     const pairDef = getPaperPairDefinition(pair);
     let candles;
-    let source: 'mt5' | 'oanda' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
+    let source: 'itick' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
 
-    // Historique MT5 (VPS Python) — prioritaire pour les paires TradFi feedées par MT5.
-    if (await mt5Candles.hasCandles(pair, interval)) {
-      const mt5Bars = await mt5Candles.getCandles(pair, interval, candleOpts);
-      if (mt5Bars.length > 0) {
-        candles = mt5Bars;
-        source = 'mt5';
+    // Pair iTick (forex / commodity / index) → store local Postgres.
+    // Si vide, backfill REST iTick (avec fallback Hyperliquid xyz si dispo).
+    if (isItickPair(pair)) {
+      let itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
+      if (itickBars.length === 0) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const targetTo = candleOpts.to ?? nowSec;
+        const targetFrom = candleOpts.from ?? targetTo - interval * 60 * (candleOpts.countBack ?? 500);
+        await itickCandles.backfillRange(pair, interval, targetFrom, targetTo);
+        itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
       }
-    }
-
-    if (!candles) {
-      if (pairDef?.source === 'oanda') {
-        // OANDA practice ne couvre que le forex sur la plupart des comptes
-        // gratuits. Pour les commodités/indices (GOLD, SILVER, SP500, …),
-        // l'instrument n'est pas disponible et on retombe sur Hyperliquid
-        // qui propose un historique 24/7 propre via xyz:GOLD, xyz:SP500, …
-        let oandaTried = false;
-        if (oanda.isConfigured()) {
-          try {
-            if (await oanda.isInstrumentAvailable(pair)) {
-              candles = await oanda.getOhlcCandles(pair, interval, candleOpts);
-              source = 'oanda';
-              oandaTried = true;
-            }
-          } catch (err) {
-            console.warn(`[candles] OANDA ${pair} échec, fallback HL:`, (err as Error).message);
-          }
-        }
-        if (!oandaTried || !candles || candles.length === 0) {
+      if (itickBars.length > 0) {
+        candles = itickBars;
+        source = 'itick';
+      } else {
+        // Dernier recours : Hyperliquid direct si on a un coin xyz pour
+        // cette pair. Évite une 400 si iTick est complètement injoignable.
+        try {
           candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
           source = 'hyperliquid';
+        } catch {
+          candles = [];
         }
-      } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
-        // Historique crypto via cache mémoire (Binance amont). Le 1er hit
-        // après boot Railway coûte ~7s pour 40k bougies, les suivants sont
-        // instantanés. Les ticks live (paperEngine.applyTicker) maintiennent
-        // la dernière bougie à jour dans le cache.
-        try {
-          candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
-        } catch (err) {
-          console.warn(`[candles] cache miss ${pair}, direct Binance:`, (err as Error).message);
-          candles = await binance.getOhlcCandles(pair, interval, candleOpts);
-        }
-        source = 'binance';
-      } else if (manager.getMarketDataSource() === 'binance') {
-        try {
-          candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
-        } catch (err) {
-          console.warn(`[candles] cache miss ${pair}, direct Binance:`, (err as Error).message);
-          candles = await binance.getOhlcCandles(pair, interval, candleOpts);
-        }
-        source = 'binance';
-      } else {
-        try {
-          candles = await engineCandlesCache.getCachedCandles(pair, interval, 'kraken', candleOpts);
-        } catch (err) {
-          console.warn(`[candles] cache miss ${pair}, direct Kraken:`, (err as Error).message);
-          candles = await kraken.getOhlcCandles(pair, interval);
-        }
-        source = 'kraken';
       }
+    } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
+      // Crypto : cache mémoire alimenté par Binance (live ticks gardent la
+      // dernière bougie à jour). Premier hit ~7s pour 40k bars, suivants instantanés.
+      try {
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+      } catch (err) {
+        console.warn(`[candles] cache miss ${pair}, direct Binance:`, (err as Error).message);
+        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+      }
+      source = 'binance';
+    } else if (manager.getMarketDataSource() === 'binance') {
+      try {
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+      } catch (err) {
+        console.warn(`[candles] cache miss ${pair}, direct Binance:`, (err as Error).message);
+        candles = await binance.getOhlcCandles(pair, interval, candleOpts);
+      }
+      source = 'binance';
+    } else {
+      try {
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'kraken', candleOpts);
+      } catch (err) {
+        console.warn(`[candles] cache miss ${pair}, direct Kraken:`, (err as Error).message);
+        candles = await kraken.getOhlcCandles(pair, interval);
+      }
+      source = 'kraken';
     }
     res.json({ pair, interval, candles, source });
   } catch (error: any) {
@@ -1583,7 +1620,7 @@ app.post('/api/admin/competitions/result', requireAdmin, async (req, res) => {
 const serverReady = Promise.all([
   competitionManager.ready,
   manager.ready,
-  mt5Candles.initMt5CandlesStore(),
+  itickCandles.initItickCandlesStore(),
 ]).then(() => {
   manager.markOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
 });
@@ -1592,7 +1629,6 @@ if (!process.env.NETLIFY) {
   serverReady.then(() => {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
-      void oanda.validateConnection();
       // Préchauffer uniquement BTC/M1 (le pair le plus consulté). Charger
       // plus de paires en parallèle au boot provoque des bursts qui ban
       // l'IP Railway côté Binance (HTTP 418) — le cache reste vide et
@@ -1601,7 +1637,38 @@ if (!process.env.NETLIFY) {
         [{ pair: 'BTC/USD', source: 'binance' }],
         [1],
       );
+
+      // Démarrage du pipeline iTick : subscribe aux 11 instruments prod,
+      // branche le live tick → candle builder, lance le backfill
+      // historique en background, et alimente le paper engine.
+      // Plan pro = 600 calls/min, 6 WS, 500 subs.
+      if (itick.isConfigured()) {
+        const subs = itickSymbolsByAsset();
+        itick.itickFeed.setSubscriptions(subs);
+        itickCandles.startLiveBuilder();
+        startItickToPaperBridge(
+          (quotes) => manager.applyItickMarketTicks(quotes),
+          (pairs) => broadcastMarketTicks(pairs),
+        );
+        const summary = Object.entries(subs)
+          .map(([asset, codes]) => `${asset}:${codes?.length ?? 0}`)
+          .join(' ');
+        console.log(`[itick] feed armé — ${summary}`);
+      } else {
+        console.warn('[itick] ITICK_TOKEN absent — feed désactivé');
+      }
     });
+
+    // Ferme proprement la connexion WS iTick au shutdown (tsx watch
+    // reload, Ctrl-C, etc.) pour que iTick libère immédiatement la
+    // session — sinon la nouvelle instance est refusée pendant ~30s.
+    const gracefulShutdown = (signal: string) => {
+      console.log(`[shutdown] ${signal} reçu, fermeture iTick…`);
+      try { itick.itickFeed.disconnect(); } catch { /* noop */ }
+      setTimeout(() => process.exit(0), 250);
+    };
+    process.once('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
   });
 }
 

@@ -50,7 +50,7 @@ interface MarketMetadata {
   imageUrl: string | null;
   krakenSymbol: string;
   category?: 'crypto' | 'actions' | 'indices' | 'commodities' | 'forex';
-  source?: 'kraken_futures' | 'binance_futures' | 'hyperliquid_perp' | 'hyperliquid_spot' | 'oanda';
+  source?: 'kraken_futures' | 'binance_futures' | 'itick';
   sourceSymbol?: string;
   tradingViewSymbol?: string | null;
   sortOrder: number;

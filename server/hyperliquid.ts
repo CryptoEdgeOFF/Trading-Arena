@@ -1,5 +1,4 @@
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
-import { getHyperliquidTradfiSymbol } from './oandaInstruments.js';
 
 const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
 const MAX_CANDLES = 50000;
@@ -72,8 +71,7 @@ export async function getAllMids(): Promise<Record<string, number>> {
 }
 
 function pairToHyperliquidCoin(pair: string): string | null {
-  if (PAIR_TO_COIN[pair]) return PAIR_TO_COIN[pair];
-  return getHyperliquidTradfiSymbol(pair);
+  return PAIR_TO_COIN[pair] || null;
 }
 
 function parseCandleRow(row: any): OhlcCandle | null {
@@ -93,12 +91,20 @@ function parseCandleRow(row: any): OhlcCandle | null {
   return { time, open, high, low, close };
 }
 
+/**
+ * Récupère l'historique OHLC depuis Hyperliquid.
+ *
+ * Surcharges :
+ *   - `getOhlcCandles('BTC/USD', 1)` — coin résolu via PAIR_TO_COIN.
+ *   - `getOhlcCandles({ coin: 'xyz:GOLD' }, 1)` — coin fourni directement
+ *     (utilisé par le fallback iTick pour les pairs TradFi).
+ */
 export async function getOhlcCandles(
-  pair: string,
+  pair: string | { coin: string },
   interval = 1,
   opts: OhlcQueryOptions = {},
 ): Promise<OhlcCandle[]> {
-  const coin = pairToHyperliquidCoin(pair);
+  const coin = typeof pair === 'string' ? pairToHyperliquidCoin(pair) : pair.coin;
   if (!coin) {
     throw new Error('Pair non supportee pour historique Hyperliquid');
   }

@@ -7,6 +7,7 @@ import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderbo
 import CompetitionSettings from './components/CompetitionSettings';
 import CompetitionAdmin from './components/CompetitionAdmin';
 import AdminPanel from './components/AdminPanel';
+import FeedTest from './components/FeedTest';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
 
@@ -16,6 +17,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/compete" replace />} />
         <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/feed-test" element={<FeedTest />} />
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />
         <Route path="/live-dashboard" element={<Dashboard />} />
         <Route path="/trader" element={<TraderTerminal />} />

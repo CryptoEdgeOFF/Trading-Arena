@@ -2,12 +2,11 @@ import crypto from 'crypto';
 import WebSocket from 'ws';
 import type { MarketDataSource, MarketTicker, Order, OrderType, Player, Position, SpotlightTrade, Trade } from './types.js';
 import * as kraken from './kraken.js';
-import * as oanda from './oanda.js';
 import * as binance from './binance.js';
 import * as hyperliquid from './hyperliquid.js';
-import * as mt5Feed from './mt5Feed.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
-import { OANDA_TRADFI_PAIRS } from './oandaInstruments.js';
+import { ITICK_INSTRUMENTS } from './itickInstruments.js';
+import { itickFeed } from './itick.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -25,7 +24,20 @@ export interface PaperOrderResult {
   spotlight: SpotlightTrade;
 }
 
-type PaperPairSource = 'kraken_futures' | 'oanda';
+/**
+ * Quote injectée dans le paper engine par les sources externes (iTick).
+ * Format générique pour découpler le moteur de la source amont.
+ */
+export interface ExternalQuote {
+  pair: string;
+  sourceSymbol: string;
+  markPrice: number;
+  bidPrice: number;
+  askPrice: number;
+  updatedAt: number;
+}
+
+type PaperPairSource = 'kraken_futures' | 'itick';
 type PaperPairDef = {
   pair: string;
   source: PaperPairSource;
@@ -33,7 +45,6 @@ type PaperPairDef = {
   krakenSymbol?: string;
   hyperliquidCoin?: string;
   binanceSymbol?: string;
-  oandaInvert?: boolean;
 };
 
 const cryptoPair = (pair: string, krakenSymbol: string, hyperliquidCoin: string, binanceSymbol?: string): PaperPairDef => ({
@@ -45,12 +56,11 @@ const cryptoPair = (pair: string, krakenSymbol: string, hyperliquidCoin: string,
   binanceSymbol: binanceSymbol || binance.pairToBinanceSymbol(pair) || undefined,
 });
 
-const oandaPair = (pair: string, instrument: string, hyperliquidSymbol: string, invert = false): PaperPairDef => ({
+const itickPaperPair = (pair: string, code: string, hlCoin?: string | null): PaperPairDef => ({
   pair,
-  source: 'oanda',
-  sourceSymbol: instrument,
-  hyperliquidCoin: hyperliquidSymbol,
-  oandaInvert: invert,
+  source: 'itick',
+  sourceSymbol: code,
+  hyperliquidCoin: hlCoin || undefined,
 });
 
 export const PAPER_PAIRS: PaperPairDef[] = [
@@ -104,7 +114,7 @@ export const PAPER_PAIRS: PaperPairDef[] = [
   cryptoPair('JUP/USD', 'PF_JUPUSD', 'JUP'),
   cryptoPair('PYTH/USD', 'PF_PYTHUSD', 'PYTH'),
   cryptoPair('BONK/USD', 'PF_BONKUSD', 'BONK'),
-  ...OANDA_TRADFI_PAIRS.map(({ pair, instrument, hyperliquidSymbol, invert }) => oandaPair(pair, instrument, hyperliquidSymbol, Boolean(invert))),
+  ...ITICK_INSTRUMENTS.map((inst) => itickPaperPair(inst.pair, inst.code, inst.hyperliquidCoin)),
 ];
 
 const SPREAD_BPS = 0;
@@ -218,16 +228,17 @@ export class PaperTradingEngine {
   }
 
   /**
-   * Fast path for MT5 ticks: update in-memory quotes only (no Kraken/OANDA HTTP).
-   * Returns pairs whose ticker actually changed.
+   * Fast path pour les ticks externes (iTick) : met à jour les quotes
+   * en mémoire sans appeler Kraken/Binance. Retourne les pairs dont le
+   * ticker a effectivement changé.
    */
-  applyMt5Quotes(mt5Prices: Record<string, mt5Feed.Mt5Quote>): string[] {
+  applyItickQuotes(quotes: Record<string, ExternalQuote>): string[] {
     const changed: string[] = [];
     const now = Date.now();
 
-    for (const [pair, quote] of Object.entries(mt5Prices)) {
+    for (const [pair, quote] of Object.entries(quotes)) {
       const pairDef = PAPER_PAIRS.find((item) => item.pair === pair);
-      if (!pairDef || pairDef.source !== 'oanda') continue;
+      if (!pairDef || pairDef.source !== 'itick') continue;
 
       const prev = this.market[pair];
       const markPrice = quote.markPrice;
@@ -275,7 +286,7 @@ export class PaperTradingEngine {
 
   private getActivePairDefs(): PaperPairDef[] {
     if (this.marketDataSource === 'binance') {
-      return PAPER_PAIRS.filter((item) => Boolean(item.binanceSymbol) || item.source === 'oanda');
+      return PAPER_PAIRS.filter((item) => Boolean(item.binanceSymbol) || item.source === 'itick');
     }
     return PAPER_PAIRS;
   }
@@ -634,58 +645,58 @@ export class PaperTradingEngine {
   }
 
   private async refreshTickers(players: Player[]): Promise<void> {
-    const [krakenPrices, oandaPrices, binancePrices, hyperliquidPrices, mt5Prices] = await Promise.all([
+    const [krakenPrices, binancePrices, hyperliquidPrices] = await Promise.all([
       kraken.getTickerStats().catch(() => ({})),
-      oanda.getPricing().catch(() => ({})),
       binance.getTickerStats().catch(() => ({})),
       hyperliquid.getAllMids().catch(() => ({})),
-      Promise.resolve(mt5Feed.getPricing()),
     ]);
     const now = Date.now();
 
+    // Pour les pairs iTick, on récupère les derniers ticks live depuis
+    // le registry iTick (déjà alimenté par le WS upstream). Si pas de
+    // tick récent, fallback sur le mid Hyperliquid xyz si dispo.
     const activePairs = this.getActivePairDefs();
     this.market = Object.fromEntries(activePairs.map((item) => {
-      const sourceKey = item.source === 'oanda'
-        ? item.sourceSymbol
-        : this.marketDataSource === 'binance'
-          ? item.binanceSymbol || item.krakenSymbol || item.sourceSymbol
-          : item.krakenSymbol || item.sourceSymbol;
-      const sourcePrices = item.source === 'oanda'
-        ? oandaPrices
-        : this.marketDataSource === 'binance'
-          ? binancePrices
-          : krakenPrices;
-      const rawTicker = sourcePrices[sourceKey];
-      let markPrice = (typeof rawTicker === 'number' ? rawTicker : rawTicker?.markPrice) || this.market[item.pair]?.markPrice || 0;
-      let bidPrice = typeof rawTicker === 'number'
-        ? Math.max(0, markPrice * (1 - SPREAD_BPS / 10000))
-        : (rawTicker?.bidPrice ?? Math.max(0, markPrice - markPrice * (SPREAD_BPS / 10000)));
-      let askPrice = typeof rawTicker === 'number'
-        ? markPrice * (1 + SPREAD_BPS / 10000)
-        : (rawTicker?.askPrice ?? markPrice + markPrice * (SPREAD_BPS / 10000));
-      let updatedAt = now;
-
-      if (item.source === 'oanda') {
-        const mt5Quote = mt5Prices[item.pair];
-        if (mt5Quote) {
-          markPrice = mt5Quote.markPrice;
-          updatedAt = mt5Quote.updatedAt;
-        } else if (rawTicker && typeof rawTicker !== 'number') {
-          markPrice = rawTicker.markPrice || markPrice;
-          if (markPrice <= 0 && rawTicker.bidPrice && rawTicker.askPrice) {
-            markPrice = (rawTicker.bidPrice + rawTicker.askPrice) / 2;
-          }
-        } else if (markPrice <= 0 && item.hyperliquidCoin) {
+      // Pair iTick → lecture du last tick mémoire.
+      if (item.source === 'itick') {
+        const liveTick = itickFeed.getLatest(item.sourceSymbol);
+        let markPrice = liveTick?.price ?? this.market[item.pair]?.markPrice ?? 0;
+        let updatedAt = liveTick?.ts ?? now;
+        if ((!markPrice || markPrice <= 0) && item.hyperliquidCoin) {
           const hlPrice = hyperliquidPrices[item.hyperliquidCoin];
           if (typeof hlPrice === 'number' && hlPrice > 0) {
             markPrice = hlPrice;
+            updatedAt = now;
           }
         }
-        if (markPrice > 0) {
-          ({ bidPrice, askPrice } = applyPaperMarkSpread(markPrice));
-        }
+        const { bidPrice, askPrice } = markPrice > 0
+          ? applyPaperMarkSpread(markPrice)
+          : { bidPrice: 0, askPrice: 0 };
+        return [item.pair, {
+          pair: item.pair,
+          symbol: item.sourceSymbol,
+          markPrice,
+          bidPrice,
+          askPrice,
+          change24h: this.market[item.pair]?.change24h ?? null,
+          spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
+          updatedAt,
+        } satisfies MarketTicker];
       }
 
+      // Pair crypto → Kraken / Binance.
+      const sourceKey = this.marketDataSource === 'binance'
+        ? item.binanceSymbol || item.krakenSymbol || item.sourceSymbol
+        : item.krakenSymbol || item.sourceSymbol;
+      const sourcePrices = this.marketDataSource === 'binance' ? binancePrices : krakenPrices;
+      const rawTicker = sourcePrices[sourceKey];
+      const markPrice = (typeof rawTicker === 'number' ? rawTicker : rawTicker?.markPrice) || this.market[item.pair]?.markPrice || 0;
+      const bidPrice = typeof rawTicker === 'number'
+        ? Math.max(0, markPrice * (1 - SPREAD_BPS / 10000))
+        : (rawTicker?.bidPrice ?? Math.max(0, markPrice - markPrice * (SPREAD_BPS / 10000)));
+      const askPrice = typeof rawTicker === 'number'
+        ? markPrice * (1 + SPREAD_BPS / 10000)
+        : (rawTicker?.askPrice ?? markPrice + markPrice * (SPREAD_BPS / 10000));
       const change24h = typeof rawTicker === 'number' ? (this.market[item.pair]?.change24h ?? null) : (rawTicker?.change24h ?? null);
       return [item.pair, {
         pair: item.pair,
@@ -695,7 +706,7 @@ export class PaperTradingEngine {
         askPrice,
         change24h,
         spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
-        updatedAt,
+        updatedAt: now,
       } satisfies MarketTicker];
     }));
 
