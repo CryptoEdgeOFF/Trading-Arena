@@ -2262,10 +2262,6 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
   const chartLiveTickRef = useRef<ChartLiveTickHandler | null>(null);
-  // Mis à jour par un useEffect plus bas avec `pairCategories`. Permet à
-  // applyMarketTick (défini avant pairCategories dans le scope) de savoir
-  // si une paire est forex pour streamer au bid au lieu du mid.
-  const pairCategoriesRef = useRef<Record<string, string>>({});
 
   const clearOrderDraftRisk = useCallback(() => {
     setOrderPreview(null);
@@ -2381,15 +2377,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
     for (const tick of ticks) {
       if (!tick?.pair || !Number.isFinite(tick.markPrice) || tick.markPrice <= 0) continue;
-      // Pour les paires forex MT5, on stream au BID (= ce que MT5 dessine
-      // par défaut) afin que la bougie courante matche pixel par pixel
-      // celle du terminal MT5 du trader. Pour le reste, on garde le mid.
-      const category = pairCategoriesRef.current[tick.pair];
-      const isForex = category === 'forex';
-      const livePrice = isForex && tick.bidPrice && tick.bidPrice > 0
-        ? tick.bidPrice
-        : tick.markPrice;
-      chartLiveTickRef.current?.(tick.pair, livePrice, tick.updatedAt || Date.now());
+      chartLiveTickRef.current?.(tick.pair, tick.markPrice, tick.updatedAt || Date.now());
     }
 
     setLiveMarket((prev) => {
@@ -3197,10 +3185,6 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }
     return out;
   }, [meta.pairs, meta.marketMetadata]);
-
-  useEffect(() => {
-    pairCategoriesRef.current = pairCategories;
-  }, [pairCategories]);
 
   const chartPanel = (
     <ChartArea

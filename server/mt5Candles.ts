@@ -1,8 +1,6 @@
 import { Pool } from 'pg';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
-import { mt5SymbolToPair, pairToMt5Symbol, listMt5Symbols } from './mt5Instruments.js';
-import * as oanda from './oanda.js';
-import * as hyperliquid from './hyperliquid.js';
+import { mt5SymbolToPair, pairToMt5Symbol } from './mt5Instruments.js';
 
 export interface Mt5CandleInput {
   time: number;
@@ -41,7 +39,6 @@ export interface Mt5CandleSeriesStatus {
 
 /** Intervalles minutes acceptés (alignés sur le script VPS Python). */
 export const MT5_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
-export const MT5_INTERVALS_SORTED = [1, 5, 15, 30, 60, 240, 1440] as const;
 const MAX_HISTORY_BARS = 100_000;
 
 type SeriesKey = `${string}:${number}`;
@@ -56,17 +53,6 @@ interface StoredSeries {
 
 const memorySeries = new Map<SeriesKey, StoredSeries>();
 const mt5SymbolBySeries = new Map<SeriesKey, string>();
-
-/**
- * In-flight bougies construites en temps réel à partir des ticks MT5.
- * Map<pair, Map<intervalMin, OhlcCandle>>. La bougie "courante" pour la
- * minute actuelle est mise à jour à chaque tick et persistée en DB lors
- * de la rotation de bucket (changement de minute / 5min / etc.). Cela
- * évite tout gap entre la dernière bougie historique persistée et
- * l'instant présent.
- */
-const inflightCandles = new Map<string, Map<number, OhlcCandle>>();
-const inflightSymbols = new Map<string, string>();
 
 let pool: Pool | null = null;
 let schemaReady: Promise<void> = Promise.resolve();
@@ -93,13 +79,10 @@ function normalizeInterval(raw: unknown): number | null {
 }
 
 /**
- * Borne maximale autorisée pour un timestamp de bougie reçu via l'API.
- * Les brokers MT5 (FTMO, IC Markets, etc.) livrent souvent leurs temps
- * dans leur propre fuseau (GMT+2/+3). Sans compensation côté VPS Python,
- * on recevrait des bougies dans le futur qui resteraient invisibles côté
- * TradingView (la query SQL filtre `bar_time < to` avec to = now). On
- * rejette donc tout ce qui est > 5 min dans le futur et on log un warning
- * explicite pour aider à diagnostiquer le décalage broker.
+ * Tolérance pour rejeter une bougie dont le timestamp tombe dans le futur.
+ * Les brokers MT5 (FTMO, IC Markets…) renvoient parfois leurs temps dans
+ * leur propre fuseau (GMT+2/+3) ; sans compensation côté VPS Python, on
+ * recevrait des bougies invisibles côté TradingView (filtre bar_time < now).
  */
 const FUTURE_BAR_TOLERANCE_SEC = 300;
 let lastFutureWarnAt = 0;
@@ -186,7 +169,7 @@ async function purgeFutureBars(): Promise<void> {
     );
     const removed = result.rowCount ?? 0;
     if (removed > 0) {
-      console.warn(`[mt5Candles] purgé ${removed} bougies dans le futur (offset broker non corrigé côté VPS)`);
+      console.warn(`[mt5Candles] purgé ${removed} bougies dans le futur`);
     }
   } catch (err) {
     console.warn('[mt5Candles] purge futures bars failed:', (err as Error).message);
@@ -196,9 +179,6 @@ async function purgeFutureBars(): Promise<void> {
 let purgeTimer: ReturnType<typeof setInterval> | null = null;
 function startPurgeLoop(): void {
   if (purgeTimer) return;
-  // Lance immédiatement puis répète chaque minute. Couvre le cas où la
-  // garde côté API rejette de nouvelles bougies futures mais où des
-  // résidus polluent encore la DB (push antérieur avec offset broker).
   void purgeFutureBars();
   purgeTimer = setInterval(() => void purgeFutureBars(), 60_000);
   if (typeof purgeTimer.unref === 'function') purgeTimer.unref();
@@ -223,35 +203,36 @@ export function initMt5CandlesStore(): Promise<void> {
     console.error('[mt5Candles] schema init failed:', (err as Error).message);
     throw err;
   });
-  // Nettoyer en continu les bougies polluées (futures) issues d'un broker
-  // MT5 non compensé. Idempotent : si tout est OK, removed=0 à chaque pass.
   void schemaReady.then(() => startPurgeLoop());
   return schemaReady;
 }
 
 /**
- * @param mode 'upsert' (défaut) écrase une bougie existante — utilisé par le
- *             push VPS qui est la source de vérité (bid FTMO). 'fillGap' ne
- *             touche pas une bougie déjà persistée — utilisé par le backfill
- *             OANDA pour ne pas écraser les bougies VPS avec un prix mid.
+ * Purge ciblée des bougies plus jeunes que `cutoffSec`. Utilisée par
+ * l'endpoint admin POST /api/admin/mt5/purge pour effacer un historique
+ * pollué (par ex après un mauvais offset broker ou un mix de sources).
+ * Le VPS Python re-pushera ensuite les bougies via /api/mt5/candles.
  */
+export async function purgeRecentBars(pair: string | null, sinceSec: number): Promise<number> {
+  if (!pool) return 0;
+  await schemaReady;
+  const params: unknown[] = [sinceSec];
+  let sql = 'DELETE FROM mt5_candles WHERE bar_time >= $1';
+  if (pair) {
+    sql += ' AND pair = $2';
+    params.push(pair);
+  }
+  const result = await pool.query(sql, params);
+  return result.rowCount ?? 0;
+}
+
 async function persistCandles(
   pair: string,
   intervalMin: number,
   candles: OhlcCandle[],
-  mode: 'upsert' | 'fillGap' = 'upsert',
 ): Promise<void> {
   if (!pool) return;
   await schemaReady;
-
-  const conflictClause = mode === 'fillGap'
-    ? 'ON CONFLICT (pair, timeframe, bar_time) DO NOTHING'
-    : `ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
-         open = EXCLUDED.open,
-         high = EXCLUDED.high,
-         low = EXCLUDED.low,
-         close = EXCLUDED.close,
-         ingested_at = NOW()`;
 
   const chunkSize = 400;
   for (let offset = 0; offset < candles.length; offset += chunkSize) {
@@ -270,7 +251,12 @@ async function persistCandles(
     await pool.query(
       `INSERT INTO mt5_candles (pair, timeframe, bar_time, open, high, low, close)
        VALUES ${placeholders.join(', ')}
-       ${conflictClause}`,
+       ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
+         open = EXCLUDED.open,
+         high = EXCLUDED.high,
+         low = EXCLUDED.low,
+         close = EXCLUDED.close,
+         ingested_at = NOW()`,
       values,
     );
   }
@@ -336,208 +322,7 @@ export async function ingestCandles(input: Mt5CandlesIngestInput): Promise<Mt5Ca
   };
 }
 
-/**
- * Met à jour les bougies "in-flight" pour toutes les timeframes supportées
- * à partir d'un tick MT5. Persiste la bougie précédente quand le bucket
- * change (rotation de minute / 5min / etc.) — ainsi la DB reste alignée
- * avec le présent à la seconde près, sans attendre la sync incrémentale
- * du VPS Python.
- */
-export async function updateInflight(
-  pair: string,
-  mt5Symbol: string,
-  price: number,
-  tsMs: number,
-): Promise<void> {
-  if (!Number.isFinite(price) || price <= 0) return;
-  const tsSec = Math.floor(tsMs / 1000);
-  if (!Number.isFinite(tsSec) || tsSec <= 0) return;
-
-  inflightSymbols.set(pair, mt5Symbol);
-  let pairMap = inflightCandles.get(pair);
-  if (!pairMap) {
-    pairMap = new Map();
-    inflightCandles.set(pair, pairMap);
-  }
-
-  const rotated: Array<{ interval: number; candle: OhlcCandle }> = [];
-
-  for (const interval of MT5_INTERVALS_SORTED) {
-    const intervalSec = interval * 60;
-    const bucket = Math.floor(tsSec / intervalSec) * intervalSec;
-    const current = pairMap.get(interval);
-
-    if (!current || current.time !== bucket) {
-      if (current && current.time < bucket) {
-        rotated.push({ interval, candle: { ...current } });
-      }
-      pairMap.set(interval, {
-        time: bucket,
-        open: price,
-        high: price,
-        low: price,
-        close: price,
-      });
-    } else {
-      current.high = Math.max(current.high, price);
-      current.low = Math.min(current.low, price);
-      current.close = price;
-    }
-  }
-
-  if (rotated.length === 0) return;
-
-  // Persistance fire-and-forget : on ne bloque pas le tick. Une rotation
-  // ratée sera de toute façon recouverte par la sync incrémentale du VPS.
-  for (const { interval, candle } of rotated) {
-    if (pool) {
-      persistCandles(pair, interval, [candle]).catch((err) => {
-        console.error('[mt5Candles] inflight persist failed:', (err as Error).message);
-      });
-    } else {
-      mergeIntoMemory(pair, interval, mt5Symbol, [candle]);
-    }
-  }
-}
-
-/**
- * Retourne la bougie courante (in-flight) pour (pair, interval) si elle
- * couvre `nowSec`. Utilisé par `getCandles` pour combler le delta entre
- * la dernière bougie persistée et l'instant présent.
- */
-export function getInflight(pair: string, intervalMin: number): OhlcCandle | null {
-  const candle = inflightCandles.get(pair)?.get(intervalMin);
-  if (!candle) return null;
-  return { ...candle };
-}
-
-/**
- * Compense le délai entre la dernière sync VPS Python (~30 min) et l'instant
- * présent en complétant les bougies manquantes via OANDA / Hyperliquid. Le
- * résultat est persisté en DB pour que les requêtes suivantes soient
- * instantanées et n'aient plus de gap. Idempotent : ne fait rien si la
- * dernière bougie persistée est récente (<2 minutes).
- */
-const lastBackfillAt = new Map<string, number>();
-const BACKFILL_THROTTLE_MS = 30_000;
-const BACKFILL_MAX_GAP_MIN = 60;
-
-async function backfillFromSource(
-  pair: string,
-  intervalMin: number,
-  fromSec: number,
-  toSec: number,
-): Promise<OhlcCandle[]> {
-  const count = Math.max(1, Math.ceil((toSec - fromSec) / (intervalMin * 60)));
-  if (oanda.isConfigured()) {
-    try {
-      const available = await oanda.isInstrumentAvailable(pair);
-      if (available) {
-        const bars = await oanda.getOhlcCandles(pair, intervalMin, {
-          from: fromSec,
-          to: toSec,
-          countBack: count,
-        });
-        if (bars.length > 0) return bars;
-      }
-    } catch (err) {
-      console.warn(
-        `[mt5Candles] OANDA backfill ${pair} ${intervalMin}m KO:`,
-        (err as Error).message,
-      );
-    }
-  }
-  try {
-    const bars = await hyperliquid.getOhlcCandles(pair, intervalMin, {
-      from: fromSec,
-      to: toSec,
-      countBack: count,
-    });
-    return bars;
-  } catch (err) {
-    console.warn(
-      `[mt5Candles] Hyperliquid backfill ${pair} ${intervalMin}m KO:`,
-      (err as Error).message,
-    );
-    return [];
-  }
-}
-
-export async function ensureRecentBackfill(
-  pair: string,
-  intervalMin: number,
-): Promise<void> {
-  if (!MT5_CANDLE_INTERVALS.has(intervalMin)) return;
-  if (!pool) return;
-
-  const k = seriesKey(pair, intervalMin);
-  const now = Date.now();
-  const last = lastBackfillAt.get(k) || 0;
-  if (now - last < BACKFILL_THROTTLE_MS) return;
-  lastBackfillAt.set(k, now);
-
-  try {
-    await schemaReady;
-    const result = await pool.query(
-      'SELECT MAX(bar_time) AS max_time FROM mt5_candles WHERE pair = $1 AND timeframe = $2',
-      [pair, intervalMin],
-    );
-    const intervalSec = intervalMin * 60;
-    const lastBarTime = Number(result.rows[0]?.max_time) || 0;
-    const nowSec = Math.floor(now / 1000);
-    const currentBucket = Math.floor(nowSec / intervalSec) * intervalSec;
-    const gapBars = lastBarTime > 0
-      ? Math.floor((currentBucket - lastBarTime) / intervalSec) - 1
-      : BACKFILL_MAX_GAP_MIN;
-    if (gapBars < 1) return;
-    const cappedGap = Math.min(gapBars, Math.ceil(BACKFILL_MAX_GAP_MIN * 60 / intervalSec));
-    const fromSec = currentBucket - (cappedGap + 1) * intervalSec;
-
-    const bars = await backfillFromSource(pair, intervalMin, fromSec, currentBucket);
-    if (bars.length === 0) return;
-
-    // Ne pas écraser les bougies in-flight déjà construites en mémoire :
-    // on filtre celles qui chevauchent l'in-flight courant.
-    const inflight = inflightCandles.get(pair)?.get(intervalMin);
-    const filtered = inflight
-      ? bars.filter((bar) => bar.time !== inflight.time)
-      : bars;
-    if (filtered.length === 0) return;
-
-    // Mode 'fillGap' : ne touche pas aux bougies VPS déjà persistées (prix
-    // FTMO bid). OANDA est juste là pour combler les trous historiques.
-    await persistCandles(pair, intervalMin, filtered, 'fillGap');
-  } catch (err) {
-    console.warn(
-      `[mt5Candles] backfill ${pair} ${intervalMin}m failed:`,
-      (err as Error).message,
-    );
-  }
-}
-
-/**
- * Lance le backfill pour tous les pairs MT5 connus sur l'intervalle M1.
- * Appelé au boot et toutes les 60 secondes pour garder la DB à jour.
- */
-let backfillTimer: ReturnType<typeof setInterval> | null = null;
-
-export function startBackfillLoop(intervalMs = 60_000): void {
-  if (backfillTimer) return;
-  const tick = async () => {
-    const symbols = listMt5Symbols();
-    for (const pair of symbols) {
-      // M1 est l'intervalle critique pour le live tick — les autres
-      // timeframes sont buildées à la demande par TradingView.
-      await ensureRecentBackfill(pair, 1).catch(() => undefined);
-    }
-  };
-  void tick();
-  backfillTimer = setInterval(() => void tick(), intervalMs);
-  if (typeof backfillTimer.unref === 'function') backfillTimer.unref();
-}
-
 export async function hasCandles(pair: string, intervalMin: number): Promise<boolean> {
-  if (inflightCandles.get(pair)?.has(intervalMin)) return true;
   if (pool) {
     await schemaReady;
     const result = await pool.query(
@@ -561,11 +346,6 @@ export async function getCandles(
   const nowSec = Math.floor(Date.now() / 1000);
   const toSec = opts.to && opts.to > 0 ? Math.floor(opts.to) : nowSec;
 
-  // Avant de servir la requête, s'assurer que la DB est à jour à la minute
-  // près. Throttlée à 30s pour éviter de hammerer OANDA quand TradingView
-  // multiplie les requêtes au démarrage du chart.
-  await ensureRecentBackfill(pair, safeInterval).catch(() => undefined);
-
   const defaultCount = 5000;
   const targetCount = Math.min(
     MAX_HISTORY_BARS,
@@ -574,16 +354,11 @@ export async function getCandles(
 
   const fromSec = opts.from && opts.from > 0 ? Math.floor(opts.from) : null;
 
-  let bars: OhlcCandle[];
-
   if (pool) {
     await schemaReady;
 
-    // Renvoie les `targetCount` dernières bougies persistées en DB.
-    // L'ingestion live se fait via le VPS Python qui push directement les
-    // bougies MT5 (POST /api/mt5/candles) chaque seconde — on ne
-    // reconstruit plus depuis les ticks pour éviter d'envoyer des bougies
-    // décalées (open au mauvais prix sur H1, H4, D1…).
+    // Toujours renvoyer les `targetCount` dernières bougies avant `to` (optionnellement
+    // après `from`). Couvre l'ouverture du chart ET le scroll vers le passé.
     const result = await pool.query(
       `SELECT bar_time AS time, open, high, low, close
        FROM (
@@ -599,35 +374,28 @@ export async function getCandles(
        ORDER BY bar_time ASC`,
       [pair, safeInterval, toSec, fromSec, targetCount],
     );
-    bars = result.rows.map((row) => ({
+    return result.rows.map((row) => ({
       time: Number(row.time),
       open: Number(row.open),
       high: Number(row.high),
       low: Number(row.low),
       close: Number(row.close),
     }));
-  } else {
-    const series = memorySeries.get(seriesKey(pair, safeInterval));
-    if (!series || series.bars.size === 0) {
-      bars = [];
-    } else {
-      let memBars = [...series.bars.values()]
-        .filter((bar) => bar.time < toSec)
-        .sort((a, b) => a.time - b.time);
-      if (fromSec != null) {
-        memBars = memBars.filter((bar) => bar.time >= fromSec);
-      }
-      bars = memBars.length <= targetCount ? memBars : memBars.slice(memBars.length - targetCount);
-    }
   }
 
-  // L'in-flight bar (construite depuis les ticks au mid) n'est plus
-  // appendée du tout. MT5 dessine ses bougies au bid, donc utiliser le mid
-  // côté serveur produit des bougies à forme légèrement différente de ce
-  // que le trader voit dans MT5. Le VPS push la bougie courante toutes les
-  // 5s avec les vraies valeurs MT5 — c'est ça qu'on sert. La fluidité
-  // visuelle entre 2 push VPS est assurée côté client par pushTick().
-  return bars;
+  const series = memorySeries.get(seriesKey(pair, safeInterval));
+  if (!series || series.bars.size === 0) return [];
+
+  let bars = [...series.bars.values()]
+    .filter((bar) => bar.time < toSec)
+    .sort((a, b) => a.time - b.time);
+
+  if (fromSec != null) {
+    bars = bars.filter((bar) => bar.time >= fromSec);
+  }
+
+  if (bars.length <= targetCount) return bars;
+  return bars.slice(bars.length - targetCount);
 }
 
 export async function getCandlesStatus(): Promise<Mt5CandleSeriesStatus[]> {

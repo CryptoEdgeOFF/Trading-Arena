@@ -56,22 +56,6 @@ function pickPriceFromTicker(ticker: MarketTicker | undefined): number {
   return ticker.markPrice || 0;
 }
 
-/**
- * Prix utilisé pour streamer la bougie courante côté chart.
- * Pour les paires forex MT5, on aligne sur le BID — c'est ce que MT5
- * Desktop dessine par défaut, donc la forme du chart matche pixel par
- * pixel ce que le trader voit sur son terminal MT5. Pour le reste
- * (crypto), on garde le mid pour rester cohérent avec l'execution.
- */
-function pickChartTickPrice(
-  bidPrice: number | undefined,
-  markPrice: number | undefined,
-  category: string | undefined,
-): number {
-  if (category === 'forex' && bidPrice && bidPrice > 0) return bidPrice;
-  return markPrice && markPrice > 0 ? markPrice : (bidPrice || 0);
-}
-
 interface PendingOrder {
   id: string;
   pair: string;
@@ -710,18 +694,16 @@ export default function AdvancedChart({
     if (!datafeed) return;
     if (market) {
       for (const [pairKey, t] of Object.entries(market)) {
-        const category = pairCategories?.[pairKey];
-        const price = pickChartTickPrice(t.bidPrice, t.markPrice, category);
+        const price = pickPriceFromTicker(t);
         if (price > 0) datafeed.pushTick(pairKey, price, (t.updatedAt || Date.now()));
       }
       return;
     }
     if (ticker) {
-      const category = pairCategories?.[ticker.pair];
-      const price = pickChartTickPrice(ticker.bidPrice, ticker.markPrice, category);
+      const price = pickPriceFromTicker(ticker);
       if (price > 0) datafeed.pushTick(ticker.pair, price, ticker.updatedAt || Date.now());
     }
-  }, [market, ticker, pairCategories]);
+  }, [market, ticker]);
 
   // Lines (PE / SL / TP / pending orders) — recomputed when relevant inputs change.
   useEffect(() => {

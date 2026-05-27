@@ -226,6 +226,31 @@ app.get('/api/mt5/status', async (_req, res) => {
   }
 });
 
+/**
+ * Purge ciblée des bougies MT5 récentes en DB. Utilisé pour effacer un
+ * historique pollué (par ex après un mix de sources OANDA / VPS, ou un
+ * mauvais offset broker). Le VPS Python re-pushera ensuite naturellement
+ * via POST /api/mt5/candles. Protégé par le secret MT5 (même que le feed).
+ *
+ * body: { pair?: string, hours?: number }
+ *  - pair  : si fourni, ne purge que cette paire ; sinon toutes.
+ *  - hours : fenêtre à effacer (défaut 24h, max 720h).
+ */
+app.post('/api/mt5/purge', requireMt5FeedAuth, async (req, res) => {
+  try {
+    const pair = typeof req.body?.pair === 'string' && req.body.pair.trim()
+      ? String(req.body.pair).trim()
+      : null;
+    const hoursRaw = Number(req.body?.hours ?? 24);
+    const hours = Math.max(1, Math.min(720, Number.isFinite(hoursRaw) ? hoursRaw : 24));
+    const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
+    const removed = await mt5Candles.purgeRecentBars(pair, sinceSec);
+    res.json({ ok: true, removed, pair, hours, sinceSec });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message || 'Purge MT5 impossible' });
+  }
+});
+
 app.post('/api/mt5/tick', requireMt5FeedAuth, (req, res) => {
   const result = mt5Feed.ingestTick({
     symbol: String(req.body?.symbol || ''),
@@ -1544,12 +1569,6 @@ if (!process.env.NETLIFY) {
         [{ pair: 'BTC/USD', source: 'binance' }],
         [1],
       );
-      // Boucle de backfill MT5 : comble en continu le gap entre la
-      // dernière sync VPS Python (~30 min) et l'instant présent en
-      // fetchant les bougies manquantes depuis OANDA/Hyperliquid. Sans
-      // ça, chaque redémarrage Railway laissait jusqu'à 30 min d'historique
-      // vide → trou visible dans le chart à l'ouverture.
-      mt5Candles.startBackfillLoop();
     });
   });
 }
