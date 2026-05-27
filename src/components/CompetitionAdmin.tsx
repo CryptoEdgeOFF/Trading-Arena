@@ -453,7 +453,7 @@ export default function CompetitionAdmin() {
               className="rounded-2xl border border-slate-800 bg-slate-900/80 p-7 shadow-2xl"
             >
               <div className="mb-5 flex items-center gap-3">
-                <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
+                <img src="/assets/pictures/logoBTF.webp" alt="BTF" className="h-10 w-10 rounded-lg object-contain" />
                 <div>
                   <h1 className="font-rajdhani text-2xl font-bold text-white">Admin Arènes</h1>
                   <p className="text-xs text-slate-400">Gestion des compétitions en ligne</p>
