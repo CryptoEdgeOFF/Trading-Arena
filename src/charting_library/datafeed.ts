@@ -60,6 +60,19 @@ interface Subscription {
   lastBar: Bar | null;
 }
 
+/**
+ * Per-pair / per-interval cache of the most recent bar known by the
+ * datafeed. Updated whenever `getBars` returns history (so subscribeBars
+ * — which TradingView calls AFTER getBars — can seed its lastBar) and
+ * also whenever `pushTick` produces a new bar (so a resolution switch
+ * picks up where we left off without a visual jump).
+ */
+type LastBarCacheKey = `${string}@${number}`;
+
+function lastBarKey(pair: string, intervalMin: number): LastBarCacheKey {
+  return `${pair}@${intervalMin}` as LastBarCacheKey;
+}
+
 function tvSymbolType(pair: string, category?: string): string {
   if (category === 'forex') return 'forex';
   if (category === 'actions') return 'stock';
@@ -122,6 +135,9 @@ export class BtfDatafeed implements IBasicDataFeed {
   private config: BtfDatafeedConfig;
   private subscriptions = new Map<string, Subscription>();
   private symbolCache = new Map<string, LibrarySymbolInfo>();
+  private lastBarCache = new Map<LastBarCacheKey, Bar>();
+  /** Last live tick observed per pair before subscribeBars runs. */
+  private pendingTicks = new Map<string, { price: number; timestampMs: number }>();
 
   constructor(config: BtfDatafeedConfig) {
     this.config = config;
@@ -272,11 +288,14 @@ export class BtfDatafeed implements IBasicDataFeed {
           category,
           sampleClose,
         ));
+      }
 
-        // Seed la dernière bougie connue dans toutes les souscriptions actives
-        // pour ce pair afin que le prochain tick continue cette bougie au lieu
-        // d'en ouvrir une nouvelle décalée (ce qui crée un gap visuel à
-        // l'ouverture du chart).
+      // Mémorise la dernière bougie connue pour ce (pair, interval) afin
+      // que `subscribeBars` (appelée APRÈS `getBars` par TradingView) puisse
+      // seed sa `lastBar` et que le 1er tick continue la bougie en cours au
+      // lieu d'en ouvrir une nouvelle vide.
+      if (firstDataRequest && visible.length > 0) {
+        this.lastBarCache.set(lastBarKey(pair, intervalMin), visible[visible.length - 1]);
         this.primeLastBar(pair, visible[visible.length - 1]);
       }
 
@@ -297,13 +316,26 @@ export class BtfDatafeed implements IBasicDataFeed {
   ): void {
     const pair = symbolInfo.ticker || symbolInfo.name;
     const intervalMin = RESOLUTION_TO_INTERVAL[String(resolution)] ?? 1;
-    this.subscriptions.set(listenerGuid, {
+    // Seed la subscription depuis le cache rempli par `getBars`. Sans ça,
+    // le 1er tick passe par la branche "lastBar=null" de `pushTick` et
+    // ouvre une bougie vide au prix du tick — ce qui causait le trou
+    // visuel pendant ~1 minute jusqu'au prochain bucket.
+    const seededLastBar = this.lastBarCache.get(lastBarKey(pair, intervalMin)) || null;
+    const sub: Subscription = {
       pair,
       intervalMin,
       resolution,
       onTick,
-      lastBar: null,
-    });
+      lastBar: seededLastBar,
+    };
+    this.subscriptions.set(listenerGuid, sub);
+
+    // Rejoue immédiatement le dernier tick mémorisé s'il en existe un
+    // (cas où les ticks WS arrivent avant que la subscription soit prête).
+    const pending = this.pendingTicks.get(pair);
+    if (pending) {
+      this.applyTickToSub(sub, pending.price, pending.timestampMs);
+    }
   }
 
   unsubscribeBars(listenerGuid: string): void {
@@ -312,33 +344,47 @@ export class BtfDatafeed implements IBasicDataFeed {
 
   pushTick(pair: string, price: number, timestampMs: number = Date.now()): void {
     if (!Number.isFinite(price) || price <= 0) return;
+    // Mémorise le dernier tick pour pouvoir le rejouer si une subscription
+    // arrive après. Empêche le 1er tick d'être perdu en cas de race
+    // condition entre `subscribeBars` et le flux WS.
+    this.pendingTicks.set(pair, { price, timestampMs });
+
+    let touched = false;
     for (const sub of this.subscriptions.values()) {
       if (sub.pair !== pair) continue;
-      const intervalMs = sub.intervalMin * 60 * 1000;
-      const bucket = Math.floor(timestampMs / intervalMs) * intervalMs;
-      const last = sub.lastBar;
-      if (!last || last.time !== bucket) {
-        const open = last?.close ?? price;
-        const next: Bar = {
-          time: bucket,
-          open,
-          high: Math.max(open, price),
-          low: Math.min(open, price),
-          close: price,
-        };
-        sub.lastBar = next;
-        sub.onTick(next);
-      } else {
-        const next: Bar = {
-          ...last,
-          high: Math.max(last.high, price),
-          low: Math.min(last.low, price),
-          close: price,
-        };
-        sub.lastBar = next;
-        sub.onTick(next);
-      }
+      this.applyTickToSub(sub, price, timestampMs);
+      touched = true;
     }
+    void touched;
+  }
+
+  /** Applique un tick à une seule subscription en mettant à jour le cache global. */
+  private applyTickToSub(sub: Subscription, price: number, timestampMs: number): void {
+    const intervalMs = sub.intervalMin * 60 * 1000;
+    const bucket = Math.floor(timestampMs / intervalMs) * intervalMs;
+    const last = sub.lastBar;
+
+    let next: Bar;
+    if (!last || last.time !== bucket) {
+      const open = last?.close ?? price;
+      next = {
+        time: bucket,
+        open,
+        high: Math.max(open, price),
+        low: Math.min(open, price),
+        close: price,
+      };
+    } else {
+      next = {
+        ...last,
+        high: Math.max(last.high, price),
+        low: Math.min(last.low, price),
+        close: price,
+      };
+    }
+    sub.lastBar = next;
+    this.lastBarCache.set(lastBarKey(sub.pair, sub.intervalMin), next);
+    sub.onTick(next);
   }
 
   primeLastBar(pair: string, bar: Bar): void {

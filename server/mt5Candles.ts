@@ -1,6 +1,8 @@
 import { Pool } from 'pg';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
-import { mt5SymbolToPair, pairToMt5Symbol } from './mt5Instruments.js';
+import { mt5SymbolToPair, pairToMt5Symbol, listMt5Symbols } from './mt5Instruments.js';
+import * as oanda from './oanda.js';
+import * as hyperliquid from './hyperliquid.js';
 
 export interface Mt5CandleInput {
   time: number;
@@ -342,6 +344,129 @@ export function getInflight(pair: string, intervalMin: number): OhlcCandle | nul
   return { ...candle };
 }
 
+/**
+ * Compense le délai entre la dernière sync VPS Python (~30 min) et l'instant
+ * présent en complétant les bougies manquantes via OANDA / Hyperliquid. Le
+ * résultat est persisté en DB pour que les requêtes suivantes soient
+ * instantanées et n'aient plus de gap. Idempotent : ne fait rien si la
+ * dernière bougie persistée est récente (<2 minutes).
+ */
+const lastBackfillAt = new Map<string, number>();
+const BACKFILL_THROTTLE_MS = 30_000;
+const BACKFILL_MAX_GAP_MIN = 60;
+
+async function backfillFromSource(
+  pair: string,
+  intervalMin: number,
+  fromSec: number,
+  toSec: number,
+): Promise<OhlcCandle[]> {
+  const count = Math.max(1, Math.ceil((toSec - fromSec) / (intervalMin * 60)));
+  if (oanda.isConfigured()) {
+    try {
+      const available = await oanda.isInstrumentAvailable(pair);
+      if (available) {
+        const bars = await oanda.getOhlcCandles(pair, intervalMin, {
+          from: fromSec,
+          to: toSec,
+          countBack: count,
+        });
+        if (bars.length > 0) return bars;
+      }
+    } catch (err) {
+      console.warn(
+        `[mt5Candles] OANDA backfill ${pair} ${intervalMin}m KO:`,
+        (err as Error).message,
+      );
+    }
+  }
+  try {
+    const bars = await hyperliquid.getOhlcCandles(pair, intervalMin, {
+      from: fromSec,
+      to: toSec,
+      countBack: count,
+    });
+    return bars;
+  } catch (err) {
+    console.warn(
+      `[mt5Candles] Hyperliquid backfill ${pair} ${intervalMin}m KO:`,
+      (err as Error).message,
+    );
+    return [];
+  }
+}
+
+export async function ensureRecentBackfill(
+  pair: string,
+  intervalMin: number,
+): Promise<void> {
+  if (!MT5_CANDLE_INTERVALS.has(intervalMin)) return;
+  if (!pool) return;
+
+  const k = seriesKey(pair, intervalMin);
+  const now = Date.now();
+  const last = lastBackfillAt.get(k) || 0;
+  if (now - last < BACKFILL_THROTTLE_MS) return;
+  lastBackfillAt.set(k, now);
+
+  try {
+    await schemaReady;
+    const result = await pool.query(
+      'SELECT MAX(bar_time) AS max_time FROM mt5_candles WHERE pair = $1 AND timeframe = $2',
+      [pair, intervalMin],
+    );
+    const intervalSec = intervalMin * 60;
+    const lastBarTime = Number(result.rows[0]?.max_time) || 0;
+    const nowSec = Math.floor(now / 1000);
+    const currentBucket = Math.floor(nowSec / intervalSec) * intervalSec;
+    const gapBars = lastBarTime > 0
+      ? Math.floor((currentBucket - lastBarTime) / intervalSec) - 1
+      : BACKFILL_MAX_GAP_MIN;
+    if (gapBars < 1) return;
+    const cappedGap = Math.min(gapBars, Math.ceil(BACKFILL_MAX_GAP_MIN * 60 / intervalSec));
+    const fromSec = currentBucket - (cappedGap + 1) * intervalSec;
+
+    const bars = await backfillFromSource(pair, intervalMin, fromSec, currentBucket);
+    if (bars.length === 0) return;
+
+    // Ne pas écraser les bougies in-flight déjà construites en mémoire :
+    // on filtre celles qui chevauchent l'in-flight courant.
+    const inflight = inflightCandles.get(pair)?.get(intervalMin);
+    const filtered = inflight
+      ? bars.filter((bar) => bar.time !== inflight.time)
+      : bars;
+    if (filtered.length === 0) return;
+
+    await persistCandles(pair, intervalMin, filtered);
+  } catch (err) {
+    console.warn(
+      `[mt5Candles] backfill ${pair} ${intervalMin}m failed:`,
+      (err as Error).message,
+    );
+  }
+}
+
+/**
+ * Lance le backfill pour tous les pairs MT5 connus sur l'intervalle M1.
+ * Appelé au boot et toutes les 60 secondes pour garder la DB à jour.
+ */
+let backfillTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startBackfillLoop(intervalMs = 60_000): void {
+  if (backfillTimer) return;
+  const tick = async () => {
+    const symbols = listMt5Symbols();
+    for (const pair of symbols) {
+      // M1 est l'intervalle critique pour le live tick — les autres
+      // timeframes sont buildées à la demande par TradingView.
+      await ensureRecentBackfill(pair, 1).catch(() => undefined);
+    }
+  };
+  void tick();
+  backfillTimer = setInterval(() => void tick(), intervalMs);
+  if (typeof backfillTimer.unref === 'function') backfillTimer.unref();
+}
+
 export async function hasCandles(pair: string, intervalMin: number): Promise<boolean> {
   if (inflightCandles.get(pair)?.has(intervalMin)) return true;
   if (pool) {
@@ -366,6 +491,11 @@ export async function getCandles(
   const intervalSec = safeInterval * 60;
   const nowSec = Math.floor(Date.now() / 1000);
   const toSec = opts.to && opts.to > 0 ? Math.floor(opts.to) : nowSec;
+
+  // Avant de servir la requête, s'assurer que la DB est à jour à la minute
+  // près. Throttlée à 30s pour éviter de hammerer OANDA quand TradingView
+  // multiplie les requêtes au démarrage du chart.
+  await ensureRecentBackfill(pair, safeInterval).catch(() => undefined);
 
   const defaultCount = 5000;
   const targetCount = Math.min(

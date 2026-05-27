@@ -1546,6 +1546,12 @@ if (!process.env.NETLIFY) {
         ],
         [1, 5, 15, 60],
       );
+      // Boucle de backfill MT5 : comble en continu le gap entre la
+      // dernière sync VPS Python (~30 min) et l'instant présent en
+      // fetchant les bougies manquantes depuis OANDA/Hyperliquid. Sans
+      // ça, chaque redémarrage Railway laissait jusqu'à 30 min d'historique
+      // vide → trou visible dans le chart à l'ouverture.
+      mt5Candles.startBackfillLoop();
     });
   });
 }
