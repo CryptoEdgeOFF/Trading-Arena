@@ -311,9 +311,12 @@ export default function CompetitionPublicLeaderboard() {
                     <h2 className="display mt-1 text-2xl font-bold text-white md:text-3xl">Top 3</h2>
                   </div>
                   <div className="mt-8 grid gap-5 md:grid-cols-3 md:items-end">
-                    <PodiumCard row={top3[1]} place={2} />
-                    <PodiumCard row={top3[0]} place={1} />
-                    <PodiumCard row={top3[2]} place={3} />
+                    {/* Mobile follows DOM order (1, 2, 3 — natural reading
+                        order). Desktop reorders to the classical podium
+                        layout (2nd left, 1st centred, 3rd right). */}
+                    <div className="md:order-2"><PodiumCard row={top3[0]} place={1} /></div>
+                    <div className="md:order-1"><PodiumCard row={top3[1]} place={2} /></div>
+                    <div className="md:order-3"><PodiumCard row={top3[2]} place={3} /></div>
                   </div>
                 </section>
               )}

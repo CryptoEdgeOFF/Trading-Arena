@@ -450,6 +450,191 @@ interface OrderFormProps {
   setStopLossInput: (value: string) => void;
 }
 
+/* ------------------------------------------------------------------ PAIR SELECTOR */
+
+/**
+ * Same dropdown as the order form's pair picker (categories pills, search,
+ * scrollable list with live price + 24h change), reusable from anywhere.
+ * Keeps its own open / search / category state so multiple instances don't
+ * fight over a shared store.
+ */
+function PairSelectorMenu({
+  selectedPair,
+  pairs,
+  marketMetadata,
+  market,
+  onChange,
+  className = '',
+}: {
+  selectedPair: string;
+  pairs: string[];
+  marketMetadata: Record<string, MarketMetadata>;
+  market: Record<string, MarketTicker>;
+  onChange: (pair: string) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [activeCategory, setActiveCategory] = useState<MarketCategory>(
+    (marketMetadata[selectedPair]?.category as MarketCategory) || 'crypto',
+  );
+
+  // Re-sync the active category whenever the controlled selectedPair changes
+  // from outside (e.g. another instance picked a forex pair).
+  useEffect(() => {
+    const next = marketMetadata[selectedPair]?.category as MarketCategory | undefined;
+    if (next) setActiveCategory(next);
+  }, [selectedPair, marketMetadata]);
+
+  const availableCategories = MARKET_CATEGORIES.filter((category) =>
+    pairs.some((pair) => (marketMetadata[pair]?.category || 'crypto') === category.id),
+  );
+
+  const filteredPairs = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const categoryPairs = pairs.filter(
+      (pair) => (marketMetadata[pair]?.category || 'crypto') === activeCategory,
+    );
+    if (!query) return categoryPairs;
+    const compactQuery = query.replace(/[\s/_-]/g, '');
+    return categoryPairs.filter((pair) => {
+      const baseLabel = pairBase(pair);
+      const fullName = marketMetadata[pair]?.name || PAIR_NAME[baseLabel] || '';
+      const values = [
+        pair,
+        pair.replace('/', ''),
+        baseLabel,
+        fullName,
+        `${baseLabel}/USD`,
+        `${baseLabel}USD`,
+      ];
+      return values.some((value) => {
+        const normalized = value.toLowerCase();
+        return normalized.includes(query) || normalized.replace(/[\s/_-]/g, '').includes(compactQuery);
+      });
+    });
+  }, [activeCategory, marketMetadata, search, pairs]);
+
+  return (
+    <div className={`relative z-40 ${className}`}>
+      {open && (
+        <button
+          type="button"
+          aria-label="Fermer le menu des marches"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 cursor-default bg-transparent"
+          tabIndex={-1}
+        />
+      )}
+      <div className="relative z-40">
+        <button
+          type="button"
+          onClick={() => {
+            setOpen((value) => !value);
+            setSearch('');
+          }}
+          className="flex w-full cursor-pointer items-center gap-2 rounded-xl border border-[#241e30] bg-[#171320] px-3 py-1.5 text-left text-[12px] font-semibold text-white transition-colors hover:border-[#3a3148]"
+        >
+          <TokenIcon pair={selectedPair} imageUrl={marketMetadata[selectedPair]?.imageUrl} size="h-5 w-5" />
+          <span className="truncate">{selectedPair}</span>
+          <span className="ml-auto text-[#7a8090]"><Icon d={ICONS.chevron} size={12} /></span>
+        </button>
+
+        {open && (
+          <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100dvh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
+            <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 sm:gap-2 sm:px-3">
+              {availableCategories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => setActiveCategory(category.id)}
+                  className={`shrink-0 rounded-xl border px-3 py-2 text-[11px] font-bold transition-colors sm:px-4 sm:text-[12px] ${
+                    activeCategory === category.id
+                      ? 'border-white/10 bg-white text-[#171320] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]'
+                      : 'border-[#332b43] bg-[#211b2b] text-[#c8c0d8] hover:border-[#4a405d]'
+                  }`}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="border-b border-[#241e30] px-3 py-2">
+              <div className="flex h-9 items-center gap-2 rounded-xl border border-[#30283d] bg-[#100c18] px-3 focus-within:border-[#dc2626]/60">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#746d82]">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />
+                </svg>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Rechercher BTC, Bitcoin, ETH..."
+                  className="h-full w-full bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-[#5f586d]"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
+              <span>{MARKET_CATEGORIES.find((entry) => entry.id === activeCategory)?.label || 'Marchés'}</span>
+              <span className="text-right">Dernier prix</span>
+            </div>
+
+            <div className="max-h-[calc(100dvh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
+              {filteredPairs.map((pair) => {
+                const baseLabel = pairBase(pair);
+                const quoteLabel = pair.split('/')[1] || 'USD';
+                const metadata = marketMetadata[pair];
+                const fullName = metadata?.name || PAIR_NAME[baseLabel] || 'Crypto perpetual';
+                const marketTicker = market[pair];
+                const marketPrice = marketTicker?.markPrice;
+                const change24h = marketTicker?.change24h;
+                const changePositive = (change24h ?? 0) >= 0;
+                const active = pair === selectedPair;
+                return (
+                  <button
+                    key={pair}
+                    type="button"
+                    onClick={() => {
+                      onChange(pair);
+                      setOpen(false);
+                      setSearch('');
+                    }}
+                    className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_92px] items-center gap-2 px-3 py-2.5 text-left transition-colors sm:grid-cols-[1fr_120px] sm:gap-3 sm:px-4 ${active ? 'bg-[#241d30]' : 'hover:bg-[#211a2b]'}`}
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <TokenIcon pair={pair} imageUrl={metadata?.imageUrl} />
+                      <span className="min-w-0">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
+                          {change24h != null && (
+                            <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
+                              {changePositive ? '+' : ''}{change24h.toFixed(2)}%
+                            </span>
+                          )}
+                        </span>
+                        <span className="block truncate text-[11px] text-[#746d82]">{fullName}</span>
+                      </span>
+                    </span>
+                    <span className="num truncate text-right text-[11px] font-semibold text-[#ece8f5] sm:text-[12.5px]">
+                      {marketPrice ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}` : '–'}
+                    </span>
+                  </button>
+                );
+              })}
+              {filteredPairs.length === 0 && (
+                <div className="px-4 py-8 text-center text-[12px] text-[#746d82]">
+                  Aucune paire trouvée.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OrderForm(props: OrderFormProps) {
   const {
     meta, pairs, selectedPair, setSelectedPair,
@@ -469,9 +654,6 @@ function OrderForm(props: OrderFormProps) {
   const [accountPercent, setAccountPercent] = useState(0);
   const [usdAmount, setUsdAmount] = useState('');
   const [lastEditedAmount, setLastEditedAmount] = useState<'qty' | 'usd'>('qty');
-  const [pairMenuOpen, setPairMenuOpen] = useState(false);
-  const [pairSearch, setPairSearch] = useState('');
-  const [activeMarketCategory, setActiveMarketCategory] = useState<MarketCategory>('crypto');
 
   const category = meta.marketMetadata[selectedPair]?.category || 'crypto';
   const lotBased = isLotBased(selectedPair);
@@ -495,31 +677,6 @@ function OrderForm(props: OrderFormProps) {
   const sizeUnit = sizeUnitLabel(selectedPair, base);
   const sizeStep = inputSizeStep(selectedPair);
   const canSubmit = eventStarted && Number.isFinite(qty) && qty > 0;
-  const availableCategories = MARKET_CATEGORIES.filter((category) => (
-    pairs.some((pair) => (meta.marketMetadata[pair]?.category || 'crypto') === category.id)
-  ));
-  const filteredPairs = useMemo(() => {
-    const query = pairSearch.trim().toLowerCase();
-    const categoryPairs = pairs.filter((pair) => (meta.marketMetadata[pair]?.category || 'crypto') === activeMarketCategory);
-    if (!query) return categoryPairs;
-    const compactQuery = query.replace(/[\s/_-]/g, '');
-    return categoryPairs.filter((pair) => {
-      const baseLabel = pairBase(pair);
-      const fullName = meta.marketMetadata[pair]?.name || PAIR_NAME[baseLabel] || '';
-      const values = [
-        pair,
-        pair.replace('/', ''),
-        baseLabel,
-        fullName,
-        `${baseLabel}/USD`,
-        `${baseLabel}USD`,
-      ];
-      return values.some((value) => {
-        const normalized = value.toLowerCase();
-        return normalized.includes(query) || normalized.replace(/[\s/_-]/g, '').includes(compactQuery);
-      });
-    });
-  }, [activeMarketCategory, meta.marketMetadata, pairSearch, pairs]);
 
   useEffect(() => {
     setAccountPercent(Math.round(usedRatio * 100));
@@ -620,121 +777,14 @@ function OrderForm(props: OrderFormProps) {
   return (
     <section className="flex w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c] lg:w-[470px]">
       <div className="flex-1 overflow-y-auto px-3 pb-3 pt-3">
-        <div className="relative z-40 mb-2 flex items-center">
-          {pairMenuOpen && (
-            <button
-              type="button"
-              aria-label="Fermer le menu des marches"
-              onClick={() => setPairMenuOpen(false)}
-              className="fixed inset-0 z-30 cursor-default bg-transparent"
-              tabIndex={-1}
-            />
-          )}
-          <div className="relative z-40">
-            <button
-              type="button"
-              onClick={() => {
-                setPairMenuOpen((value) => !value);
-                setPairSearch('');
-              }}
-              className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#241e30] bg-[#171320] px-3 py-1.5 text-left text-[12px] font-semibold text-white transition-colors hover:border-[#3a3148]"
-            >
-              <TokenIcon pair={selectedPair} imageUrl={meta.marketMetadata[selectedPair]?.imageUrl} size="h-5 w-5" />
-              <span>{selectedPair}</span>
-              <span className="text-[#7a8090]"><Icon d={ICONS.chevron} size={12} /></span>
-            </button>
-
-            {pairMenuOpen && (
-              <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100dvh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
-                <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 sm:gap-2 sm:px-3">
-                  {availableCategories.map((category) => (
-                    <button
-                      key={category.id}
-                      type="button"
-                      onClick={() => setActiveMarketCategory(category.id)}
-                      className={`shrink-0 rounded-xl border px-3 py-2 text-[11px] font-bold transition-colors sm:px-4 sm:text-[12px] ${
-                        activeMarketCategory === category.id
-                          ? 'border-white/10 bg-white text-[#171320] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]'
-                          : 'border-[#332b43] bg-[#211b2b] text-[#c8c0d8] hover:border-[#4a405d]'
-                      }`}
-                    >
-                      {category.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="border-b border-[#241e30] px-3 py-2">
-                  <div className="flex h-9 items-center gap-2 rounded-xl border border-[#30283d] bg-[#100c18] px-3 focus-within:border-[#dc2626]/60">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#746d82]">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />
-                    </svg>
-                    <input
-                      type="text"
-                      value={pairSearch}
-                      onChange={(event) => setPairSearch(event.target.value)}
-                      placeholder="Rechercher BTC, Bitcoin, ETH..."
-                      className="h-full w-full bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-[#5f586d]"
-                      autoFocus
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
-                  <span>{MARKET_CATEGORIES.find((entry) => entry.id === activeMarketCategory)?.label || 'Marchés'}</span>
-                  <span className="text-right">Dernier prix</span>
-                </div>
-
-                <div className="max-h-[calc(100dvh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
-                  {filteredPairs.map((pair) => {
-                    const baseLabel = pairBase(pair);
-                    const quoteLabel = pair.split('/')[1] || 'USD';
-                    const metadata = meta.marketMetadata[pair];
-                    const fullName = metadata?.name || PAIR_NAME[baseLabel] || 'Crypto perpetual';
-                    const marketTicker = meta.market[pair];
-                    const marketPrice = marketTicker?.markPrice;
-                    const change24h = marketTicker?.change24h;
-                    const changePositive = (change24h ?? 0) >= 0;
-                    const active = pair === selectedPair;
-                    return (
-                      <button
-                        key={pair}
-                        type="button"
-                        onClick={() => {
-                          setSelectedPair(pair);
-                          setPairMenuOpen(false);
-                          setPairSearch('');
-                        }}
-                        className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_92px] items-center gap-2 px-3 py-2.5 text-left transition-colors sm:grid-cols-[1fr_120px] sm:gap-3 sm:px-4 ${active ? 'bg-[#241d30]' : 'hover:bg-[#211a2b]'}`}
-                      >
-                        <span className="flex min-w-0 items-center gap-2.5">
-                          <TokenIcon pair={pair} imageUrl={metadata?.imageUrl} />
-                          <span className="min-w-0">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
-                              {change24h != null && (
-                                <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
-                                  {changePositive ? '+' : ''}{change24h.toFixed(2)}%
-                                </span>
-                              )}
-                            </span>
-                            <span className="block truncate text-[11px] text-[#746d82]">{fullName}</span>
-                          </span>
-                        </span>
-                        <span className="num truncate text-right text-[11px] font-semibold text-[#ece8f5] sm:text-[12.5px]">
-                          {marketPrice ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}` : '–'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                  {filteredPairs.length === 0 && (
-                    <div className="px-4 py-8 text-center text-[12px] text-[#746d82]">
-                      Aucune paire trouvée.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+        <div className="mb-2 flex items-center gap-2">
+          <PairSelectorMenu
+            selectedPair={selectedPair}
+            pairs={pairs}
+            marketMetadata={meta.marketMetadata}
+            market={meta.market}
+            onChange={setSelectedPair}
+          />
           <div className="ml-auto flex items-center gap-1 rounded-lg border border-[#241e30] bg-[#171320] px-1.5 py-0.5 sm:gap-1.5 sm:rounded-xl sm:px-2.5 sm:py-1">
             <span className="hidden text-[9px] font-medium uppercase tracking-[0.12em] text-[#7a8090] sm:inline">Powered by</span>
             <img
@@ -1028,6 +1078,7 @@ function ChartArea({
   pairs,
   pairLabels,
   pairCategories,
+  marketMetadata,
   ticker,
   market,
   player,
@@ -1046,6 +1097,7 @@ function ChartArea({
   pairs: string[];
   pairLabels?: Record<string, string>;
   pairCategories?: Record<string, string>;
+  marketMetadata?: Record<string, MarketMetadata>;
   marketDataSource?: MarketDataSource;
   tradingViewSymbol?: string | null;
   ticker: MarketTicker | undefined;
@@ -1081,38 +1133,19 @@ function ChartArea({
 
   return (
     <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c]">
-      {isMobile && onPairChange && (
-        // Quick asset switcher for the mobile "Graphique" tab — uses a native
-        // <select> so iOS picks the system fullscreen picker (no zoom, no
-        // custom modal to manage). Categories are grouped via <optgroup>.
+      {isMobile && onPairChange && marketMetadata && (
+        // Quick asset switcher for the mobile "Graphique" tab — same dropdown
+        // (categories pills + search + price list) as the order form, so the
+        // experience is consistent across tabs.
         <div className="flex shrink-0 items-center gap-2 border-b border-[#2a2236] bg-[#0e0817] px-2 py-1.5">
-          <div className="relative flex-1">
-            <select
-              value={pair}
-              onChange={(event) => onPairChange?.(event.target.value)}
-              className="block w-full cursor-pointer appearance-none truncate rounded-lg border border-[#2a2236] bg-[#15101f] px-2.5 py-1.5 pr-7 font-semibold text-white outline-none focus:border-[#dc2626]/60"
-              aria-label="Choisir un actif"
-            >
-              {MARKET_CATEGORIES.map((category) => {
-                const pairsInCategory = pairs.filter(
-                  (p) => (pairCategories?.[p] || 'crypto') === category.id,
-                );
-                if (pairsInCategory.length === 0) return null;
-                return (
-                  <optgroup key={category.id} label={category.label}>
-                    {pairsInCategory.map((p) => (
-                      <option key={p} value={p}>
-                        {pairLabels?.[p] || p}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            </select>
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#7a8090]">
-              <Icon d={ICONS.chevron} size={12} />
-            </span>
-          </div>
+          <PairSelectorMenu
+            selectedPair={pair}
+            pairs={pairs}
+            marketMetadata={marketMetadata}
+            market={market || {}}
+            onChange={onPairChange}
+            className="flex-1"
+          />
           {ticker?.markPrice != null && (
             <span
               className="num shrink-0 text-[12px] font-semibold tabular-nums text-white"
@@ -3283,6 +3316,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       pairs={meta.pairs}
       pairLabels={pairLabels}
       pairCategories={pairCategories}
+      marketMetadata={meta.marketMetadata}
       marketDataSource={meta.marketDataSource}
       tradingViewSymbol={meta.marketMetadata[selectedPair]?.tradingViewSymbol}
       ticker={ticker}
