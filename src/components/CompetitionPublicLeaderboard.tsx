@@ -30,6 +30,7 @@ interface CashPrize {
   breakdown?: Array<{ rank: number; amount: number }>;
   label?: string;
   imageUrl?: string;
+  description?: string;
 }
 
 interface LeaderboardResponse {
@@ -423,8 +424,10 @@ function CashPrizeSection({ prize }: { prize: CashPrize }) {
                   Valeur cash {formatPrizeAmount(prize.total, prize.currency)}
                 </div>
               )}
-              <p className="mt-4 max-w-md text-sm text-[#b8b8c2]">
-                Remis aux meilleurs traders à la fin de la compétition. Plus tu grimpes dans le ranking, plus tu te rapproches du lot.
+              <p className="mt-4 max-w-md whitespace-pre-line text-sm leading-relaxed text-[#b8b8c2]">
+                {prize.description?.trim()
+                  ? prize.description
+                  : 'Remis aux meilleurs traders à la fin de la compétition. Plus tu grimpes dans le ranking, plus tu te rapproches du lot.'}
               </p>
             </div>
           </div>

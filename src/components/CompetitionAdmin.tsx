@@ -25,6 +25,7 @@ interface AdminCashPrize {
   breakdown?: Array<{ rank: number; amount: number }>;
   label?: string;
   imageUrl?: string;
+  description?: string;
 }
 
 interface AdminCompetition {
@@ -50,6 +51,7 @@ interface PrizeDraft {
   third: string;
   label: string;
   imageUrl: string;
+  description: string;
 }
 
 interface CompetitionDraft {
@@ -69,7 +71,7 @@ const EMPTY_DRAFT: CompetitionDraft = {
   startAt: '',
   endAt: '',
   isPublic: true,
-  prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '' },
+  prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '', description: '' },
 };
 
 const DATA_SOURCE_LABELS: Record<MarketDataSource, { label: string; desc: string; accent: string }> = {
@@ -93,7 +95,14 @@ function toLocalInput(value: number): string {
 }
 
 function buildCashPrizePayload(input: PrizeDraft):
-  | { currency: string; total: number; breakdown?: Array<{ rank: number; amount: number }>; label?: string; imageUrl?: string }
+  | {
+      currency: string;
+      total: number;
+      breakdown?: Array<{ rank: number; amount: number }>;
+      label?: string;
+      imageUrl?: string;
+      description?: string;
+    }
   | null {
   const total = Number(input.total);
   const first = Number(input.first);
@@ -102,13 +111,14 @@ function buildCashPrizePayload(input: PrizeDraft):
   const currency = (input.currency || 'USD').trim().toUpperCase().slice(0, 6) || 'USD';
   const label = input.label.trim().slice(0, 80);
   const imageUrl = input.imageUrl.trim();
+  const description = input.description.trim().slice(0, 1500);
   const breakdown: Array<{ rank: number; amount: number }> = [];
   if (Number.isFinite(first) && first > 0) breakdown.push({ rank: 1, amount: first });
   if (Number.isFinite(second) && second > 0) breakdown.push({ rank: 2, amount: second });
   if (Number.isFinite(third) && third > 0) breakdown.push({ rank: 3, amount: third });
 
   if (!Number.isFinite(total) || total <= 0) {
-    if (breakdown.length === 0 && !label && !imageUrl) return null;
+    if (breakdown.length === 0 && !label && !imageUrl && !description) return null;
     const computed = breakdown.reduce((acc, row) => acc + row.amount, 0);
     return {
       currency,
@@ -116,6 +126,7 @@ function buildCashPrizePayload(input: PrizeDraft):
       ...(breakdown.length > 0 ? { breakdown } : {}),
       ...(label ? { label } : {}),
       ...(imageUrl ? { imageUrl } : {}),
+      ...(description ? { description } : {}),
     };
   }
   return {
@@ -124,6 +135,7 @@ function buildCashPrizePayload(input: PrizeDraft):
     ...(breakdown.length > 0 ? { breakdown } : {}),
     ...(label ? { label } : {}),
     ...(imageUrl ? { imageUrl } : {}),
+    ...(description ? { description } : {}),
   };
 }
 
@@ -367,6 +379,7 @@ export default function CompetitionAdmin() {
         third: findAmount(3) != null ? String(findAmount(3)) : '',
         label: competition.cashPrize?.label || '',
         imageUrl: competition.cashPrize?.imageUrl || '',
+        description: competition.cashPrize?.description || '',
       },
     });
   }
@@ -1064,6 +1077,22 @@ function PrizeFields({
           />
           </Field>
         </div>
+      </div>
+
+      <div className="mt-4">
+        <Field label="Règles & description du lot (affiché sous le podium)">
+          <textarea
+            value={draft.description}
+            onChange={(e) => onChange({ ...draft, description: e.target.value })}
+            className="block w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-relaxed text-white outline-none transition-colors focus:border-amber-400"
+            rows={5}
+            maxLength={1500}
+            placeholder={'Le premier gagne une PS5 et les 20 meilleurs PNL se qualifient pour entrer dans l\u2019arène le 5 juin et remporter des prize en physique.\nChoisis une arène et trade pour dépasser les autres.'}
+          />
+        </Field>
+        <p className="mt-1 text-[11px] text-slate-500">
+          Texte libre, jusqu&apos;à 1500 caractères. Les retours à la ligne sont conservés.
+        </p>
       </div>
     </div>
   );

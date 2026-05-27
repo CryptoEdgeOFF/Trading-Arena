@@ -40,6 +40,13 @@ export interface CashPrize {
   breakdown?: CashPrizeBreakdownEntry[];
   label?: string;
   imageUrl?: string;
+  /**
+   * Free-form text (rules, prize description, qualification info) shown on
+   * the public leaderboard under the prize block. Edited by the admin
+   * through the competition admin form. Multi-line, kept short-ish (a few
+   * paragraphs). Supports plain newlines.
+   */
+  description?: string;
 }
 
 export interface Competition {
@@ -123,12 +130,25 @@ function inferCompetitionStatus(startAt: number, endAt: number, now = Date.now()
 function normalizeCashPrize(input: unknown): CashPrize | null {
   if (input === null || input === undefined) return null;
   if (typeof input !== 'object') return null;
-  const data = input as { currency?: unknown; total?: unknown; breakdown?: unknown; label?: unknown; imageUrl?: unknown };
+  const data = input as {
+    currency?: unknown;
+    total?: unknown;
+    breakdown?: unknown;
+    label?: unknown;
+    imageUrl?: unknown;
+    description?: unknown;
+  };
   const total = Number(data.total);
   const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
   const currency = String(data.currency || 'USD').trim().toUpperCase().slice(0, 6) || 'USD';
   const label = String(data.label || '').trim().slice(0, 80);
   const imageUrl = String(data.imageUrl || '').trim().slice(0, 5000);
+  const description = String(data.description || '')
+    // Normalize CRLF to LF, drop other control chars except \n.
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '')
+    .trim()
+    .slice(0, 1500);
 
   let breakdown: CashPrizeBreakdownEntry[] | undefined;
   if (Array.isArray(data.breakdown)) {
@@ -146,7 +166,15 @@ function normalizeCashPrize(input: unknown): CashPrize | null {
     if (breakdown.length === 0) breakdown = undefined;
   }
 
-  if (safeTotal === 0 && (!breakdown || breakdown.length === 0) && !label && !imageUrl) return null;
+  if (
+    safeTotal === 0 &&
+    (!breakdown || breakdown.length === 0) &&
+    !label &&
+    !imageUrl &&
+    !description
+  ) {
+    return null;
+  }
 
   return {
     currency,
@@ -154,6 +182,7 @@ function normalizeCashPrize(input: unknown): CashPrize | null {
     breakdown,
     ...(label ? { label } : {}),
     ...(imageUrl ? { imageUrl } : {}),
+    ...(description ? { description } : {}),
   };
 }
 

@@ -660,7 +660,7 @@ export default function CompetitionPlatform() {
                   transition={{ duration: 0.6, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
                   className="mt-6 max-w-xl text-base leading-relaxed text-[#b8b8c2] md:text-lg"
                 >
-                  Une plateforme de compétition trading organisée comme un vrai event : inscription sécurisée, arènes publiques, cash prize, ranking live et accès direct au terminal.
+                  La plateforme de tournoi officielle du Breakout Trading Fight.
                 </motion.p>
 
                 <motion.div
