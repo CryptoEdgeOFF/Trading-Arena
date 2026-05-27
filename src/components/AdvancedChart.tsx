@@ -3,6 +3,7 @@ import { BtfDatafeed } from '../charting_library/datafeed';
 import type {
   EntityId,
   IChartingLibraryWidget,
+  IExecutionLineAdapter,
   ILineDataSourceApi,
   ResolutionString,
 } from '../charting_library/charting_library';
@@ -265,6 +266,7 @@ export default function AdvancedChart({
   position,
   positions,
   pendingOrders,
+  recentTrades,
   orderPreview,
   intervalMinutes,
   onIntervalChange,
@@ -318,6 +320,9 @@ export default function AdvancedChart({
   const onIntervalChangeRef = useRef(onIntervalChange);
   const positionsRef = useRef<Position[]>([]);
   const ordersRef = useRef<PendingOrder[]>([]);
+  // tradeId → execution shape adapter, so we can incrementally add new
+  // entry markers without redrawing every existing arrow on each tick.
+  const tradeArrowsRef = useRef<Map<string, IExecutionLineAdapter>>(new Map());
   // Live refs for the drag handler so it can read the most recent mark
   // price of any pair without re-running the line-sync effect on every
   // tick.
@@ -712,6 +717,85 @@ export default function AdvancedChart({
       chartLiveTickRef.current = null;
     };
   }, [chartLiveTickRef]);
+
+  // Entry arrows: place a small green/red execution shape on the candle
+  // where each long/short was opened. We sync incrementally so already-
+  // drawn arrows are kept across ticks; only new trades are added and
+  // arrows from a different pair are wiped on symbol change.
+  useEffect(() => {
+    const widget = widgetRef.current;
+    if (!widget || !chartReady) return;
+    let cancelled = false;
+    let chart: ReturnType<IChartingLibraryWidget['activeChart']> | null;
+    try {
+      chart = widget.activeChart();
+    } catch {
+      return;
+    }
+    if (!chart) return;
+
+    const arrows = tradeArrowsRef.current;
+
+    const targetTrades = (recentTrades ?? []).filter(
+      (trade) => trade.pair === pair && trade.action === 'open',
+    );
+    const targetIds = new Set(targetTrades.map((trade) => trade.id));
+
+    // 1) Drop arrows that no longer apply (different pair, closed series,
+    // or trade evicted from the recent feed).
+    for (const [tradeId, adapter] of arrows) {
+      if (!targetIds.has(tradeId)) {
+        try { adapter.remove(); } catch { /* already gone */ }
+        arrows.delete(tradeId);
+      }
+    }
+
+    // 2) Create arrows for newly seen trades.
+    (async () => {
+      for (const trade of targetTrades) {
+        if (arrows.has(trade.id)) continue;
+        try {
+          const adapter = await chart!.createExecutionShape();
+          if (cancelled) {
+            try { adapter.remove(); } catch { /* noop */ }
+            return;
+          }
+          // The TradingView API accepts seconds (UDF time format) — Trade.time
+          // is a JS millisecond timestamp coming from the engine.
+          adapter
+            .setDirection(trade.side === 'long' ? 'buy' : 'sell')
+            .setTime(Math.floor(trade.time / 1000))
+            .setPrice(trade.price)
+            .setText(trade.side === 'long' ? 'LONG' : 'SHORT')
+            .setTooltip(
+              `${trade.side === 'long' ? 'Long' : 'Short'} ${trade.size} @ ${trade.price.toFixed(4)} · ${trade.leverage}x`,
+            )
+            .setArrowHeight(8)
+            .setArrowSpacing(3);
+          arrows.set(trade.id, adapter);
+        } catch (err) {
+          if (!cancelled) {
+            console.warn('[AdvancedChart] createExecutionShape failed', err);
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [recentTrades, pair, chartReady]);
+
+  // Wipe every entry arrow when the chart symbol changes (the dataset is
+  // resetData'd and refs to old time values would dangle).
+  useEffect(() => {
+    return () => {
+      for (const adapter of tradeArrowsRef.current.values()) {
+        try { adapter.remove(); } catch { /* noop */ }
+      }
+      tradeArrowsRef.current.clear();
+    };
+  }, [pair]);
 
   // Live ticker → push to datafeed for streaming candles (paper:update / poll fallback).
   useEffect(() => {
