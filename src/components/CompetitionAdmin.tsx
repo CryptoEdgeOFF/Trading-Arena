@@ -1005,12 +1005,15 @@ function PrizeFields({
           </div>
           <div className="md:col-span-2">
             <Field label="URL photo">
+              {/* type="text" et pas "url" : on accepte aussi les URLs relatives
+                  comme /api/prize-images/<uuid> retournées par l'upload ;
+                  le validateur navigateur HTML5 url ne les laisse pas passer. */}
               <input
-                type="url"
+                type="text"
                 value={draft.imageUrl}
                 onChange={(e) => onChange({ ...draft, imageUrl: e.target.value })}
                 className="admin-input"
-                placeholder="https://..."
+                placeholder="https://... ou laisse l'upload remplir"
               />
             </Field>
           </div>
