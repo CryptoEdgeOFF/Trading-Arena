@@ -301,7 +301,11 @@ interface BackfillOptions {
   upsert?: boolean;
 }
 
-const ITICK_PAGE_SIZE = 1000;
+// iTick REST plafonne à 500 bars par appel /kline (pour forex/indices/
+// commodities) même quand on passe limit=1000. La pagination doit donc
+// utiliser cette taille réelle pour ne pas s'arrêter après 1 page sur
+// la condition `bars.length < pageLimit`.
+const ITICK_PAGE_SIZE = 500;
 
 /**
  * Récupère un seul page (≤ 1000 bars) depuis iTick avec un fallback
