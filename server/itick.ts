@@ -329,7 +329,12 @@ class ItickClusterManager extends EventEmitter {
     ws.on('message', (raw) => this.handleMessage(raw.toString()));
 
     ws.on('error', (err) => {
-      this.lastError = err.message;
+      // On ne veut pas écraser un `lastError` plus précis (ex: "HTTP 401")
+      // par le générique "WebSocket was closed before the connection
+      // was established" que ws émet juste après unexpected-response.
+      if (!this.lastError || !this.lastError.startsWith('HTTP ')) {
+        this.lastError = err.message;
+      }
       console.warn(`[itickWS:${this.asset}] error:`, err.message);
     });
 
