@@ -1107,6 +1107,7 @@ function PositionRow({
   busy,
   onClosePosition,
   onUpdateRisk,
+  onSelectPair,
 }: {
   position: Position;
   category?: MarketCategory;
@@ -1119,6 +1120,7 @@ function PositionRow({
     takeProfit: number | null,
     options?: { stopLossSize?: number | null; takeProfitSize?: number | null },
   ) => Promise<void> | void;
+  onSelectPair?: (pair: string) => void;
 }) {
   const isLong = position.side === 'long';
   const accent = isLong ? '#15c990' : '#c026d3';
@@ -1150,16 +1152,18 @@ function PositionRow({
     <>
       <tr className="hover:bg-[#181517]">
         <Td>
-          <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onSelectPair?.(position.pair)}
+            className="flex items-center gap-2 rounded px-1 py-0.5 -mx-1 text-left transition-colors hover:bg-[#1f1b27]"
+            title={`Afficher ${position.pair} sur le graphique`}
+          >
             <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: PAIR_COLOR[position.pair] || '#f7931a' }}>
               {pairBase(position.pair).slice(0, 1)}
             </span>
             <span className="text-white">{position.pair}</span>
             <span className="rounded-sm bg-[#231f22] px-1 py-px text-[9px] text-[#9498a4]">{position.leverage}x</span>
-            <span className="rounded-sm border border-[#2a2635] bg-[#15121f] px-1 py-px text-[9px] text-[#7a8090]">
-              #{position.id.slice(0, 4)}
-            </span>
-          </div>
+          </button>
         </Td>
         <Td><span style={{ color: accent }}>{isLong ? 'Long' : 'Short'}</span></Td>
         <Td>{sizeDisplay.text} <span className="text-[10px] text-[#7a8090]">{sizeDisplay.unit}</span></Td>
@@ -1764,6 +1768,7 @@ function BottomTabs({
   onClosePosition,
   onUpdateRisk,
   onCancelOrder,
+  onSelectPair,
   busy,
   marketMetadata,
 }: {
@@ -1787,6 +1792,7 @@ function BottomTabs({
     options?: { stopLossSize?: number | null; takeProfitSize?: number | null },
   ) => Promise<void> | void;
   onCancelOrder: (orderId: string) => void;
+  onSelectPair: (pair: string) => void;
   busy: boolean;
   marketMetadata: Record<string, MarketMetadata>;
 }) {
@@ -1876,6 +1882,7 @@ function BottomTabs({
                     busy={busy}
                     onClosePosition={onClosePosition}
                     onUpdateRisk={onUpdateRisk}
+                    onSelectPair={onSelectPair}
                   />
                 ))}
               </tbody>
@@ -1899,7 +1906,16 @@ function BottomTabs({
                   const orderSizeDisplay = formatEngineSizeDisplay(order.pair, order.size, pairBase(order.pair));
                   return (
                   <tr key={order.id} className="hover:bg-[#181517]">
-                    <Td>{order.pair}</Td>
+                    <Td>
+                      <button
+                        type="button"
+                        onClick={() => onSelectPair(order.pair)}
+                        className="cursor-pointer rounded px-1 py-0.5 -mx-1 text-left text-white transition-colors hover:bg-[#1f1b27]"
+                        title={`Afficher ${order.pair} sur le graphique`}
+                      >
+                        {order.pair}
+                      </button>
+                    </Td>
                     <Td><span style={{ color: order.side === 'long' ? '#15c990' : '#c026d3' }}>{order.side === 'long' ? 'Long' : 'Short'}</span></Td>
                     <Td className="capitalize">{order.orderType === 'market' ? 'Marché' : 'Limite'}</Td>
                     <Td>{order.limitPrice ? fmtMarketPrice(order.limitPrice, marketMetadata[order.pair]?.category) : '–'}</Td>
@@ -1934,7 +1950,16 @@ function BottomTabs({
                 {allTrades.map((trade) => (
                   <tr key={trade.id} className="hover:bg-[#181517]">
                     <Td className="text-[#9498a4]">{timeAgo(trade.time)}</Td>
-                    <Td>{trade.pair}</Td>
+                    <Td>
+                      <button
+                        type="button"
+                        onClick={() => onSelectPair(trade.pair)}
+                        className="cursor-pointer rounded px-1 py-0.5 -mx-1 text-left text-white transition-colors hover:bg-[#1f1b27]"
+                        title={`Afficher ${trade.pair} sur le graphique`}
+                      >
+                        {trade.pair}
+                      </button>
+                    </Td>
                     <Td><span style={{ color: trade.side === 'long' ? '#15c990' : '#c026d3' }}>{trade.side === 'long' ? 'Long' : 'Short'}</span></Td>
                     <Td className="capitalize">{trade.action}</Td>
                     <Td>{fmt(trade.price, 1)}</Td>
@@ -3227,6 +3252,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       onClosePosition={closePosition}
       onUpdateRisk={updateRisk}
       onCancelOrder={cancelOrder}
+      onSelectPair={setSelectedPair}
       busy={busy}
       marketMetadata={meta.marketMetadata}
     />
