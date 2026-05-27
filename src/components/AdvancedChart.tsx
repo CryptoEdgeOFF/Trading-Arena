@@ -6,7 +6,7 @@ import type {
   ILineDataSourceApi,
   ResolutionString,
 } from '../charting_library/charting_library';
-import type { MarketTicker, Position, Trade } from '../stores/useGameStore';
+import type { MarketTicker, Position } from '../stores/useGameStore';
 import { fmtMarketPrice, isValidRiskPrice, roundPriceForCategory } from '../utils/positionSizing';
 
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js';
@@ -89,7 +89,6 @@ export interface AdvancedChartProps {
   positions?: Position[];
   pendingOrders?: PendingOrder[];
   orderPreview?: ChartOrderPreview | null;
-  recentTrades?: Trade[];
   intervalMinutes: number;
   onIntervalChange?: (minutes: number) => void;
   onPairChange?: (pair: string) => void;
@@ -265,7 +264,6 @@ export default function AdvancedChart({
   position,
   positions,
   pendingOrders,
-  recentTrades,
   orderPreview,
   intervalMinutes,
   onIntervalChange,
@@ -319,9 +317,6 @@ export default function AdvancedChart({
   const onIntervalChangeRef = useRef(onIntervalChange);
   const positionsRef = useRef<Position[]>([]);
   const ordersRef = useRef<PendingOrder[]>([]);
-  // tradeId → drawing entityId, so we can incrementally add new entry
-  // arrows without redrawing every existing one on each tick.
-  const tradeArrowsRef = useRef<Map<string, EntityId>>(new Map());
   // Live refs for the drag handler so it can read the most recent mark
   // price of any pair without re-running the line-sync effect on every
   // tick.
@@ -716,99 +711,6 @@ export default function AdvancedChart({
       chartLiveTickRef.current = null;
     };
   }, [chartLiveTickRef]);
-
-  // Entry arrows: place a small green/red marker on the candle where each
-  // long/short was opened. We use createShape() with the 'arrow_up' /
-  // 'arrow_down' shapes (available in the standard Charting Library).
-  // createExecutionShape() would be cleaner but is restricted to Trading
-  // Platform since v29 and silently fails otherwise.
-  useEffect(() => {
-    const widget = widgetRef.current;
-    if (!widget || !chartReady) return;
-    let cancelled = false;
-    let chart: ReturnType<IChartingLibraryWidget['activeChart']> | null;
-    try {
-      chart = widget.activeChart();
-    } catch {
-      return;
-    }
-    if (!chart) return;
-
-    const arrows = tradeArrowsRef.current;
-
-    const targetTrades = (recentTrades ?? []).filter(
-      (trade) => trade.pair === pair && trade.action === 'open',
-    );
-    const targetIds = new Set(targetTrades.map((trade) => trade.id));
-
-    for (const [tradeId, entityId] of arrows) {
-      if (!targetIds.has(tradeId)) {
-        try { chart.removeEntity(entityId); } catch { /* already gone */ }
-        arrows.delete(tradeId);
-      }
-    }
-
-    (async () => {
-      for (const trade of targetTrades) {
-        if (arrows.has(trade.id)) continue;
-        try {
-          const isLong = trade.side === 'long';
-          // We render a tiny Unicode triangle through the `text` shape so we
-          // can fully control the size with `fontsize`. The native arrow_up
-          // / arrow_down shapes have a hard-coded minimum size which the
-          // user found too big.
-          const entityId = await chart!.createShape(
-            { time: Math.floor(trade.time / 1000), price: trade.price },
-            {
-              shape: 'text',
-              text: isLong ? '▲' : '▼',
-              lock: true,
-              disableSave: true,
-              disableSelection: true,
-              disableUndo: true,
-              zOrder: 'top',
-              overrides: {
-                'linetooltext.fontsize': 9,
-                'linetooltext.color': isLong ? '#16a34a' : '#dc2626',
-                'linetooltext.bold': true,
-                'linetooltext.fillBackground': false,
-                'linetooltext.drawBorder': false,
-                'linetooltext.fixedSize': true,
-              },
-            },
-          );
-          if (cancelled) {
-            try { chart!.removeEntity(entityId); } catch { /* noop */ }
-            return;
-          }
-          arrows.set(trade.id, entityId);
-        } catch (err) {
-          if (!cancelled) {
-            console.warn('[AdvancedChart] entry arrow createShape failed', err);
-          }
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [recentTrades, pair, chartReady]);
-
-  // Wipe every entry arrow when the chart symbol changes (the dataset is
-  // resetData'd and refs to old time values would dangle).
-  useEffect(() => {
-    const arrows = tradeArrowsRef.current;
-    return () => {
-      const widget = widgetRef.current;
-      let chart: ReturnType<IChartingLibraryWidget['activeChart']> | null = null;
-      try { chart = widget?.activeChart() ?? null; } catch { /* noop */ }
-      for (const entityId of arrows.values()) {
-        try { chart?.removeEntity(entityId); } catch { /* noop */ }
-      }
-      arrows.clear();
-    };
-  }, [pair]);
 
   // Live ticker → push to datafeed for streaming candles (paper:update / poll fallback).
   useEffect(() => {

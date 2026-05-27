@@ -1089,7 +1089,6 @@ function ChartArea({
   ticker,
   market,
   player,
-  recentTrades,
   orderPreview,
   onPreviewRiskChange,
   onPreviewEntryChange,
@@ -1111,7 +1110,6 @@ function ChartArea({
   ticker: MarketTicker | undefined;
   market?: Record<string, MarketTicker>;
   player: Player | null;
-  recentTrades?: Trade[];
   orderPreview?: ChartOrderPreview | null;
   onPreviewRiskChange?: (patch: { stopLoss?: number | null; takeProfit?: number | null }) => void;
   onPreviewEntryChange?: (price: number) => void;
@@ -1177,7 +1175,6 @@ function ChartArea({
           market={market}
           positions={positions}
           pendingOrders={pendingOrders}
-          recentTrades={recentTrades}
           orderPreview={orderPreview}
           onPreviewRiskChange={onPreviewRiskChange}
           onPreviewEntryChange={onPreviewEntryChange}
@@ -3332,7 +3329,6 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       ticker={ticker}
       market={market}
       player={player}
-      recentTrades={playerTrades}
       orderPreview={orderPreview}
       onPreviewRiskChange={updateOrderPreviewRisk}
       onPreviewEntryChange={updateOrderPreviewEntry}
