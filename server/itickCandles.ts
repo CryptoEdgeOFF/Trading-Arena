@@ -23,8 +23,31 @@ import * as hyperliquid from './hyperliquid.js';
 import { ITICK_INSTRUMENTS, findByPair, findByCode, type ItickInstrument } from './itickInstruments.js';
 import type { ItickLiveTick } from './itick.js';
 
-export const ITICK_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 1440]);
+export const ITICK_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
 const MAX_HISTORY_BARS = 100_000;
+
+/**
+ * Profondeur cible (en bougies) à conserver pour chaque timeframe au
+ * backfill historique. iTick limite à 1000 bars par appel REST, donc on
+ * pagine pour atteindre ces volumes (cf. `backfillSeriesPaginated`).
+ *
+ *   1m   → 3000 bars (~2.1 j)
+ *   5m   → 3000 bars (~10.4 j)
+ *   15m  → 3000 bars (~31 j)
+ *   30m  → 2000 bars (~41 j)
+ *   60m  → 2000 bars (~83 j ≈ 2.7 mois)
+ *   240m → dérivé depuis le 60m, donc 500 bars (~83 j)
+ *   1d   → 1000 bars (~2.7 ans)
+ */
+const HISTORY_DEPTH: Record<number, number> = {
+  1: 3000,
+  5: 3000,
+  15: 3000,
+  30: 2000,
+  60: 2000,
+  240: 500,
+  1440: 1000,
+};
 
 type SeriesKey = `${string}:${number}`;
 
@@ -159,7 +182,10 @@ async function persistCandles(
 /*                              Live tick → bars                               */
 /* -------------------------------------------------------------------------- */
 
-const LIVE_INTERVALS = [1, 5, 15, 30, 60, 1440];
+// 4h (240) est inclus pour que les ticks alimentent aussi cette série en
+// temps réel. Le backfill historique 4h, lui, est dérivé du 1h (iTick
+// REST ne renvoie pas de bougies 4h fiables sur toutes les paires).
+const LIVE_INTERVALS = [1, 5, 15, 30, 60, 240, 1440];
 
 /**
  * Met à jour la bougie courante de tous les intervalles pour un tick.
@@ -232,57 +258,79 @@ function startFlushLoop(): void {
 
 interface BackfillOptions {
   intervalMin: number;
+  /** Profondeur totale demandée (paginée si > 1000). */
   limit?: number;
   endTs?: number;
   /** Si true, écrase les bougies existantes (init / refresh). */
   upsert?: boolean;
 }
 
-async function backfillSeries(inst: ItickInstrument, opts: BackfillOptions): Promise<number> {
-  const limit = Math.max(50, Math.min(1000, opts.limit ?? 1000));
+const ITICK_PAGE_SIZE = 1000;
+
+/**
+ * Récupère un seul page (≤ 1000 bars) depuis iTick avec un fallback
+ * Hyperliquid quand iTick ne renvoie rien pour cette paire/TF.
+ */
+async function fetchOnePage(
+  inst: ItickInstrument,
+  intervalMin: number,
+  limit: number,
+  endTs: number | undefined,
+): Promise<OhlcCandle[]> {
   let bars: OhlcCandle[] = [];
 
-  // Source primaire : iTick REST kline.
   if (itick.isConfigured()) {
     try {
-      const rows = await itick.getKline(inst.code, opts.intervalMin, limit, opts.endTs, inst.asset);
+      const rows = await itick.getKline(inst.code, intervalMin, limit, endTs, inst.asset);
       bars = rows.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }));
     } catch (err) {
       console.warn(
-        `[itickCandles] backfill iTick ${inst.pair} ${opts.intervalMin}m KO:`,
+        `[itickCandles] iTick ${inst.pair} ${intervalMin}m page KO:`,
         (err as Error).message,
       );
     }
   }
 
-  // Fallback Hyperliquid pour les pairs disposant d'un xyz:* coin.
   const hlCoin = inst.hyperliquidCoin || null;
   if (bars.length === 0 && hlCoin) {
     try {
-      const fromSec = opts.endTs
-        ? Math.floor(opts.endTs / 1000) - opts.intervalMin * 60 * limit
-        : Math.floor(Date.now() / 1000) - opts.intervalMin * 60 * limit;
-      const toSec = opts.endTs ? Math.floor(opts.endTs / 1000) : Math.floor(Date.now() / 1000);
-      bars = await hyperliquid.getOhlcCandles({ coin: hlCoin }, opts.intervalMin, {
+      const fromSec = endTs
+        ? Math.floor(endTs / 1000) - intervalMin * 60 * limit
+        : Math.floor(Date.now() / 1000) - intervalMin * 60 * limit;
+      const toSec = endTs ? Math.floor(endTs / 1000) : Math.floor(Date.now() / 1000);
+      bars = await hyperliquid.getOhlcCandles({ coin: hlCoin }, intervalMin, {
         from: fromSec,
         to: toSec,
         countBack: limit,
       });
       if (bars.length > 0) {
-        console.log(`[itickCandles] fallback Hyperliquid ${inst.pair} (${hlCoin}) ${opts.intervalMin}m → ${bars.length} bars`);
+        console.log(`[itickCandles] fallback Hyperliquid ${inst.pair} (${hlCoin}) ${intervalMin}m → ${bars.length} bars`);
       }
     } catch (err) {
       console.warn(
-        `[itickCandles] fallback Hyperliquid ${inst.pair} ${opts.intervalMin}m KO:`,
+        `[itickCandles] fallback Hyperliquid ${inst.pair} ${intervalMin}m KO:`,
         (err as Error).message,
       );
     }
   }
 
-  if (bars.length === 0) return 0;
+  return bars;
+}
 
-  // Hydrate la mémoire (sans écraser une bougie live courante plus récente).
-  const series = getSeries(inst.pair, opts.intervalMin);
+/**
+ * Hydrate la mémoire + Postgres avec un lot de bougies.
+ * Ne remplace pas les bougies déjà présentes en RAM (live = source de
+ * vérité pour la bar la plus récente).
+ */
+async function ingestBars(
+  inst: ItickInstrument,
+  intervalMin: number,
+  bars: OhlcCandle[],
+  upsert: boolean,
+): Promise<void> {
+  if (bars.length === 0) return;
+
+  const series = getSeries(inst.pair, intervalMin);
   for (const bar of bars) {
     if (!series.bars.has(bar.time)) {
       series.bars.set(bar.time, bar);
@@ -290,35 +338,142 @@ async function backfillSeries(inst: ItickInstrument, opts: BackfillOptions): Pro
   }
   series.updatedAt = Date.now();
 
-  // Persist DB.
   try {
-    await persistCandles(inst.pair, inst.asset, opts.intervalMin, bars, opts.upsert ? 'upsert' : 'fillGap');
+    await persistCandles(inst.pair, inst.asset, intervalMin, bars, upsert ? 'upsert' : 'fillGap');
   } catch (err) {
     console.warn(
-      `[itickCandles] persist backfill ${inst.pair} ${opts.intervalMin}m KO:`,
+      `[itickCandles] persist ${inst.pair} ${intervalMin}m KO:`,
       (err as Error).message,
     );
   }
-  return bars.length;
+}
+
+/**
+ * Backfill paginé : fait plusieurs appels REST iTick avec endTs qui
+ * remonte dans le temps pour récupérer plus que 1000 bars par TF. S'arrête
+ * dès que iTick ne renvoie plus rien (limite naturelle de l'historique).
+ */
+async function backfillSeries(inst: ItickInstrument, opts: BackfillOptions): Promise<number> {
+  const totalTarget = Math.max(50, opts.limit ?? HISTORY_DEPTH[opts.intervalMin] ?? 1000);
+  let endTs = opts.endTs;
+  let total = 0;
+  const seenOldest = new Set<number>();
+
+  while (total < totalTarget) {
+    const remaining = totalTarget - total;
+    const pageLimit = Math.min(ITICK_PAGE_SIZE, remaining);
+    const bars = await fetchOnePage(inst, opts.intervalMin, pageLimit, endTs);
+    if (bars.length === 0) break;
+
+    await ingestBars(inst, opts.intervalMin, bars, opts.upsert ?? false);
+    total += bars.length;
+
+    // Préparer la page suivante : on remonte juste avant la plus ancienne
+    // bar reçue. Si iTick renvoie une page partielle (< pageLimit), on a
+    // probablement atteint le bord de l'historique disponible.
+    const oldest = bars.reduce((min, bar) => (bar.time < min ? bar.time : min), bars[0].time);
+    if (seenOldest.has(oldest)) break; // anti-boucle si l'API renvoie 2x la même page
+    seenOldest.add(oldest);
+    endTs = oldest * 1000 - 1;
+    if (bars.length < pageLimit) break;
+  }
+
+  return total;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                       4h derivation (60m → 240m)                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Construit l'historique 4h pour `pair` à partir des bougies 60m
+ * présentes en RAM. iTick REST ne renvoie pas systématiquement le 4h
+ * pour toutes les paires forex/commos/indices, on dérive donc côté
+ * serveur en agrégeant 4 bougies 1h adjacentes.
+ *
+ * Persiste les bougies dérivées en DB (mode fillGap, on n'écrase pas
+ * les 4h déjà construites en live).
+ */
+async function deriveH4FromH1(inst: ItickInstrument): Promise<number> {
+  const h1Series = memorySeries.get(seriesKey(inst.pair, 60));
+  if (!h1Series || h1Series.bars.size === 0) return 0;
+
+  const h4BucketSec = 240 * 60;
+  type Agg = { time: number; open: number; high: number; low: number; close: number; lastT: number };
+  const buckets = new Map<number, Agg>();
+  // On itère par ordre chronologique pour bien capturer open=premier 1h, close=dernier 1h.
+  const sortedH1 = [...h1Series.bars.values()].sort((a, b) => a.time - b.time);
+  for (const bar of sortedH1) {
+    const bucket = Math.floor(bar.time / h4BucketSec) * h4BucketSec;
+    const agg = buckets.get(bucket);
+    if (!agg) {
+      buckets.set(bucket, {
+        time: bucket,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        lastT: bar.time,
+      });
+    } else {
+      if (bar.high > agg.high) agg.high = bar.high;
+      if (bar.low < agg.low) agg.low = bar.low;
+      if (bar.time > agg.lastT) {
+        agg.close = bar.close;
+        agg.lastT = bar.time;
+      }
+    }
+  }
+
+  if (buckets.size === 0) return 0;
+
+  const h4Bars: OhlcCandle[] = [...buckets.values()]
+    .map(({ time, open, high, low, close }) => ({ time, open, high, low, close }))
+    .sort((a, b) => a.time - b.time);
+
+  await ingestBars(inst, 240, h4Bars, false);
+  return h4Bars.length;
 }
 
 /**
  * Backfill historique de toutes les paires iTick configurées sur tous
- * les intervalles. À appeler une fois au boot (en arrière-plan).
+ * les intervalles, avec pagination pour aller plus profond que les
+ * 1000 bars max d'un seul appel REST.
  *
- * Coût : ~11 paires × 6 intervalles ≈ 66 calls REST. Plan pro = 600/min.
+ * Le 4h n'est jamais demandé à iTick : on le dérive systématiquement
+ * depuis les bougies 1h une fois celles-ci backfillées.
  */
 export async function backfillAll(): Promise<void> {
+  // Tous les TFs à backfiller via REST iTick. Le 240 (4h) est volontairement
+  // exclu : il sera dérivé depuis le 60m juste après.
+  const restIntervals = [1, 5, 15, 30, 60, 1440];
+
   for (const inst of ITICK_INSTRUMENTS) {
-    for (const intervalMin of LIVE_INTERVALS) {
+    for (const intervalMin of restIntervals) {
       try {
-        await backfillSeries(inst, { intervalMin, limit: 1000, upsert: true });
+        const target = HISTORY_DEPTH[intervalMin] ?? 1000;
+        const fetched = await backfillSeries(inst, { intervalMin, limit: target, upsert: true });
+        if (fetched > 0) {
+          console.log(`[itickCandles] backfill ${inst.pair} ${intervalMin}m → ${fetched} bars`);
+        }
       } catch (err) {
         console.warn(
           `[itickCandles] backfillAll ${inst.pair} ${intervalMin}m KO:`,
           (err as Error).message,
         );
       }
+    }
+    // Dérive le 4h depuis l'historique 1h fraîchement chargé.
+    try {
+      const derived = await deriveH4FromH1(inst);
+      if (derived > 0) {
+        console.log(`[itickCandles] derived H4 ${inst.pair} → ${derived} bars`);
+      }
+    } catch (err) {
+      console.warn(
+        `[itickCandles] deriveH4FromH1 ${inst.pair} KO:`,
+        (err as Error).message,
+      );
     }
   }
   console.log(`[itickCandles] backfill historique terminé (${ITICK_INSTRUMENTS.length} paires)`);
@@ -327,6 +482,9 @@ export async function backfillAll(): Promise<void> {
 /**
  * Backfill ciblé pour une paire / intervalle spécifique. Utilisé par le
  * datafeed lorsque l'historique demandé sort de ce qui est en cache.
+ *
+ * Pour le 4h, on backfill d'abord le 1h puis on agrège, ce qui évite de
+ * dépendre d'un éventuel kType iTick 4h indispo.
  */
 export async function backfillRange(
   pair: string,
@@ -337,7 +495,19 @@ export async function backfillRange(
   const inst = findByPair(pair);
   if (!inst) return 0;
   if (!ITICK_CANDLE_INTERVALS.has(intervalMin)) return 0;
-  const count = Math.max(50, Math.min(1000, Math.ceil((toSec - fromSec) / (intervalMin * 60))));
+
+  if (intervalMin === 240) {
+    // Pour le 4h, on backfill d'abord le 1h (avec une marge ×4 sur le
+    // count) puis on dérive.
+    const h1Count = Math.max(
+      200,
+      Math.min(ITICK_PAGE_SIZE * 3, Math.ceil((toSec - fromSec) / (60 * 60)) + 50),
+    );
+    await backfillSeries(inst, { intervalMin: 60, limit: h1Count, endTs: toSec * 1000, upsert: false });
+    return deriveH4FromH1(inst);
+  }
+
+  const count = Math.max(50, Math.min(ITICK_PAGE_SIZE * 3, Math.ceil((toSec - fromSec) / (intervalMin * 60))));
   return backfillSeries(inst, { intervalMin, limit: count, endTs: toSec * 1000, upsert: false });
 }
 
