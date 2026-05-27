@@ -195,7 +195,8 @@ export interface ItickLiveTick {
 const HEARTBEAT_MS = 25_000;
 const RECONNECT_MIN_MS = 2_000;
 const RECONNECT_MAX_MS = 60_000;
-const RATE_LIMIT_COOLDOWN_MS = 30_000;
+const RATE_LIMIT_COOLDOWN_MIN_MS = 30_000;
+const RATE_LIMIT_COOLDOWN_MAX_MS = 5 * 60_000;
 const FAST_CLOSE_THRESHOLD_MS = 3_000;
 
 class ItickClusterManager extends EventEmitter {
@@ -213,6 +214,7 @@ class ItickClusterManager extends EventEmitter {
   private cooldownUntil = 0;
   private lastError = '';
   private intentionalClose = false;
+  private rateLimitHits = 0;
 
   constructor(asset: ItickAssetClass) {
     super();
@@ -256,6 +258,7 @@ class ItickClusterManager extends EventEmitter {
   resetCooldown(): void {
     this.cooldownUntil = 0;
     this.reconnectAttempt = 0;
+    this.rateLimitHits = 0;
     this.lastError = '';
     if (this.wantConnected && (!this.ws || this.ws.readyState !== WebSocket.OPEN)) {
       this.connect();
@@ -330,8 +333,20 @@ class ItickClusterManager extends EventEmitter {
     ws.on('unexpected-response', (_req, res) => {
       this.lastError = `HTTP ${res.statusCode}`;
       if (res.statusCode === 429) {
-        this.cooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-        console.warn(`[itickWS:${this.asset}] HTTP 429 — cooldown ${RATE_LIMIT_COOLDOWN_MS / 1000}s`);
+        this.rateLimitHits++;
+        // Backoff exponentiel par cluster sur 429 répétés. Le `api-free`
+        // endpoint n'autorise qu'1 connexion concurrente même avec un
+        // token pro — si on enchaîne les 429 c'est qu'il faut basculer
+        // sur l'endpoint pro via ITICK_WS_BASE=wss://api.itick.org.
+        const cooldown = Math.min(
+          RATE_LIMIT_COOLDOWN_MAX_MS,
+          RATE_LIMIT_COOLDOWN_MIN_MS * Math.pow(2, this.rateLimitHits - 1),
+        );
+        this.cooldownUntil = Date.now() + cooldown;
+        console.warn(
+          `[itickWS:${this.asset}] HTTP 429 (#${this.rateLimitHits}) — cooldown ${Math.round(cooldown / 1000)}s. `
+          + `Si répété, configure ITICK_WS_BASE=wss://api.itick.org pour utiliser ton plan pro.`,
+        );
       } else {
         console.warn(`[itickWS:${this.asset}] HTTP ${res.statusCode}`);
       }
@@ -363,6 +378,7 @@ class ItickClusterManager extends EventEmitter {
     if (msg?.resAc === 'auth' || msg?.ac === 'auth') {
       if (msg.code === 1 || msg.code === 0) {
         this.authenticated = true;
+        this.rateLimitHits = 0;
         console.log(`[itickWS:${this.asset}] auth OK`);
         this.queueSubscribe();
       } else {
