@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { compressImage } from '../utils/imageUpload';
 
 const SESSION_KEY = 'btf-comp-session';
 const SESSION_USER_KEY = 'btf-comp-user';
@@ -138,8 +139,10 @@ export default function CompetitionSettings() {
     setError('');
     setMessage('');
     try {
+      // 512px max suffit pour un avatar carré, JPEG q=0.85 → ~50 KB.
+      const compressed = await compressImage(file, { maxSide: 512, quality: 0.85 });
       const form = new FormData();
-      form.append('avatar', file);
+      form.append('avatar', compressed, 'avatar.jpg');
       const response = await fetch('/api/competition/me/avatar', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },

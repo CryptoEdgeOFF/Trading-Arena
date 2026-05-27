@@ -696,6 +696,43 @@ export class CompetitionManager {
         updated_at timestamptz not null default now()
       )
     `);
+    // Photos de lot (PS5, BTC, etc.) gérées en admin et servies via
+    // GET /api/prize-images/:id. Même approche que les avatars : durable
+    // sans disk volume Railway, un seul SELECT par hit.
+    await this.pool.query(`
+      create table if not exists comp_prize_images (
+        id text primary key,
+        mime text not null,
+        data bytea not null,
+        created_at timestamptz not null default now()
+      )
+    `);
+  }
+
+  async putPrizeImage(id: string, mime: string, data: Buffer): Promise<void> {
+    if (!this.pool) {
+      throw new Error('Database non configurée pour stocker les images');
+    }
+    await this.pool.query(
+      `insert into comp_prize_images (id, mime, data, created_at)
+       values ($1, $2, $3, now())
+       on conflict (id) do update
+         set mime = excluded.mime,
+             data = excluded.data,
+             created_at = now()`,
+      [id, mime, data],
+    );
+  }
+
+  async getPrizeImage(id: string): Promise<{ mime: string; data: Buffer } | null> {
+    if (!this.pool) return null;
+    const result = await this.pool.query(
+      'select mime, data from comp_prize_images where id = $1 limit 1',
+      [id],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { mime: String(row.mime), data: row.data as Buffer };
   }
 
   /**

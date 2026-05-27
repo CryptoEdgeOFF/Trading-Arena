@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { EventMode, MarketDataSource } from '../stores/useGameStore';
+import { compressImage } from '../utils/imageUpload';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -259,8 +260,12 @@ export default function CompetitionAdmin() {
   }
 
   async function uploadPrizeImage(file: File): Promise<string> {
+    // Compress côté client : limite à ~150 KB et évite le re-render lourd
+    // d'un <img src=data:…> de plusieurs Mo qui faisait "sauter" la page
+    // (decode synchrone du gros data URL bloquait le main thread).
+    const compressed = await compressImage(file, { maxSide: 1024, quality: 0.85 });
     const formData = new FormData();
-    formData.append('image', file);
+    formData.append('image', compressed, file.name.replace(/\.\w+$/, '.jpg'));
     const res = await adminFetch('/api/admin/prize-image', {
       method: 'POST',
       body: formData,

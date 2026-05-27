@@ -1398,12 +1398,46 @@ app.get('/api/avatars/:userId', async (req, res) => {
   }
 });
 
-app.post('/api/admin/prize-image', requireAdmin, upload.single('image'), (req, res) => {
+app.post('/api/admin/prize-image', requireAdmin, upload.single('image'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'Fichier image requis' });
     return;
   }
-  res.json({ imageUrl: uploadedImageUrl(req.file) });
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const id = crypto.randomUUID();
+    await competitionManager.putPrizeImage(id, req.file.mimetype || 'image/jpeg', buffer);
+    res.json({ imageUrl: `/api/prize-images/${id}` });
+  } catch (error: any) {
+    console.error('[prize-image] upload failed:', error?.message);
+    res.status(500).json({ error: error.message || 'Upload impossible' });
+  }
+});
+
+app.get('/api/prize-images/:id', async (req, res) => {
+  const id = String(req.params.id);
+  try {
+    const blob = await competitionManager.getPrizeImage(id);
+    if (!blob) {
+      res.status(404).json({ error: 'Image introuvable' });
+      return;
+    }
+    res.setHeader('Content-Type', blob.mime);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Content-Length', String(blob.data.length));
+    res.end(blob.data);
+  } catch (error: any) {
+    console.error(`[prize-image] read failed id=${id}:`, error?.message);
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
 });
 
 /**
