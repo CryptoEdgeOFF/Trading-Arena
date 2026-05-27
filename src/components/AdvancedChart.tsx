@@ -629,16 +629,30 @@ export default function AdvancedChart({
           try {
             chart.setResolution(intervalMinutesToResolution(intervalMinutes));
             chart.resetData();
-            // Re-engage auto-scaling on every visible pane's main price scale
-            // so the chart re-fits the new symbol's price range. Without this,
-            // the previous symbol's Y-zoom is kept and the new prices can sit
-            // entirely off-screen until the user double-clicks the price axis.
-            try {
-              for (const pane of chart.getPanes()) {
-                pane.getMainSourcePriceScale()?.setAutoScale(true);
+            // Re-fit every visible pane's main price scale to the new
+            // symbol's price range. Without this the previous Y-zoom is
+            // kept and the new prices can sit entirely off-screen
+            // (e.g. switching from BTC at 70k to EUR/USD at ~1.07).
+            //
+            // Two-step: trigger immediately + once data is actually loaded.
+            // The first call covers cases where bars are already cached;
+            // dataReady() guarantees we re-run after the new history is
+            // streamed in, since setSymbol's own callback fires before
+            // the datafeed has resolved the bars.
+            const rescaleAllPanes = () => {
+              try {
+                for (const pane of chart.getPanes()) {
+                  pane.getMainSourcePriceScale()?.setAutoScale(true);
+                }
+              } catch {
+                // ignore: panes/scales may not be ready yet
               }
+            };
+            rescaleAllPanes();
+            try {
+              chart.dataReady(rescaleAllPanes);
             } catch {
-              // ignore: panes/scales may not be ready immediately after symbol switch
+              // ignore: dataReady may not be available on every pane state
             }
           } catch {
             // ignore
