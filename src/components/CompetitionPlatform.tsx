@@ -243,7 +243,10 @@ function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: 
 
 function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?: () => void }) {
   return (
-    <header className="relative z-50 bg-[#050507] sm:bg-transparent sm:px-5 sm:pt-3">
+    <header
+      className="relative z-50 bg-[#050507] sm:bg-transparent sm:px-5 sm:pt-3"
+      style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
+    >
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 border-b border-white/10 bg-[#050507] px-3 py-2 shadow-[0_18px_60px_-42px_rgba(220,38,38,0.65)] sm:rounded-2xl sm:border sm:border-white/10 sm:bg-[#060609]/85 sm:px-4 sm:py-3 sm:backdrop-blur-2xl md:px-6">
         <Link to="/compete" className="group flex min-w-0 items-center gap-2 sm:gap-3">
           <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#dc2626]/30 bg-[#120506] sm:h-10 sm:w-10">
@@ -617,7 +620,7 @@ export default function CompetitionPlatform() {
   }, [myCompetitions]);
 
   return (
-    <div className="compete h-screen overflow-y-auto">
+    <div className="compete h-[100dvh] overflow-y-auto">
       <CompeteHeader user={session?.user || null} onLogout={logout} />
 
       <main className="compete-bg pb-20">

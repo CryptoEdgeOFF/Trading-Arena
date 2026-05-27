@@ -645,7 +645,7 @@ function OrderForm(props: OrderFormProps) {
             </button>
 
             {pairMenuOpen && (
-              <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100vh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
+              <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100dvh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
                 <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 sm:gap-2 sm:px-3">
                   {availableCategories.map((category) => (
                     <button
@@ -684,7 +684,7 @@ function OrderForm(props: OrderFormProps) {
                   <span className="text-right">Dernier prix</span>
                 </div>
 
-                <div className="max-h-[calc(100vh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
+                <div className="max-h-[calc(100dvh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
                   {filteredPairs.map((pair) => {
                     const baseLabel = pairBase(pair);
                     const quoteLabel = pair.split('/')[1] || 'USD';
@@ -3291,7 +3291,13 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   );
 
   return (
-    <div className="terminal flex h-screen min-h-screen flex-col overflow-hidden bg-[#020107] text-[12px] text-[#e0e2ea]">
+    <div
+      className="terminal flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden bg-[#020107] text-[12px] text-[#e0e2ea]"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
+    >
       {!livePaperMode && (
         <div className="m-3 rounded-md border border-[#3a2c08] bg-[#241a05] p-3 text-[12px] text-[#f4b400]">
           Aucune competition active pour ce terminal. Retourne sur <a className="underline" href="/compete">BTF Arena</a> pour rejoindre une arene.

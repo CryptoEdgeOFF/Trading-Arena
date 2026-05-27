@@ -161,7 +161,7 @@ export default function CompetitionSettings() {
   }
 
   return (
-    <div className="compete h-screen overflow-y-auto">
+    <div className="compete h-[100dvh] overflow-y-auto">
       <main className="compete-bg min-h-screen px-5 pb-24 pt-8 md:px-10">
         <div className="mx-auto max-w-4xl">
           <Link to="/compete" className="ghost-cta inline-flex px-4 py-2 text-xs uppercase tracking-[0.14em]">
