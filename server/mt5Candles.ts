@@ -92,6 +92,18 @@ function normalizeInterval(raw: unknown): number | null {
   return num;
 }
 
+/**
+ * Borne maximale autorisée pour un timestamp de bougie reçu via l'API.
+ * Les brokers MT5 (FTMO, IC Markets, etc.) livrent souvent leurs temps
+ * dans leur propre fuseau (GMT+2/+3). Sans compensation côté VPS Python,
+ * on recevrait des bougies dans le futur qui resteraient invisibles côté
+ * TradingView (la query SQL filtre `bar_time < to` avec to = now). On
+ * rejette donc tout ce qui est > 5 min dans le futur et on log un warning
+ * explicite pour aider à diagnostiquer le décalage broker.
+ */
+const FUTURE_BAR_TOLERANCE_SEC = 300;
+let lastFutureWarnAt = 0;
+
 function parseCandle(row: Mt5CandleInput): OhlcCandle | null {
   const time = asBarTime(row.time);
   const open = asOhlc(row.open);
@@ -100,6 +112,19 @@ function parseCandle(row: Mt5CandleInput): OhlcCandle | null {
   const close = asOhlc(row.close);
   if (time == null || open == null || high == null || low == null || close == null) return null;
   if (high < low) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (time > nowSec + FUTURE_BAR_TOLERANCE_SEC) {
+    const now = Date.now();
+    if (now - lastFutureWarnAt > 60_000) {
+      lastFutureWarnAt = now;
+      const offsetHours = ((time - nowSec) / 3600).toFixed(1);
+      console.warn(
+        `[mt5Candles] bougie rejetée — timestamp ${time} dans le futur (~${offsetHours}h). ` +
+        'Vérifie BROKER_OFFSET_SEC dans le script VPS Python.',
+      );
+    }
+    return null;
+  }
   return { time, open, high, low, close };
 }
 
@@ -151,6 +176,23 @@ async function ensureSchema(): Promise<void> {
   `);
 }
 
+async function purgeFutureBars(): Promise<void> {
+  if (!pool) return;
+  try {
+    const result = await pool.query(
+      `DELETE FROM mt5_candles
+       WHERE bar_time > EXTRACT(EPOCH FROM NOW())::bigint + $1`,
+      [FUTURE_BAR_TOLERANCE_SEC],
+    );
+    const removed = result.rowCount ?? 0;
+    if (removed > 0) {
+      console.warn(`[mt5Candles] purgé ${removed} bougies dans le futur (offset broker non corrigé côté VPS)`);
+    }
+  } catch (err) {
+    console.warn('[mt5Candles] purge futures bars failed:', (err as Error).message);
+  }
+}
+
 export function initMt5CandlesStore(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
@@ -170,6 +212,9 @@ export function initMt5CandlesStore(): Promise<void> {
     console.error('[mt5Candles] schema init failed:', (err as Error).message);
     throw err;
   });
+  // Nettoyer une seule fois au boot les bougies polluées (futures) issues
+  // d'un broker MT5 non compensé. Idempotent : si tout est OK, removed=0.
+  void schemaReady.then(() => purgeFutureBars());
   return schemaReady;
 }
 
