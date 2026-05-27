@@ -28,26 +28,67 @@ const MAX_HISTORY_BARS = 100_000;
 
 /**
  * Profondeur cible (en bougies) à conserver pour chaque timeframe au
- * backfill historique. iTick limite à 1000 bars par appel REST, donc on
- * pagine pour atteindre ces volumes (cf. `backfillSeriesPaginated`).
+ * backfill historique. iTick facture en "compute time" — chaque appel
+ * REST consomme du quota — donc on reste à ≤ 1 page (1000 bars) par
+ * (pair, TF) au boot. Le datafeed pourra paginer à la demande quand un
+ * user scroll vraiment loin dans le passé.
  *
- *   1m   → 3000 bars (~2.1 j)
- *   5m   → 3000 bars (~10.4 j)
- *   15m  → 3000 bars (~31 j)
- *   30m  → 2000 bars (~41 j)
- *   60m  → 2000 bars (~83 j ≈ 2.7 mois)
- *   240m → dérivé depuis le 60m, donc 500 bars (~83 j)
+ *   1m   → 1000 bars (~16h)
+ *   5m   → 1000 bars (~3.5j)
+ *   15m  → 1000 bars (~10.5j)
+ *   30m  → 1000 bars (~21j)
+ *   60m  → 1000 bars (~41j)
+ *   240m → dérivé depuis le 60m
  *   1d   → 1000 bars (~2.7 ans)
  */
 const HISTORY_DEPTH: Record<number, number> = {
-  1: 3000,
-  5: 3000,
-  15: 3000,
-  30: 2000,
-  60: 2000,
-  240: 500,
+  1: 1000,
+  5: 1000,
+  15: 1000,
+  30: 1000,
+  60: 1000,
+  240: 250,
   1440: 1000,
 };
+
+/** Nombre minimum de bougies déjà présentes en DB pour skipper le backfill au boot. */
+const SKIP_BACKFILL_THRESHOLD = 500;
+
+/* -------------------------------------------------------------------------- */
+/*                            iTick quota cooldown                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Si iTick refuse une requête (quota compute dépassé, rate-limit, etc.)
+ * on entre en cooldown global pour ne pas spammer la suite du backfill
+ * et ne pas faire échouer chaque requête user pendant que le quota est
+ * cramé. Pendant le cooldown, on retourne directement [] et on tombe
+ * sur le fallback Hyperliquid.
+ */
+let itickCooldownUntil = 0;
+
+function isItickInCooldown(): boolean {
+  return Date.now() < itickCooldownUntil;
+}
+
+function triggerItickCooldown(reason: string, durationMs = 10 * 60_000): void {
+  const until = Date.now() + durationMs;
+  if (until > itickCooldownUntil) {
+    itickCooldownUntil = until;
+    console.warn(`[itickCandles] cooldown iTick ${Math.round(durationMs / 1000)}s — ${reason}`);
+  }
+}
+
+function isQuotaError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('quota') ||
+    m.includes('compute time') ||
+    m.includes('rate limit') ||
+    m.includes('too many requests') ||
+    m.includes('429')
+  );
+}
 
 type SeriesKey = `${string}:${number}`;
 
@@ -279,15 +320,19 @@ async function fetchOnePage(
 ): Promise<OhlcCandle[]> {
   let bars: OhlcCandle[] = [];
 
-  if (itick.isConfigured()) {
+  if (itick.isConfigured() && !isItickInCooldown()) {
     try {
       const rows = await itick.getKline(inst.code, intervalMin, limit, endTs, inst.asset);
       bars = rows.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }));
     } catch (err) {
+      const message = (err as Error).message || '';
       console.warn(
         `[itickCandles] iTick ${inst.pair} ${intervalMin}m page KO:`,
-        (err as Error).message,
+        message,
       );
+      if (isQuotaError(message)) {
+        triggerItickCooldown(`${inst.pair} ${intervalMin}m: ${message}`);
+      }
     }
   }
 
@@ -349,17 +394,22 @@ async function ingestBars(
 }
 
 /**
- * Backfill paginé : fait plusieurs appels REST iTick avec endTs qui
- * remonte dans le temps pour récupérer plus que 1000 bars par TF. S'arrête
- * dès que iTick ne renvoie plus rien (limite naturelle de l'historique).
+ * Backfill simple : un seul appel REST iTick (≤ 1000 bars). Si une
+ * profondeur supérieure est demandée par le datafeed (`limit > 1000`),
+ * on pagine prudemment avec un délai entre les pages — mais au boot
+ * on s'en tient à une seule page pour ne pas exploser le quota iTick.
  */
 async function backfillSeries(inst: ItickInstrument, opts: BackfillOptions): Promise<number> {
   const totalTarget = Math.max(50, opts.limit ?? HISTORY_DEPTH[opts.intervalMin] ?? 1000);
   let endTs = opts.endTs;
   let total = 0;
   const seenOldest = new Set<number>();
+  // Au boot on coupe à 1 page (1000 bars). Pour les requêtes datafeed
+  // (countBack > 1000), on autorise jusqu'à 3 pages avec un petit délai.
+  const maxPages = totalTarget > ITICK_PAGE_SIZE ? 3 : 1;
+  let pages = 0;
 
-  while (total < totalTarget) {
+  while (total < totalTarget && pages < maxPages) {
     const remaining = totalTarget - total;
     const pageLimit = Math.min(ITICK_PAGE_SIZE, remaining);
     const bars = await fetchOnePage(inst, opts.intervalMin, pageLimit, endTs);
@@ -367,15 +417,17 @@ async function backfillSeries(inst: ItickInstrument, opts: BackfillOptions): Pro
 
     await ingestBars(inst, opts.intervalMin, bars, opts.upsert ?? false);
     total += bars.length;
+    pages += 1;
 
-    // Préparer la page suivante : on remonte juste avant la plus ancienne
-    // bar reçue. Si iTick renvoie une page partielle (< pageLimit), on a
-    // probablement atteint le bord de l'historique disponible.
     const oldest = bars.reduce((min, bar) => (bar.time < min ? bar.time : min), bars[0].time);
-    if (seenOldest.has(oldest)) break; // anti-boucle si l'API renvoie 2x la même page
+    if (seenOldest.has(oldest)) break;
     seenOldest.add(oldest);
     endTs = oldest * 1000 - 1;
     if (bars.length < pageLimit) break;
+    if (pages < maxPages) {
+      // Petit gap pour ne pas saturer le rate-limit / quota iTick.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
   return total;
@@ -436,26 +488,60 @@ async function deriveH4FromH1(inst: ItickInstrument): Promise<number> {
 }
 
 /**
+ * Compte le nombre de bougies déjà persistées en DB pour (pair, TF).
+ * Permet de décider au boot si on backfill ou pas.
+ */
+async function countPersistedBars(pair: string, intervalMin: number): Promise<number> {
+  if (!pool) return 0;
+  await schemaReady;
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM itick_candles WHERE pair = $1 AND timeframe = $2',
+      [pair, intervalMin],
+    );
+    return Number(result.rows?.[0]?.n ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Backfill historique de toutes les paires iTick configurées sur tous
- * les intervalles, avec pagination pour aller plus profond que les
- * 1000 bars max d'un seul appel REST.
+ * les intervalles. Stratégie économe en quota :
+ *   - Skip si la DB a déjà SKIP_BACKFILL_THRESHOLD bougies pour cette
+ *     (pair, TF) — l'historique a déjà été collecté lors d'un boot
+ *     précédent et le live tick suffit à le garder à jour.
+ *   - 1 page max (1000 bars) par (pair, TF) sinon.
+ *   - Délai entre les paires pour ne pas saturer iTick.
  *
  * Le 4h n'est jamais demandé à iTick : on le dérive systématiquement
- * depuis les bougies 1h une fois celles-ci backfillées.
+ * depuis les bougies 1h après chaque paire.
  */
 export async function backfillAll(): Promise<void> {
-  // Tous les TFs à backfiller via REST iTick. Le 240 (4h) est volontairement
-  // exclu : il sera dérivé depuis le 60m juste après.
   const restIntervals = [1, 5, 15, 30, 60, 1440];
 
   for (const inst of ITICK_INSTRUMENTS) {
     for (const intervalMin of restIntervals) {
       try {
+        const existing = await countPersistedBars(inst.pair, intervalMin);
+        if (existing >= SKIP_BACKFILL_THRESHOLD) {
+          // DB déjà chaude — pas de raison de re-cramer du quota iTick au
+          // boot. Le live tick (ws) prend le relais pour les updates.
+          continue;
+        }
         const target = HISTORY_DEPTH[intervalMin] ?? 1000;
         const fetched = await backfillSeries(inst, { intervalMin, limit: target, upsert: true });
         if (fetched > 0) {
           console.log(`[itickCandles] backfill ${inst.pair} ${intervalMin}m → ${fetched} bars`);
         }
+        if (isItickInCooldown()) {
+          // iTick est cuit, inutile de continuer à appeler — on laisse le
+          // cooldown expirer. La DB existante + Hyperliquid prennent le relais.
+          console.warn('[itickCandles] backfillAll: iTick en cooldown, arrêt anticipé');
+          return;
+        }
+        // Petit délai inter-TF pour étaler la charge.
+        await new Promise((resolve) => setTimeout(resolve, 200));
       } catch (err) {
         console.warn(
           `[itickCandles] backfillAll ${inst.pair} ${intervalMin}m KO:`,
@@ -463,7 +549,6 @@ export async function backfillAll(): Promise<void> {
         );
       }
     }
-    // Dérive le 4h depuis l'historique 1h fraîchement chargé.
     try {
       const derived = await deriveH4FromH1(inst);
       if (derived > 0) {

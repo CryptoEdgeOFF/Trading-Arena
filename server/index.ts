@@ -933,7 +933,13 @@ app.get('/api/paper/candles', async (req, res) => {
         const nowSec = Math.floor(Date.now() / 1000);
         const targetTo = candleOpts.to ?? nowSec;
         const targetFrom = candleOpts.from ?? targetTo - interval * 60 * (candleOpts.countBack ?? 500);
-        await itickCandles.backfillRange(pair, interval, targetFrom, targetTo);
+        try {
+          await itickCandles.backfillRange(pair, interval, targetFrom, targetTo);
+        } catch (err) {
+          // Quota / rate-limit iTick : on n'échoue pas la route, on
+          // tombera juste sur le fallback Hyperliquid plus bas.
+          console.warn(`[candles] backfill iTick ${pair} ${interval}m KO:`, (err as Error).message);
+        }
         itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
       }
       if (itickBars.length > 0) {
