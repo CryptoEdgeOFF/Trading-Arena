@@ -542,7 +542,15 @@ function PairSelectorMenu({
 
         {open && (
           <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100dvh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
-            <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 sm:gap-2 sm:px-3">
+            <button
+              type="button"
+              aria-label="Fermer"
+              onClick={() => setOpen(false)}
+              className="absolute right-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-[#332b43] bg-[#1d1828] text-[#c8c0d8] transition-colors hover:border-[#dc2626]/60 hover:text-white"
+            >
+              <Icon d={ICONS.close} size={14} />
+            </button>
+            <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
               {availableCategories.map((category) => (
                 <button
                   key={category.id}
