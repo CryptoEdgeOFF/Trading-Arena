@@ -236,6 +236,38 @@ app.get('/api/mt5/status', async (_req, res) => {
  *  - pair  : si fourni, ne purge que cette paire ; sinon toutes.
  *  - hours : fenêtre à effacer (défaut 24h, max 720h).
  */
+/**
+ * Backfill one-shot via OANDA pour combler un trou récent en DB.
+ * body: { pair?: string, hours?: number }
+ *   - pair  : paire à backfill ; si absent, fait tous les symboles MT5.
+ *   - hours : profondeur à reconstruire (défaut 24h, max 168h).
+ * Mode fillGap : n'écrase JAMAIS une bougie VPS bid FTMO déjà présente.
+ */
+app.post('/api/mt5/backfill', requireMt5FeedAuth, async (req, res) => {
+  try {
+    const { listMt5Symbols } = await import('./mt5Instruments.js');
+    const requested = typeof req.body?.pair === 'string' && req.body.pair.trim()
+      ? [String(req.body.pair).trim()]
+      : listMt5Symbols();
+    const hoursRaw = Number(req.body?.hours ?? 24);
+    const hours = Math.max(1, Math.min(168, Number.isFinite(hoursRaw) ? hoursRaw : 24));
+    const toSec = Math.floor(Date.now() / 1000);
+    const fromSec = toSec - hours * 3600;
+    const intervals = [1, 5, 15, 30, 60, 240, 1440];
+    const summary: Record<string, Record<string, number>> = {};
+    for (const pair of requested) {
+      summary[pair] = {};
+      for (const intervalMin of intervals) {
+        const inserted = await mt5Candles.backfillRange(pair, intervalMin, fromSec, toSec);
+        summary[pair][`m${intervalMin}`] = inserted;
+      }
+    }
+    res.json({ ok: true, hours, summary });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message || 'Backfill MT5 impossible' });
+  }
+});
+
 app.post('/api/mt5/purge', requireMt5FeedAuth, async (req, res) => {
   try {
     const pair = typeof req.body?.pair === 'string' && req.body.pair.trim()

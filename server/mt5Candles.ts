@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 import { mt5SymbolToPair, pairToMt5Symbol } from './mt5Instruments.js';
+import * as oanda from './oanda.js';
 
 export interface Mt5CandleInput {
   time: number;
@@ -226,13 +227,30 @@ export async function purgeRecentBars(pair: string | null, sinceSec: number): Pr
   return result.rowCount ?? 0;
 }
 
+/**
+ * @param mode 'upsert' (défaut) écrase une bougie existante — utilisé par
+ *             le push VPS qui est la source de vérité (bid FTMO).
+ *             'fillGap' ne touche pas une bougie déjà persistée — utilisé
+ *             par le backfill OANDA one-shot pour combler les trous sans
+ *             écraser une bougie VPS plus précise.
+ */
 async function persistCandles(
   pair: string,
   intervalMin: number,
   candles: OhlcCandle[],
+  mode: 'upsert' | 'fillGap' = 'upsert',
 ): Promise<void> {
   if (!pool) return;
   await schemaReady;
+
+  const conflictClause = mode === 'fillGap'
+    ? 'ON CONFLICT (pair, timeframe, bar_time) DO NOTHING'
+    : `ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
+         open = EXCLUDED.open,
+         high = EXCLUDED.high,
+         low = EXCLUDED.low,
+         close = EXCLUDED.close,
+         ingested_at = NOW()`;
 
   const chunkSize = 400;
   for (let offset = 0; offset < candles.length; offset += chunkSize) {
@@ -251,14 +269,44 @@ async function persistCandles(
     await pool.query(
       `INSERT INTO mt5_candles (pair, timeframe, bar_time, open, high, low, close)
        VALUES ${placeholders.join(', ')}
-       ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
-         open = EXCLUDED.open,
-         high = EXCLUDED.high,
-         low = EXCLUDED.low,
-         close = EXCLUDED.close,
-         ingested_at = NOW()`,
+       ${conflictClause}`,
       values,
     );
+  }
+}
+
+/**
+ * Backfill one-shot via OANDA pour combler un trou récent (par ex après
+ * une purge). N'écrase JAMAIS une bougie existante (mode fillGap), donc
+ * les bougies VPS bid FTMO déjà en place restent intactes.
+ */
+export async function backfillRange(
+  pair: string,
+  intervalMin: number,
+  fromSec: number,
+  toSec: number,
+): Promise<number> {
+  if (!pool) return 0;
+  if (!MT5_CANDLE_INTERVALS.has(intervalMin)) return 0;
+  if (!oanda.isConfigured()) return 0;
+  try {
+    const available = await oanda.isInstrumentAvailable(pair);
+    if (!available) return 0;
+    const count = Math.max(1, Math.ceil((toSec - fromSec) / (intervalMin * 60)));
+    const bars = await oanda.getOhlcCandles(pair, intervalMin, {
+      from: fromSec,
+      to: toSec,
+      countBack: Math.min(count, 5000),
+    });
+    if (bars.length === 0) return 0;
+    await persistCandles(pair, intervalMin, bars, 'fillGap');
+    return bars.length;
+  } catch (err) {
+    console.warn(
+      `[mt5Candles] backfill ${pair} ${intervalMin}m KO:`,
+      (err as Error).message,
+    );
+    return 0;
   }
 }
 
