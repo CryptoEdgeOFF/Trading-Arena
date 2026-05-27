@@ -193,6 +193,17 @@ async function purgeFutureBars(): Promise<void> {
   }
 }
 
+let purgeTimer: ReturnType<typeof setInterval> | null = null;
+function startPurgeLoop(): void {
+  if (purgeTimer) return;
+  // Lance immédiatement puis répète chaque minute. Couvre le cas où la
+  // garde côté API rejette de nouvelles bougies futures mais où des
+  // résidus polluent encore la DB (push antérieur avec offset broker).
+  void purgeFutureBars();
+  purgeTimer = setInterval(() => void purgeFutureBars(), 60_000);
+  if (typeof purgeTimer.unref === 'function') purgeTimer.unref();
+}
+
 export function initMt5CandlesStore(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
@@ -212,9 +223,9 @@ export function initMt5CandlesStore(): Promise<void> {
     console.error('[mt5Candles] schema init failed:', (err as Error).message);
     throw err;
   });
-  // Nettoyer une seule fois au boot les bougies polluées (futures) issues
-  // d'un broker MT5 non compensé. Idempotent : si tout est OK, removed=0.
-  void schemaReady.then(() => purgeFutureBars());
+  // Nettoyer en continu les bougies polluées (futures) issues d'un broker
+  // MT5 non compensé. Idempotent : si tout est OK, removed=0 à chaque pass.
+  void schemaReady.then(() => startPurgeLoop());
   return schemaReady;
 }
 
