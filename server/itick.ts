@@ -180,6 +180,68 @@ export function isConfigured(): boolean {
 }
 
 /* -------------------------------------------------------------------------- */
+/*                       Quotes batch (open/high/low/change)                  */
+/* -------------------------------------------------------------------------- */
+
+export interface ItickQuote {
+  symbol: string;
+  /** Last price. */
+  last: number;
+  /** Open du jour. */
+  open: number;
+  high: number;
+  low: number;
+  /** Change absolu sur la session courante. */
+  change: number;
+  /** Change en pourcentage (signé). */
+  changePct: number;
+  ts: number;
+}
+
+/**
+ * Récupère les quotes (open/high/low/change %) pour plusieurs symbols
+ * d'un même cluster en un seul appel REST.
+ *
+ *   GET /<asset>/quotes?region=GB&codes=EURUSD,GBPUSD,…
+ *
+ * Réponse iTick : `data` est un objet keyé par symbol.
+ */
+export async function getBatchQuotes(
+  codes: string[],
+  asset: ItickAssetClass = 'forex',
+  region = DEFAULT_REGION,
+): Promise<Record<string, ItickQuote>> {
+  if (codes.length === 0) return {};
+  const data = await fetchItick<Record<string, any>>(
+    `/${ASSET_PATH[asset]}/quotes`,
+    { region, codes: codes.join(',') },
+  );
+  const out: Record<string, ItickQuote> = {};
+  if (!data || typeof data !== 'object') return out;
+  for (const [code, row] of Object.entries(data)) {
+    const last = Number((row as any)?.ld);
+    const open = Number((row as any)?.o);
+    const high = Number((row as any)?.h);
+    const low = Number((row as any)?.l);
+    const change = Number((row as any)?.ch);
+    const changePct = Number((row as any)?.chp);
+    const ts = Number((row as any)?.t);
+    if (!Number.isFinite(last) || last <= 0) continue;
+    out[code.toUpperCase()] = {
+      symbol: code.toUpperCase(),
+      last,
+      open: Number.isFinite(open) ? open : last,
+      high: Number.isFinite(high) ? high : last,
+      low: Number.isFinite(low) ? low : last,
+      change: Number.isFinite(change) ? change : 0,
+      changePct: Number.isFinite(changePct) ? changePct : 0,
+      ts: Number.isFinite(ts) ? ts : Date.now(),
+    };
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------------------- */
 /*                              WebSocket upstream                            */
 /* -------------------------------------------------------------------------- */
 
@@ -501,8 +563,14 @@ class ItickClusterManager extends EventEmitter {
  * `itickFeed.setSubscriptions({ forex: [...], indices: [...] })` une fois
  * au boot et `on('tick', cb)` pour s'abonner à tous les ticks.
  */
+/** Période de rafraîchissement du polling REST `/quotes` pour les
+ *  open/high/low/change %. 60s = bon compromis entre fraîcheur et load. */
+const QUOTES_POLL_INTERVAL_MS = 60_000;
+
 class ItickFeedRegistry extends EventEmitter {
   private managers = new Map<ItickAssetClass, ItickClusterManager>();
+  private quotesByAsset = new Map<ItickAssetClass, Record<string, ItickQuote>>();
+  private quotesPollTimer: ReturnType<typeof setInterval> | null = null;
 
   private ensure(asset: ItickAssetClass): ItickClusterManager {
     let m = this.managers.get(asset);
@@ -512,6 +580,38 @@ class ItickFeedRegistry extends EventEmitter {
       this.managers.set(asset, m);
     }
     return m;
+  }
+
+  /** Quote (open/high/low/change %) la plus récente pour un symbol.
+   *  Lue depuis le poller REST `/quotes`. Retourne `undefined` si la
+   *  pair n'est pas suivie ou si aucun quote n'est arrivé encore. */
+  getQuote(symbol: string, asset?: ItickAssetClass): ItickQuote | undefined {
+    const sym = symbol.trim().toUpperCase();
+    if (asset) return this.quotesByAsset.get(asset)?.[sym];
+    for (const map of this.quotesByAsset.values()) {
+      if (map[sym]) return map[sym];
+    }
+    return undefined;
+  }
+
+  /** Démarre/relance le poller quotes. Idempotent. */
+  private startQuotesPoller(): void {
+    if (this.quotesPollTimer) return;
+    const tick = async () => {
+      for (const [asset, manager] of this.managers.entries()) {
+        const codes = manager.getStatus().symbols;
+        if (codes.length === 0) continue;
+        try {
+          const quotes = await getBatchQuotes(codes, asset);
+          this.quotesByAsset.set(asset, quotes);
+        } catch (err) {
+          console.warn(`[itickQuotes:${asset}] poll KO:`, (err as Error).message);
+        }
+      }
+    };
+    void tick();
+    this.quotesPollTimer = setInterval(tick, QUOTES_POLL_INTERVAL_MS);
+    if (typeof this.quotesPollTimer.unref === 'function') this.quotesPollTimer.unref();
   }
 
   /** Configure tous les clusters en une fois. Les clusters non listés
@@ -535,6 +635,7 @@ class ItickFeedRegistry extends EventEmitter {
     for (const [asset, m] of this.managers.entries()) {
       if (!wanted.has(asset)) m.setSymbols([]);
     }
+    if (wanted.size > 0) this.startQuotesPoller();
   }
 
   /**

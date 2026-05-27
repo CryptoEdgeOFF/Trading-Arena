@@ -678,6 +678,7 @@ function OrderForm(props: OrderFormProps) {
                 <div className="max-h-[calc(100vh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
                   {filteredPairs.map((pair) => {
                     const baseLabel = pairBase(pair);
+                    const quoteLabel = pair.split('/')[1] || 'USD';
                     const metadata = meta.marketMetadata[pair];
                     const fullName = metadata?.name || PAIR_NAME[baseLabel] || 'Crypto perpetual';
                     const marketTicker = meta.market[pair];
@@ -700,7 +701,7 @@ function OrderForm(props: OrderFormProps) {
                           <TokenIcon pair={pair} imageUrl={metadata?.imageUrl} />
                           <span className="min-w-0">
                             <span className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/USD</span></span>
+                              <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
                               {change24h != null && (
                                 <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
                                   {changePositive ? '+' : ''}{change24h.toFixed(2)}%
@@ -711,7 +712,7 @@ function OrderForm(props: OrderFormProps) {
                           </span>
                         </span>
                         <span className="num truncate text-right text-[11px] font-semibold text-[#ece8f5] sm:text-[12.5px]">
-                          {marketPrice ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} USD` : '–'}
+                          {marketPrice ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}` : '–'}
                         </span>
                       </button>
                     );

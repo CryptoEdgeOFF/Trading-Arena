@@ -7,6 +7,7 @@ import * as hyperliquid from './hyperliquid.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
 import { ITICK_INSTRUMENTS } from './itickInstruments.js';
 import { itickFeed } from './itick.js';
+import { pnlToAccountCcy } from './pairFx.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -131,9 +132,13 @@ const symbolToPair = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map
 const symbolToBinancePair = new Map(PAPER_PAIRS.filter((item) => item.binanceSymbol).map((item) => [item.binanceSymbol as string, item.pair]));
 
 function computePositionPnl(position: Position): number {
-  return position.side === 'long'
+  const rawPnl = position.side === 'long'
     ? (position.markPrice - position.entryPrice) * position.size
     : (position.entryPrice - position.markPrice) * position.size;
+  // Pair en USD (BTC/USD, GOLD/USD, …) : rawPnl est déjà en USD.
+  // Pair USD/JPY ou USD/CHF : rawPnl est en JPY/CHF, on convertit
+  // au mark price courant (cohérent avec le PnL flottant MT5).
+  return pnlToAccountCcy(position.pair, rawPnl, position.markPrice);
 }
 
 /** Bid/ask compétition : exécution au mark (futures), pas le spread CFD MT5/OANDA. */
@@ -510,9 +515,11 @@ export class PaperTradingEngine {
 
     const portion = sizeToClose / existing.size;
     const closeFee = exitPrice * sizeToClose * TAKER_FEE_RATE;
-    const realizedPnl = existing.side === 'long'
+    const rawRealizedPnl = existing.side === 'long'
       ? (exitPrice - existing.entryPrice) * sizeToClose
       : (existing.entryPrice - exitPrice) * sizeToClose;
+    // PnL réalisé converti en USD pour USD/JPY, USD/CHF (sinon identité).
+    const realizedPnl = pnlToAccountCcy(pair, rawRealizedPnl, exitPrice);
     player.feesPaid += closeFee;
     existing.feesPaid += closeFee;
 
@@ -672,13 +679,18 @@ export class PaperTradingEngine {
         const { bidPrice, askPrice } = markPrice > 0
           ? applyPaperMarkSpread(markPrice)
           : { bidPrice: 0, askPrice: 0 };
+        // Alimenté par le poller REST iTick `/quotes` (toutes les 60s).
+        // Pour les pairs où on n'a pas encore reçu de quote, on garde
+        // la dernière valeur connue (pas de saut visuel à 0%).
+        const itickQuote = itickFeed.getQuote(item.sourceSymbol);
+        const change24h = itickQuote?.changePct ?? this.market[item.pair]?.change24h ?? null;
         return [item.pair, {
           pair: item.pair,
           symbol: item.sourceSymbol,
           markPrice,
           bidPrice,
           askPrice,
-          change24h: this.market[item.pair]?.change24h ?? null,
+          change24h,
           spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
           updatedAt,
         } satisfies MarketTicker];
@@ -979,9 +991,10 @@ export class PaperTradingEngine {
 
     const portion = sizeToClose / existing.size;
     const closeFee = exitPrice * sizeToClose * TAKER_FEE_RATE;
-    const realizedPnl = existing.side === 'long'
+    const rawRealizedPnl = existing.side === 'long'
       ? (exitPrice - existing.entryPrice) * sizeToClose
       : (existing.entryPrice - exitPrice) * sizeToClose;
+    const realizedPnl = pnlToAccountCcy(existing.pair, rawRealizedPnl, exitPrice);
     player.feesPaid += closeFee;
     existing.feesPaid += closeFee;
 
