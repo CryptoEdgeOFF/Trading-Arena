@@ -17,6 +17,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/*
+ * iOS Safari auto-zooms when an input/textarea/select has font-size < 16px,
+ * which then breaks the layout (the header drops behind the URL bar after
+ * the keyboard closes). Force 16px on all form fields up to 640px viewport
+ * so the auto-zoom never triggers; desktop keeps the original styles.
+ */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 .font-rajdhani {
   font-family: 'Rajdhani', sans-serif;
 }

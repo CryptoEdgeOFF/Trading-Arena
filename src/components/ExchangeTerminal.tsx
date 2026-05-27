@@ -735,12 +735,12 @@ function OrderForm(props: OrderFormProps) {
               </div>
             )}
           </div>
-          <div className="ml-auto flex items-center gap-1.5 rounded-xl border border-[#241e30] bg-[#171320] px-2.5 py-1">
-            <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-[#7a8090]">Powered by</span>
+          <div className="ml-auto flex items-center gap-1 rounded-lg border border-[#241e30] bg-[#171320] px-1.5 py-0.5 sm:gap-1.5 sm:rounded-xl sm:px-2.5 sm:py-1">
+            <span className="hidden text-[9px] font-medium uppercase tracking-[0.12em] text-[#7a8090] sm:inline">Powered by</span>
             <img
               src="/assets/pictures/Kraken%20Logo_White.png"
               alt="Kraken"
-              className="h-4 object-contain opacity-90"
+              className="h-2.5 object-contain opacity-90 sm:h-4"
             />
           </div>
         </div>
@@ -1081,6 +1081,50 @@ function ChartArea({
 
   return (
     <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c]">
+      {isMobile && onPairChange && (
+        // Quick asset switcher for the mobile "Graphique" tab — uses a native
+        // <select> so iOS picks the system fullscreen picker (no zoom, no
+        // custom modal to manage). Categories are grouped via <optgroup>.
+        <div className="flex shrink-0 items-center gap-2 border-b border-[#2a2236] bg-[#0e0817] px-2 py-1.5">
+          <div className="relative flex-1">
+            <select
+              value={pair}
+              onChange={(event) => onPairChange?.(event.target.value)}
+              className="block w-full cursor-pointer appearance-none truncate rounded-lg border border-[#2a2236] bg-[#15101f] px-2.5 py-1.5 pr-7 font-semibold text-white outline-none focus:border-[#dc2626]/60"
+              aria-label="Choisir un actif"
+            >
+              {MARKET_CATEGORIES.map((category) => {
+                const pairsInCategory = pairs.filter(
+                  (p) => (pairCategories?.[p] || 'crypto') === category.id,
+                );
+                if (pairsInCategory.length === 0) return null;
+                return (
+                  <optgroup key={category.id} label={category.label}>
+                    {pairsInCategory.map((p) => (
+                      <option key={p} value={p}>
+                        {pairLabels?.[p] || p}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#7a8090]">
+              <Icon d={ICONS.chevron} size={12} />
+            </span>
+          </div>
+          {ticker?.markPrice != null && (
+            <span
+              className="num shrink-0 text-[12px] font-semibold tabular-nums text-white"
+              style={{
+                color: (ticker.change24h ?? 0) >= 0 ? '#15c990' : '#f43f6e',
+              }}
+            >
+              {fmtMarketPrice(ticker.markPrice, pairCategories?.[pair])}
+            </span>
+          )}
+        </div>
+      )}
       <div className="relative min-h-0 flex-1">
         <AdvancedChart
           pair={pair}
