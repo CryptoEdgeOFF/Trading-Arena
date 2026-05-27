@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 import { mt5SymbolToPair, pairToMt5Symbol } from './mt5Instruments.js';
 import * as oanda from './oanda.js';
+import * as hyperliquid from './hyperliquid.js';
 
 export interface Mt5CandleInput {
   time: number;
@@ -288,22 +289,50 @@ export async function backfillRange(
 ): Promise<number> {
   if (!pool) return 0;
   if (!MT5_CANDLE_INTERVALS.has(intervalMin)) return 0;
-  if (!oanda.isConfigured()) return 0;
+  const count = Math.max(1, Math.ceil((toSec - fromSec) / (intervalMin * 60)));
+  const cappedCount = Math.min(count, 5000);
+
+  let bars: OhlcCandle[] = [];
+  if (oanda.isConfigured()) {
+    try {
+      const available = await oanda.isInstrumentAvailable(pair);
+      if (available) {
+        bars = await oanda.getOhlcCandles(pair, intervalMin, {
+          from: fromSec,
+          to: toSec,
+          countBack: cappedCount,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        `[mt5Candles] OANDA backfill ${pair} ${intervalMin}m KO:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  if (bars.length === 0) {
+    try {
+      bars = await hyperliquid.getOhlcCandles(pair, intervalMin, {
+        from: fromSec,
+        to: toSec,
+        countBack: cappedCount,
+      });
+    } catch (err) {
+      console.warn(
+        `[mt5Candles] Hyperliquid backfill ${pair} ${intervalMin}m KO:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  if (bars.length === 0) return 0;
   try {
-    const available = await oanda.isInstrumentAvailable(pair);
-    if (!available) return 0;
-    const count = Math.max(1, Math.ceil((toSec - fromSec) / (intervalMin * 60)));
-    const bars = await oanda.getOhlcCandles(pair, intervalMin, {
-      from: fromSec,
-      to: toSec,
-      countBack: Math.min(count, 5000),
-    });
-    if (bars.length === 0) return 0;
     await persistCandles(pair, intervalMin, bars, 'fillGap');
     return bars.length;
   } catch (err) {
     console.warn(
-      `[mt5Candles] backfill ${pair} ${intervalMin}m KO:`,
+      `[mt5Candles] persist backfill ${pair} ${intervalMin}m KO:`,
       (err as Error).message,
     );
     return 0;
