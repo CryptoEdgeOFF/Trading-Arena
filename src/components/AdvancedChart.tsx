@@ -753,30 +753,28 @@ export default function AdvancedChart({
         if (arrows.has(trade.id)) continue;
         try {
           const isLong = trade.side === 'long';
-          const overrides = isLong
-            ? {
-                'linetoolarrowmarkup.showLabel': false,
-                'linetoolarrowmarkup.fontsize': 1,
-                'linetoolarrowmarkup.arrowColor': '#16a34a',
-                'linetoolarrowmarkup.color': '#16a34a',
-              }
-            : {
-                'linetoolarrowmarkdown.showLabel': false,
-                'linetoolarrowmarkdown.fontsize': 1,
-                'linetoolarrowmarkdown.arrowColor': '#dc2626',
-                'linetoolarrowmarkdown.color': '#dc2626',
-              };
-          // TradingView expects UNIX seconds for the shape time anchor.
+          // We render a tiny Unicode triangle through the `text` shape so we
+          // can fully control the size with `fontsize`. The native arrow_up
+          // / arrow_down shapes have a hard-coded minimum size which the
+          // user found too big.
           const entityId = await chart!.createShape(
             { time: Math.floor(trade.time / 1000), price: trade.price },
             {
-              shape: isLong ? 'arrow_up' : 'arrow_down',
+              shape: 'text',
+              text: isLong ? '▲' : '▼',
               lock: true,
               disableSave: true,
               disableSelection: true,
               disableUndo: true,
               zOrder: 'top',
-              overrides,
+              overrides: {
+                'linetooltext.fontsize': 9,
+                'linetooltext.color': isLong ? '#16a34a' : '#dc2626',
+                'linetooltext.bold': true,
+                'linetooltext.fillBackground': false,
+                'linetooltext.drawBorder': false,
+                'linetooltext.fixedSize': true,
+              },
             },
           );
           if (cancelled) {
