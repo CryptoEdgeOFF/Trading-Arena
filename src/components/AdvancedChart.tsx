@@ -629,6 +629,17 @@ export default function AdvancedChart({
           try {
             chart.setResolution(intervalMinutesToResolution(intervalMinutes));
             chart.resetData();
+            // Re-engage auto-scaling on every visible pane's main price scale
+            // so the chart re-fits the new symbol's price range. Without this,
+            // the previous symbol's Y-zoom is kept and the new prices can sit
+            // entirely off-screen until the user double-clicks the price axis.
+            try {
+              for (const pane of chart.getPanes()) {
+                pane.getMainSourcePriceScale()?.setAutoScale(true);
+              }
+            } catch {
+              // ignore: panes/scales may not be ready immediately after symbol switch
+            }
           } catch {
             // ignore
           }
