@@ -17,6 +17,7 @@ interface LeaderboardRow {
   rank: number;
   userId: string;
   name: string;
+  avatarUrl?: string | null;
   pnlPercent: number;
   pnlUsd: number;
   tradesCount: number;
@@ -198,7 +199,7 @@ export default function CompetitionPublicLeaderboard() {
       <header className="sticky top-0 z-40 border-b border-[#1a1a20] bg-[rgba(5,5,7,0.85)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4 md:px-10">
           <Link to="/compete" className="flex items-center gap-3">
-            <img src="/assets/pictures/logoBTF.png" alt="BTF" className="h-9 w-9 rounded-lg object-contain" />
+            <img src="/assets/pictures/logoBTF.webp" alt="BTF" className="h-9 w-9 rounded-lg object-contain" />
             <div className="flex items-baseline gap-2">
               <span className="display text-xl font-bold text-white">BTF</span>
               <span className="micro text-xs text-[#dc2626]">Arena</span>
@@ -471,8 +472,20 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
       className={`podium-card podium-${place} card-shine`}
     >
       <div className={`rank-circle ${tier} mx-auto`}>{place}</div>
-      <div className="mx-auto mt-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-base font-bold text-white shadow-inner">
-        {getInitials(row.name)}
+      <div className="mx-auto mt-4 h-14 w-14 overflow-hidden rounded-2xl bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] shadow-inner">
+        {row.avatarUrl ? (
+          <img
+            src={row.avatarUrl}
+            alt={row.name}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-base font-bold text-white">
+            {getInitials(row.name)}
+          </div>
+        )}
       </div>
       <div className="display mt-3 truncate text-base font-bold text-white sm:text-lg">{row.name}</div>
       <div
@@ -511,8 +524,18 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
         <span className={`rank-circle ${tier}`}>{row.rank}</span>
       </div>
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white sm:h-8 sm:w-8 sm:text-[11px]">
-          {getInitials(row.name)}
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white sm:h-8 sm:w-8 sm:text-[11px]">
+          {row.avatarUrl ? (
+            <img
+              src={row.avatarUrl}
+              alt={row.name}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            getInitials(row.name)
+          )}
         </span>
         <span className="display flex min-w-0 items-center gap-2 text-sm font-semibold text-white sm:text-base">
           <span className="truncate">{row.name}</span>

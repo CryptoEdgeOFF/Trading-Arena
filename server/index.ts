@@ -167,6 +167,7 @@ const arenaSnapshots = new Map<string, Map<string, {
   pnlUsd: number;
   tradesCount: number;
   updatedAt: number;
+  avatarUrl: string | null;
 }>>();
 
 // --- Admin auth (single shared code, configurable via env) ---
@@ -532,6 +533,7 @@ type ArenaLeaderboardEntry = {
   rank: number;
   userId: string;
   name: string;
+  avatarUrl: string | null;
   pnlPercent: number;
   pnlUsd: number;
   tradesCount: number;
@@ -541,6 +543,7 @@ type ArenaLeaderboardEntry = {
 type ArenaPatchEntry = {
   userId: string;
   name?: string;
+  avatarUrl?: string | null;
   rank?: number;
   pnlPercent?: number;
   pnlUsd?: number;
@@ -580,10 +583,12 @@ function computeArenaPatch(
       prev.pnlPercent !== entry.pnlPercent ||
       prev.pnlUsd !== entry.pnlUsd ||
       prev.tradesCount !== entry.tradesCount ||
-      prev.updatedAt !== entry.updatedAt
+      prev.updatedAt !== entry.updatedAt ||
+      (prev.avatarUrl ?? null) !== (entry.avatarUrl ?? null)
     ) {
       const diff: ArenaPatchEntry = { userId: entry.userId };
       if (!prev) diff.name = entry.name;
+      if (!prev || (prev.avatarUrl ?? null) !== (entry.avatarUrl ?? null)) diff.avatarUrl = entry.avatarUrl ?? null;
       if (!prev || prev.rank !== entry.rank) diff.rank = entry.rank;
       if (!prev || prev.pnlPercent !== entry.pnlPercent) diff.pnlPercent = entry.pnlPercent;
       if (!prev || prev.pnlUsd !== entry.pnlUsd) diff.pnlUsd = entry.pnlUsd;
@@ -606,6 +611,7 @@ function computeArenaPatch(
         pnlUsd: v.pnlUsd,
         tradesCount: v.tradesCount,
         updatedAt: v.updatedAt,
+        avatarUrl: v.avatarUrl ?? null,
       }]),
     ),
   );
@@ -646,7 +652,7 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
     ws.send(JSON.stringify({ type: 'arena:init', data: init }));
     // Prime the diff baseline with the snapshot we just sent.
     const baseline = new Map<string, {
-      rank: number; pnlPercent: number; pnlUsd: number; tradesCount: number; updatedAt: number;
+      rank: number; pnlPercent: number; pnlUsd: number; tradesCount: number; updatedAt: number; avatarUrl: string | null;
     }>();
     for (const entry of init.leaderboard) {
       baseline.set(entry.userId, {
@@ -655,6 +661,7 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
         pnlUsd: entry.pnlUsd,
         tradesCount: entry.tradesCount,
         updatedAt: entry.updatedAt,
+        avatarUrl: entry.avatarUrl ?? null,
       });
     }
     // Only refresh the snapshot if we have nothing yet. Other concurrent
