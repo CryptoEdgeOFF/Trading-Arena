@@ -1629,12 +1629,20 @@ if (!process.env.NETLIFY) {
   serverReady.then(() => {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
-      // Préchauffer uniquement BTC/M1 (le pair le plus consulté). Charger
-      // plus de paires en parallèle au boot provoque des bursts qui ban
-      // l'IP Railway côté Binance (HTTP 418) — le cache reste vide et
-      // les requêtes utilisateur échouent.
+      // Préchauffer le top des pairs crypto avec le **fast path** (1500
+      // bars chacun = 1 round-trip Binance ~300 ms). Le background fill
+      // jusqu'à 40k bars se déclenche ensuite tout seul dans
+      // `engineCandlesCache.startFetch`. On garde une liste réduite pour
+      // ne pas saturer le rate limit Binance Futures (~1200 req/min) au
+      // boot Railway.
       engineCandlesCache.prewarm(
-        [{ pair: 'BTC/USD', source: 'binance' }],
+        [
+          { pair: 'BTC/USD', source: 'binance' },
+          { pair: 'ETH/USD', source: 'binance' },
+          { pair: 'SOL/USD', source: 'binance' },
+          { pair: 'XRP/USD', source: 'binance' },
+          { pair: 'BNB/USD', source: 'binance' },
+        ],
         [1],
       );
 

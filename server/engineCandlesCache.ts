@@ -22,11 +22,20 @@ interface CachedSeries {
 
 const SUPPORTED_INTERVALS = [1, 5, 15, 30, 60, 240, 1440] as const;
 const MAX_CACHE_BARS = 40_000;
+/**
+ * Fast path : nombre de bars retourné immédiatement au premier hit
+ * (avant que le background fetch ne complète jusqu'à `MAX_CACHE_BARS`).
+ * 1500 = 1 seul call Binance/Hyperliquid (~300 ms) — couvre largement le
+ * premier rendu TradingView (typiquement 300-500 bars demandés).
+ */
+const FAST_PATH_BARS = 1500;
 /** After this delay a background refresh is fired on the next read. */
 const STALE_REFRESH_MS = 10 * 60 * 1000;
 
 const cache = new Map<string, CachedSeries>();
 const inflightFetches = new Map<string, Promise<CachedSeries>>();
+/** Background fills en cours pour compléter une série jusqu'à MAX_CACHE_BARS. */
+const inflightBackfills = new Map<string, Promise<void>>();
 
 function key(pair: string, interval: number): string {
   return `${pair}:${interval}`;
@@ -36,10 +45,11 @@ async function fetchFromUpstream(
   pair: string,
   interval: number,
   source: Source,
+  countBack: number,
 ): Promise<OhlcCandle[]> {
   if (source === 'binance') {
     try {
-      return await binance.getOhlcCandles(pair, interval, { countBack: MAX_CACHE_BARS });
+      return await binance.getOhlcCandles(pair, interval, { countBack });
     } catch (err) {
       const msg = (err as Error).message;
       // Binance Futures occasionally rate-limits with HTTP 418 (IP ban) or
@@ -48,7 +58,7 @@ async function fetchFromUpstream(
       if (/4(18|29)/.test(msg)) {
         console.warn(`[candles cache] Binance ${pair} ${interval}m KO (${msg}), fallback Hyperliquid`);
         try {
-          return await hyperliquid.getOhlcCandles(pair, interval, { countBack: MAX_CACHE_BARS });
+          return await hyperliquid.getOhlcCandles(pair, interval, { countBack });
         } catch (hlErr) {
           console.warn(`[candles cache] Hyperliquid ${pair} ${interval}m KO:`, (hlErr as Error).message);
           throw err; // propagate the original Binance error
@@ -60,15 +70,23 @@ async function fetchFromUpstream(
   return kraken.getOhlcCandles(pair, interval);
 }
 
+/**
+ * Cold start : un seul round-trip Binance pour les ~1500 dernières bars
+ * (≈300 ms) afin que TradingView puisse rendre le premier viewport sans
+ * attendre la pagination 40k. Si l'utilisateur scrolle vers le passé, le
+ * background fill (déclenché juste après) aura déjà rempli le cache.
+ */
 function startFetch(
   pair: string,
   interval: number,
   source: Source,
+  fastPath = true,
 ): Promise<CachedSeries> {
   const k = key(pair, interval);
+  const target = fastPath ? FAST_PATH_BARS : MAX_CACHE_BARS;
   const pending = (async () => {
     try {
-      const candles = await fetchFromUpstream(pair, interval, source);
+      const candles = await fetchFromUpstream(pair, interval, source, target);
       candles.sort((a, b) => a.time - b.time);
       const series: CachedSeries = {
         candles,
@@ -76,6 +94,12 @@ function startFetch(
         source,
       };
       cache.set(k, series);
+      // Si on est sur le fast path, on lance un background fill pour
+      // étendre la série jusqu'à MAX_CACHE_BARS (les futurs scrolls
+      // historiques seront servis depuis le cache). Best effort.
+      if (fastPath && candles.length >= FAST_PATH_BARS - 50) {
+        scheduleBackgroundFill(pair, interval, source);
+      }
       return series;
     } finally {
       // Always release the in-flight slot, success or failure, so the
@@ -86,6 +110,41 @@ function startFetch(
   })();
   inflightFetches.set(k, pending);
   return pending;
+}
+
+function scheduleBackgroundFill(pair: string, interval: number, source: Source): Promise<void> {
+  const k = key(pair, interval);
+  const existing = inflightBackfills.get(k);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      const full = await fetchFromUpstream(pair, interval, source, MAX_CACHE_BARS);
+      full.sort((a, b) => a.time - b.time);
+      const cached = cache.get(k);
+      // Le live tick a pu déjà avancer la dernière bar pendant qu'on
+      // paginait → on merge sur `time` en gardant la version la plus
+      // récente (live > REST historique).
+      const merged = new Map<number, OhlcCandle>();
+      for (const c of full) merged.set(c.time, c);
+      if (cached) {
+        const lastTime = cached.candles[cached.candles.length - 1]?.time;
+        for (const c of cached.candles) {
+          if (c.time === lastTime) merged.set(c.time, c);
+        }
+      }
+      const candles = [...merged.values()].sort((a, b) => a.time - b.time);
+      cache.set(k, { candles, fetchedAt: Date.now(), source });
+    } catch (err) {
+      console.warn(
+        `[candles cache] background fill ${pair} ${interval}m failed:`,
+        (err as Error).message,
+      );
+    } finally {
+      inflightBackfills.delete(k);
+    }
+  })();
+  inflightBackfills.set(k, p);
+  return p;
 }
 
 function filterByOpts(candles: OhlcCandle[], opts: OhlcQueryOptions): OhlcCandle[] {
@@ -132,6 +191,26 @@ export async function getCachedCandles(
           (err as Error).message,
         );
       });
+    }
+  }
+
+  // Si l'utilisateur scrolle vers le passé pendant que le background fill
+  // est encore en cours et qu'on n'a que le fast-path en RAM, on attend
+  // le fill plutôt que de retourner un trou (TradingView pense alors qu'il
+  // n'y a plus d'historique et arrête le scroll).
+  const oldestCached = series.candles[0]?.time ?? Number.POSITIVE_INFINITY;
+  const wantsOlder = (opts.from != null && opts.from > 0 && opts.from < oldestCached)
+    || (opts.countBack != null && opts.countBack > series.candles.length);
+  if (wantsOlder) {
+    const fill = inflightBackfills.get(k);
+    if (fill) {
+      await fill;
+      series = cache.get(k) ?? series;
+    } else if (series.candles.length < MAX_CACHE_BARS) {
+      // Fast path déjà servi mais background fill jamais lancé (ex: cache
+      // hydraté par un autre code path) → on déclenche maintenant.
+      await scheduleBackgroundFill(pair, interval, source);
+      series = cache.get(k) ?? series;
     }
   }
 
