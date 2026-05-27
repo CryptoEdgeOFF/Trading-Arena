@@ -192,7 +192,10 @@ export interface ItickLiveTick {
   ts: number;
 }
 
-const HEARTBEAT_MS = 25_000;
+/** iTick exige un keepalive applicatif `{"ac":"ping",...}` au moins
+ *  toutes les 60s, sinon le serveur ferme la connexion. On envoie à
+ *  30s pour garder une marge confortable. */
+const HEARTBEAT_MS = 30_000;
 const RECONNECT_MIN_MS = 2_000;
 const RECONNECT_MAX_MS = 60_000;
 const RATE_LIMIT_COOLDOWN_MIN_MS = 30_000;
@@ -392,6 +395,14 @@ class ItickClusterManager extends EventEmitter {
       }
       return;
     }
+    if (msg?.resAc === 'pong' || msg?.ac === 'pong') {
+      return;
+    }
+    // Message d'accueil pré-auth : `{"code":1,"msg":"Connected Successfully"}`.
+    // Pas de `data` ni de `resAc`. À ignorer silencieusement.
+    if (msg?.code !== undefined && !msg?.data && !msg?.s) {
+      return;
+    }
     const data = msg?.data && typeof msg.data === 'object' ? msg.data : msg;
     const symbol = String(data?.s || '').toUpperCase();
     if (!symbol) return;
@@ -441,8 +452,14 @@ class ItickClusterManager extends EventEmitter {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        try { this.ws.ping(); } catch { /* noop */ }
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      // iTick attend un keepalive *applicatif* (pas un PING WS natif).
+      // cf. https://docs.itick.org/websocket/forex
+      const payload = JSON.stringify({ ac: 'ping', params: String(Date.now()) });
+      try {
+        this.ws.send(payload);
+      } catch (err) {
+        console.warn(`[itickWS:${this.asset}] heartbeat send failed:`, (err as Error).message);
       }
     }, HEARTBEAT_MS);
     if (typeof this.heartbeatTimer.unref === 'function') this.heartbeatTimer.unref();
