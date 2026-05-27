@@ -229,13 +229,29 @@ export function initMt5CandlesStore(): Promise<void> {
   return schemaReady;
 }
 
+/**
+ * @param mode 'upsert' (défaut) écrase une bougie existante — utilisé par le
+ *             push VPS qui est la source de vérité (bid FTMO). 'fillGap' ne
+ *             touche pas une bougie déjà persistée — utilisé par le backfill
+ *             OANDA pour ne pas écraser les bougies VPS avec un prix mid.
+ */
 async function persistCandles(
   pair: string,
   intervalMin: number,
   candles: OhlcCandle[],
+  mode: 'upsert' | 'fillGap' = 'upsert',
 ): Promise<void> {
   if (!pool) return;
   await schemaReady;
+
+  const conflictClause = mode === 'fillGap'
+    ? 'ON CONFLICT (pair, timeframe, bar_time) DO NOTHING'
+    : `ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
+         open = EXCLUDED.open,
+         high = EXCLUDED.high,
+         low = EXCLUDED.low,
+         close = EXCLUDED.close,
+         ingested_at = NOW()`;
 
   const chunkSize = 400;
   for (let offset = 0; offset < candles.length; offset += chunkSize) {
@@ -254,12 +270,7 @@ async function persistCandles(
     await pool.query(
       `INSERT INTO mt5_candles (pair, timeframe, bar_time, open, high, low, close)
        VALUES ${placeholders.join(', ')}
-       ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
-         open = EXCLUDED.open,
-         high = EXCLUDED.high,
-         low = EXCLUDED.low,
-         close = EXCLUDED.close,
-         ingested_at = NOW()`,
+       ${conflictClause}`,
       values,
     );
   }
@@ -493,7 +504,9 @@ export async function ensureRecentBackfill(
       : bars;
     if (filtered.length === 0) return;
 
-    await persistCandles(pair, intervalMin, filtered);
+    // Mode 'fillGap' : ne touche pas aux bougies VPS déjà persistées (prix
+    // FTMO bid). OANDA est juste là pour combler les trous historiques.
+    await persistCandles(pair, intervalMin, filtered, 'fillGap');
   } catch (err) {
     console.warn(
       `[mt5Candles] backfill ${pair} ${intervalMin}m failed:`,
@@ -608,22 +621,12 @@ export async function getCandles(
     }
   }
 
-  // L'in-flight bar (reconstruite depuis les ticks) n'est plus appendée :
-  // sur les timeframes longs (H1, H4…) elle ouvrait au mauvais prix car
-  // le serveur n'avait pas tous les ticks depuis le début du bucket. Le
-  // VPS Python pousse maintenant la bougie courante chaque seconde via
-  // POST /api/mt5/candles, ce qui est plus précis. On ne garde l'in-flight
-  // que comme fallback strict (M1 uniquement) si rien d'autre n'est dispo.
-  const inflight = safeInterval === 1 ? getInflight(pair, safeInterval) : null;
-  if (inflight && inflight.time < toSec) {
-    const lastTime = bars.length > 0 ? bars[bars.length - 1].time : -1;
-    if (inflight.time > lastTime && (fromSec == null || inflight.time >= fromSec)) {
-      bars.push(inflight);
-    } else if (inflight.time === lastTime) {
-      bars[bars.length - 1] = inflight;
-    }
-  }
-
+  // L'in-flight bar (construite depuis les ticks au mid) n'est plus
+  // appendée du tout. MT5 dessine ses bougies au bid, donc utiliser le mid
+  // côté serveur produit des bougies à forme légèrement différente de ce
+  // que le trader voit dans MT5. Le VPS push la bougie courante toutes les
+  // 5s avec les vraies valeurs MT5 — c'est ça qu'on sert. La fluidité
+  // visuelle entre 2 push VPS est assurée côté client par pushTick().
   return bars;
 }
 
