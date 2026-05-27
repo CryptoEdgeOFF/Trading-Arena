@@ -333,26 +333,31 @@ class ItickClusterManager extends EventEmitter {
       console.warn(`[itickWS:${this.asset}] error:`, err.message);
     });
 
-    ws.on('unexpected-response', (_req, res) => {
+    ws.on('unexpected-response', (req, res) => {
       this.lastError = `HTTP ${res.statusCode}`;
       if (res.statusCode === 429) {
         this.rateLimitHits++;
-        // Backoff exponentiel par cluster sur 429 répétés. Le `api-free`
-        // endpoint n'autorise qu'1 connexion concurrente même avec un
-        // token pro — si on enchaîne les 429 c'est qu'il faut basculer
-        // sur l'endpoint pro via ITICK_WS_BASE=wss://api.itick.org.
         const cooldown = Math.min(
           RATE_LIMIT_COOLDOWN_MAX_MS,
           RATE_LIMIT_COOLDOWN_MIN_MS * Math.pow(2, this.rateLimitHits - 1),
         );
         this.cooldownUntil = Date.now() + cooldown;
         console.warn(
-          `[itickWS:${this.asset}] HTTP 429 (#${this.rateLimitHits}) — cooldown ${Math.round(cooldown / 1000)}s. `
-          + `Si répété, configure ITICK_WS_BASE=wss://api.itick.org pour utiliser ton plan pro.`,
+          `[itickWS:${this.asset}] HTTP 429 (#${this.rateLimitHits}) — cooldown ${Math.round(cooldown / 1000)}s.`,
         );
       } else {
         console.warn(`[itickWS:${this.asset}] HTTP ${res.statusCode}`);
       }
+      // CRITIQUE : sur `unexpected-response`, la lib `ws` n'émet PAS
+      // l'event `close` automatiquement, donc `scheduleReconnect()` ne
+      // serait jamais appelé. On force la cleanup ici pour que le
+      // cluster retente après le cooldown.
+      try { req.destroy(); } catch { /* noop */ }
+      try { ws.terminate(); } catch { /* noop */ }
+      this.authenticated = false;
+      this.stopHeartbeat();
+      this.ws = null;
+      if (this.wantConnected) this.scheduleReconnect();
     });
 
     ws.on('close', (code, reason) => {
@@ -503,15 +508,23 @@ class ItickFeedRegistry extends EventEmitter {
   }
 
   /** Configure tous les clusters en une fois. Les clusters non listés
-   *  sont déconnectés. */
+   *  sont déconnectés. Les opens sont espacés de ~800ms pour éviter le
+   *  rate-limit "burst" côté iTick (l'IP prend un 429 si on ouvre 2 WS
+   *  simultanément en moins de quelques centaines de ms). */
   setSubscriptions(byAsset: Partial<Record<ItickAssetClass, string[]>>): void {
+    const STAGGER_MS = 800;
     const wanted = new Set<ItickAssetClass>();
-    for (const [asset, codes] of Object.entries(byAsset) as [ItickAssetClass, string[]][]) {
-      if (codes && codes.length > 0) {
-        wanted.add(asset);
-        this.ensure(asset).setSymbols(codes);
+    const entries = Object.entries(byAsset) as [ItickAssetClass, string[]][];
+    entries.forEach(([asset, codes], idx) => {
+      if (!codes || codes.length === 0) return;
+      wanted.add(asset);
+      const m = this.ensure(asset);
+      if (idx === 0) {
+        m.setSymbols(codes);
+      } else {
+        setTimeout(() => m.setSymbols(codes), idx * STAGGER_MS).unref?.();
       }
-    }
+    });
     for (const [asset, m] of this.managers.entries()) {
       if (!wanted.has(asset)) m.setSymbols([]);
     }
