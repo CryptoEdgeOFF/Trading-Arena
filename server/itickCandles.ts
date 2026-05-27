@@ -27,32 +27,27 @@ export const ITICK_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
 const MAX_HISTORY_BARS = 100_000;
 
 /**
- * Profondeur cible (en bougies) à conserver pour chaque timeframe au
- * backfill historique. iTick facture en "compute time" — chaque appel
- * REST consomme du quota — donc on reste à ≤ 1 page (1000 bars) par
- * (pair, TF) au boot. Le datafeed pourra paginer à la demande quand un
- * user scroll vraiment loin dans le passé.
+ * Profondeur cible (en bougies) à conserver dans Postgres pour chaque
+ * timeframe. iTick limite à 1000 bars par appel REST, donc on pagine
+ * pour atteindre ces volumes (cf. `backfillSeries`).
  *
- *   1m   → 1000 bars (~16h)
- *   5m   → 1000 bars (~3.5j)
- *   15m  → 1000 bars (~10.5j)
- *   30m  → 1000 bars (~21j)
- *   60m  → 1000 bars (~41j)
- *   240m → dérivé depuis le 60m
+ *   1m   → 3000 bars (~2 j)
+ *   5m   → 3000 bars (~10 j)
+ *   15m  → 3000 bars (~31 j)
+ *   30m  → 2000 bars (~41 j)
+ *   60m  → 2000 bars (~83 j)
+ *   240m → 500 bars (~83 j) — dérivé du 60m
  *   1d   → 1000 bars (~2.7 ans)
  */
 const HISTORY_DEPTH: Record<number, number> = {
-  1: 1000,
-  5: 1000,
-  15: 1000,
-  30: 1000,
-  60: 1000,
-  240: 250,
+  1: 3000,
+  5: 3000,
+  15: 3000,
+  30: 2000,
+  60: 2000,
+  240: 500,
   1440: 1000,
 };
-
-/** Nombre minimum de bougies déjà présentes en DB pour skipper le backfill au boot. */
-const SKIP_BACKFILL_THRESHOLD = 500;
 
 /* -------------------------------------------------------------------------- */
 /*                            iTick quota cooldown                             */
@@ -394,19 +389,19 @@ async function ingestBars(
 }
 
 /**
- * Backfill simple : un seul appel REST iTick (≤ 1000 bars). Si une
- * profondeur supérieure est demandée par le datafeed (`limit > 1000`),
- * on pagine prudemment avec un délai entre les pages — mais au boot
- * on s'en tient à une seule page pour ne pas exploser le quota iTick.
+ * Backfill paginé : appelle iTick page par page (≤ 1000 bars/page) en
+ * remontant `endTs` jusqu'à atteindre la profondeur cible ou jusqu'à
+ * ce qu'iTick ne renvoie plus rien. 250 ms de gap entre les pages.
  */
 async function backfillSeries(inst: ItickInstrument, opts: BackfillOptions): Promise<number> {
   const totalTarget = Math.max(50, opts.limit ?? HISTORY_DEPTH[opts.intervalMin] ?? 1000);
   let endTs = opts.endTs;
   let total = 0;
   const seenOldest = new Set<number>();
-  // Au boot on coupe à 1 page (1000 bars). Pour les requêtes datafeed
-  // (countBack > 1000), on autorise jusqu'à 3 pages avec un petit délai.
-  const maxPages = totalTarget > ITICK_PAGE_SIZE ? 3 : 1;
+  // 1 page suffit si la cible tient en 1000 bars, sinon on pagine jusqu'à
+  // 4 pages (= 4000 bars) pour atteindre les profondeurs HISTORY_DEPTH
+  // sans dépasser raisonnablement le quota iTick.
+  const maxPages = totalTarget > ITICK_PAGE_SIZE ? Math.ceil(totalTarget / ITICK_PAGE_SIZE) : 1;
   let pages = 0;
 
   while (total < totalTarget && pages < maxPages) {
@@ -506,41 +501,41 @@ async function countPersistedBars(pair: string, intervalMin: number): Promise<nu
 }
 
 /**
- * Backfill historique de toutes les paires iTick configurées sur tous
- * les intervalles. Stratégie économe en quota :
- *   - Skip si la DB a déjà SKIP_BACKFILL_THRESHOLD bougies pour cette
- *     (pair, TF) — l'historique a déjà été collecté lors d'un boot
- *     précédent et le live tick suffit à le garder à jour.
- *   - 1 page max (1000 bars) par (pair, TF) sinon.
- *   - Délai entre les paires pour ne pas saturer iTick.
+ * Backfill historique de toutes les paires iTick. Stratégie :
+ *   - Skip si la DB a déjà ≥ HISTORY_DEPTH[TF] bougies — la profondeur
+ *     cible est atteinte, le live tick (ws) garde la chose à jour.
+ *   - Sinon backfill jusqu'à la profondeur cible, paginé.
+ *   - Délai inter-TF pour ne pas saturer iTick / Neon.
+ *   - Cooldown global si iTick refuse (quota / rate-limit) → arrêt
+ *     anticipé pour ne pas spammer.
  *
- * Le 4h n'est jamais demandé à iTick : on le dérive systématiquement
- * depuis les bougies 1h après chaque paire.
+ * Le 4h n'est jamais demandé à iTick : il est dérivé du 60m après la
+ * paire complète.
+ *
+ * Si `force=true`, on rebackfill même si la DB est déjà pleine
+ * (utilisé par l'endpoint admin `/api/admin/itick/backfill`).
  */
-export async function backfillAll(): Promise<void> {
+export async function backfillAll(force = false): Promise<void> {
   const restIntervals = [1, 5, 15, 30, 60, 1440];
 
   for (const inst of ITICK_INSTRUMENTS) {
     for (const intervalMin of restIntervals) {
       try {
-        const existing = await countPersistedBars(inst.pair, intervalMin);
-        if (existing >= SKIP_BACKFILL_THRESHOLD) {
-          // DB déjà chaude — pas de raison de re-cramer du quota iTick au
-          // boot. Le live tick (ws) prend le relais pour les updates.
-          continue;
-        }
         const target = HISTORY_DEPTH[intervalMin] ?? 1000;
+        if (!force) {
+          const existing = await countPersistedBars(inst.pair, intervalMin);
+          if (existing >= target) {
+            continue;
+          }
+        }
         const fetched = await backfillSeries(inst, { intervalMin, limit: target, upsert: true });
         if (fetched > 0) {
           console.log(`[itickCandles] backfill ${inst.pair} ${intervalMin}m → ${fetched} bars`);
         }
         if (isItickInCooldown()) {
-          // iTick est cuit, inutile de continuer à appeler — on laisse le
-          // cooldown expirer. La DB existante + Hyperliquid prennent le relais.
           console.warn('[itickCandles] backfillAll: iTick en cooldown, arrêt anticipé');
           return;
         }
-        // Petit délai inter-TF pour étaler la charge.
         await new Promise((resolve) => setTimeout(resolve, 200));
       } catch (err) {
         console.warn(

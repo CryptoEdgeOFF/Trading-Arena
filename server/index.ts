@@ -260,6 +260,34 @@ app.get('/api/itick/status', (_req, res) => {
   });
 });
 
+/**
+ * GET /api/itick/candles-status — récap par (pair, TF) du nombre de
+ * bougies en DB, leur âge, et la plage temporelle couverte. Utile pour
+ * vérifier la profondeur d'historique et la fraîcheur du backfill.
+ */
+app.get('/api/itick/candles-status', async (_req, res) => {
+  try {
+    const rows = await itickCandles.getCandlesStatus();
+    res.json({ rows });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/admin/itick/backfill?force=true — relance manuellement le
+ * backfill historique complet. Utile après un upgrade Neon ou pour
+ * combler des données manquantes sans redéployer.
+ */
+app.post('/api/admin/itick/backfill', requireAdmin, async (req, res) => {
+  const force = String(req.query.force || '') === 'true';
+  // Lance en background — la requête répond immédiatement.
+  void itickCandles
+    .backfillAll(force)
+    .catch((err) => console.warn('[admin] backfillAll KO:', (err as Error).message));
+  res.json({ ok: true, started: true, force });
+});
+
 function parseAsset(raw: unknown): itick.ItickAssetClass {
   const v = String(raw || 'forex').toLowerCase();
   if (v === 'indices' || v === 'crypto' || v === 'stock' || v === 'forex') return v;
