@@ -570,7 +570,6 @@ function PairSelectorMenu({
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Rechercher BTC, Bitcoin, ETH..."
                   className="h-full w-full bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-[#5f586d]"
-                  autoFocus
                 />
               </div>
             </div>
