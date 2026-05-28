@@ -118,10 +118,10 @@ export const PAPER_PAIRS: PaperPairDef[] = [
   ...ITICK_INSTRUMENTS.map((inst) => itickPaperPair(inst.pair, inst.code, inst.hyperliquidCoin)),
 ];
 
-/** Demi-spread autour du mark pour l'exécution paper (bid/ask). 1 bps =
- *  0,01 % par côté → ~2 bps aller-retour. Le mark affiché (chart,
+/** Demi-spread autour du mark pour l'exécution paper (bid/ask). 0,001 %
+ *  par côté (0,1 bps) → ~0,002 % aller-retour. Le mark affiché (chart,
  *  PnL flottant) reste le mid iTick = TradingView. */
-const SPREAD_BPS = 1;
+const SPREAD_BPS = 0.1;
 // Même barème que la compétition online, divisé par 3.
 const TAKER_FEE_RATE = 0.00005 / 3; // ~0,00167 % — ordres au marché
 const MAKER_FEE_RATE = 0.00002 / 3; // ~0,00067 % — ordres limites
