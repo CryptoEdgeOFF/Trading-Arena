@@ -1,4 +1,60 @@
 import { create } from 'zustand';
+import { refreshOpenPositions } from '../utils/positionPnl';
+import { tryAcceptSpotlight, resetSpotlightNotifications } from '../utils/arenaSounds';
+
+function withLivePositionPnls<T extends { openPositions: Position[] }>(
+  player: T,
+  market: Record<string, { markPrice?: number }>,
+): T {
+  return {
+    ...player,
+    openPositions: refreshOpenPositions(player.openPositions || [], market),
+  };
+}
+
+function refreshAllPlayersPositions(
+  players: Player[],
+  market: Record<string, { markPrice?: number }>,
+): Player[] {
+  if (!players.length) return players;
+  return players.map((player) => withLivePositionPnls(player, market));
+}
+
+type CelebrationItem = { type: 'leader-change' | 'big-trade'; playerId: string };
+
+function enqueueLeaderCelebration(
+  queue: CelebrationItem[],
+  playerId: string,
+): CelebrationItem[] {
+  // Une seule notif leader à la fois : pas de file d'attente qui s'empile.
+  if (queue.some((item) => item.type === 'leader-change')) return queue;
+  return [...queue, { type: 'leader-change', playerId }];
+}
+
+function shouldCelebrateLeaderChange(
+  change: { playerId: string; from: number; to: number },
+  players: Player[],
+  celebrationQueue: CelebrationItem[],
+): boolean {
+  if (change.to !== 1 || change.from <= 0) return false;
+  if (!players.some((player) => (player.openPositions?.length ?? 0) > 0)) return false;
+
+  // Déjà une célébration leader affichée ou en attente → on drop.
+  if (celebrationQueue.some((item) => item.type === 'leader-change')) return false;
+
+  const now = Date.now();
+  if (now - leaderCelebrationGuard.lastAt < 45_000) return false;
+  if (leaderCelebrationGuard.lastPlayerId === change.playerId) return false;
+
+  leaderCelebrationGuard.lastAt = now;
+  leaderCelebrationGuard.lastPlayerId = change.playerId;
+  return true;
+}
+
+const leaderCelebrationGuard = {
+  lastAt: 0,
+  lastPlayerId: '',
+};
 
 export interface Player {
   id: string;
@@ -22,7 +78,7 @@ export interface Player {
   badges: Badge[];
   winStreak: number;
   longestPositionMinutes: number;
-  biggestTradeVolume: number;
+  biggestTradePnl: number;
   bestTradePercent: number;
   lastUpdate: number;
   connected: boolean;
@@ -90,6 +146,8 @@ export interface Badge {
   awardedAt: number;
 }
 
+export type SpotlightReason = 'manual' | 'stop-loss' | 'take-profit';
+
 export interface SpotlightTrade {
   id: string;
   playerName: string;
@@ -101,6 +159,7 @@ export interface SpotlightTrade {
   entryPrice: number;
   action: 'open' | 'close';
   pnl: number;
+  reason?: SpotlightReason;
 }
 
 export interface MarketTicker {
@@ -137,6 +196,46 @@ export interface PlayerStatePatch {
   feesPaid?: number;
   connected?: boolean;
   lastUpdate?: number;
+  // Snapshot complet des positions / ordres ouverts. Inclus uniquement quand
+  // le contenu structurel a changé depuis le dernier patch (ouverture,
+  // fermeture, modif SL/TP). Le PnL en temps réel est recalculé côté front
+  // à partir du markPrice diffusé via `patch.market`.
+  openPositions?: Position[];
+  openOrders?: Order[];
+}
+
+export interface ArchivedPlayerSnapshot {
+  id: string;
+  name: string;
+  color: string;
+  avatar: string | null;
+  rank: number;
+  initialBalance: number;
+  currentBalance: number;
+  pnl: number;
+  pnlPercent: number;
+  tradeCount: number;
+  feesPaid: number;
+  winStreak: number;
+  bestTradePercent: number;
+  biggestTradePnl: number;
+  longestPositionMinutes: number;
+  badges: Badge[];
+}
+
+export interface ArchivedEventSnapshot {
+  id: string;
+  finalizedAt: number;
+  startedAt: number | null;
+  durationMs: number;
+  eventMode: EventMode;
+  teams: [TeamInfo, TeamInfo] | null;
+  players: ArchivedPlayerSnapshot[];
+}
+
+export interface ShowcasePayload {
+  mode: 'podium' | 'stats';
+  archive: ArchivedEventSnapshot;
 }
 
 export interface StatePatch {
@@ -150,11 +249,13 @@ export interface StatePatch {
   spotlightTrades?: SpotlightTrade[];
   eventStarted?: boolean;
   eventStartTime?: number | null;
+  eventEndTime?: number | null;
   eventMode?: EventMode;
   teams?: [TeamInfo, TeamInfo] | null;
   platformMode?: PlatformMode;
   paperStartingBalance?: number;
   marketDataSource?: MarketDataSource;
+  showcase?: ShowcasePayload | null;
 }
 
 interface GameState {
@@ -163,6 +264,7 @@ interface GameState {
   market: Record<string, MarketTicker>;
   eventStarted: boolean;
   eventStartTime: number | null;
+  eventEndTime: number | null;
   platformMode: PlatformMode;
   paperStartingBalance: number;
   marketDataSource: MarketDataSource;
@@ -171,10 +273,12 @@ interface GameState {
   spotlightTrades: SpotlightTrade[];
   eventMode: EventMode;
   teams?: [TeamInfo, TeamInfo];
+  showcase: ShowcasePayload | null;
 
   badgeQueue: { playerId: string; playerName: string; badge: Badge }[];
   celebrationQueue: { type: 'leader-change' | 'big-trade'; playerId: string }[];
-  spotlightQueue: SpotlightTrade[];
+  /** Spotlight trade actuellement à l'écran (null = rien). Pas de file d'attente. */
+  spotlightTrade: SpotlightTrade | null;
 
   updateState: (state: Partial<GameState>) => void;
   applyStatePatch: (patch: StatePatch) => void;
@@ -182,7 +286,8 @@ interface GameState {
   shiftBadgeQueue: () => void;
   addCelebration: (item: { type: 'leader-change' | 'big-trade'; playerId: string }) => void;
   shiftCelebration: () => void;
-  shiftSpotlight: () => void;
+  dismissSpotlight: () => void;
+  resetClientLiveState: () => void;
 }
 
 export const useGameStore = create<GameState>((set) => ({
@@ -191,6 +296,7 @@ export const useGameStore = create<GameState>((set) => ({
   market: {},
   eventStarted: false,
   eventStartTime: null,
+  eventEndTime: null,
   platformMode: 'kraken',
   paperStartingBalance: 10000,
   marketDataSource: 'kraken',
@@ -199,9 +305,10 @@ export const useGameStore = create<GameState>((set) => ({
   spotlightTrades: [],
   eventMode: '1v1',
   teams: undefined,
+  showcase: null,
   badgeQueue: [],
   celebrationQueue: [],
-  spotlightQueue: [],
+  spotlightTrade: null,
 
   updateState: (incoming) =>
     set((state) => {
@@ -223,16 +330,30 @@ export const useGameStore = create<GameState>((set) => ({
 
       if (incoming.leaderChanges && incoming.leaderChanges.length > 0) {
         const topChange = incoming.leaderChanges.find((lc) => lc.to === 1);
-        if (topChange) {
-          next.celebrationQueue = [
-            ...state.celebrationQueue,
-            { type: 'leader-change', playerId: topChange.playerId },
-          ];
+        const players = incoming.players || state.players;
+        if (topChange && shouldCelebrateLeaderChange(topChange, players, state.celebrationQueue)) {
+          next.celebrationQueue = enqueueLeaderCelebration(
+            state.celebrationQueue,
+            topChange.playerId,
+          );
         }
       }
 
       if (incoming.spotlightTrades && incoming.spotlightTrades.length > 0) {
-        next.spotlightQueue = [...state.spotlightQueue, ...incoming.spotlightTrades];
+        if (!state.spotlightTrade) {
+          for (const trade of incoming.spotlightTrades) {
+            if (tryAcceptSpotlight(trade)) {
+              next.spotlightTrade = trade;
+              break;
+            }
+          }
+        }
+      }
+
+      // Recalcule le PnL flottant de chaque position à partir des mark
+      // prices live (state:patch ne pousse openPositions qu'à l'ouverture).
+      if (next.players.length > 0) {
+        next.players = refreshAllPlayersPositions(next.players, next.market);
       }
 
       return next;
@@ -280,14 +401,24 @@ export const useGameStore = create<GameState>((set) => ({
       }
 
       // Event-level scalars only when explicitly included in the patch.
-      if (patch.eventStarted !== undefined) next.eventStarted = patch.eventStarted;
+      if (patch.eventStarted !== undefined) {
+        next.eventStarted = patch.eventStarted;
+        if (!patch.eventStarted) {
+          leaderCelebrationGuard.lastAt = 0;
+          leaderCelebrationGuard.lastPlayerId = '';
+        }
+      }
       if (patch.eventStartTime !== undefined) next.eventStartTime = patch.eventStartTime;
+      if (patch.eventEndTime !== undefined) next.eventEndTime = patch.eventEndTime;
       if (patch.eventMode !== undefined) next.eventMode = patch.eventMode;
       if (patch.platformMode !== undefined) next.platformMode = patch.platformMode;
       if (patch.paperStartingBalance !== undefined) next.paperStartingBalance = patch.paperStartingBalance;
       if (patch.marketDataSource !== undefined) next.marketDataSource = patch.marketDataSource;
       if (patch.teams !== undefined) {
         next.teams = patch.teams === null ? undefined : patch.teams;
+      }
+      if (patch.showcase !== undefined) {
+        next.showcase = patch.showcase ?? null;
       }
 
       // One-shot signals reuse the same queue logic as updateState().
@@ -300,15 +431,28 @@ export const useGameStore = create<GameState>((set) => ({
       }
       if (patch.leaderChanges && patch.leaderChanges.length > 0) {
         const topChange = patch.leaderChanges.find((lc) => lc.to === 1);
-        if (topChange) {
-          next.celebrationQueue = [
-            ...state.celebrationQueue,
-            { type: 'leader-change', playerId: topChange.playerId },
-          ];
+        if (topChange && shouldCelebrateLeaderChange(topChange, next.players, state.celebrationQueue)) {
+          next.celebrationQueue = enqueueLeaderCelebration(
+            state.celebrationQueue,
+            topChange.playerId,
+          );
         }
       }
       if (patch.spotlightTrades && patch.spotlightTrades.length > 0) {
-        next.spotlightQueue = [...state.spotlightQueue, ...patch.spotlightTrades];
+        if (!state.spotlightTrade) {
+          for (const trade of patch.spotlightTrades) {
+            if (tryAcceptSpotlight(trade)) {
+              next.spotlightTrade = trade;
+              break;
+            }
+          }
+        }
+      }
+
+      // À chaque tick marché (ou patch positions), recalcule le PnL
+      // position par position pour aligner dashboard ↔ terminal.
+      if (next.players.length > 0 && (patch.market || patch.players || patch.addedPlayers)) {
+        next.players = refreshAllPlayersPositions(next.players, next.market);
       }
 
       return next;
@@ -326,6 +470,24 @@ export const useGameStore = create<GameState>((set) => ({
   shiftCelebration: () =>
     set((s) => ({ celebrationQueue: s.celebrationQueue.slice(1) })),
 
-  shiftSpotlight: () =>
-    set((s) => ({ spotlightQueue: s.spotlightQueue.slice(1) })),
+  dismissSpotlight: () =>
+    set(() => ({ spotlightTrade: null })),
+
+  /**
+   * Reset des files locales au démarrage d'un nouveau round : on jette
+   * spotlights, badges, célébrations et trades de l'événement précédent
+   * pour repartir d'un dashboard propre.
+   */
+  resetClientLiveState: () => {
+    resetSpotlightNotifications();
+    set(() => ({
+      badgeQueue: [],
+      celebrationQueue: [],
+      spotlightTrade: null,
+      recentTrades: [],
+      newBadges: [],
+      leaderChanges: [],
+      spotlightTrades: [],
+    }));
+  },
 }));

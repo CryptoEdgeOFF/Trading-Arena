@@ -224,6 +224,8 @@ const manager = new PlayerManager((patch: StatePatch) => {
   broadcastPaperUpdates();
 });
 
+manager.setMarketTickBroadcaster((pairs) => broadcastMarketTicks(pairs));
+
 function broadcastMarketTicks(pairs: string[]): void {
   if (pairs.length === 0 || clients.size === 0) return;
   const market = manager.getPaperMarketSnapshot();
@@ -527,7 +529,7 @@ function buildPaperUpdatePayload(playerId: string, competitionId: string | null)
   if (!player) return null;
 
   let competitionPayload: unknown = null;
-  let canTrade = manager.isStarted();
+  let canTrade = manager.canTradeLiveEvent();
   if (competitionId) {
     const status = competitionManager.getCompetitionStatus(competitionId);
     canTrade = status === 'live';
@@ -536,7 +538,7 @@ function buildPaperUpdatePayload(playerId: string, competitionId: string | null)
 
   return {
     player: publicPlayer(player),
-    market: manager.isPaperMarketActive() ? manager.getPaperMarketSnapshot() : {},
+    market: manager.getChartMarketSnapshot(),
     canTrade,
     competition: competitionPayload,
   };
@@ -849,7 +851,7 @@ app.get('/api/players', (_req, res) => {
 // --- Event config (mode & teams) ---
 
 app.post('/api/event/config', requireAdmin, (req, res) => {
-  const { mode, teams, platformMode, paperStartingBalance } = req.body as EventConfig;
+  const { mode, teams, platformMode, paperStartingBalance, eventDurationMinutes } = req.body as EventConfig;
   const marketDataSource = req.body?.marketDataSource === 'hyperliquid'
     ? 'binance'
     : req.body?.marketDataSource;
@@ -870,6 +872,11 @@ app.post('/api/event/config', requireAdmin, (req, res) => {
     res.status(400).json({ error: 'Balance paper invalide' });
     return;
   }
+  const durationMinutes = Number(eventDurationMinutes);
+  if (eventDurationMinutes != null && (!Number.isFinite(durationMinutes) || durationMinutes < 0)) {
+    res.status(400).json({ error: 'Durée de compétition invalide' });
+    return;
+  }
 
   manager.setEventConfig({
     mode,
@@ -877,8 +884,17 @@ app.post('/api/event/config', requireAdmin, (req, res) => {
     platformMode,
     paperStartingBalance: startingBalance,
     marketDataSource,
+    eventDurationMinutes: Number.isFinite(durationMinutes) ? Math.floor(durationMinutes) : undefined,
   });
-  res.json({ ok: true, mode, teams, platformMode, paperStartingBalance: startingBalance, marketDataSource });
+  res.json({
+    ok: true,
+    mode,
+    teams,
+    platformMode,
+    paperStartingBalance: startingBalance,
+    marketDataSource,
+    eventDurationMinutes: manager.getEventDurationMinutes(),
+  });
 });
 
 app.get('/api/event/config', (_req, res) => {
@@ -900,10 +916,10 @@ app.post('/api/event/start', requireAdmin, async (_req, res) => {
     res.status(500).json({ error: error.message || 'Impossible de lancer l’événement' });
     return;
   }
-  res.json({ ok: true, startTime: manager.getEventStartTime() });
+  res.json({ ok: true, startTime: manager.getEventStartTime(), endTime: manager.getEventEndTime() });
 });
 
-app.post('/api/event/stop', requireAdmin, (_req, res) => {
+app.post('/api/event/stop', requireAdmin, async (_req, res) => {
   manager.stopEvent();
   res.json({ ok: true });
 });
@@ -912,12 +928,48 @@ app.get('/api/event/status', (_req, res) => {
   res.json({
     started: manager.isStarted(),
     startTime: manager.getEventStartTime(),
+    endTime: manager.getEventEndTime(),
+    durationMinutes: manager.getEventDurationMinutes(),
     playerCount: manager.getActivePlayers().length,
     rosterCount: manager.getPlayers().length,
     platformMode: manager.getPlatformMode(),
     paperStartingBalance: manager.getPaperStartingBalance(),
     marketDataSource: manager.getMarketDataSource(),
   });
+});
+
+// --- Event archives & showcase ---
+
+app.get('/api/event/archives', requireAdmin, (_req, res) => {
+  res.json({ archives: manager.listEventArchives(), showcase: manager.getEventShowcase() });
+});
+
+app.delete('/api/event/archives/:id', requireAdmin, async (req, res) => {
+  const removed = await manager.deleteEventArchive(req.params.id);
+  if (!removed) {
+    res.status(404).json({ error: 'Archive introuvable' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/event/showcase', (_req, res) => {
+  res.json({ showcase: manager.getEventShowcasePayload() });
+});
+
+app.post('/api/event/showcase', requireAdmin, async (req, res) => {
+  const archiveId = typeof req.body?.archiveId === 'string' ? req.body.archiveId : null;
+  const mode = req.body?.mode === 'podium' || req.body?.mode === 'stats' ? req.body.mode : null;
+  if (archiveId && mode) {
+    const ok = await manager.setEventShowcase({ archiveId, mode });
+    if (!ok) {
+      res.status(404).json({ error: 'Archive introuvable' });
+      return;
+    }
+  } else {
+    await manager.setEventShowcase(null);
+  }
+  res.json({ ok: true, showcase: manager.getEventShowcase() });
 });
 
 // --- Paper trading meta & auth ---
@@ -927,6 +979,8 @@ app.get('/api/paper/meta', async (_req, res) => {
   res.json({
     enabled: manager.getPlatformMode() === 'paper',
     eventStarted: manager.isStarted(),
+    eventEndTime: manager.getEventEndTime(),
+    eventDurationMinutes: manager.getEventDurationMinutes(),
     startingBalance: manager.getPaperStartingBalance(),
     pairs,
     market: await manager.refreshPaperMarketSnapshot(),
@@ -1037,7 +1091,23 @@ app.post('/api/paper/session', async (req, res) => {
   const token = crypto.randomBytes(24).toString('hex');
   await competitionManager.setTraderSession(token, player.id, null);
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
-  res.json({ token, player: publicPlayer });
+
+  // Renvoie un payload complet (player + market + canTrade + pairs) pour
+  // que le front puisse bootstrapper le terminal Live sans round-trip
+  // /api/paper/me supplémentaire au mount.
+  res.json({
+    token,
+    player: publicPlayer,
+    market: manager.getChartMarketSnapshot(),
+    fees: manager.getPaperFeeRates(),
+    pairs: manager.getSupportedPaperPairs(),
+    startingBalance: manager.getPaperStartingBalance(),
+    marketDataSource: manager.getMarketDataSource(),
+    eventStarted: manager.isStarted(),
+    eventEndTime: manager.getEventEndTime(),
+    canTrade: manager.canTradeLiveEvent(),
+    competition: null,
+  });
 });
 
 app.get('/api/paper/me', async (req, res) => {
@@ -1069,13 +1139,14 @@ app.get('/api/paper/me', async (req, res) => {
 
   res.json({
     player: publicPlayer,
-    market: manager.isPaperMarketActive() ? manager.getPaperMarketSnapshot() : {},
+    market: manager.getChartMarketSnapshot(),
     fees: manager.getPaperFeeRates(),
     pairs: manager.getSupportedPaperPairs(),
     startingBalance: manager.getPaperStartingBalance(),
     marketDataSource: manager.getMarketDataSource(),
     eventStarted: manager.isStarted(),
-    canTrade: isCompetition ? competitionStatus === 'live' : manager.isStarted(),
+    eventEndTime: manager.getEventEndTime(),
+    canTrade: isCompetition ? competitionStatus === 'live' : manager.canTradeLiveEvent(),
     competition: competitionPayload,
   });
 });
@@ -1636,7 +1707,7 @@ app.post('/api/competition/trade/session', async (req, res) => {
     res.json({
       token,
       player: publicPlayer,
-      market: manager.isPaperMarketActive() ? manager.getPaperMarketSnapshot() : {},
+      market: manager.getChartMarketSnapshot(),
       fees: manager.getPaperFeeRates(),
       pairs: manager.getSupportedPaperPairs(),
       startingBalance: manager.getPaperStartingBalance(),
@@ -1744,8 +1815,9 @@ const serverReady = Promise.all([
   competitionManager.ready,
   manager.ready,
   itickCandles.initItickCandlesStore(),
-]).then(() => {
+]).then(async () => {
   manager.markOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
+  await manager.ensurePublicMarketFeed();
 });
 
 if (!process.env.NETLIFY) {
@@ -1796,6 +1868,7 @@ if (!process.env.NETLIFY) {
     const gracefulShutdown = (signal: string) => {
       console.log(`[shutdown] ${signal} reçu, fermeture iTick…`);
       try { itick.itickFeed.disconnect(); } catch { /* noop */ }
+      try { manager.shutdownMarketFeed(); } catch { /* noop */ }
       setTimeout(() => process.exit(0), 250);
     };
     process.once('SIGINT', () => gracefulShutdown('SIGINT'));

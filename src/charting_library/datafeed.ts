@@ -347,6 +347,15 @@ export class BtfDatafeed implements IBasicDataFeed {
     // Mémorise le dernier tick pour pouvoir le rejouer si une subscription
     // arrive après. Empêche le 1er tick d'être perdu en cas de race
     // condition entre `subscribeBars` et le flux WS.
+    const previous = this.pendingTicks.get(pair);
+    // Dédoublonnage : la useEffect côté ExchangeTerminal pousse les 60 pairs
+    // à chaque changement de `market`, alors que `chartLiveTickRef` pousse
+    // déjà chaque tick réel. Sans ce filtre, on redessinait la dernière
+    // bougie de BTC plusieurs fois par tick avec exactement le même prix,
+    // ce qui faisait vibrer le chart visuellement (close qui oscille).
+    if (previous && previous.price === price && previous.timestampMs >= timestampMs) {
+      return;
+    }
     this.pendingTicks.set(pair, { price, timestampMs });
 
     let touched = false;

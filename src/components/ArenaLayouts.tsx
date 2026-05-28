@@ -1,11 +1,12 @@
 import { motion } from 'framer-motion';
 import type { Player, TeamInfo } from '../stores/useGameStore';
 import { formatPnl, formatPercent } from '../utils/formatters';
+import { TEAM_PLAYERS_PER_SIDE } from '../utils/teamMode';
 import ArenaCard from './ArenaCard';
 import PlayerAvatar from './PlayerAvatar';
 
-const TALL_CARD_HEIGHT = 'h-[clamp(440px,68vh,560px)]';
-const QUARTER_CARD_HEIGHT = 'h-[clamp(240px,31vh,300px)]';
+const TALL_CARD_HEIGHT = 'h-full min-h-0';
+const QUARTER_CARD_HEIGHT = 'h-full min-h-0';
 
 function TeamScoreCard({ team, players }: { team: TeamInfo; players: Player[] }) {
   const totalPnl = players.reduce((sum, p) => sum + p.pnl, 0);
@@ -16,33 +17,55 @@ function TeamScoreCard({ team, players }: { team: TeamInfo; players: Player[] })
 
   return (
     <div
-      className="rounded-2xl border-2 p-5 flex items-center gap-6"
+      className="relative flex items-center gap-4 overflow-hidden rounded-xl px-4 py-3 border"
       style={{
-        borderColor: team.color + '40',
-        background: `linear-gradient(135deg, ${team.color}08, ${team.color}03)`,
-        boxShadow: `0 0 40px ${team.color}10`,
+        borderColor: `${team.color}55`,
+        background: `
+          radial-gradient(420px 200px at 100% 0%, ${team.color}22, transparent 60%),
+          linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.005)),
+          #0a0a0e
+        `,
+        boxShadow: `0 24px 64px -38px ${team.color}80, inset 0 1px 0 rgba(255,255,255,0.05)`,
       }}
     >
-      <div className="w-3 h-16 rounded-full" style={{ background: team.color }} />
-      <div className="flex-1">
-        <div className="font-rajdhani font-bold text-xl text-white">{team.name}</div>
-        <div className="flex items-center gap-3 mt-1">
+      <div
+        className="absolute top-0 left-0 right-0 h-[3px]"
+        style={{ background: `linear-gradient(90deg, ${team.color}, transparent 70%)` }}
+      />
+
+      <div className="w-2.5 h-14 rounded-full" style={{ background: team.color, boxShadow: `0 0 18px ${team.color}` }} />
+
+      <div className="flex-1 min-w-0">
+        <div className="micro text-zinc-500 mb-1">Équipe</div>
+        <div className="display text-xl font-bold tracking-[0.04em] text-white leading-none uppercase truncate">
+          {team.name.trim() || 'Équipe'}
+        </div>
+        <div className="mt-2 flex items-center gap-2">
           {players.map((p) => (
             <PlayerAvatar key={p.id} name={p.name} color={p.color} avatar={p.avatar} size="xs" />
           ))}
+          <span className="ml-2 num text-[11px] text-zinc-500">{players.length} traders</span>
         </div>
       </div>
+
       <div className="text-right">
+        <div className="micro text-zinc-500 mb-1">Score équipe</div>
         <motion.div
           key={totalPnl}
           initial={{ scale: 1.05 }}
           animate={{ scale: 1 }}
-          className={`font-rajdhani font-bold text-4xl ${isPositive ? 'text-green-400' : 'text-red-400'}`}
-          style={{ textShadow: isPositive ? '0 0 20px rgba(34,197,94,0.3)' : '0 0 20px rgba(239,68,68,0.3)' }}
+          className={`display text-4xl font-bold tabular-nums leading-none ${
+            isPositive ? 'text-emerald-400' : 'text-red-400'
+          }`}
+          style={{
+            textShadow: isPositive
+              ? '0 0 28px rgba(16,185,129,0.35)'
+              : '0 0 28px rgba(239,68,68,0.45)',
+          }}
         >
           {formatPnl(totalPnl)}
         </motion.div>
-        <div className={`text-base font-medium ${isPositive ? 'text-green-500/70' : 'text-red-500/70'}`}>
+        <div className={`num text-sm mt-1 ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
           {formatPercent(avgPercent)} moy.
         </div>
       </div>
@@ -56,17 +79,17 @@ export function Layout1v1({ players }: { players: Player[] }) {
   if (!p1) return null;
 
   return (
-    <div className="h-full w-full flex items-center justify-center gap-6 px-6 py-6 xl:px-10 xl:py-8">
-      <div className={`flex-1 min-w-0 max-w-[430px] ${TALL_CARD_HEIGHT}`}>
+    <div className="relative h-full w-full flex items-stretch justify-center gap-5 xl:gap-6 px-2 py-2 xl:px-4 xl:py-3">
+      <div className={`flex-1 min-w-0 ${TALL_CARD_HEIGHT}`}>
         <ArenaCard player={p1} side="left" size="full" />
       </div>
       {p2 ? (
-        <div className={`flex-1 min-w-0 max-w-[430px] ${TALL_CARD_HEIGHT}`}>
+        <div className={`flex-1 min-w-0 ${TALL_CARD_HEIGHT}`}>
           <ArenaCard player={p2} side="right" size="full" />
         </div>
       ) : (
-        <div className={`flex-1 max-w-[430px] flex items-center justify-center ${TALL_CARD_HEIGHT}`}>
-          <div className="text-gray-600 font-rajdhani text-2xl">En attente...</div>
+        <div className={`flex-1 flex items-center justify-center ${TALL_CARD_HEIGHT}`}>
+          <div className="text-zinc-700 display text-2xl tracking-wide">En attente...</div>
         </div>
       )}
     </div>
@@ -76,9 +99,9 @@ export function Layout1v1({ players }: { players: Player[] }) {
 // --- 1v1v1 Layout ---
 export function Layout1v1v1({ players }: { players: Player[] }) {
   return (
-    <div className="h-full w-full flex items-center justify-center gap-6 px-6 py-6 xl:px-10 xl:py-8">
+    <div className="h-full w-full flex items-stretch justify-center gap-4 xl:gap-5 px-2 py-2 xl:px-4 xl:py-3">
       {players.map((p) => (
-        <div key={p.id} className={`flex-1 min-w-0 max-w-[320px] ${TALL_CARD_HEIGHT}`}>
+        <div key={p.id} className={`flex-1 min-w-0 ${TALL_CARD_HEIGHT}`}>
           <ArenaCard player={p} side="center" size="third" />
         </div>
       ))}
@@ -92,17 +115,17 @@ export function Layout1v1v1v1({ players }: { players: Player[] }) {
   const bottom = players.slice(2, 4);
 
   return (
-    <div className="h-full w-full flex flex-col justify-center gap-6 px-4 py-4 xl:px-8 xl:py-6">
-      <div className="flex justify-center gap-6 min-h-0">
+    <div className="h-full w-full flex flex-col gap-3 xl:gap-4 px-2 py-2 xl:px-4 xl:py-3">
+      <div className="flex flex-1 min-h-0 justify-center gap-3 xl:gap-4">
         {top.map((p) => (
-          <div key={p.id} className={`flex-1 min-w-0 max-w-[360px] ${QUARTER_CARD_HEIGHT}`}>
+          <div key={p.id} className={`flex-1 min-w-0 ${QUARTER_CARD_HEIGHT}`}>
             <ArenaCard player={p} side="center" size="quarter" />
           </div>
         ))}
       </div>
-      <div className="flex justify-center gap-6 min-h-0">
+      <div className="flex flex-1 min-h-0 justify-center gap-3 xl:gap-4">
         {bottom.map((p) => (
-          <div key={p.id} className={`flex-1 min-w-0 max-w-[360px] ${QUARTER_CARD_HEIGHT}`}>
+          <div key={p.id} className={`flex-1 min-w-0 ${QUARTER_CARD_HEIGHT}`}>
             <ArenaCard player={p} side="center" size="quarter" />
           </div>
         ))}
@@ -111,36 +134,35 @@ export function Layout1v1v1v1({ players }: { players: Player[] }) {
   );
 }
 
-// --- 4v4 Layout ---
+// --- 5v5 Layout (mode API `4v4`) ---
 export function Layout4v4({ players, teams }: { players: Player[]; teams: [TeamInfo, TeamInfo] }) {
   const teamAPlayers = teams[0].playerIds.map((id) => players.find((p) => p.id === id)).filter(Boolean) as Player[];
   const teamBPlayers = teams[1].playerIds.map((id) => players.find((p) => p.id === id)).filter(Boolean) as Player[];
+  const teamGridClass = TEAM_PLAYERS_PER_SIDE <= 5 ? 'grid-cols-5' : 'grid-cols-4';
 
   return (
-    <div className="h-full w-full flex flex-col justify-center gap-5 px-2 py-3 xl:px-4 xl:py-4">
-      {/* Team A */}
-      <div className="flex flex-col gap-3 min-h-0">
+    <div className="h-full w-full flex flex-col gap-3 px-2 py-2 xl:px-4 xl:py-3">
+      <div className="flex flex-1 flex-col gap-2 min-h-0">
         <div className="shrink-0">
           <TeamScoreCard team={teams[0]} players={teamAPlayers} />
         </div>
-        <div className="grid grid-cols-4 gap-4 min-h-0">
+        <div className={`grid flex-1 min-h-0 ${teamGridClass} gap-2`}>
           {teamAPlayers.map((p) => (
             <div key={p.id} className={QUARTER_CARD_HEIGHT}>
-              <ArenaCard player={p} side="center" size="quarter" teamColor={teams[0].color} />
+              <ArenaCard player={p} side="center" size="team" teamColor={teams[0].color} />
             </div>
           ))}
         </div>
       </div>
 
-      {/* Team B */}
-      <div className="flex flex-col gap-3 min-h-0">
+      <div className="flex flex-1 flex-col gap-2 min-h-0">
         <div className="shrink-0">
           <TeamScoreCard team={teams[1]} players={teamBPlayers} />
         </div>
-        <div className="grid grid-cols-4 gap-4 min-h-0">
+        <div className={`grid flex-1 min-h-0 ${teamGridClass} gap-2`}>
           {teamBPlayers.map((p) => (
             <div key={p.id} className={QUARTER_CARD_HEIGHT}>
-              <ArenaCard player={p} side="center" size="quarter" teamColor={teams[1].color} />
+              <ArenaCard player={p} side="center" size="team" teamColor={teams[1].color} />
             </div>
           ))}
         </div>

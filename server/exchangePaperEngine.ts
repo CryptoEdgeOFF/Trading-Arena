@@ -119,17 +119,36 @@ export const PAPER_PAIRS: PaperPairDef[] = [
 ];
 
 const SPREAD_BPS = 0;
-const TAKER_FEE_RATE = 0.00005;
-const MAKER_FEE_RATE = 0.00002;
+// Même barème que la compétition online, divisé par 3.
+const TAKER_FEE_RATE = 0.00005 / 3; // ~0,00167 % — ordres au marché
+const MAKER_FEE_RATE = 0.00002 / 3; // ~0,00067 % — ordres limites
 const MAX_LEVERAGE = 50;
 const MIN_LEVERAGE = 1;
 const KRAKEN_FUTURES_WS = 'wss://futures.kraken.com/ws/v1';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream?streams=';
+const BYBIT_LINEAR_WS = 'wss://stream.bybit.com/v5/public/linear';
+/**
+ * Bybit pousse des `tickers.SYMBOL` à ~10 Hz par pair sur les contrats linear,
+ * ce qui rend les charts crypto vraiment fluides — beaucoup plus que les
+ * `markPrice@1s` Binance (1 Hz, et de toute façon `fstream.binance.com` est
+ * souvent silencieusement geo-bloqué : la WS connecte mais ne pousse aucun
+ * message). Bybit tourne en parallèle de la source d'exécution Kraken /
+ * Binance pour alimenter le dernier tick du chart sur tous les terminaux
+ * (Live event + compétition online), peu importe `marketDataSource`.
+ *
+ * On flush à 250 ms (≈ 4 Hz par pair) : c'est assez pour un chart fluide
+ * sans faire vibrer la dernière bougie en boucle sur les pairs volatiles
+ * comme BTC quand le close oscille sur chaque tick.
+ */
+const BYBIT_FLUSH_INTERVAL_MS = 250;
 
 const pairToDefinition = new Map(PAPER_PAIRS.map((item) => [item.pair, item]));
 const pairToKrakenSymbol = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map((item) => [item.pair, item.krakenSymbol as string]));
 const symbolToPair = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map((item) => [item.krakenSymbol as string, item.pair]));
 const symbolToBinancePair = new Map(PAPER_PAIRS.filter((item) => item.binanceSymbol).map((item) => [item.binanceSymbol as string, item.pair]));
+// Bybit USDT-perp utilise les mêmes symboles que Binance USDT-perp pour les
+// principales pairs (BTCUSDT, ETHUSDT…), donc on réutilise la map Binance.
+const bybitSymbolToPair = symbolToBinancePair;
 
 function computePositionPnl(position: Position): number {
   const rawPnl = position.side === 'long'
@@ -207,18 +226,67 @@ const LIMIT_WARMUP_MS = 10_000;
 
 export class PaperTradingEngine {
   private market: Record<string, MarketTicker> = {};
+  /** Intervalle REST de secours quand le WS public est down. */
   private tickerInterval: ReturnType<typeof setInterval> | null = null;
   private bootedAt = Date.now();
   private websocket: WebSocket | null = null;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  /**
+   * WS Bybit linear toujours actif pour la fluidité crypto des charts,
+   * indépendamment de `marketDataSource`. Pousse ~10 Hz par pair, on
+   * coalesce à 80 ms.
+   */
+  private bybitWebsocket: WebSocket | null = null;
+  private bybitReconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private bybitReconnectAttempts = 0;
+  private bybitPingInterval: ReturnType<typeof setInterval> | null = null;
+  private bybitPendingPairs = new Set<string>();
+  private bybitFlushTimer: ReturnType<typeof setInterval> | null = null;
   private playersRef: Player[] = [];
   private startingBalance = 10_000;
   private marketDataSource: MarketDataSource = 'kraken';
   private onTick: () => void;
+  private onMarketPairsUpdated: ((pairs: string[]) => void) | null = null;
+  /** Feed marché public (charts) — indépendant d'une session de trading active. */
+  private marketFeedActive = false;
+  /**
+   * File des spotlights générés par le moteur lui-même (déclenchements
+   * SL/TP automatiques). Drainée par le PlayerManager à chaque tick.
+   */
+  private engineSpotlights: SpotlightTrade[] = [];
 
-  constructor(onTick: () => void) {
+  constructor(onTick: () => void, onMarketPairsUpdated?: (pairs: string[]) => void) {
     this.onTick = onTick;
+    this.onMarketPairsUpdated = onMarketPairsUpdated ?? null;
+  }
+
+  /**
+   * Démarre (ou maintient) le flux prix crypto Kraken/Binance pour les
+   * charts, même sans compétition active. Les pairs iTick restent gérées
+   * par le bridge iTick côté index.ts.
+   */
+  async ensureMarketFeed(): Promise<void> {
+    if (this.marketFeedActive) return;
+    this.marketFeedActive = true;
+    try {
+      await this.refreshTickers(this.playersRef);
+    } catch (error) {
+      console.warn('[paper] ensureMarketFeed bootstrap failed:', (error as Error).message);
+    }
+    this.startMarketFeed();
+    this.startMarketFeedFallback();
+    // Bybit linear : feed crypto haute-fréquence pour la fluidité des
+    // charts, en parallèle de Kraken / Binance.
+    this.startBybitTickerSocket();
+  }
+
+  /** Récupère et vide la file des spotlights produits par le moteur. */
+  drainEngineSpotlights(): SpotlightTrade[] {
+    if (this.engineSpotlights.length === 0) return [];
+    const out = this.engineSpotlights;
+    this.engineSpotlights = [];
+    return out;
   }
 
   setStartingBalance(balance: number): void {
@@ -319,12 +387,13 @@ export class PaperTradingEngine {
   setMarketDataSource(source: MarketDataSource): void {
     const changed = this.marketDataSource !== source;
     this.marketDataSource = source;
-    if (!changed || this.playersRef.length === 0) return;
-
-    this.startMarketFeed();
-    this.refreshTickers(this.playersRef).catch((error) => {
-      console.error('Paper source switch refresh failed:', (error as Error).message);
-    });
+    if (!changed) return;
+    if (this.marketFeedActive || this.playersRef.length > 0) {
+      this.startMarketFeed();
+      this.refreshTickers(this.playersRef).catch((error) => {
+        console.error('Paper source switch refresh failed:', (error as Error).message);
+      });
+    }
   }
 
   getMarketDataSource(): MarketDataSource {
@@ -342,24 +411,36 @@ export class PaperTradingEngine {
   }
 
   async start(players: Player[], options: { reset?: boolean } = {}): Promise<void> {
-    this.stop();
+    this.stopSession();
     this.playersRef = players;
     if (options.reset !== false) {
       this.resetPlayers(players);
     }
-    await this.refreshTickers(players);
-    this.startMarketFeed();
+    if (!this.marketFeedActive) {
+      await this.ensureMarketFeed();
+    } else {
+      await this.refreshTickers(players);
+    }
 
     // Low-frequency fallback keeps the market alive if the public WS drops.
-    const fallbackMs = this.marketDataSource === 'binance' ? 5000 : 30000;
-    this.tickerInterval = setInterval(() => {
-      this.refreshTickers(players).catch((error) => {
-        console.error('Paper fallback ticker refresh failed:', (error as Error).message);
-      });
-    }, fallbackMs);
+    if (!this.tickerInterval) {
+      this.startMarketFeedFallback();
+    }
   }
 
+  /** Arrête la session de trading sans couper le feed marché public. */
+  stopSession(): void {
+    this.playersRef = [];
+  }
+
+  /** Arrête tout, y compris le feed marché (shutdown serveur). */
   stop(): void {
+    this.stopSession();
+    this.stopMarketFeed();
+  }
+
+  private stopMarketFeed(): void {
+    this.marketFeedActive = false;
     if (this.tickerInterval) {
       clearInterval(this.tickerInterval);
       this.tickerInterval = null;
@@ -373,8 +454,51 @@ export class PaperTradingEngine {
       this.websocket.close();
       this.websocket = null;
     }
-    this.playersRef = [];
     this.reconnectAttempts = 0;
+    this.stopBybitTickerSocket();
+  }
+
+  private stopBybitTickerSocket(): void {
+    if (this.bybitFlushTimer) {
+      clearInterval(this.bybitFlushTimer);
+      this.bybitFlushTimer = null;
+    }
+    if (this.bybitPingInterval) {
+      clearInterval(this.bybitPingInterval);
+      this.bybitPingInterval = null;
+    }
+    if (this.bybitReconnectTimeout) {
+      clearTimeout(this.bybitReconnectTimeout);
+      this.bybitReconnectTimeout = null;
+    }
+    if (this.bybitWebsocket) {
+      this.bybitWebsocket.removeAllListeners();
+      this.bybitWebsocket.close();
+      this.bybitWebsocket = null;
+    }
+    this.bybitPendingPairs.clear();
+    this.bybitReconnectAttempts = 0;
+  }
+
+  private startMarketFeedFallback(): void {
+    if (this.tickerInterval) return;
+    const fallbackMs = this.marketDataSource === 'binance' ? 5000 : 30000;
+    this.tickerInterval = setInterval(() => {
+      const cryptoPairs = this.getActivePairDefs()
+        .filter((item) => item.source !== 'itick')
+        .map((item) => item.pair);
+      this.refreshTickers(this.playersRef)
+        .then(() => {
+          const updated = cryptoPairs.filter((pair) => (this.market[pair]?.markPrice ?? 0) > 0);
+          if (updated.length > 0) this.onMarketPairsUpdated?.(updated);
+        })
+        .catch((error) => {
+          console.error('Paper fallback ticker refresh failed:', (error as Error).message);
+        });
+    }, fallbackMs);
+    if (typeof this.tickerInterval.unref === 'function') {
+      this.tickerInterval.unref();
+    }
   }
 
   async placeOrder(player: Player, input: PaperOrderInput): Promise<PaperOrderResult> {
@@ -563,6 +687,9 @@ export class PaperTradingEngine {
 
     const tradeReturn = (trade.pnl / (existing.entryPrice * sizeToClose)) * 100;
     player.bestTradePercent = Math.max(player.bestTradePercent, tradeReturn);
+    if (trade.pnl > 0) {
+      player.biggestTradePnl = Math.max(player.biggestTradePnl, trade.pnl);
+    }
     if (!isPartial) {
       player.winStreak = trade.pnl > 0 ? player.winStreak + 1 : 0;
     }
@@ -593,6 +720,7 @@ export class PaperTradingEngine {
         entryPrice: existing.entryPrice,
         action: 'close',
         pnl: trade.pnl,
+        reason: 'manual',
       },
     };
   }
@@ -664,7 +792,7 @@ export class PaperTradingEngine {
       player.badges = [];
       player.winStreak = 0;
       player.longestPositionMinutes = 0;
-      player.biggestTradeVolume = 0;
+      player.biggestTradePnl = 0;
       player.bestTradePercent = 0;
       player.lastUpdate = Date.now();
       player.connected = true;
@@ -722,7 +850,14 @@ export class PaperTradingEngine {
         : item.krakenSymbol || item.sourceSymbol;
       const sourcePrices = this.marketDataSource === 'binance' ? binancePrices : krakenPrices;
       const rawTicker = sourcePrices[sourceKey];
-      const markPrice = (typeof rawTicker === 'number' ? rawTicker : rawTicker?.markPrice) || this.market[item.pair]?.markPrice || 0;
+      let markPrice = (typeof rawTicker === 'number' ? rawTicker : rawTicker?.markPrice) || this.market[item.pair]?.markPrice || 0;
+      // Fallback Hyperliquid si Binance/Kraken REST est rate-limité (418).
+      if ((!markPrice || markPrice <= 0) && item.hyperliquidCoin) {
+        const hlPrice = hyperliquidPrices[item.hyperliquidCoin];
+        if (typeof hlPrice === 'number' && hlPrice > 0) {
+          markPrice = hlPrice;
+        }
+      }
       const bidPrice = typeof rawTicker === 'number'
         ? Math.max(0, markPrice * (1 - SPREAD_BPS / 10000))
         : (rawTicker?.bidPrice ?? Math.max(0, markPrice - markPrice * (SPREAD_BPS / 10000)));
@@ -814,7 +949,8 @@ export class PaperTradingEngine {
 
   private scheduleReconnect(): void {
     if (this.marketDataSource !== 'kraken' && this.marketDataSource !== 'binance') return;
-    if (this.playersRef.length === 0 || this.reconnectTimeout) return;
+    if (!this.marketFeedActive && this.playersRef.length === 0) return;
+    if (this.reconnectTimeout) return;
     const delay = Math.min(15000, 1000 * 2 ** this.reconnectAttempts);
     this.reconnectAttempts += 1;
     this.reconnectTimeout = setTimeout(() => {
@@ -878,6 +1014,172 @@ export class PaperTradingEngine {
     this.applyTicker(pair, symbol, mark);
   }
 
+  /**
+   * Ouvre la WS Bybit linear et s'abonne à tous les `tickers.SYMBOL` des
+   * pairs crypto supportées. Bybit pousse plusieurs ticks par seconde par
+   * pair (≈ 10 Hz BTC), bien plus fluide que Binance markPrice@1s — et
+   * surtout `stream.bybit.com` n'est pas geo-bloqué pour cet accès.
+   *
+   * Les ticks sont coalescés dans `bybitPendingPairs` et flushés toutes
+   * les `BYBIT_FLUSH_INTERVAL_MS` pour limiter le débit broadcast WS.
+   */
+  private startBybitTickerSocket(): void {
+    if (this.bybitWebsocket) {
+      this.bybitWebsocket.removeAllListeners();
+      this.bybitWebsocket.close();
+      this.bybitWebsocket = null;
+    }
+    if (this.bybitPingInterval) {
+      clearInterval(this.bybitPingInterval);
+      this.bybitPingInterval = null;
+    }
+
+    const symbols = PAPER_PAIRS
+      .filter((item): item is PaperPairDef & { binanceSymbol: string } => Boolean(item.binanceSymbol))
+      .map((item) => item.binanceSymbol);
+
+    if (symbols.length === 0) return;
+
+    const ws = new WebSocket(BYBIT_LINEAR_WS);
+    this.bybitWebsocket = ws;
+
+    ws.on('open', () => {
+      this.bybitReconnectAttempts = 0;
+      // Bybit accepte jusqu'à 10 args par message subscribe sur le topic
+      // tickers, on chunk pour tenir 60+ pairs.
+      const chunkSize = 10;
+      const args: string[] = symbols.map((s) => `tickers.${s}`);
+      for (let i = 0; i < args.length; i += chunkSize) {
+        const chunk = args.slice(i, i + chunkSize);
+        ws.send(JSON.stringify({ op: 'subscribe', args: chunk }));
+      }
+      // Heartbeat 20 s (Bybit timeout = 30 s côté serveur).
+      this.bybitPingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ op: 'ping' })); } catch { /* noop */ }
+        }
+      }, 20000);
+      if (typeof this.bybitPingInterval.unref === 'function') {
+        this.bybitPingInterval.unref();
+      }
+      // Démarre le flush coalescing si pas déjà actif.
+      if (!this.bybitFlushTimer) {
+        this.bybitFlushTimer = setInterval(() => this.flushBybitPending(), BYBIT_FLUSH_INTERVAL_MS);
+        if (typeof this.bybitFlushTimer.unref === 'function') {
+          this.bybitFlushTimer.unref();
+        }
+      }
+      console.log(`[paper] Bybit linear WS up — ${symbols.length} pairs`);
+    });
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg && typeof msg === 'object' && typeof msg.topic === 'string' && msg.topic.startsWith('tickers.')) {
+          this.handleBybitTickerMessage(msg);
+        }
+      } catch (error) {
+        console.error('[paper] Bybit WS parse failed:', (error as Error).message);
+      }
+    });
+
+    ws.on('error', (error) => {
+      console.error('[paper] Bybit WS error:', error.message);
+    });
+
+    ws.on('close', () => {
+      if (this.bybitWebsocket !== ws) return;
+      this.bybitWebsocket = null;
+      if (this.bybitPingInterval) {
+        clearInterval(this.bybitPingInterval);
+        this.bybitPingInterval = null;
+      }
+      this.scheduleBybitReconnect();
+    });
+  }
+
+  private scheduleBybitReconnect(): void {
+    if (!this.marketFeedActive) return;
+    if (this.bybitReconnectTimeout) return;
+    const delay = Math.min(15000, 1000 * 2 ** this.bybitReconnectAttempts);
+    this.bybitReconnectAttempts += 1;
+    this.bybitReconnectTimeout = setTimeout(() => {
+      this.bybitReconnectTimeout = null;
+      this.startBybitTickerSocket();
+    }, delay);
+    if (typeof this.bybitReconnectTimeout.unref === 'function') {
+      this.bybitReconnectTimeout.unref();
+    }
+  }
+
+  private handleBybitTickerMessage(msg: any): void {
+    const data = msg?.data;
+    if (!data || typeof data !== 'object') return;
+    const symbol = String(data.symbol || '').toUpperCase();
+    if (!symbol) return;
+    const pair = bybitSymbolToPair.get(symbol);
+    if (!pair) return;
+
+    // Bybit pousse soit un snapshot complet, soit un delta partiel.
+    // On essaye `lastPrice` puis `markPrice`, sinon mid bid/ask.
+    const last = asNumber(data.lastPrice);
+    const mark = asNumber(data.markPrice);
+    const bid = asNumber(data.bid1Price);
+    const ask = asNumber(data.ask1Price);
+    const price = last ?? mark ?? (bid && ask ? (bid + ask) / 2 : null);
+    if (!price || price <= 0) return;
+
+    const now = Date.now();
+    const prev = this.market[pair];
+    const halfSpread = price * (SPREAD_BPS / 10000);
+    const bidPrice = bid ?? Math.max(0, price - halfSpread);
+    const askPrice = ask ?? price + halfSpread;
+
+    this.market[pair] = {
+      pair,
+      symbol: prev?.symbol ?? symbol,
+      markPrice: price,
+      bidPrice,
+      askPrice,
+      change24h: asNumber(data.price24hPcnt) != null
+        ? Number(data.price24hPcnt) * 100
+        : prev?.change24h ?? null,
+      spreadBps: price > 0 ? ((askPrice - bidPrice) / price) * 10000 : SPREAD_BPS,
+      updatedAt: now,
+    };
+
+    // Tient la bougie courante du cache à jour pour que la prochaine
+    // requête historique reflète immédiatement le dernier tick Bybit.
+    engineCandlesCache.updateLastCandleFromTick(pair, price, now);
+
+    // Coalesce broadcasts : on accumule les pairs dirty, le flush timer
+    // émettra un seul market:tick toutes les 80 ms avec le dernier prix.
+    this.bybitPendingPairs.add(pair);
+  }
+
+  private flushBybitPending(): void {
+    if (this.bybitPendingPairs.size === 0) return;
+    const pairs = Array.from(this.bybitPendingPairs);
+    this.bybitPendingPairs.clear();
+
+    // SL/TP/limites + équité joueur (paper trading) : on utilise le prix
+    // Bybit comme mark price d'exécution (ils sont essentiellement les
+    // mêmes que Binance Futures sur les pairs liquides).
+    if (this.playersRef.length > 0) {
+      this.processOpenOrders(this.playersRef);
+      this.processRiskTriggers(this.playersRef);
+      const now = Date.now();
+      for (const player of this.playersRef) {
+        this.updatePlayerEquity(player);
+        player.connected = true;
+        player.lastUpdate = now;
+      }
+    }
+
+    this.onMarketPairsUpdated?.(pairs);
+    this.onTick();
+  }
+
   private handleTickerMessage(payload: any): void {
     if (!payload || payload.event || payload.feed !== 'ticker') return;
 
@@ -928,6 +1230,7 @@ export class PaperTradingEngine {
       player.lastUpdate = now;
     }
 
+    this.onMarketPairsUpdated?.([pair]);
     this.onTick();
   }
 
@@ -982,8 +1285,9 @@ export class PaperTradingEngine {
         const exitPrice = position.side === 'long' ? ticker.bidPrice : ticker.askPrice;
         const partialSize = trigger === 'tp' ? (position.takeProfitSize ?? null) : (position.stopLossSize ?? null);
 
+        const reason: 'stop-loss' | 'take-profit' = trigger === 'tp' ? 'take-profit' : 'stop-loss';
         if (partialSize != null && partialSize > 0 && partialSize < position.size) {
-          this.closePositionAtPrice(player, position, exitPrice, partialSize);
+          this.closePositionAtPrice(player, position, exitPrice, partialSize, reason);
           if (player.openPositions.includes(position)) {
             if (trigger === 'tp') {
               position.takeProfit = null;
@@ -994,13 +1298,19 @@ export class PaperTradingEngine {
             }
           }
         } else {
-          this.closePositionAtPrice(player, position, exitPrice);
+          this.closePositionAtPrice(player, position, exitPrice, undefined, reason);
         }
       }
     }
   }
 
-  private closePositionAtPrice(player: Player, existing: Position, exitPrice: number, partialSize?: number): void {
+  private closePositionAtPrice(
+    player: Player,
+    existing: Position,
+    exitPrice: number,
+    partialSize?: number,
+    reason: 'manual' | 'stop-loss' | 'take-profit' = 'manual',
+  ): void {
     let sizeToClose = existing.size;
     let isPartial = false;
     if (partialSize != null) {
@@ -1049,6 +1359,9 @@ export class PaperTradingEngine {
 
     const tradeReturn = (trade.pnl / (existing.entryPrice * sizeToClose)) * 100;
     player.bestTradePercent = Math.max(player.bestTradePercent, tradeReturn);
+    if (trade.pnl > 0) {
+      player.biggestTradePnl = Math.max(player.biggestTradePnl, trade.pnl);
+    }
     if (!isPartial) {
       player.winStreak = trade.pnl > 0 ? player.winStreak + 1 : 0;
     }
@@ -1065,6 +1378,25 @@ export class PaperTradingEngine {
     }
 
     this.updatePlayerEquity(player);
+
+    // Spotlight automatique uniquement pour les déclenchements SL/TP. Les
+    // fermetures manuelles passent par closePosition() qui retourne déjà
+    // un spotlight au PlayerManager.
+    if (reason !== 'manual') {
+      this.engineSpotlights.push({
+        id: trade.id,
+        playerName: player.name,
+        playerColor: player.color,
+        playerAvatar: player.avatar,
+        pair: existing.pair,
+        side: existing.side,
+        size: sizeToClose,
+        entryPrice: existing.entryPrice,
+        action: 'close',
+        pnl: trade.pnl,
+        reason,
+      });
+    }
   }
 
   private executeOrder(player: Player, order: Order, executionPrice: number, feeRate: number): PaperOrderResult {
@@ -1108,7 +1440,6 @@ export class PaperTradingEngine {
     player.feesPaid += fee;
     player.openPositions.push(position);
     player.tradeCount += 1;
-    player.biggestTradeVolume = Math.max(player.biggestTradeVolume, notional);
 
     const trade: Trade = {
       id: order.id,
@@ -1154,11 +1485,16 @@ export class PaperTradingEngine {
   }
 
   private updatePlayerEquity(player: Player): void {
+    const now = Date.now();
     player.openPositions = player.openPositions.map((position) => {
-      const id = position.id || `${player.id}-${position.pair}-${position.openedAt || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const id = position.id || `${player.id}-${position.pair}-${position.openedAt || now}-${Math.random().toString(36).slice(2, 8)}`;
       const markPrice = this.market[position.pair]?.markPrice || position.markPrice;
       const updated = { ...position, id, markPrice };
       updated.pnl = computePositionPnl(updated);
+      if (updated.openedAt) {
+        const heldMinutes = (now - updated.openedAt) / 60000;
+        player.longestPositionMinutes = Math.max(player.longestPositionMinutes, heldMinutes);
+      }
       return updated;
     });
 

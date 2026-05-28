@@ -118,8 +118,16 @@ export function fmtMarketPrice(price: number | null | undefined, category?: stri
   if (category === 'forex') {
     return price.toLocaleString('en-US', { minimumFractionDigits: 5, maximumFractionDigits: 5 });
   }
-  if (price >= 1000) {
+  if (category === 'indices') {
     return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  if (category === 'commodities') {
+    return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+  }
+  // Crypto & défaut : plus de décimales sur les gros prix (BTC, ETH…) sans
+  // forcer des zéros inutiles — min 2, max 4 pour rester lisible dans l'UI.
+  if (price >= 1000) {
+    return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   }
   if (price >= 1) {
     return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -130,8 +138,10 @@ export function fmtMarketPrice(price: number | null | undefined, category?: stri
 /** Décimales d'arrondi pour un prix selon la catégorie. */
 export function priceDecimals(category: string | undefined, price: number): number {
   if (category === 'forex') return 5;
+  if (category === 'indices') return 2;
+  if (category === 'commodities') return 3;
   if (!Number.isFinite(price)) return 4;
-  if (price >= 1000) return 2;
+  if (price >= 1000) return 4;
   if (price >= 1) return 4;
   return 6;
 }

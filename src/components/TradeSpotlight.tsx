@@ -1,173 +1,307 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../stores/useGameStore';
 import type { SpotlightTrade } from '../stores/useGameStore';
 import PlayerAvatar from './PlayerAvatar';
-import { formatUSD } from '../utils/formatters';
+import { fmtMarketPrice, formatEngineSizeDisplay } from '../utils/positionSizing';
+import { releaseSpotlightSlot } from '../utils/arenaSounds';
 
-const DISPLAY_DURATION = 5000;
+const DISPLAY_DURATION = 5200;
+const STOP_LOSS_DURATION = 6000;
+const TAKE_PROFIT_DURATION = 6000;
+
+type Variant = 'open' | 'manual-close' | 'stop-loss' | 'take-profit';
+
+function getVariant(trade: SpotlightTrade): Variant {
+  if (trade.action === 'open') return 'open';
+  if (trade.reason === 'stop-loss') return 'stop-loss';
+  if (trade.reason === 'take-profit') return 'take-profit';
+  return 'manual-close';
+}
+
+function getDuration(variant: Variant): number {
+  if (variant === 'stop-loss') return STOP_LOSS_DURATION;
+  if (variant === 'take-profit') return TAKE_PROFIT_DURATION;
+  return DISPLAY_DURATION;
+}
+
+interface VariantStyle {
+  banner: string;
+  bannerLabel: string;
+  border: string;
+  glow: string;
+  bg: string;
+  accent: string;
+  glyph: string;
+}
+
+function getStyle(variant: Variant, playerColor: string): VariantStyle {
+  switch (variant) {
+    case 'stop-loss':
+      return {
+        banner: 'bg-gradient-to-r from-red-700 via-red-600 to-red-700 text-white',
+        bannerLabel: '⚠ STOP LOSS DÉCLENCHÉ ⚠',
+        border: '#dc2626',
+        glow: 'rgba(220, 38, 38, 0.55)',
+        bg: 'linear-gradient(135deg, #1a0606 0%, #2a0a0a 50%, #0d0202 100%)',
+        accent: '#fca5a5',
+        glyph: '🩸',
+      };
+    case 'take-profit':
+      return {
+        banner: 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 text-white',
+        bannerLabel: '✦ TAKE PROFIT ATTEINT ✦',
+        border: '#10b981',
+        glow: 'rgba(16, 185, 129, 0.55)',
+        bg: 'linear-gradient(135deg, #042417 0%, #0a3a26 50%, #021810 100%)',
+        accent: '#6ee7b7',
+        glyph: '💰',
+      };
+    case 'manual-close':
+      return {
+        banner: 'bg-gradient-to-r from-zinc-700 to-zinc-600 text-white',
+        bannerLabel: 'POSITION FERMÉE',
+        border: playerColor,
+        glow: `${playerColor}60`,
+        bg: 'linear-gradient(135deg, #0f0f0f 0%, #1a1a1f 100%)',
+        accent: playerColor,
+        glyph: '✕',
+      };
+    case 'open':
+    default:
+      return {
+        banner: 'bg-gradient-to-r from-red-600 to-red-500 text-white',
+        bannerLabel: 'NOUVELLE POSITION',
+        border: playerColor,
+        glow: `${playerColor}50`,
+        bg: 'linear-gradient(135deg, #0f0f0f 0%, #1a1a2e 100%)',
+        accent: playerColor,
+        glyph: '◢',
+      };
+  }
+}
 
 export default function TradeSpotlight() {
-  const spotlightQueue = useGameStore((s) => s.spotlightQueue);
-  const shiftSpotlight = useGameStore((s) => s.shiftSpotlight);
-  const [current, setCurrent] = useState<SpotlightTrade | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (current || spotlightQueue.length === 0) return;
-    const next = spotlightQueue[0];
-    shiftSpotlight();
-    setCurrent(next);
-  }, [spotlightQueue, current, shiftSpotlight]);
+  const current = useGameStore((s) => s.spotlightTrade);
+  const dismissSpotlight = useGameStore((s) => s.dismissSpotlight);
 
   useEffect(() => {
     if (!current) return;
-    timerRef.current = setTimeout(() => setCurrent(null), DISPLAY_DURATION);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [current]);
+    const duration = getDuration(getVariant(current));
+    const timer = window.setTimeout(() => {
+      dismissSpotlight();
+      releaseSpotlightSlot();
+    }, duration);
+    return () => window.clearTimeout(timer);
+  }, [current, dismissSpotlight]);
 
-  const isOpen = current?.action === 'open';
-  const isLong = current?.side === 'long';
+  if (!current) {
+    return (
+      <AnimatePresence>{null}</AnimatePresence>
+    );
+  }
+
+  const variant = getVariant(current);
+  const style = getStyle(variant, current.playerColor);
+  const isLong = current.side === 'long';
+  const duration = getDuration(variant);
+  const isPnlPositive = current.pnl >= 0;
+  const isHero = variant === 'stop-loss' || variant === 'take-profit';
+  const base = current.pair.split('/')[0] || '';
+  const sizeDisplay = formatEngineSizeDisplay(current.pair, current.size, base);
+  const sizeLabel = `${sizeDisplay.text} ${sizeDisplay.unit}`;
 
   return (
     <AnimatePresence>
-      {current && (
-        <motion.div
-          key={current.id}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-        >
+      <motion.div
+        key={current.id}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.3 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-md"
+      >
+        {/* Hero glow halo (SL / TP) */}
+        {isHero && (
           <motion.div
-            initial={{ scale: 0.7, y: 60 }}
-            animate={{ scale: 1, y: 0 }}
-            exit={{ scale: 0.85, y: -30, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 180, damping: 22 }}
-            className="relative w-[640px] rounded-3xl border-2 overflow-hidden"
+            initial={{ scale: 0.6, opacity: 0 }}
+            animate={{ scale: 1.2, opacity: 0.55 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
+            className="absolute h-[640px] w-[640px] rounded-full pointer-events-none"
             style={{
-              borderColor: current.playerColor,
-              background: 'linear-gradient(135deg, #0f0f0f 0%, #1a1a2e 100%)',
-              boxShadow: `0 0 80px ${current.playerColor}30, 0 0 160px ${current.playerColor}15, inset 0 1px 0 rgba(255,255,255,0.05)`,
+              background: `radial-gradient(circle, ${style.glow} 0%, transparent 60%)`,
+              filter: 'blur(40px)',
             }}
-          >
-            {/* Action banner */}
-            <div
-              className={`w-full py-3 text-center text-sm font-bold uppercase tracking-[0.2em] ${
-                isOpen
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white'
-                  : 'bg-gradient-to-r from-orange-600 to-orange-500 text-white'
-              }`}
-            >
-              {isOpen ? 'NOUVELLE POSITION' : 'POSITION FERMÉE'}
-            </div>
+          />
+        )}
 
-            <div className="px-10 py-8">
-              {/* Player info */}
-              <div className="flex items-center gap-5 mb-8">
-                <PlayerAvatar
-                  name={current.playerName}
-                  color={current.playerColor}
-                  avatar={current.playerAvatar}
-                  size="lg"
-                  glow
-                />
-                <div>
-                  <div className="text-3xl font-bold text-white leading-tight">
-                    {current.playerName}
-                  </div>
-                  <div className="text-base text-gray-400 mt-1">
-                    {isOpen ? 'vient d\'ouvrir une position' : 'vient de fermer une position'}
-                  </div>
+        <motion.div
+          initial={{ scale: isHero ? 0.55 : 0.7, y: 60 }}
+          animate={{ scale: 1, y: 0 }}
+          exit={{ scale: 0.85, y: -30, opacity: 0 }}
+          transition={{ type: 'spring', stiffness: isHero ? 220 : 180, damping: isHero ? 18 : 22 }}
+          className={`relative ${isHero ? 'w-[720px]' : 'w-[640px]'} rounded-3xl border-2 overflow-hidden`}
+          style={{
+            borderColor: style.border,
+            background: style.bg,
+            boxShadow: `0 0 80px ${style.glow}, 0 0 200px ${style.glow}, inset 0 1px 0 rgba(255,255,255,0.05)`,
+          }}
+        >
+          {/* Banner */}
+          <div className={`relative w-full ${isHero ? 'py-4' : 'py-3'} text-center font-bold uppercase ${style.banner}`}>
+            <motion.span
+              key={`${current.id}-label`}
+              initial={{ scale: 0.85, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.1 }}
+              className={`${isHero ? 'text-xl tracking-[0.32em]' : 'text-sm tracking-[0.22em]'} display`}
+            >
+              {style.bannerLabel}
+            </motion.span>
+
+            {isHero && (
+              <motion.div
+                className="pointer-events-none absolute inset-0"
+                initial={{ x: '-100%' }}
+                animate={{ x: '100%' }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: 'linear' }}
+                style={{
+                  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent)',
+                }}
+              />
+            )}
+          </div>
+
+          <div className={`${isHero ? 'px-12 py-9' : 'px-10 py-8'}`}>
+            {/* Player */}
+            <div className="flex items-center gap-5 mb-7">
+              <PlayerAvatar
+                name={current.playerName}
+                color={current.playerColor}
+                avatar={current.playerAvatar}
+                size="lg"
+                glow
+              />
+              <div>
+                <div className={`display font-bold text-white leading-none ${isHero ? 'text-4xl' : 'text-3xl'}`}>
+                  {current.playerName}
+                </div>
+                <div className={`mt-1.5 text-zinc-400 ${isHero ? 'text-base' : 'text-sm'}`}>
+                  {variant === 'stop-loss' && 'a touché son stop loss'}
+                  {variant === 'take-profit' && 'a sécurisé son take profit'}
+                  {variant === 'manual-close' && 'a fermé sa position'}
+                  {variant === 'open' && "vient d'ouvrir une position"}
                 </div>
               </div>
-
-              {/* Direction + Pair */}
-              <div className="flex items-center gap-5 mb-8">
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ delay: 0.15, type: 'spring' }}
-                  className={`text-lg font-bold px-5 py-2.5 rounded-xl ${
-                    isLong
-                      ? 'bg-green-500/15 text-green-400 border border-green-500/25'
-                      : 'bg-red-500/15 text-red-400 border border-red-500/25'
-                  }`}
-                >
-                  {isLong ? '▲ LONG' : '▼ SHORT'}
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.25 }}
-                  className="text-5xl font-rajdhani font-bold text-white tracking-wide"
-                >
-                  {current.pair}
-                </motion.div>
-              </div>
-
-              {/* Details grid */}
-              <div className="grid grid-cols-2 gap-5">
-                <motion.div
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.35 }}
-                  className="bg-white/5 rounded-xl p-5 border border-white/5"
-                >
-                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">
-                    Taille
-                  </div>
-                  <div className="text-3xl font-rajdhani font-bold text-white">
-                    {current.size}
-                  </div>
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.45 }}
-                  className="bg-white/5 rounded-xl p-5 border border-white/5"
-                >
-                  {isOpen && current.entryPrice > 0 ? (
-                    <>
-                      <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">
-                        Prix d'entrée
-                      </div>
-                      <div className="text-3xl font-rajdhani font-bold text-white">
-                        ${formatUSD(current.entryPrice)}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">
-                        PnL
-                      </div>
-                      <div className={`text-3xl font-rajdhani font-bold ${
-                        current.pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {current.pnl >= 0 ? '+' : ''}{current.pnl.toFixed(2)}$
-                      </div>
-                    </>
-                  )}
-                </motion.div>
-              </div>
             </div>
 
-            {/* Timer bar */}
-            <motion.div
-              className="h-1.5"
-              style={{ background: current.playerColor }}
-              initial={{ width: '100%' }}
-              animate={{ width: '0%' }}
-              transition={{ duration: DISPLAY_DURATION / 1000, ease: 'linear' }}
-            />
-          </motion.div>
+            {/* Direction + Pair */}
+            <div className="flex items-center gap-5 mb-7">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ delay: 0.15, type: 'spring' }}
+                className={`text-lg font-bold px-5 py-2.5 rounded-xl border ${
+                  isLong
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : 'bg-red-500/15 text-red-400 border-red-500/30'
+                }`}
+              >
+                {isLong ? '▲ LONG' : '▼ SHORT'}
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.25 }}
+                className={`display num font-bold text-white tracking-[0.04em] ${isHero ? 'text-6xl' : 'text-5xl'}`}
+              >
+                {current.pair}
+              </motion.div>
+            </div>
+
+            {/* Details */}
+            {variant === 'open' ? (
+              <div className="grid grid-cols-2 gap-4">
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.35 }}
+                  className="min-w-0 rounded-xl bg-white/5 border border-white/5 p-5"
+                >
+                  <div className="micro mb-2 text-zinc-500">Taille</div>
+                  <div
+                    className="display num truncate text-2xl font-bold text-white tabular-nums"
+                    title={sizeLabel}
+                  >
+                    {sizeLabel}
+                  </div>
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.45 }}
+                  className="min-w-0 rounded-xl bg-white/5 border border-white/5 p-5"
+                >
+                  <div className="micro mb-2 text-zinc-500">Prix d'entrée</div>
+                  <div
+                    className="display num truncate text-2xl font-bold text-white tabular-nums"
+                    title={`$${fmtMarketPrice(current.entryPrice)}`}
+                  >
+                    ${fmtMarketPrice(current.entryPrice)}
+                  </div>
+                </motion.div>
+              </div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 14, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ delay: 0.32, type: 'spring', stiffness: 200 }}
+                className="rounded-2xl border border-white/10 bg-black/40 p-6"
+                style={{
+                  boxShadow: `inset 0 0 60px ${style.glow}`,
+                }}
+              >
+                <div className="micro mb-2 text-zinc-400 text-center">P&amp;L réalisé</div>
+                <motion.div
+                  key={`${current.id}-pnl`}
+                  initial={{ scale: 1.2 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 220, damping: 12 }}
+                  className={`text-center display num font-bold tabular-nums ${
+                    isPnlPositive ? 'text-emerald-400' : 'text-red-400'
+                  } ${isHero ? 'text-7xl' : 'text-5xl'}`}
+                  style={{
+                    textShadow: isPnlPositive
+                      ? '0 0 48px rgba(16,185,129,0.55)'
+                      : '0 0 48px rgba(239,68,68,0.55)',
+                  }}
+                >
+                  {isPnlPositive ? '+' : ''}
+                  {current.pnl.toFixed(2)} $
+                </motion.div>
+                {isHero && (
+                  <div className={`mt-3 text-center ${variant === 'take-profit' ? 'text-emerald-300' : 'text-red-300'} text-sm tracking-[0.2em] uppercase`}>
+                    {variant === 'take-profit'
+                      ? 'objectif sécurisé · le combat continue'
+                      : 'risque coupé · prochaine offensive en préparation'}
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </div>
+
+          {/* Timer bar */}
+          <motion.div
+            className="h-1.5"
+            style={{ background: style.border }}
+            initial={{ width: '100%' }}
+            animate={{ width: '0%' }}
+            transition={{ duration: duration / 1000, ease: 'linear' }}
+          />
         </motion.div>
-      )}
+      </motion.div>
     </AnimatePresence>
   );
 }

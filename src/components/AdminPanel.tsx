@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import PlayerAvatar from './PlayerAvatar';
+import EventArchivesAdmin from './EventArchivesAdmin';
 import type { EventMode, MarketDataSource, PlatformMode, TeamInfo } from '../stores/useGameStore';
+import { TEAM_MODE_LABEL, TEAM_MODE_TOTAL_PLAYERS, TEAM_PLAYERS_PER_SIDE } from '../utils/teamMode';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -54,7 +56,7 @@ const MODE_LABELS: Record<EventMode, { label: string; desc: string; players: str
   '1v1': { label: '1 vs 1', desc: 'Duel entre deux traders', players: '2 joueurs' },
   '1v1v1': { label: '1 vs 1 vs 1', desc: 'Triple menace', players: '3 joueurs' },
   '1v1v1v1': { label: '1 vs 1 vs 1 vs 1', desc: 'Battle royale', players: '4 joueurs' },
-  '4v4': { label: '4 vs 4', desc: 'Match par équipes', players: '8 joueurs' },
+  '4v4': { label: TEAM_MODE_LABEL, desc: 'Match par équipes', players: `${TEAM_MODE_TOTAL_PLAYERS} joueurs` },
 };
 
 const PLATFORM_LABELS: Record<PlatformMode, { label: string; desc: string; accent: string }> = {
@@ -190,8 +192,9 @@ export default function AdminPanel() {
   const [platformMode, setPlatformMode] = useState<PlatformMode>('kraken');
   const [marketDataSource, setMarketDataSource] = useState<MarketDataSource>('kraken');
   const [paperStartingBalance, setPaperStartingBalance] = useState(10000);
-  const [teamA, setTeamA] = useState<TeamInfo>({ name: 'Équipe Alpha', color: '#6366f1', playerIds: [] });
-  const [teamB, setTeamB] = useState<TeamInfo>({ name: 'Équipe Beta', color: '#f43f5e', playerIds: [] });
+  const [eventDurationMinutes, setEventDurationMinutes] = useState(60);
+  const [teamA, setTeamA] = useState<TeamInfo>({ name: '', color: '#6366f1', playerIds: [] });
+  const [teamB, setTeamB] = useState<TeamInfo>({ name: '', color: '#f43f5e', playerIds: [] });
   const [adminCompetitions, setAdminCompetitions] = useState<AdminCompetition[]>([]);
   const [competitionTitle, setCompetitionTitle] = useState('');
   const [competitionCode, setCompetitionCode] = useState('');
@@ -295,6 +298,7 @@ export default function AdminPanel() {
     if (data.platformMode) setPlatformMode(data.platformMode);
     if (data.marketDataSource) setMarketDataSource(data.marketDataSource === 'hyperliquid' ? 'binance' : data.marketDataSource);
     if (data.paperStartingBalance) setPaperStartingBalance(data.paperStartingBalance);
+    if (typeof data.durationMinutes === 'number') setEventDurationMinutes(data.durationMinutes);
   }
 
   async function fetchConfig() {
@@ -304,6 +308,7 @@ export default function AdminPanel() {
     if (data.platformMode) setPlatformMode(data.platformMode);
     if (data.marketDataSource) setMarketDataSource(data.marketDataSource === 'hyperliquid' ? 'binance' : data.marketDataSource);
     if (data.paperStartingBalance) setPaperStartingBalance(data.paperStartingBalance);
+    if (typeof data.eventDurationMinutes === 'number') setEventDurationMinutes(data.eventDurationMinutes);
     if (data.teams) {
       setTeamA(data.teams[0]);
       setTeamB(data.teams[1]);
@@ -317,12 +322,51 @@ export default function AdminPanel() {
     setAdminCompetitions(data.competitions || []);
   }
 
-  async function saveConfig(next?: Partial<{ mode: EventMode; platformMode: PlatformMode; paperStartingBalance: number; marketDataSource: MarketDataSource }>) {
+  async function saveTeams(nextA: TeamInfo, nextB: TeamInfo) {
+    setError('');
+    const res = await adminFetch('/api/event/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: '4v4',
+        platformMode,
+        paperStartingBalance,
+        marketDataSource,
+        eventDurationMinutes,
+        teams: [nextA, nextB],
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Impossible de sauvegarder les équipes');
+    }
+  }
+
+  async function persistTeams(nextA: TeamInfo, nextB: TeamInfo) {
+    setTeamA(nextA);
+    setTeamB(nextB);
+    try {
+      await saveTeams(nextA, nextB);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function handleTeamNameBlur() {
+    try {
+      await saveTeams(teamA, teamB);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function saveConfig(next?: Partial<{ mode: EventMode; platformMode: PlatformMode; paperStartingBalance: number; marketDataSource: MarketDataSource; eventDurationMinutes: number }>) {
     const body: any = {
       mode: next?.mode || mode,
       platformMode: next?.platformMode || platformMode,
       paperStartingBalance: next?.paperStartingBalance ?? paperStartingBalance,
       marketDataSource: next?.marketDataSource || marketDataSource,
+      eventDurationMinutes: next?.eventDurationMinutes ?? eventDurationMinutes,
     };
     if ((next?.mode || mode) === '4v4') {
       body.teams = [teamA, teamB];
@@ -411,6 +455,15 @@ export default function AdminPanel() {
     if (safeBalance !== paperStartingBalance) setPaperStartingBalance(safeBalance);
     setError('');
     await saveConfig({ paperStartingBalance: safeBalance });
+  }
+
+  async function handleEventDurationBlur() {
+    const safeDuration = Number.isFinite(eventDurationMinutes) && eventDurationMinutes >= 0
+      ? Math.floor(eventDurationMinutes)
+      : 60;
+    if (safeDuration !== eventDurationMinutes) setEventDurationMinutes(safeDuration);
+    setError('');
+    await saveConfig({ eventDurationMinutes: safeDuration });
   }
 
   async function toggleEvent() {
@@ -606,18 +659,19 @@ export default function AdminPanel() {
   }
 
   function addToTeam(playerId: string, team: 'A' | 'B') {
-    if (team === 'A') {
-      setTeamA((current) => ({ ...current, playerIds: [...current.playerIds.filter((id) => id !== playerId), playerId] }));
-      setTeamB((current) => ({ ...current, playerIds: current.playerIds.filter((id) => id !== playerId) }));
-    } else {
-      setTeamB((current) => ({ ...current, playerIds: [...current.playerIds.filter((id) => id !== playerId), playerId] }));
-      setTeamA((current) => ({ ...current, playerIds: current.playerIds.filter((id) => id !== playerId) }));
-    }
+    const nextA = team === 'A'
+      ? { ...teamA, playerIds: [...teamA.playerIds.filter((id) => id !== playerId), playerId] }
+      : { ...teamA, playerIds: teamA.playerIds.filter((id) => id !== playerId) };
+    const nextB = team === 'B'
+      ? { ...teamB, playerIds: [...teamB.playerIds.filter((id) => id !== playerId), playerId] }
+      : { ...teamB, playerIds: teamB.playerIds.filter((id) => id !== playerId) };
+    void persistTeams(nextA, nextB);
   }
 
   function removeFromTeam(playerId: string) {
-    setTeamA((current) => ({ ...current, playerIds: current.playerIds.filter((id) => id !== playerId) }));
-    setTeamB((current) => ({ ...current, playerIds: current.playerIds.filter((id) => id !== playerId) }));
+    const nextA = { ...teamA, playerIds: teamA.playerIds.filter((id) => id !== playerId) };
+    const nextB = { ...teamB, playerIds: teamB.playerIds.filter((id) => id !== playerId) };
+    void persistTeams(nextA, nextB);
   }
 
   const activePlayers = roster.filter((player) => player.active);
@@ -626,9 +680,9 @@ export default function AdminPanel() {
   const teamAPlayers = roster.filter((player) => teamA.playerIds.includes(player.id));
   const teamBPlayers = roster.filter((player) => teamB.playerIds.includes(player.id));
   const unassigned = roster.filter((player) => !teamA.playerIds.includes(player.id) && !teamB.playerIds.includes(player.id));
-  const expectedPlayers = mode === '1v1' ? 2 : mode === '1v1v1' ? 3 : mode === '1v1v1v1' ? 4 : 8;
+  const expectedPlayers = mode === '1v1' ? 2 : mode === '1v1v1' ? 3 : mode === '1v1v1v1' ? 4 : TEAM_MODE_TOTAL_PLAYERS;
   const currentCount = is4v4 ? teamA.playerIds.length + teamB.playerIds.length : activePlayers.length;
-  const isReady = currentCount === expectedPlayers && (!is4v4 || (teamA.playerIds.length === 4 && teamB.playerIds.length === 4));
+  const isReady = currentCount === expectedPlayers && (!is4v4 || (teamA.playerIds.length === TEAM_PLAYERS_PER_SIDE && teamB.playerIds.length === TEAM_PLAYERS_PER_SIDE));
   const showTraderCodes = platformMode === 'paper';
 
   if (!adminToken) {
@@ -884,15 +938,17 @@ export default function AdminPanel() {
                   type="text"
                   value={teamA.name}
                   onChange={(e) => setTeamA((current) => ({ ...current, name: e.target.value }))}
-                  className="border-b border-transparent bg-transparent font-rajdhani text-xl font-bold text-white outline-none transition-colors hover:border-slate-600 focus:border-indigo-500"
+                  onBlur={() => void handleTeamNameBlur()}
+                  placeholder="Nom de l'équipe"
+                  className="min-w-0 flex-1 border-b border-transparent bg-transparent font-rajdhani text-xl font-bold text-white outline-none transition-colors placeholder:text-slate-600 hover:border-slate-600 focus:border-indigo-500"
                 />
-                <span className="ml-auto text-sm text-slate-500">{teamAPlayers.length}/4</span>
+                <span className="ml-auto text-sm text-slate-500">{teamAPlayers.length}/{TEAM_PLAYERS_PER_SIDE}</span>
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 {teamAPlayers.map((player) => (
                   <PlayerPill key={player.id} player={player} onRemove={() => removeFromTeam(player.id)} onUpload={fetchRoster} showCode={showTraderCodes} adminToken={adminToken || ''} />
                 ))}
-                {Array.from({ length: Math.max(0, 4 - teamAPlayers.length) }).map((_, index) => (
+                {Array.from({ length: Math.max(0, TEAM_PLAYERS_PER_SIDE - teamAPlayers.length) }).map((_, index) => (
                   <div key={`empty-a-${index}`} className="rounded-lg border-2 border-dashed border-slate-700 py-2 text-center text-sm text-slate-600">
                     Slot vide
                   </div>
@@ -909,15 +965,17 @@ export default function AdminPanel() {
                   type="text"
                   value={teamB.name}
                   onChange={(e) => setTeamB((current) => ({ ...current, name: e.target.value }))}
-                  className="border-b border-transparent bg-transparent font-rajdhani text-xl font-bold text-white outline-none transition-colors hover:border-slate-600 focus:border-indigo-500"
+                  onBlur={() => void handleTeamNameBlur()}
+                  placeholder="Nom de l'équipe"
+                  className="min-w-0 flex-1 border-b border-transparent bg-transparent font-rajdhani text-xl font-bold text-white outline-none transition-colors placeholder:text-slate-600 hover:border-slate-600 focus:border-indigo-500"
                 />
-                <span className="ml-auto text-sm text-slate-500">{teamBPlayers.length}/4</span>
+                <span className="ml-auto text-sm text-slate-500">{teamBPlayers.length}/{TEAM_PLAYERS_PER_SIDE}</span>
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 {teamBPlayers.map((player) => (
                   <PlayerPill key={player.id} player={player} onRemove={() => removeFromTeam(player.id)} onUpload={fetchRoster} showCode={showTraderCodes} adminToken={adminToken || ''} />
                 ))}
-                {Array.from({ length: Math.max(0, 4 - teamBPlayers.length) }).map((_, index) => (
+                {Array.from({ length: Math.max(0, TEAM_PLAYERS_PER_SIDE - teamBPlayers.length) }).map((_, index) => (
                   <div key={`empty-b-${index}`} className="rounded-lg border-2 border-dashed border-slate-700 py-2 text-center text-sm text-slate-600">
                     Slot vide
                   </div>
@@ -942,20 +1000,20 @@ export default function AdminPanel() {
                         <button
                           type="button"
                           onClick={() => addToTeam(player.id, 'A')}
-                          disabled={teamAPlayers.length >= 4}
+                          disabled={teamAPlayers.length >= TEAM_PLAYERS_PER_SIDE}
                           className="rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-30"
                           style={{ borderColor: `${teamA.color}40`, color: teamA.color }}
                         >
-                          {teamA.name}
+                          {teamA.name.trim() || 'Équipe A'}
                         </button>
                         <button
                           type="button"
                           onClick={() => addToTeam(player.id, 'B')}
-                          disabled={teamBPlayers.length >= 4}
+                          disabled={teamBPlayers.length >= TEAM_PLAYERS_PER_SIDE}
                           className="rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:opacity-30"
                           style={{ borderColor: `${teamB.color}40`, color: teamB.color }}
                         >
-                          {teamB.name}
+                          {teamB.name.trim() || 'Équipe B'}
                         </button>
                         <button type="button" onClick={() => removePlayer(player.id)} className="px-2 py-1.5 text-xs text-slate-500 transition-colors hover:text-red-400">
                           Supprimer
@@ -1034,6 +1092,35 @@ export default function AdminPanel() {
             </div>
           </>
         )}
+
+        <div className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
+          <h2 className="mb-1 text-lg font-semibold text-white">Durée de la compétition</h2>
+          <p className="mb-4 text-sm text-slate-500">
+            Compte à rebours affiché sur le dashboard. À 00:00:00, toutes les positions sont clôturées et le trading s&apos;arrête.
+          </p>
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <label className="mb-2 block text-sm text-slate-300">Durée (minutes)</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={eventDurationMinutes}
+                onChange={(e) => setEventDurationMinutes(Number(e.target.value))}
+                onBlur={handleEventDurationBlur}
+                disabled={eventStarted}
+                className="w-40 rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none transition-colors focus:border-indigo-500 disabled:opacity-50"
+              />
+            </div>
+            <p className="pb-3 text-sm text-slate-500">
+              {eventDurationMinutes > 0
+                ? `Le timer démarre à ${eventDurationMinutes} min et descend jusqu'à 00:00.`
+                : '0 = pas de fin automatique (chrono classique).'}
+            </p>
+          </div>
+        </div>
+
+        <EventArchivesAdmin adminFetch={adminFetch} />
 
         <button
           onClick={toggleEvent}

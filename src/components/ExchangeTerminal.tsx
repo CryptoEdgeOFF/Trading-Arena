@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
-import { formatPnl, timeAgo } from '../utils/formatters';
+import { formatPnl, formatTime, timeAgo } from '../utils/formatters';
 import {
   engineSizeFromInput,
   fmtMarketPrice,
@@ -23,7 +23,8 @@ const SESSION_KEY = 'btf-paper-session';
 const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
 const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
-const DEMO_TAKER_FEE = 0.00005;
+const DEMO_TAKER_FEE = 0.00005 / 3;
+const DEMO_MAKER_FEE = 0.00002 / 3;
 
 interface PaperMeta {
   enabled: boolean;
@@ -245,7 +246,7 @@ function createDemoPlayer(): Player {
     badges: [],
     winStreak: 0,
     longestPositionMinutes: 0,
-    biggestTradeVolume: 0,
+    biggestTradePnl: 0,
     bestTradePercent: 0,
     lastUpdate: Date.now(),
     connected: true,
@@ -343,20 +344,38 @@ function TopBar({
   player,
   trader,
   competition,
+  liveMode = false,
 }: {
   player: Player | null;
   trader: SessionPlayer;
   competition: CompetitionContext | null;
+  liveMode?: boolean;
 }) {
+  const eventEndTime = useGameStore((s) => s.eventEndTime);
+  const eventStarted = useGameStore((s) => s.eventStarted);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!liveMode || !eventStarted || eventEndTime == null) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [liveMode, eventStarted, eventEndTime]);
+
+  const remainingMs = eventEndTime != null ? Math.max(0, eventEndTime - now) : null;
   const balance = player?.currentBalance ?? 0;
   const pnl = player?.pnl ?? 0;
   const pnlPct = player?.pnlPercent ?? 0;
   const pnlPos = pnl >= 0;
   const rank = competition?.rank ?? player?.rank ?? null;
   const participants = competition?.participants ?? null;
-  const leaderboardHref = competition?.id && competition.id !== 'unknown'
-    ? `/compete/leaderboard/${competition.id}`
-    : '/compete';
+  // En mode Live (BTF event roster), l'home renvoie sur la page de login
+  // par code et le bouton "Leaderboard" pointe sur le dashboard public Live.
+  const homeHref = liveMode ? '/trader' : '/compete';
+  const leaderboardHref = liveMode
+    ? '/live-dashboard'
+    : (competition?.id && competition.id !== 'unknown'
+        ? `/compete/leaderboard/${competition.id}`
+        : '/compete');
 
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2.5 py-2 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
@@ -369,9 +388,13 @@ function TopBar({
       </div>
 
       <div className="hidden min-w-0 md:block">
-        <div className="truncate text-[13px] font-semibold text-white">{competition?.title || 'Trading terminal'}</div>
+        <div className="truncate text-[13px] font-semibold text-white">
+          {liveMode ? 'BTF Live event' : (competition?.title || 'Trading terminal')}
+        </div>
         <div className="text-[10px] uppercase tracking-[0.16em] text-[#7a8090]">
-          {competition?.status === 'live' ? 'Competition live' : competition?.status === 'upcoming' ? 'Competition a venir' : 'Paper trading'}
+          {liveMode
+            ? 'Trader access'
+            : (competition?.status === 'live' ? 'Competition live' : competition?.status === 'upcoming' ? 'Competition a venir' : 'Paper trading')}
         </div>
       </div>
 
@@ -395,11 +418,17 @@ function TopBar({
       </div>
 
       <div className="ml-auto flex items-center gap-1.5 md:ml-0">
-        <a href="/compete" className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
-          Accueil
+        {liveMode && remainingMs != null && (
+          <div className={`rounded-xl border px-3 py-1.5 text-center ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+            <div className="text-[8px] uppercase tracking-[0.16em] text-[#7a8090]">Restant</div>
+            <div className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</div>
+          </div>
+        )}
+        <a href={homeHref} className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
+          {liveMode ? 'Sortir' : 'Accueil'}
         </a>
         <a href={leaderboardHref} className="cursor-pointer rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
-          Leaderboard
+          {liveMode ? 'Dashboard' : 'Leaderboard'}
         </a>
         <div className="hidden items-center gap-2 px-2 text-[11.5px] text-[#e0e2ea] xl:flex">
           {trader.avatar ? (
@@ -1388,6 +1417,7 @@ function PositionRow({
         <RiskModal
           position={position}
           markPrice={currentPrice}
+          category={category}
           onClose={() => setRiskOpen(false)}
           onSubmit={async (payload) => {
             await onUpdateRisk(position.id, payload.stopLoss, payload.takeProfit, {
@@ -1414,11 +1444,13 @@ interface RiskPayload {
 function RiskModal({
   position,
   markPrice,
+  category,
   onClose,
   onSubmit,
 }: {
   position: Position;
   markPrice: number;
+  category?: MarketCategory;
   onClose: () => void;
   onSubmit: (payload: RiskPayload) => Promise<void> | void;
 }) {
@@ -1482,7 +1514,7 @@ function RiskModal({
     if (value === '' || !Number.isFinite(num)) {
       setTpPriceDraft('');
     } else {
-      setTpPriceDraft(pctToPrice(num, 'tp').toFixed(2));
+      setTpPriceDraft(priceToInputString(pctToPrice(num, 'tp'), category));
     }
   }
   function setSlFromPrice(value: string) {
@@ -1500,7 +1532,7 @@ function RiskModal({
     if (value === '' || !Number.isFinite(num)) {
       setSlPriceDraft('');
     } else {
-      setSlPriceDraft(pctToPrice(num, 'sl').toFixed(2));
+      setSlPriceDraft(priceToInputString(pctToPrice(num, 'sl'), category));
     }
   }
 
@@ -1580,6 +1612,16 @@ function RiskModal({
     setSlPctDraft('');
   }
 
+  let liquidationDisplay: number | null = position.liquidationPrice ?? null;
+  if (liquidationDisplay == null && position.leverage > 0 && Number.isFinite(position.entryPrice)) {
+    liquidationDisplay = isLong
+      ? position.entryPrice * (1 - 1 / position.leverage)
+      : position.entryPrice * (1 + 1 / position.leverage);
+  }
+  const liquidationLabel = liquidationDisplay != null && Number.isFinite(liquidationDisplay)
+    ? fmtMarketPrice(liquidationDisplay, category)
+    : '—';
+
   return createPortal(
     (
         <div
@@ -1614,29 +1656,31 @@ function RiskModal({
                   <span className="rounded-md bg-[#1c1928] px-2 py-1 text-[10px] uppercase tracking-wide text-[#9498a4]">Position</span>
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-                  <div className="rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
+                  <div className="min-w-0 rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
                     <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">Entree</div>
-                    <div className="num mt-0.5 text-[13px] font-semibold text-white">{fmt(position.entryPrice, 1)}</div>
+                    <div
+                      className="num mt-0.5 truncate text-[12px] font-semibold tabular-nums text-white"
+                      title={fmtMarketPrice(position.entryPrice, category)}
+                    >
+                      {fmtMarketPrice(position.entryPrice, category)}
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
+                  <div className="min-w-0 rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
                     <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">Marche</div>
-                    <div className="num mt-0.5 text-[13px] font-semibold text-white">{fmt(markPrice, 1)}</div>
+                    <div
+                      className="num mt-0.5 truncate text-[12px] font-semibold tabular-nums text-white"
+                      title={fmtMarketPrice(markPrice, category)}
+                    >
+                      {fmtMarketPrice(markPrice, category)}
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-[#f43f6e]/30 bg-[#f43f6e]/5 px-2.5 py-2">
+                  <div className="min-w-0 rounded-lg border border-[#f43f6e]/30 bg-[#f43f6e]/5 px-2.5 py-2">
                     <div className="text-[10px] uppercase tracking-wide text-[#f43f6e]">Liquidation</div>
-                    <div className="num mt-0.5 text-[13px] font-semibold text-white">
-                      {(() => {
-                        // Prefer the backend value when available, otherwise
-                        // fall back to the standard isolated-margin formula
-                        // so the user always sees a reference price.
-                        let liq = position.liquidationPrice;
-                        if (liq == null && position.leverage > 0 && Number.isFinite(position.entryPrice)) {
-                          liq = isLong
-                            ? position.entryPrice * (1 - 1 / position.leverage)
-                            : position.entryPrice * (1 + 1 / position.leverage);
-                        }
-                        return liq != null && Number.isFinite(liq) ? fmt(liq, 1) : '—';
-                      })()}
+                    <div
+                      className="num mt-0.5 truncate text-[12px] font-semibold tabular-nums text-white"
+                      title={liquidationLabel !== '—' ? liquidationLabel : undefined}
+                    >
+                      {liquidationLabel}
                     </div>
                   </div>
                 </div>
@@ -2163,6 +2207,128 @@ function CompetitionLeaderboardPanel({
   );
 }
 
+/**
+ * Leaderboard latéral du terminal Live (BTF event).
+ *
+ * Consomme directement le store global (`useGameStore.players`) qui contient
+ * uniquement les joueurs roster Live actifs (les traders compétition online
+ * sont retirés via `onlineCompetitionPlayerIds` côté serveur). Trie par
+ * pnlPercent desc et met en évidence le trader courant.
+ */
+function LiveRosterLeaderboardPanel({
+  players,
+  currentPlayerId,
+}: {
+  players: Player[];
+  currentPlayerId: string | null;
+}) {
+  const ranked = useMemo(() => {
+    return [...players]
+      .filter((p) => p.active !== false)
+      .sort((a, b) => (b.pnlPercent ?? 0) - (a.pnlPercent ?? 0))
+      .slice(0, 50);
+  }, [players]);
+
+  const myIndex = ranked.findIndex((p) => p.id === currentPlayerId);
+  const visible = useMemo(() => {
+    if (!ranked.length) return [];
+    if (myIndex < 0) return ranked.slice(0, 20);
+    const start = Math.max(0, Math.min(myIndex - 4, ranked.length - 9));
+    return ranked.slice(start, start + 9);
+  }, [myIndex, ranked]);
+  const myPlayer = myIndex >= 0 ? ranked[myIndex] : null;
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c]">
+      <div className="shrink-0 border-b border-[#171321] px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[#dc2626]">Leaderboard</div>
+            <div className="truncate text-[14px] font-bold text-white">BTF Live event</div>
+          </div>
+          <a
+            href="/live-dashboard"
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-white"
+          >
+            Dashboard
+          </a>
+        </div>
+        {myPlayer && (
+          <div className="mt-3 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/12 px-3 py-2">
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#fca5a5]">Ta position</div>
+            <LiveRosterRow player={myPlayer} rank={myIndex + 1} isMe compact />
+          </div>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {visible.length === 0 ? (
+          <EmptyState lines={['Aucun trader actif dans le roster.']} />
+        ) : (
+          <div className="divide-y divide-[#171321]">
+            {visible.map((player) => {
+              const rank = ranked.findIndex((p) => p.id === player.id) + 1;
+              return (
+                <LiveRosterRow
+                  key={player.id}
+                  player={player}
+                  rank={rank}
+                  isMe={player.id === currentPlayerId}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LiveRosterRow({
+  player,
+  rank,
+  isMe,
+  compact = false,
+}: {
+  player: Player;
+  rank: number;
+  isMe?: boolean;
+  compact?: boolean;
+}) {
+  const positive = (player.pnlPercent ?? 0) >= 0;
+  return (
+    <div className={`grid grid-cols-[42px_minmax(0,1fr)_74px_62px] items-center gap-2 px-3 ${compact ? 'py-1.5' : 'py-3'} text-[12px] ${isMe ? 'bg-[#dc2626]/10' : ''}`}>
+      <div className={`num font-bold ${isMe ? 'text-white' : 'text-[#8f899e]'}`}>#{rank}</div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {player.avatar ? (
+            <img src={player.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+          ) : (
+            <span
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold uppercase text-white"
+              style={{ background: player.color || '#dc2626' }}
+            >
+              {player.name.slice(0, 2)}
+            </span>
+          )}
+          <span className="truncate font-bold text-white">{player.name}</span>
+        </div>
+        {!compact && (
+          <div className="text-[10px] text-[#6f687f]">{player.tradeCount ?? 0} trades</div>
+        )}
+      </div>
+      <div className={`num text-right font-bold ${positive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
+        {fmtSigned(player.pnlPercent ?? 0, 2)}%
+      </div>
+      <div className={`num text-right font-bold ${positive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
+        {fmtSigned(player.pnl ?? 0, 0)}
+      </div>
+    </div>
+  );
+}
+
 function LeaderboardMiniRow({ row, isMe, compact = false }: { row: LeaderboardRow; isMe?: boolean; compact?: boolean }) {
   const positive = row.pnlPercent >= 0;
   return (
@@ -2315,7 +2481,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     pairs: demoMode ? DEMO_PAIRS : [],
     market: demoMode ? demoMarket : {},
     marketMetadata: {},
-    fees: { maker: DEMO_TAKER_FEE, taker: DEMO_TAKER_FEE, spreadBps: 1, minLeverage: 1, maxLeverage: 50 },
+    fees: { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE, spreadBps: 1, minLeverage: 1, maxLeverage: 50 },
   }));
   // Initialize the session synchronously from the bootstrap cache deposited
   // by CompetitionPlatform when the user clicked "TRADER". This avoids the
@@ -2387,6 +2553,22 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [competitionContext, setCompetitionContext] = useState<CompetitionContext | null>(null);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardResponse | null>(null);
   const [leaderboardError, setLeaderboardError] = useState('');
+
+  // Mode Live (BTF event roster, accès par traderCode admin) vs mode
+  // compétition online. Détecté en lisant `?live=true` dans l'URL au mount
+  // pour éviter un flash de l'UI compétition. En mode Live :
+  //   - pas de polling /api/competition/leaderboard
+  //   - pas de bouton "Accueil" vers /compete (renvoie vers /trader)
+  //   - placeholder "Acces requis" redirige vers /trader
+  //   - logout() ramène sur /trader
+  const [liveMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || demoMode) return false;
+    try {
+      return new URLSearchParams(window.location.search).get('live') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const [livePlayer, setLivePlayer] = useState<Player | null>(null);
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
@@ -3212,6 +3394,11 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (demoMode) return;
     window.localStorage.removeItem(SESSION_KEY);
     setSession(null);
+    // En mode Live, ramener directement sur la page de login par code
+    // pour ne pas afficher le placeholder "Aller sur BTF Arena".
+    if (liveMode && typeof window !== 'undefined') {
+      window.location.href = '/trader';
+    }
   }
 
   function startBottomResize(event: PointerEvent<HTMLDivElement>) {
@@ -3366,7 +3553,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     />
   );
 
-  const competitionLeaderboardPanel = (
+  const competitionLeaderboardPanel = liveMode ? (
+    <LiveRosterLeaderboardPanel
+      players={players}
+      currentPlayerId={session?.player.id ?? null}
+    />
+  ) : (
     <CompetitionLeaderboardPanel
       data={leaderboardData}
       currentUserId={competitionContext?.userId}
@@ -3385,7 +3577,11 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     >
       {!livePaperMode && (
         <div className="m-3 rounded-md border border-[#3a2c08] bg-[#241a05] p-3 text-[12px] text-[#f4b400]">
-          Aucune competition active pour ce terminal. Retourne sur <a className="underline" href="/compete">BTF Arena</a> pour rejoindre une arene.
+          {liveMode ? (
+            <>Mode paper non actif. Demande à l’admin d’activer le paper trading dans <a className="underline" href="/admin">/admin</a>.</>
+          ) : (
+            <>Aucune competition active pour ce terminal. Retourne sur <a className="underline" href="/compete">BTF Arena</a> pour rejoindre une arene.</>
+          )}
         </div>
       )}
 
@@ -3408,16 +3604,20 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="w-full max-w-md rounded-2xl border border-[#231f22] bg-[#0e0c0d] p-7 shadow-2xl shadow-black/40">
             <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#dc2626]">Acces requis</div>
-            <h2 className="font-rajdhani text-3xl font-bold text-white">Terminal de competition</h2>
+            <h2 className="font-rajdhani text-3xl font-bold text-white">
+              {liveMode ? 'Terminal BTF Live' : 'Terminal de competition'}
+            </h2>
             <p className="mt-3 text-[13px] text-[#9498a4]">
-              Le terminal de trading est reserve aux joueurs inscrits a une competition. Connecte-toi sur la BTF Arena pour rejoindre une arene.
+              {liveMode
+                ? 'Le terminal Live est reserve aux traders inscrits au roster de l\'evenement. Saisis ton code admin pour entrer.'
+                : 'Le terminal de trading est reserve aux joueurs inscrits a une competition. Connecte-toi sur la BTF Arena pour rejoindre une arene.'}
             </p>
             {error && <div className="mt-4 text-[12px] text-[#fda4af]">{error}</div>}
             <a
-              href="/compete"
+              href={liveMode ? '/trader' : '/compete'}
               className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-[#dc2626] py-3 text-[13px] font-bold uppercase tracking-[0.18em] text-white transition-transform hover:scale-[1.01]"
             >
-              Aller sur BTF Arena
+              {liveMode ? 'Saisir mon code' : 'Aller sur BTF Arena'}
             </a>
           </div>
         </div>
@@ -3429,6 +3629,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             player={player}
             trader={session.player}
             competition={competitionContext}
+            liveMode={liveMode}
           />
 
           <div className="flex min-h-0 flex-1 flex-col lg:hidden">

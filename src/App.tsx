@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import ExchangeTerminal from './components/ExchangeTerminal';
 import Dashboard from './components/Dashboard';
-import TraderTerminal from './components/TraderTerminal';
+import LiveAccessGate from './components/LiveAccessGate';
 import CompetitionPlatform from './components/CompetitionPlatform';
 import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderboard';
 import CompetitionSettings from './components/CompetitionSettings';
@@ -20,7 +20,7 @@ export default function App() {
         <Route path="/feed-test" element={<FeedTest />} />
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />
         <Route path="/live-dashboard" element={<Dashboard />} />
-        <Route path="/trader" element={<TraderTerminal />} />
+        <Route path="/trader" element={<LiveAccessGate />} />
         <Route path="/trade" element={<ExchangeTerminal />} />
         <Route path="/compete" element={<CompetitionPlatform />} />
         <Route path="/compete/settings" element={<CompetitionSettings />} />

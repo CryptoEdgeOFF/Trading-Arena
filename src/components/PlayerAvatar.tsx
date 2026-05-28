@@ -2,7 +2,7 @@ interface PlayerAvatarProps {
   name: string;
   color: string;
   avatar: string | null;
-  size?: 'xs' | 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   glow?: boolean;
   dimmed?: boolean;
 }
@@ -12,6 +12,8 @@ const sizes = {
   sm: 'w-8 h-8 text-sm',
   md: 'w-10 h-10 text-lg',
   lg: 'w-14 h-14 text-xl',
+  xl: 'w-20 h-20 text-2xl',
+  '2xl': 'w-28 h-28 text-4xl',
 };
 
 export default function PlayerAvatar({

@@ -171,7 +171,6 @@ export class PaperTradingEngine {
     };
     player.openPositions.push(position);
     player.tradeCount += 1;
-    player.biggestTradeVolume = Math.max(player.biggestTradeVolume, notional);
     this.updatePlayerEquity(player);
 
     const trade: Trade = {
@@ -247,6 +246,9 @@ export class PaperTradingEngine {
 
     const tradeReturn = (existing.pnl / (existing.entryPrice * existing.size)) * 100;
     player.bestTradePercent = Math.max(player.bestTradePercent, tradeReturn);
+    if (existing.pnl > 0) {
+      player.biggestTradePnl = Math.max(player.biggestTradePnl, existing.pnl);
+    }
     player.winStreak = existing.pnl > 0 ? player.winStreak + 1 : 0;
     player.trades.push(trade);
     player.trades = player.trades.slice(-50);
@@ -284,7 +286,7 @@ export class PaperTradingEngine {
       player.badges = [];
       player.winStreak = 0;
       player.longestPositionMinutes = 0;
-      player.biggestTradeVolume = 0;
+      player.biggestTradePnl = 0;
       player.bestTradePercent = 0;
       player.lastUpdate = Date.now();
       player.connected = true;

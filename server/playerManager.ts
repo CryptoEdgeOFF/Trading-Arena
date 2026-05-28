@@ -12,6 +12,7 @@ import {
   GameState,
   MarketTicker,
   PlatformMode,
+  Order,
   Player,
   PlayerStatePatch,
   Position,
@@ -23,6 +24,13 @@ import {
 } from './types.js';
 import * as kraken from './kraken.js';
 import { PaperTradingEngine, type ExternalQuote, type PaperOrderInput } from './exchangePaperEngine.js';
+import {
+  EventArchiveStore,
+  buildEventArchive,
+  type EventArchive,
+  type ShowcaseMode,
+  type ShowcaseState,
+} from './eventArchive.js';
 
 const PLAYER_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
@@ -34,6 +42,21 @@ const PLAYER_COLORS = [
 const DEFAULT_PAPER_BALANCE = 10_000;
 const ROSTER_FILE = path.join(process.cwd(), 'data', 'roster.json');
 const ROSTER_DB_KEY = 'paper-roster';
+/** Leader #1 doit rester stable avant d'annoncer un changement (évite le ping-pong PnL). */
+const LEADER_STABLE_MS = 10_000;
+const LEADER_ANNOUNCE_COOLDOWN_MS = 45_000;
+
+/** Seuils minimum avant d'attribuer un badge compétitif (évite le spam au 1er trade). */
+const BADGE_THRESHOLDS: Record<
+  Exclude<BadgeType, 'first-blood'>,
+  { score: (player: Player) => number; min: number }
+> = {
+  'whale-alert': { score: (p) => p.biggestTradePnl, min: 50 },
+  'speed-demon': { score: (p) => p.tradeCount, min: 5 },
+  'diamond-hands': { score: (p) => p.longestPositionMinutes, min: 15 },
+  sniper: { score: (p) => p.bestTradePercent, min: 2 },
+  'green-machine': { score: (p) => p.winStreak, min: 3 },
+};
 
 function cleanPair(instrument: string): string {
   return instrument
@@ -55,14 +78,22 @@ export class PlayerManager {
   private firstTradeAwarded = false;
   private onUpdate: (patch: StatePatch) => void;
   private pendingBadges: { playerId: string; badge: Badge }[] = [];
-  private pendingLeaderChanges: { playerId: string; from: number; to: number }[] = [];
+  private pendingLeaderChange: { playerId: string; from: number; to: number } | null = null;
   private pendingSpotlights: SpotlightTrade[] = [];
   private badgeHolders: Map<BadgeType, string> = new Map();
+  /** Suivi anti ping-pong pour la notif « nouveau leader ». */
+  private topLeaderId: string | null = null;
+  private topLeaderSince = 0;
+  private lastAnnouncedLeaderId: string | null = null;
+  private lastLeaderAnnouncementAt = 0;
   private tickerPrices: Record<string, number> = {};
   private eventMode: EventMode = '1v1';
   private platformMode: PlatformMode = 'kraken';
   private marketDataSource: MarketDataSource = 'kraken';
   private paperStartingBalance = DEFAULT_PAPER_BALANCE;
+  private eventDurationMinutes = 60;
+  private eventEndTime: number | null = null;
+  private eventTimerInterval: ReturnType<typeof setInterval> | null = null;
   private teams?: [TeamInfo, TeamInfo];
   private paperEngine: PaperTradingEngine;
   private competitionPaperRuntimeStarted = false;
@@ -102,6 +133,11 @@ export class PlayerManager {
     feesPaid: number;
     connected: boolean;
     lastUpdate: number;
+    // Empreintes compactes utilisées par computeStatePatch pour détecter
+    // les changements de positions/ordres ouverts sans réécrire les arrays
+    // entiers à chaque tick. Voir `fingerprintPositions` / `fingerprintOrders`.
+    openPositionsFp: string;
+    openOrdersFp: string;
   }> = new Map();
   private snapshotMarket: Map<string, {
     markPrice: number;
@@ -124,12 +160,16 @@ export class PlayerManager {
   private snapshotEvent = {
     eventStarted: false as boolean,
     eventStartTime: null as number | null,
+    eventEndTime: null as number | null,
     eventMode: null as EventMode | null,
     platformMode: null as PlatformMode | null,
     paperStartingBalance: null as number | null,
     marketDataSource: null as MarketDataSource | null,
     teamsSignature: '' as string,
+    showcaseSignature: '' as string,
   };
+  private archiveStore = new EventArchiveStore();
+  private marketTickBroadcaster: ((pairs: string[]) => void) | null = null;
   readonly ready: Promise<void>;
 
   constructor(onUpdate: (patch: StatePatch) => void) {
@@ -144,14 +184,25 @@ export class PlayerManager {
         console.error('[player pool] idle client error:', err.message || err);
       });
     }
-    this.paperEngine = new PaperTradingEngine(() => {
-      this.updateRankings();
-      this.checkBadges();
-      this.markRosterDirty();
-      this.broadcastState();
-    });
+    this.paperEngine = new PaperTradingEngine(
+      () => {
+        const engineSpotlights = this.paperEngine.drainEngineSpotlights();
+        if (engineSpotlights.length > 0) {
+          this.pendingSpotlights.push(...engineSpotlights);
+        }
+        this.updateRankings();
+        this.checkBadges();
+        this.markRosterDirty();
+        this.broadcastState();
+      },
+      (pairs) => {
+        this.marketTickBroadcaster?.(pairs);
+      },
+    );
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
-    this.ready = this.loadRoster();
+    this.archiveStore.setPool(this.pool);
+    this.archiveStore.onChange(() => this.broadcastState(true));
+    this.ready = this.loadRoster().then(() => this.archiveStore.init());
     this.startRosterFlushLoop();
   }
 
@@ -217,6 +268,7 @@ export class PlayerManager {
       const player = this.createPlayerFromStored(stored);
       this.players.set(player.id, player);
     }
+    this.syncBadgeHoldersFromPlayers();
   }
 
   /**
@@ -300,7 +352,7 @@ export class PlayerManager {
       badges: player.badges,
       winStreak: player.winStreak,
       longestPositionMinutes: player.longestPositionMinutes,
-      biggestTradeVolume: player.biggestTradeVolume,
+      biggestTradePnl: player.biggestTradePnl,
       bestTradePercent: player.bestTradePercent,
       lastUpdate: player.lastUpdate,
       connected: player.connected,
@@ -540,7 +592,7 @@ export class PlayerManager {
       badges: stored.badges ?? [],
       winStreak: stored.winStreak ?? 0,
       longestPositionMinutes: stored.longestPositionMinutes ?? 0,
-      biggestTradeVolume: stored.biggestTradeVolume ?? 0,
+      biggestTradePnl: stored.biggestTradePnl ?? 0,
       bestTradePercent: stored.bestTradePercent ?? 0,
       lastUpdate: stored.lastUpdate ?? 0,
       connected: stored.connected ?? false,
@@ -549,10 +601,11 @@ export class PlayerManager {
 
   private resetCompetitionState(players = this.getActivePlayers()): void {
     this.pendingBadges = [];
-    this.pendingLeaderChanges = [];
+    this.pendingLeaderChange = null;
     this.pendingSpotlights = [];
     this.badgeHolders.clear();
     this.firstTradeAwarded = false;
+    this.resetLeaderAnnouncementState();
 
     for (const player of players) {
       player.initialBalance = null;
@@ -571,7 +624,7 @@ export class PlayerManager {
       player.badges = [];
       player.winStreak = 0;
       player.longestPositionMinutes = 0;
-      player.biggestTradeVolume = 0;
+      player.biggestTradePnl = 0;
       player.bestTradePercent = 0;
       player.lastUpdate = Date.now();
       player.connected = false;
@@ -616,7 +669,7 @@ export class PlayerManager {
       badges: [],
       winStreak: 0,
       longestPositionMinutes: 0,
-      biggestTradeVolume: 0,
+      biggestTradePnl: 0,
       bestTradePercent: 0,
       lastUpdate: Date.now(),
       connected: false,
@@ -738,6 +791,11 @@ export class PlayerManager {
     return this.onlineCompetitionPlayerIds.has(playerId);
   }
 
+  /** Snapshot marché pour les charts — toujours disponible, compétition ou non. */
+  getChartMarketSnapshot(): Record<string, import('./types.js').MarketTicker> {
+    return this.getPaperMarketSnapshot();
+  }
+
   isPaperMarketActive(): boolean {
     return this.platformMode === 'paper' || this.competitionPaperRuntimeStarted;
   }
@@ -782,6 +840,9 @@ export class PlayerManager {
     this.platformMode = config.platformMode;
     this.marketDataSource = config.marketDataSource;
     this.paperStartingBalance = config.paperStartingBalance;
+    if (typeof config.eventDurationMinutes === 'number' && Number.isFinite(config.eventDurationMinutes)) {
+      this.eventDurationMinutes = Math.max(0, Math.floor(config.eventDurationMinutes));
+    }
     this.paperEngine.setMarketDataSource(this.marketDataSource);
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
   }
@@ -793,7 +854,22 @@ export class PlayerManager {
       platformMode: this.platformMode,
       paperStartingBalance: this.paperStartingBalance,
       marketDataSource: this.marketDataSource,
+      eventDurationMinutes: this.eventDurationMinutes,
     };
+  }
+
+  getEventDurationMinutes(): number {
+    return this.eventDurationMinutes;
+  }
+
+  getEventEndTime(): number | null {
+    return this.eventEndTime;
+  }
+
+  canTradeLiveEvent(): boolean {
+    if (!this.eventStarted) return false;
+    if (this.eventEndTime != null && Date.now() >= this.eventEndTime) return false;
+    return true;
   }
 
   getPlatformMode(): PlatformMode {
@@ -818,6 +894,19 @@ export class PlayerManager {
 
   async refreshPaperMarketSnapshot() {
     return this.paperEngine.refreshMarketSnapshot();
+  }
+
+  setMarketTickBroadcaster(fn: (pairs: string[]) => void): void {
+    this.marketTickBroadcaster = fn;
+  }
+
+  /** Démarre le flux prix crypto (Binance/Kraken) pour les charts, always-on. */
+  async ensurePublicMarketFeed(): Promise<void> {
+    await this.paperEngine.ensureMarketFeed();
+  }
+
+  shutdownMarketFeed(): void {
+    this.paperEngine.stop();
   }
 
   /**
@@ -859,7 +948,14 @@ export class PlayerManager {
     this.resetCompetitionState(active);
     this.eventStarted = true;
     this.eventStartTime = Date.now();
+    this.eventEndTime = this.eventDurationMinutes > 0
+      ? this.eventStartTime + this.eventDurationMinutes * 60_000
+      : null;
     this.playerQueue = active.map((player) => player.id);
+
+    // Assigner les rangs AVANT le démarrage du moteur paper pour éviter
+    // un faux « nouveau leader » (0 → #1) sur le premier tick marché.
+    this.rebuildRankings();
 
     if (this.platformMode === 'paper') {
       await this.paperEngine.start(active);
@@ -868,14 +964,95 @@ export class PlayerManager {
       this.startPolling();
     }
 
-    this.rebuildRankings();
+    this.startEventTimerLoop();
     this.broadcastState();
   }
 
   stopEvent(): void {
+    if (this.eventStarted) {
+      void this.archiveCurrentEvent('manual-stop');
+    }
     this.eventStarted = false;
+    this.eventEndTime = null;
+    this.stopEventTimerLoop();
     this.stopRealtimeLoops();
+    // Purge — voir commentaire dans finalizeLiveEvent.
+    this.resetActivePlayersForNextRound();
     this.broadcastState();
+  }
+
+  /**
+   * Réinitialise les stats compétition de tous les joueurs (PnL, trades,
+   * positions, balances, badges, séries…) pour que le dashboard reparte
+   * propre entre deux rounds. L'archive éventuelle a déjà capturé le
+   * snapshot final, donc on peut purger sans perte.
+   */
+  private resetActivePlayersForNextRound(): void {
+    const players = Array.from(this.players.values());
+    if (players.length === 0) return;
+    this.resetCompetitionState(players);
+    this.saveRoster();
+  }
+
+  private startEventTimerLoop(): void {
+    this.stopEventTimerLoop();
+    if (!this.eventEndTime) return;
+    this.eventTimerInterval = setInterval(() => {
+      void this.checkEventTimer();
+    }, 1000);
+    if (typeof this.eventTimerInterval.unref === 'function') {
+      this.eventTimerInterval.unref();
+    }
+  }
+
+  private stopEventTimerLoop(): void {
+    if (this.eventTimerInterval) {
+      clearInterval(this.eventTimerInterval);
+      this.eventTimerInterval = null;
+    }
+  }
+
+  private async checkEventTimer(): Promise<void> {
+    if (!this.eventStarted || this.eventEndTime == null) return;
+    if (Date.now() < this.eventEndTime) return;
+    await this.finalizeLiveEvent();
+  }
+
+  /** Fin auto du timer : clôture toutes les positions, stop trading. */
+  async finalizeLiveEvent(): Promise<void> {
+    if (!this.eventStarted) return;
+    this.stopEventTimerLoop();
+
+    const active = this.getActivePlayers();
+    if (this.platformMode === 'paper') {
+      for (const player of active) {
+        for (const order of [...player.openOrders]) {
+          if (order.status === 'open') {
+            this.paperEngine.cancelOrder(player, order.id);
+          }
+        }
+        for (const position of [...player.openPositions]) {
+          if (player.openPositions.some((entry) => entry.id === position.id)) {
+            await this.paperEngine.closePosition(player, position.id);
+          }
+        }
+      }
+      this.rebuildRankings();
+      this.saveRoster();
+    }
+
+    void this.archiveCurrentEvent('timer');
+
+    this.pendingLeaderChange = null;
+    this.eventStarted = false;
+    this.eventEndTime = null;
+    this.stopRealtimeLoops();
+    // Purge des stats des joueurs immédiatement après archivage : on
+    // veut que le dashboard inter-rounds reparte propre (badges, PnL,
+    // trades, positions à zéro) plutôt que d'afficher l'état figé du
+    // round précédent quand l'admin configure un nouveau round.
+    this.resetActivePlayersForNextRound();
+    this.broadcastState(true);
   }
 
   isStarted(): boolean {
@@ -886,8 +1063,53 @@ export class PlayerManager {
     return this.eventStartTime;
   }
 
+  /* ---------- Archives & Showcase ---------- */
+
+  private async archiveCurrentEvent(_origin: 'timer' | 'manual-stop'): Promise<void> {
+    const players = this.getActivePlayers().filter(
+      (player) => player.initialBalance != null && player.tradeCount > 0,
+    );
+    if (players.length === 0) return;
+    const archive = buildEventArchive({
+      players,
+      startedAt: this.eventStartTime,
+      finalizedAt: Date.now(),
+      eventMode: this.eventMode,
+      teams: this.teams ?? null,
+    });
+    try {
+      await this.archiveStore.add(archive);
+    } catch (err) {
+      console.error('[archive] add failed:', (err as Error).message || err);
+    }
+  }
+
+  listEventArchives(): EventArchive[] {
+    return this.archiveStore.list();
+  }
+
+  getEventArchive(id: string): EventArchive | null {
+    return this.archiveStore.get(id);
+  }
+
+  async deleteEventArchive(id: string): Promise<boolean> {
+    return this.archiveStore.remove(id);
+  }
+
+  async setEventShowcase(state: ShowcaseState | null): Promise<boolean> {
+    return this.archiveStore.setShowcase(state);
+  }
+
+  getEventShowcase(): ShowcaseState | null {
+    return this.archiveStore.getShowcase();
+  }
+
+  getEventShowcasePayload(): { mode: ShowcaseMode; archive: EventArchive } | null {
+    return this.archiveStore.getShowcasePayload();
+  }
+
   async placePaperOrder(playerId: string, order: PaperOrderInput): Promise<void> {
-    if (!this.eventStarted || this.platformMode !== 'paper') {
+    if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
       throw new Error('Le paper trading n’est pas disponible');
     }
 
@@ -922,7 +1144,7 @@ export class PlayerManager {
   }
 
   async closePaperPosition(playerId: string, pair: string, partialSize?: number): Promise<void> {
-    if (!this.eventStarted || this.platformMode !== 'paper') {
+    if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
       throw new Error('Le paper trading n’est pas disponible');
     }
 
@@ -1029,7 +1251,7 @@ export class PlayerManager {
     takeProfit: number | null,
     options: { stopLossSize?: number | null; takeProfitSize?: number | null } = {},
   ): void {
-    if (!this.eventStarted || this.platformMode !== 'paper') {
+    if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
       throw new Error('Le paper trading n’est pas disponible');
     }
 
@@ -1113,7 +1335,8 @@ export class PlayerManager {
       clearInterval(this.tickerInterval);
       this.tickerInterval = null;
     }
-    this.paperEngine.stop();
+    // Ne coupe pas le WS Binance/Kraken : les charts crypto doivent rester live.
+    this.paperEngine.stopSession();
     this.competitionPaperRuntimeStarted = false;
   }
 
@@ -1314,8 +1537,11 @@ export class PlayerManager {
       player.openOrders = [];
       player.usedMargin = nextPositions.reduce((total, position) => total + position.margin, 0);
       player.availableMargin = Math.max(0, player.currentBalance - player.usedMargin);
-      for (const position of nextPositions) {
-        player.biggestTradeVolume = Math.max(player.biggestTradeVolume, position.size * position.markPrice);
+      // Whale = plus gros gain sur trade clôturé : on s'aligne sur les trades 'close' réalisés.
+      for (const trade of player.trades) {
+        if (trade.action === 'close' && trade.pnl > player.biggestTradePnl) {
+          player.biggestTradePnl = trade.pnl;
+        }
       }
       player.connected = true;
       player.lastUpdate = Date.now();
@@ -1341,6 +1567,55 @@ export class PlayerManager {
     });
   }
 
+  private hasAnyOpenPositions(): boolean {
+    return this.getActivePlayers().some((player) => player.openPositions.length > 0);
+  }
+
+  private resetLeaderAnnouncementState(): void {
+    this.topLeaderId = null;
+    this.topLeaderSince = 0;
+    this.lastAnnouncedLeaderId = null;
+    this.lastLeaderAnnouncementAt = 0;
+  }
+
+  private maybeAnnounceLeaderChange(sorted: Player[]): void {
+    if (!this.hasAnyOpenPositions() || sorted.length === 0) {
+      this.topLeaderId = null;
+      this.topLeaderSince = 0;
+      return;
+    }
+
+    const leader = sorted[0];
+    const now = Date.now();
+
+    if (leader.id !== this.topLeaderId) {
+      this.topLeaderId = leader.id;
+      this.topLeaderSince = now;
+      return;
+    }
+
+    const stableMs = now - this.topLeaderSince;
+    if (stableMs < LEADER_STABLE_MS) return;
+
+    // Premier leader établi : on enregistre sans célébrer.
+    if (this.lastAnnouncedLeaderId === null) {
+      this.lastAnnouncedLeaderId = leader.id;
+      return;
+    }
+
+    if (this.lastAnnouncedLeaderId === leader.id) return;
+
+    if (now - this.lastLeaderAnnouncementAt < LEADER_ANNOUNCE_COOLDOWN_MS) return;
+
+    this.pendingLeaderChange = {
+      playerId: leader.id,
+      from: leader.previousRank > 1 ? leader.previousRank : 2,
+      to: 1,
+    };
+    this.lastAnnouncedLeaderId = leader.id;
+    this.lastLeaderAnnouncementAt = now;
+  }
+
   private updateRankings(): void {
     const sorted = this.getActivePlayers()
       .filter((player) => player.initialBalance !== null)
@@ -1349,54 +1624,53 @@ export class PlayerManager {
     sorted.forEach((player, index) => {
       const nextRank = index + 1;
       if (player.rank !== nextRank) {
-        this.pendingLeaderChanges.push({
-          playerId: player.id,
-          from: player.rank,
-          to: nextRank,
-        });
         player.previousRank = player.rank;
         player.rank = nextRank;
       }
     });
+
+    this.maybeAnnounceLeaderChange(sorted);
+  }
+
+  private syncBadgeHoldersFromPlayers(): void {
+    this.badgeHolders.clear();
+    for (const player of this.players.values()) {
+      for (const badge of player.badges) {
+        if (badge.type !== 'first-blood') {
+          this.badgeHolders.set(badge.type, player.id);
+        }
+      }
+    }
+  }
+
+  /** Leader strict : score >= min et pas d'égalité au sommet. */
+  private findStrictBadgeLeader(
+    players: Player[],
+    scoreOf: (player: Player) => number,
+    minScore: number,
+  ): Player | null {
+    const ranked = players
+      .map((player) => ({ player, score: scoreOf(player) }))
+      .filter((entry) => entry.score >= minScore)
+      .sort((a, b) => b.score - a.score);
+
+    if (ranked.length === 0) return null;
+    if (ranked.length >= 2 && ranked[0].score === ranked[1].score) return null;
+    return ranked[0].player;
   }
 
   private checkBadges(): void {
     const players = this.getActivePlayers().filter((player) => player.initialBalance !== null);
     if (players.length === 0) return;
 
-    const whale = players.reduce((best, player) => (
-      player.biggestTradeVolume > best.biggestTradeVolume ? player : best
-    ));
-    if (whale.biggestTradeVolume > 0) {
-      this.assignCompetitiveBadge('whale-alert', whale, players);
-    }
-
-    const speedy = players.reduce((best, player) => (
-      player.tradeCount > best.tradeCount ? player : best
-    ));
-    if (speedy.tradeCount > 0) {
-      this.assignCompetitiveBadge('speed-demon', speedy, players);
-    }
-
-    const longest = players.reduce((best, player) => (
-      player.longestPositionMinutes > best.longestPositionMinutes ? player : best
-    ));
-    if (longest.longestPositionMinutes > 0) {
-      this.assignCompetitiveBadge('diamond-hands', longest, players);
-    }
-
-    const sniper = players.reduce((best, player) => (
-      player.bestTradePercent > best.bestTradePercent ? player : best
-    ));
-    if (sniper.bestTradePercent > 0) {
-      this.assignCompetitiveBadge('sniper', sniper, players);
-    }
-
-    const greenest = players.reduce((best, player) => (
-      player.pnlPercent > best.pnlPercent ? player : best
-    ));
-    if (greenest.pnlPercent > 0) {
-      this.assignCompetitiveBadge('green-machine', greenest, players);
+    const competitiveTypes = Object.keys(BADGE_THRESHOLDS) as Array<
+      Exclude<BadgeType, 'first-blood'>
+    >;
+    for (const type of competitiveTypes) {
+      const { score, min } = BADGE_THRESHOLDS[type];
+      const winner = this.findStrictBadgeLeader(players, score, min);
+      if (!winner) continue;
+      this.assignCompetitiveBadge(type, winner, players);
     }
   }
 
@@ -1439,9 +1713,10 @@ export class PlayerManager {
     return {
       players,
       recentTrades: allTrades,
-      market: this.isPaperMarketActive() ? this.getPaperMarketSnapshot() : {},
+      market: this.getChartMarketSnapshot(),
       eventStarted: this.eventStarted,
       eventStartTime: this.eventStartTime,
+      eventEndTime: this.eventEndTime,
       eventMode: this.eventMode,
       teams: this.teams,
       platformMode: this.platformMode,
@@ -1450,6 +1725,7 @@ export class PlayerManager {
       newBadges: [],
       leaderChanges: [],
       spotlightTrades: [],
+      showcase: this.archiveStore.getShowcasePayload() ?? null,
     };
   }
 
@@ -1472,10 +1748,12 @@ export class PlayerManager {
         feesPaid: player.feesPaid,
         connected: player.connected,
         lastUpdate: player.lastUpdate,
+        openPositionsFp: this.fingerprintPositions(player.openPositions),
+        openOrdersFp: this.fingerprintOrders(player.openOrders),
       });
       for (const trade of player.trades) this.snapshotTradeIds.add(trade.id);
     }
-    const market = this.isPaperMarketActive() ? this.getPaperMarketSnapshot() : {};
+    const market = this.getChartMarketSnapshot();
     for (const [pair, ticker] of Object.entries(market)) {
       this.snapshotMarket.set(pair, {
         markPrice: ticker.markPrice,
@@ -1488,12 +1766,36 @@ export class PlayerManager {
     this.snapshotEvent = {
       eventStarted: this.eventStarted,
       eventStartTime: this.eventStartTime,
+      eventEndTime: this.eventEndTime,
       eventMode: this.eventMode,
       platformMode: this.platformMode,
       paperStartingBalance: this.paperStartingBalance,
       marketDataSource: this.marketDataSource,
       teamsSignature: JSON.stringify(this.teams || null),
+      showcaseSignature: JSON.stringify(this.archiveStore.getShowcase() || null),
     };
+  }
+
+  /**
+   * Empreinte compacte d'un set de positions ouvertes. Ne dépend QUE des
+   * champs structurels (id, paire, side, taille, entrée, levier, SL/TP) —
+   * pas du markPrice ni du PnL qui changent à chaque tick. Le dashboard
+   * recalcule le PnL côté client à partir du markPrice diffusé via
+   * `patch.market`, donc on ne ré-émet les positions que sur ouverture /
+   * fermeture / modification effective.
+   */
+  private fingerprintPositions(positions: Position[]): string {
+    if (!positions.length) return '';
+    return positions
+      .map((p) => `${p.id}|${p.pair}|${p.side}|${p.size}|${p.entryPrice}|${p.leverage}|${p.stopLoss ?? ''}|${p.takeProfit ?? ''}`)
+      .join(';');
+  }
+
+  private fingerprintOrders(orders: Order[]): string {
+    if (!orders.length) return '';
+    return orders
+      .map((o) => `${o.id}|${o.pair}|${o.side}|${o.size}|${o.orderType}|${o.limitPrice ?? ''}|${o.status}|${o.stopLoss ?? ''}|${o.takeProfit ?? ''}`)
+      .join(';');
   }
 
   private computeStatePatch(): StatePatch | null {
@@ -1506,6 +1808,8 @@ export class PlayerManager {
     for (const player of players) {
       seenIds.add(player.id);
       const previous = this.snapshotPlayers.get(player.id);
+      const positionsFp = this.fingerprintPositions(player.openPositions);
+      const ordersFp = this.fingerprintOrders(player.openOrders);
       if (!previous) {
         addedPlayers.push(player as Player);
         this.snapshotPlayers.set(player.id, {
@@ -1520,6 +1824,8 @@ export class PlayerManager {
           feesPaid: player.feesPaid,
           connected: player.connected,
           lastUpdate: player.lastUpdate,
+          openPositionsFp: positionsFp,
+          openOrdersFp: ordersFp,
         });
         continue;
       }
@@ -1536,6 +1842,14 @@ export class PlayerManager {
       if (previous.feesPaid !== player.feesPaid) { diff.feesPaid = player.feesPaid; changed = true; }
       if (previous.connected !== player.connected) { diff.connected = player.connected; changed = true; }
       if (previous.lastUpdate !== player.lastUpdate) { diff.lastUpdate = player.lastUpdate; changed = true; }
+      if (previous.openPositionsFp !== positionsFp) {
+        diff.openPositions = player.openPositions;
+        changed = true;
+      }
+      if (previous.openOrdersFp !== ordersFp) {
+        diff.openOrders = player.openOrders;
+        changed = true;
+      }
       if (changed) {
         playerPatches.push(diff);
         previous.pnl = player.pnl;
@@ -1549,6 +1863,8 @@ export class PlayerManager {
         previous.feesPaid = player.feesPaid;
         previous.connected = player.connected;
         previous.lastUpdate = player.lastUpdate;
+        previous.openPositionsFp = positionsFp;
+        previous.openOrdersFp = ordersFp;
       }
     }
 
@@ -1565,9 +1881,7 @@ export class PlayerManager {
     if (removedPlayerIds.length > 0) patch.removedPlayerIds = removedPlayerIds;
 
     // Market diff: only include pairs whose price-related fields changed.
-    const market: Record<string, MarketTicker> = this.isPaperMarketActive()
-      ? this.getPaperMarketSnapshot()
-      : {};
+    const market: Record<string, MarketTicker> = this.getChartMarketSnapshot();
     const marketPatch: Record<string, MarketTicker> = {};
     const seenPairs = new Set<string>();
     for (const [pair, ticker] of Object.entries(market)) {
@@ -1625,6 +1939,10 @@ export class PlayerManager {
       patch.eventStartTime = this.eventStartTime;
       this.snapshotEvent.eventStartTime = this.eventStartTime;
     }
+    if (this.snapshotEvent.eventEndTime !== this.eventEndTime) {
+      patch.eventEndTime = this.eventEndTime;
+      this.snapshotEvent.eventEndTime = this.eventEndTime;
+    }
     if (this.snapshotEvent.eventMode !== this.eventMode) {
       patch.eventMode = this.eventMode;
       this.snapshotEvent.eventMode = this.eventMode;
@@ -1646,13 +1964,18 @@ export class PlayerManager {
       patch.teams = this.teams || null;
       this.snapshotEvent.teamsSignature = teamsSignature;
     }
+    const showcaseSignature = JSON.stringify(this.archiveStore.getShowcase() || null);
+    if (this.snapshotEvent.showcaseSignature !== showcaseSignature) {
+      patch.showcase = this.archiveStore.getShowcasePayload() ?? null;
+      this.snapshotEvent.showcaseSignature = showcaseSignature;
+    }
 
     // One-shot signals always go in the patch when present.
     if (this.pendingBadges.length > 0) patch.newBadges = [...this.pendingBadges];
-    if (this.pendingLeaderChanges.length > 0) patch.leaderChanges = [...this.pendingLeaderChanges];
+    if (this.pendingLeaderChange) patch.leaderChanges = [this.pendingLeaderChange];
     if (this.pendingSpotlights.length > 0) patch.spotlightTrades = [...this.pendingSpotlights];
     this.pendingBadges = [];
-    this.pendingLeaderChanges = [];
+    this.pendingLeaderChange = null;
     this.pendingSpotlights = [];
 
     return Object.keys(patch).length > 0 ? patch : null;
@@ -1716,7 +2039,7 @@ export class PlayerManager {
     // updates on a fixed interval to keep the WS load predictable.
     const hasOneShot =
       this.pendingBadges.length > 0 ||
-      this.pendingLeaderChanges.length > 0 ||
+      this.pendingLeaderChange !== null ||
       this.pendingSpotlights.length > 0;
     if (!force && !hasOneShot) {
       const elapsed = now - this.lastBroadcastAt;

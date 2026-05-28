@@ -23,7 +23,8 @@ export interface Player {
   badges: Badge[];
   winStreak: number;
   longestPositionMinutes: number;
-  biggestTradeVolume: number;
+  /** Plus gros PNL réalisé (en USD) sur un trade clôturé. Utilisé pour le badge Whale. */
+  biggestTradePnl: number;
   bestTradePercent: number;
   lastUpdate: number;
   connected: boolean;
@@ -54,6 +55,8 @@ export interface StoredPlayer {
   badges?: Badge[];
   winStreak?: number;
   longestPositionMinutes?: number;
+  biggestTradePnl?: number;
+  /** @deprecated remplacé par biggestTradePnl. Conservé pour migration des anciennes rosters. */
   biggestTradeVolume?: number;
   bestTradePercent?: number;
   lastUpdate?: number;
@@ -149,7 +152,11 @@ export interface EventConfig {
   platformMode: PlatformMode;
   paperStartingBalance: number;
   marketDataSource: MarketDataSource;
+  /** Durée de l'événement live en minutes (0 = pas de timer auto). */
+  eventDurationMinutes?: number;
 }
+
+export type SpotlightReason = 'manual' | 'stop-loss' | 'take-profit';
 
 export interface SpotlightTrade {
   id: string;
@@ -162,6 +169,8 @@ export interface SpotlightTrade {
   entryPrice: number;
   action: 'open' | 'close';
   pnl: number;
+  /** Présent uniquement pour `action: 'close'`. */
+  reason?: SpotlightReason;
 }
 
 export interface MarketTicker {
@@ -181,6 +190,8 @@ export interface GameState {
   market: Record<string, MarketTicker>;
   eventStarted: boolean;
   eventStartTime: number | null;
+  /** Timestamp fin auto (start + durée admin). Null si pas de timer. */
+  eventEndTime: number | null;
   eventMode: EventMode;
   teams?: [TeamInfo, TeamInfo];
   platformMode: PlatformMode;
@@ -189,6 +200,43 @@ export interface GameState {
   newBadges: { playerId: string; badge: Badge }[];
   leaderChanges: { playerId: string; from: number; to: number }[];
   spotlightTrades: SpotlightTrade[];
+  /** Showcase courant (archive d'un round précédent diffusée sur le dashboard). */
+  showcase?: ShowcasePayload | null;
+}
+
+/** Payload diffusé pour afficher une archive de round sur le dashboard. */
+export interface ShowcasePayload {
+  mode: 'podium' | 'stats';
+  archive: ArchivedEventSnapshot;
+}
+
+export interface ArchivedEventSnapshot {
+  id: string;
+  finalizedAt: number;
+  startedAt: number | null;
+  durationMs: number;
+  eventMode: EventMode;
+  teams: [TeamInfo, TeamInfo] | null;
+  players: ArchivedPlayerSnapshot[];
+}
+
+export interface ArchivedPlayerSnapshot {
+  id: string;
+  name: string;
+  color: string;
+  avatar: string | null;
+  rank: number;
+  initialBalance: number;
+  currentBalance: number;
+  pnl: number;
+  pnlPercent: number;
+  tradeCount: number;
+  feesPaid: number;
+  winStreak: number;
+  bestTradePercent: number;
+  biggestTradePnl: number;
+  longestPositionMinutes: number;
+  badges: Badge[];
 }
 
 /**
@@ -209,6 +257,13 @@ export interface PlayerStatePatch {
   feesPaid?: number;
   connected?: boolean;
   lastUpdate?: number;
+  // Snapshots complets de l'état des positions/ordres ouverts du joueur.
+  // Inclus seulement quand le contenu (taille de l'array, ids, paires, sides,
+  // mark price ou pnl par position/ordre) a changé depuis le dernier patch.
+  // Permet au dashboard Live d'afficher en temps réel les positions et
+  // limites de chaque trader sans avoir à interroger le serveur.
+  openPositions?: Position[];
+  openOrders?: Order[];
 }
 
 export interface StatePatch {
@@ -227,11 +282,14 @@ export interface StatePatch {
   spotlightTrades?: SpotlightTrade[];
   eventStarted?: boolean;
   eventStartTime?: number | null;
+  eventEndTime?: number | null;
   eventMode?: EventMode;
   teams?: [TeamInfo, TeamInfo] | null;
   platformMode?: PlatformMode;
   paperStartingBalance?: number;
   marketDataSource?: MarketDataSource;
+  /** Push de l'archive showcase courante. `null` = retire l'overlay. */
+  showcase?: ShowcasePayload | null;
 }
 
 export const BADGE_DEFS: Record<BadgeType, Omit<Badge, 'awardedAt'>> = {
@@ -244,7 +302,7 @@ export const BADGE_DEFS: Record<BadgeType, Omit<Badge, 'awardedAt'>> = {
   'whale-alert': {
     type: 'whale-alert',
     label: 'Whale Alert',
-    description: 'Plus gros trade en volume',
+    description: 'Plus gros gain sur un trade clôturé',
     icon: '🐋',
   },
   sniper: {
