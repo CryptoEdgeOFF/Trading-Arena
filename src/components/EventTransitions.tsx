@@ -30,8 +30,22 @@ export default function EventTransitions() {
   // page pendant un round déjà actif (où on ne doit PAS rejouer le
   // countdown). Voir #refresh-no-countdown.
   const previousStartedRef = useRef<boolean | null>(null);
+  // Dernier snapshot des joueurs PENDANT que l'event tournait, avec stats
+  // non vides. Utilisé pour le podium/stats : le serveur purge les PnL
+  // dans le même patch que `eventStarted=false`, donc on ne peut pas se
+  // baser sur le state courant au moment de la transition.
+  const liveSnapshotRef = useRef<Player[]>([]);
 
-  // Détection du démarrage : false → true
+  useEffect(() => {
+    if (!eventStarted) return;
+    const hasMeaningfulStats = players.some(
+      (p) => p.tradeCount > 0 || p.pnl !== 0 || p.openPositions.length > 0,
+    );
+    if (hasMeaningfulStats || liveSnapshotRef.current.length === 0) {
+      liveSnapshotRef.current = players;
+    }
+  }, [eventStarted, players]);
+
   useEffect(() => {
     const wasStarted = previousStartedRef.current;
     previousStartedRef.current = eventStarted;
@@ -45,6 +59,7 @@ export default function EventTransitions() {
       // Nouveau round : on vide les files locales pour repartir propre.
       resetClientLiveState();
       resetArenaRoundSounds();
+      liveSnapshotRef.current = [];
       setSnapshotPlayers(null);
       setPhase('countdown');
       setCountdownValue(COUNTDOWN_FROM);
@@ -53,8 +68,13 @@ export default function EventTransitions() {
     }
 
     if (wasStarted && !eventStarted) {
-      // Fin d'événement : on capture le snapshot final pour le podium.
-      const snapshot = [...players].sort((a, b) => b.pnl - a.pnl);
+      // Fin d'événement : on prend le DERNIER snapshot capturé pendant que
+      // l'event tournait (avant le reset serveur). Si pour une raison
+      // quelconque on n'en a pas, fallback sur l'état courant.
+      const source = liveSnapshotRef.current.length > 0
+        ? liveSnapshotRef.current
+        : players;
+      const snapshot = [...source].sort((a, b) => b.pnl - a.pnl);
       if (snapshot.length > 0) {
         setSnapshotPlayers(snapshot);
         setPhase('event-end');
