@@ -22,12 +22,6 @@ interface CachedSeries {
 const SUPPORTED_INTERVALS = [1, 5, 15, 30, 60, 240, 1440] as const;
 const MAX_CACHE_BARS = 40_000;
 /**
- * Nombre max de bougies-pont créées d'un coup pour combler un gap de ticks.
- * Au-delà (ex: serveur idle plusieurs heures), on n'ouvre que la bougie
- * courante — un backfill REST rétablira l'historique complet.
- */
-const MAX_BRIDGE_BARS = 2_000;
-/**
  * Fast path : nombre de bars retourné immédiatement au premier hit
  * (avant que le background fetch ne complète jusqu'à `MAX_CACHE_BARS`).
  * 1500 = 1 seul call Binance/Hyperliquid (~300 ms) — couvre largement le
@@ -226,30 +220,15 @@ export function updateLastCandleFromTick(pair: string, price: number, tsMs: numb
     const bucket = Math.floor(tsSec / intervalSec) * intervalSec;
     const last = series.candles.length > 0 ? series.candles[series.candles.length - 1] : null;
 
-    if (!last) {
-      series.candles.push({ time: bucket, open: price, high: price, low: price, close: price });
-    } else if (bucket > last.time) {
-      // Comble les buckets sautés entre la dernière bougie connue et le
-      // bucket courant avec des bougies plates (open=close=dernier close).
-      // Sans ça, un hoquet du flux (gap WS, transition de failover) laisse
-      // un trou permanent dans la série jusqu'au prochain backfill REST.
-      const bridgeClose = last.close;
-      for (
-        let t = last.time + intervalSec;
-        t < bucket && (bucket - t) / intervalSec <= MAX_BRIDGE_BARS;
-        t += intervalSec
-      ) {
-        series.candles.push({ time: t, open: bridgeClose, high: bridgeClose, low: bridgeClose, close: bridgeClose });
-      }
-      // Bougie courante : ouvre sur le dernier close pour la continuité.
+    if (!last || bucket > last.time) {
       series.candles.push({
         time: bucket,
-        open: bridgeClose,
-        high: Math.max(bridgeClose, price),
-        low: Math.min(bridgeClose, price),
+        open: price,
+        high: price,
+        low: price,
         close: price,
       });
-      while (series.candles.length > MAX_CACHE_BARS) series.candles.shift();
+      if (series.candles.length > MAX_CACHE_BARS) series.candles.shift();
     } else if (bucket === last.time) {
       last.high = Math.max(last.high, price);
       last.low = Math.min(last.low, price);

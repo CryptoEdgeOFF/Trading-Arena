@@ -42,9 +42,6 @@ const RESOLUTION_TO_INTERVAL: Record<string, number> = {
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as ResolutionString[];
 
-/** Plafond de bougies-pont émises d'un coup pour combler un gap de ticks. */
-const MAX_BRIDGE_BARS = 2_000;
-
 /**
  * Netlify Functions coupe les réponses > ~6 Mo (≈ 60k bougies M1) → 502.
  * Sans VITE_API_URL (proxy Netlify), on reste sous ce seuil.
@@ -376,25 +373,9 @@ export class BtfDatafeed implements IBasicDataFeed {
     const bucket = Math.floor(timestampMs / intervalMs) * intervalMs;
     const last = sub.lastBar;
 
-    if (last && bucket > last.time) {
-      // Comble les buckets sautés entre la dernière bougie et le bucket
-      // courant avec des bougies plates, pour ne pas laisser de trou visuel
-      // au bord droit si le flux a hoqueté (gap WS, transition de failover).
-      const bridgeClose = last.close;
-      const skipped = (bucket - last.time) / intervalMs - 1;
-      if (skipped > 0 && skipped <= MAX_BRIDGE_BARS) {
-        for (let t = last.time + intervalMs; t < bucket; t += intervalMs) {
-          const bridge: Bar = { time: t, open: bridgeClose, high: bridgeClose, low: bridgeClose, close: bridgeClose };
-          sub.lastBar = bridge;
-          sub.onTick(bridge);
-        }
-      }
-    }
-
-    const refreshed = sub.lastBar;
     let next: Bar;
-    if (!refreshed || refreshed.time !== bucket) {
-      const open = refreshed?.close ?? price;
+    if (!last || last.time !== bucket) {
+      const open = last?.close ?? price;
       next = {
         time: bucket,
         open,
@@ -404,9 +385,9 @@ export class BtfDatafeed implements IBasicDataFeed {
       };
     } else {
       next = {
-        ...refreshed,
-        high: Math.max(refreshed.high, price),
-        low: Math.min(refreshed.low, price),
+        ...last,
+        high: Math.max(last.high, price),
+        low: Math.min(last.low, price),
         close: price,
       };
     }
