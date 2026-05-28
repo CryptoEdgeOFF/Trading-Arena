@@ -253,9 +253,12 @@ function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?
             <span className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(220,38,38,0.35),transparent_62%)] opacity-80 transition-opacity group-hover:opacity-100" />
             <img src="/assets/pictures/logoBTF.webp" alt="BTF" className="relative h-7 w-7 object-contain sm:h-8 sm:w-8" />
           </span>
-          <div className="flex min-w-0 items-baseline gap-1.5 sm:gap-2">
-            <span className="display text-lg font-bold text-white sm:text-xl">BTF</span>
-            <span className="micro text-[10px] text-[#dc2626] sm:text-xs">Arena</span>
+          <div className="flex min-w-0 flex-col">
+            <div className="flex items-baseline gap-1.5 sm:gap-2">
+              <span className="display text-lg font-bold text-white sm:text-xl">BTF</span>
+              <span className="micro text-[10px] text-[#dc2626] sm:text-xs">Arena</span>
+            </div>
+            <span className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#dc2626] sm:text-[10px]">BETA</span>
           </div>
         </Link>
         <nav className="flex shrink-0 items-center gap-1.5 sm:gap-2">

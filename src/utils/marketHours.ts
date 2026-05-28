@@ -1,11 +1,10 @@
 /**
  * Horaires d'ouverture des marchés (UTC). Crypto = 24/7.
  * Forex / métaux : semaine FX (dim 22h → ven 22h UTC).
- * Indices US : lun–ven 14h30–21h UTC (session cash NY).
- * Pétrole : lun–ven 01h–22h UTC.
+ * Indices US + WTI : lun–ven 14h30–21h UTC (session cash NY).
  */
 
-export type MarketScheduleKind = 'always' | 'forex_week' | 'us_index' | 'energy';
+export type MarketScheduleKind = 'always' | 'forex_week' | 'us_index';
 
 export interface MarketSessionInfo {
   open: boolean;
@@ -36,13 +35,6 @@ function isUsIndexOpen(now: Date): boolean {
   return mins >= start && mins < end;
 }
 
-function isEnergyOpen(now: Date): boolean {
-  const day = now.getUTCDay();
-  if (day === 0 || day === 6) return false;
-  const mins = utcDayMinutes(now);
-  return mins >= 60 && mins < 22 * 60;
-}
-
 export function scheduleForPair(
   pair: string,
   category?: string,
@@ -54,9 +46,7 @@ export function scheduleForPair(
   if (cat === 'indices' || cat === 'index') return 'us_index';
   if (cat === 'commodities' || cat === 'commodity') {
     const code = (instrumentCode || pair.split('/')[0] || '').toUpperCase();
-    if (code === 'USOIL' || code === 'UKOIL' || code === 'WTI' || code === 'BRENTOIL') {
-      return 'energy';
-    }
+    if (code === 'USOIL' || code === 'WTI') return 'us_index';
     return 'forex_week';
   }
   return 'always';
@@ -79,9 +69,6 @@ export function getMarketSession(
       break;
     case 'us_index':
       open = isUsIndexOpen(now);
-      break;
-    case 'energy':
-      open = isEnergyOpen(now);
       break;
     default:
       open = true;

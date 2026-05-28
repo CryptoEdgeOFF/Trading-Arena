@@ -78,7 +78,6 @@ export const STATIC_MARKET_METADATA: MarketMetadata[] = [
   { pair: 'GOLD/USD', base: 'GOLD', quote: 'USD', name: 'Gold', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'commodities', source: 'itick', sourceSymbol: 'XAUUSD', tradingViewSymbol: 'TVC:GOLD', sortOrder: 110, enabled: true },
   { pair: 'SILVER/USD', base: 'SILVER', quote: 'USD', name: 'Silver', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'commodities', source: 'itick', sourceSymbol: 'XAGUSD', tradingViewSymbol: 'TVC:SILVER', sortOrder: 111, enabled: true },
   { pair: 'WTI/USD', base: 'WTI', quote: 'USD', name: 'WTI Crude Oil', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'commodities', source: 'itick', sourceSymbol: 'USOIL', tradingViewSymbol: 'TVC:USOIL', sortOrder: 112, enabled: true },
-  { pair: 'BRENTOIL/USD', base: 'BRENTOIL', quote: 'USD', name: 'Brent Oil', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'commodities', source: 'itick', sourceSymbol: 'UKOIL', tradingViewSymbol: 'TVC:UKOIL', sortOrder: 113, enabled: true },
 
   // Indices US (iTick) — sortOrder 120-122
   { pair: 'SP500/USD', base: 'SP500', quote: 'USD', name: 'S&P 500', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'SPX', tradingViewSymbol: 'SP:SPX', sortOrder: 120, enabled: true },

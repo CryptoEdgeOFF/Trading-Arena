@@ -8,7 +8,7 @@
  *   - Forex majors          : 1 lot = 100 000 unités base currency
  *   - Gold (XAUUSD)         : 1 lot = 100 oz
  *   - Silver (XAGUSD)       : 1 lot = 5 000 oz
- *   - Oil (USOIL/UKOIL)     : 1 lot = 1 000 barrels
+ *   - Oil (USOIL)             : 1 lot = 1 000 barrels
  *   - SP500                 : 1 lot = 50 contracts ($50/point)
  *   - NAS100                : 1 lot = 20 contracts ($20/point)
  *   - US30                  : 1 lot = 5 contracts ($5/point)
@@ -26,7 +26,6 @@ const CONTRACT_SIZE_BY_PAIR: Record<string, number> = {
   'SILVER/USD': 5_000,
   // Energy
   'WTI/USD': 1_000,
-  'BRENTOIL/USD': 1_000,
   // Indices
   'SP500/USD': 50,
   'NAS100/USD': 20,

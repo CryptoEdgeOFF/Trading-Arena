@@ -23,7 +23,7 @@ export interface ItickInstrument {
 }
 
 /**
- * Liste production : 4 forex + 4 commodities + 3 indices = 11 instruments.
+ * Liste production : 4 forex + 3 commodities + 3 indices = 10 instruments.
  * - Cluster `/forex` chez iTick : 8 subscriptions
  * - Cluster `/indices` chez iTick : 3 subscriptions
  * → 2 connexions WS sur les 6 dispos en plan pro.
@@ -44,7 +44,6 @@ export const ITICK_INSTRUMENTS: ItickInstrument[] = [
 
   // Energy
   { pair: 'WTI/USD',      asset: 'forex',   code: 'USOIL',  category: 'commodity', pricescale: 1_000,   label: 'WTI Crude' },
-  { pair: 'BRENTOIL/USD', asset: 'forex',   code: 'UKOIL',  category: 'commodity', pricescale: 1_000,   label: 'Brent',     hyperliquidCoin: 'xyz:BRENTOIL' },
 
   // Indices US
   { pair: 'SP500/USD',    asset: 'indices', code: 'SPX',    category: 'index',     pricescale: 100,     label: 'S&P 500',   hyperliquidCoin: 'xyz:SP500' },
