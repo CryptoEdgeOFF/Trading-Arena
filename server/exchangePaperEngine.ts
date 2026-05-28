@@ -118,7 +118,11 @@ export const PAPER_PAIRS: PaperPairDef[] = [
   ...ITICK_INSTRUMENTS.map((inst) => itickPaperPair(inst.pair, inst.code, inst.hyperliquidCoin)),
 ];
 
-const SPREAD_BPS = 0;
+/** Demi-spread autour du mark pour l'exécution paper (bid/ask). 3 bps =
+ *  0,03 % par côté → ~6 bps aller-retour, assez pour freiner le farm
+ *  instantané sans pénaliser le trading normal. Le mark affiché (chart,
+ *  PnL flottant) reste le mid iTick = TradingView. */
+const SPREAD_BPS = 3;
 // Même barème que la compétition online, divisé par 3.
 const TAKER_FEE_RATE = 0.00005 / 3; // ~0,00167 % — ordres au marché
 const MAKER_FEE_RATE = 0.00002 / 3; // ~0,00067 % — ordres limites
@@ -182,9 +186,13 @@ function computePositionPnl(position: Position): number {
   return pnlToAccountCcy(position.pair, rawPnl, position.markPrice);
 }
 
-/** Bid/ask compétition : exécution au mark (futures), pas le spread CFD MT5/OANDA. */
+/** Bid/ask paper : demi-spread symétrique autour du mark (chart = mid). */
 function applyPaperMarkSpread(markPrice: number): { bidPrice: number; askPrice: number } {
-  return { bidPrice: markPrice, askPrice: markPrice };
+  const halfSpread = markPrice * (SPREAD_BPS / 10000);
+  return {
+    bidPrice: Math.max(0, markPrice - halfSpread),
+    askPrice: markPrice + halfSpread,
+  };
 }
 
 function validateRiskLevels(
@@ -930,12 +938,7 @@ export class PaperTradingEngine {
           markPrice = hlPrice;
         }
       }
-      const bidPrice = typeof rawTicker === 'number'
-        ? Math.max(0, markPrice * (1 - SPREAD_BPS / 10000))
-        : (rawTicker?.bidPrice ?? Math.max(0, markPrice - markPrice * (SPREAD_BPS / 10000)));
-      const askPrice = typeof rawTicker === 'number'
-        ? markPrice * (1 + SPREAD_BPS / 10000)
-        : (rawTicker?.askPrice ?? markPrice + markPrice * (SPREAD_BPS / 10000));
+      const { bidPrice, askPrice } = applyPaperMarkSpread(markPrice);
       const change24h = typeof rawTicker === 'number' ? (this.market[item.pair]?.change24h ?? null) : (rawTicker?.change24h ?? null);
       return [item.pair, {
         pair: item.pair,
@@ -1201,9 +1204,7 @@ export class PaperTradingEngine {
     const price = last ?? mark ?? (bid && ask ? (bid + ask) / 2 : null);
     if (!price || price <= 0) return;
 
-    const halfSpread = price * (SPREAD_BPS / 10000);
-    const bidPrice = bid ?? Math.max(0, price - halfSpread);
-    const askPrice = ask ?? price + halfSpread;
+    const { bidPrice, askPrice } = applyPaperMarkSpread(price);
     const change24h = asNumber(data.price24hPcnt) != null ? Number(data.price24hPcnt) * 100 : null;
 
     // Buffer uniquement — l'écriture effective dans `this.market` est
@@ -1288,11 +1289,9 @@ export class PaperTradingEngine {
     this.applyTicker(pair, symbol, mark, bid ?? undefined, ask ?? undefined);
   }
 
-  private applyTicker(pair: string, symbol: string, markPrice: number, bid?: number, ask?: number): void {
+  private applyTicker(pair: string, symbol: string, markPrice: number, _bid?: number, _ask?: number): void {
     const now = Date.now();
-    const halfSpread = markPrice * (SPREAD_BPS / 10000);
-    const bidPrice = bid ?? Math.max(0, markPrice - halfSpread);
-    const askPrice = ask ?? markPrice + halfSpread;
+    const { bidPrice, askPrice } = applyPaperMarkSpread(markPrice);
 
     this.market[pair] = {
       pair,
