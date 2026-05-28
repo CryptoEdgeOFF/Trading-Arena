@@ -183,6 +183,65 @@ export function isConfigured(): boolean {
 }
 
 /* -------------------------------------------------------------------------- */
+/*                          Crypto kline (region BA)                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Région crypto iTick = marché agrégé source. `BA` (Binance) par défaut :
+ * iTick proxifie la data Binance depuis ses serveurs non géo-bloqués, ce
+ * qui en fait un excellent relais quand Binance est inaccessible chez nous.
+ * Surchargeable via `ITICK_CRYPTO_REGION` (ex: `BT`).
+ */
+const CRYPTO_REGION = process.env.ITICK_CRYPTO_REGION?.trim().toUpperCase() || 'BA';
+
+/** "BTC/USD" → "BTCUSDT" (code crypto iTick, aligné sur Binance). */
+export function pairToCryptoCode(pair: string): string | null {
+  const base = pair.split('/')[0]?.trim().toUpperCase();
+  if (!base) return null;
+  return `${base}USDT`;
+}
+
+/**
+ * Historique OHLC crypto via iTick (cluster `crypto`, region `BA`).
+ * Pagine les appels (iTick plafonne à 500 bougies/call) en remontant dans
+ * le temps jusqu'à `countBack` bougies ou épuisement.
+ */
+export async function getCryptoKline(
+  pair: string,
+  intervalMin: number,
+  opts: { countBack?: number; to?: number } = {},
+): Promise<ItickKlineRow[]> {
+  const code = pairToCryptoCode(pair);
+  if (!code) throw new Error('Pair non supportee pour historique iTick crypto');
+
+  const targetCount = Math.min(5000, opts.countBack && opts.countBack > 0 ? opts.countBack : 500);
+  const intervalMs = intervalMin * 60 * 1000;
+  const nowMs = Date.now();
+  let endMs = opts.to && opts.to > 0 ? opts.to * 1000 : nowMs;
+
+  const byTime = new Map<number, ItickKlineRow>();
+  // Garde-fou : iTick rend 500 max/call, on borne le nombre d'itérations.
+  const maxPages = Math.ceil(targetCount / 500) + 1;
+
+  for (let page = 0; page < maxPages && byTime.size < targetCount && endMs > 0; page += 1) {
+    const rows = await getKline(code, intervalMin, 500, endMs, 'crypto', CRYPTO_REGION);
+    if (rows.length === 0) break;
+
+    let oldestSec = Math.floor(endMs / 1000);
+    for (const row of rows) {
+      byTime.set(row.time, row);
+      oldestSec = Math.min(oldestSec, row.time);
+    }
+
+    const nextEndMs = oldestSec * 1000 - intervalMs;
+    if (nextEndMs >= endMs) break;
+    endMs = nextEndMs;
+  }
+
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
+/* -------------------------------------------------------------------------- */
 /*                       Quotes batch (open/high/low/change)                  */
 /* -------------------------------------------------------------------------- */
 

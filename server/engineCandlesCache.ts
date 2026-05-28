@@ -1,6 +1,5 @@
-import * as binance from './binance.js';
 import * as kraken from './kraken.js';
-import * as hyperliquid from './hyperliquid.js';
+import * as cryptoCandles from './cryptoCandles.js';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 
 /**
@@ -48,27 +47,11 @@ async function fetchFromUpstream(
   countBack: number,
 ): Promise<OhlcCandle[]> {
   if (source === 'binance') {
-    try {
-      return await binance.getOhlcCandles(pair, interval, { countBack });
-    } catch (err) {
-      const msg = (err as Error).message;
-      // Binance Futures peut bloquer l'IP avec :
-      //   - 418 / 429 : rate-limit / ban temporaire
-      //   - 403 / 451 : blocage géographique ou légal (ex: IP datacenter
-      //     Railway aux US → "451 Unavailable For Legal Reasons").
-      // Dans tous ces cas on bascule de façon transparente sur Hyperliquid
-      // qui sert les mêmes pairs crypto sans restriction.
-      if (/4(03|18|29|51)/.test(msg)) {
-        console.warn(`[candles cache] Binance ${pair} ${interval}m KO (${msg}), fallback Hyperliquid`);
-        try {
-          return await hyperliquid.getOhlcCandles(pair, interval, { countBack });
-        } catch (hlErr) {
-          console.warn(`[candles cache] Hyperliquid ${pair} ${interval}m KO:`, (hlErr as Error).message);
-          throw err; // propagate the original Binance error
-        }
-      }
-      throw err;
-    }
+    // Pairs crypto : chaîne de fallback Binance → iTick → Bybit gérée de
+    // façon centralisée dans cryptoCandles. Évite que le chart se vide
+    // quand Binance Futures est géo-bloqué (451) sur l'IP du provider.
+    const { candles } = await cryptoCandles.getCryptoOhlc(pair, interval, { countBack });
+    return candles;
   }
   return kraken.getOhlcCandles(pair, interval);
 }

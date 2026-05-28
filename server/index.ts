@@ -1089,27 +1089,14 @@ app.get('/api/paper/candles', async (req, res) => {
         }
       }
     } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
-      // Crypto : cache mémoire alimenté par Binance (live ticks gardent la
-      // dernière bougie à jour). Premier hit ~7s pour 40k bars, suivants instantanés.
-      try {
-        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
-        source = 'binance';
-      } catch (err) {
-        // Binance geo/legal-bloqué (403/418/429/451) chez le provider :
-        // dernier recours Hyperliquid qui sert les mêmes pairs crypto.
-        console.warn(`[candles] cache miss ${pair}, fallback Hyperliquid:`, (err as Error).message);
-        candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
-        source = 'hyperliquid';
-      }
+      // Crypto : cache mémoire dont l'upstream suit la chaîne de fallback
+      // Binance → iTick → Bybit (cf. cryptoCandles). Premier hit ~7s pour
+      // 40k bars, suivants instantanés.
+      candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+      source = 'binance';
     } else if (manager.getMarketDataSource() === 'binance') {
-      try {
-        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
-        source = 'binance';
-      } catch (err) {
-        console.warn(`[candles] cache miss ${pair}, fallback Hyperliquid:`, (err as Error).message);
-        candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
-        source = 'hyperliquid';
-      }
+      candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+      source = 'binance';
     } else {
       try {
         candles = await engineCandlesCache.getCachedCandles(pair, interval, 'kraken', candleOpts);
