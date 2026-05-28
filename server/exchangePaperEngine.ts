@@ -128,19 +128,20 @@ const KRAKEN_FUTURES_WS = 'wss://futures.kraken.com/ws/v1';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream?streams=';
 const BYBIT_LINEAR_WS = 'wss://stream.bybit.com/v5/public/linear';
 /**
- * Bybit pousse des `tickers.SYMBOL` à ~10 Hz par pair sur les contrats linear,
- * ce qui rend les charts crypto vraiment fluides — beaucoup plus que les
- * `markPrice@1s` Binance (1 Hz, et de toute façon `fstream.binance.com` est
- * souvent silencieusement geo-bloqué : la WS connecte mais ne pousse aucun
- * message). Bybit tourne en parallèle de la source d'exécution Kraken /
- * Binance pour alimenter le dernier tick du chart sur tous les terminaux
- * (Live event + compétition online), peu importe `marketDataSource`.
+ * Bybit linear est utilisé en FAILOVER quand Binance fstream est
+ * silencieusement geo-bloqué chez le provider (la WS connecte, ne pousse
+ * aucun message → BTC reste figé puis saute toutes les 5s via REST).
  *
- * On flush à 250 ms (≈ 4 Hz par pair) : c'est assez pour un chart fluide
- * sans faire vibrer la dernière bougie en boucle sur les pairs volatiles
- * comme BTC quand le close oscille sur chaque tick.
+ * Comportement :
+ *  - Binance markPrice@1s reste la source primaire (1 Hz, comportement
+ *    fluide identique à ce qui tournait avant la session).
+ *  - Bybit tourne en parallèle MAIS son flush n'écrit le prix que pour
+ *    les pairs où Binance n'a rien poussé depuis BYBIT_TAKEOVER_MS.
+ *  - Flush coalescé à 1 Hz pour rester aligné sur le rythme Binance et
+ *    éviter la vibration de la dernière bougie.
  */
-const BYBIT_FLUSH_INTERVAL_MS = 250;
+const BYBIT_FLUSH_INTERVAL_MS = 1000;
+const BYBIT_TAKEOVER_MS = 3000;
 
 const pairToDefinition = new Map(PAPER_PAIRS.map((item) => [item.pair, item]));
 const pairToKrakenSymbol = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map((item) => [item.pair, item.krakenSymbol as string]));
@@ -243,6 +244,15 @@ export class PaperTradingEngine {
   private bybitPingInterval: ReturnType<typeof setInterval> | null = null;
   private bybitPendingPairs = new Set<string>();
   private bybitFlushTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Buffer du dernier prix Bybit reçu par pair, en attente d'écriture.
+   * On n'écrit dans `this.market` que si Binance n'a pas fourni de tick
+   * récent pour la même pair (failover) — sinon Bybit ferait vibrer la
+   * dernière bougie inutilement.
+   */
+  private bybitLatest = new Map<string, { price: number; bid: number; askPrice: number; symbol: string; change24h: number | null; ts: number }>();
+  /** Timestamp du dernier tick reçu par pair, source réelle confondue. */
+  private lastTickAt = new Map<string, number>();
   private playersRef: Player[] = [];
   private startingBalance = 10_000;
   private marketDataSource: MarketDataSource = 'kraken';
@@ -276,11 +286,12 @@ export class PaperTradingEngine {
     }
     this.startMarketFeed();
     this.startMarketFeedFallback();
-    // Bybit linear (haute-fréquence ~10 Hz) reste désactivé par défaut :
-    // sur les chartings de la compete online il rendait les bougies trop
-    // agressives (vibration du close à chaque tick). Activable via
-    // ENABLE_BYBIT_FEED=true si Binance fstream est de nouveau geo-bloqué.
-    if (process.env.ENABLE_BYBIT_FEED === 'true') {
+    // Bybit en FAILOVER : démarre la WS, mais le flush n'écrit pas dans
+    // `this.market` tant que Binance pousse normalement (cf.
+    // `flushBybitPending` + `BYBIT_TAKEOVER_MS`). Garde le chart vivant
+    // sur Railway si fstream.binance.com est silencieusement bloqué,
+    // sans casser la fluidité 1 Hz quand Binance fonctionne.
+    if (process.env.DISABLE_BYBIT_FEED !== 'true') {
       this.startBybitTickerSocket();
     }
   }
@@ -1133,46 +1144,57 @@ export class PaperTradingEngine {
     const price = last ?? mark ?? (bid && ask ? (bid + ask) / 2 : null);
     if (!price || price <= 0) return;
 
-    const now = Date.now();
-    const prev = this.market[pair];
     const halfSpread = price * (SPREAD_BPS / 10000);
     const bidPrice = bid ?? Math.max(0, price - halfSpread);
     const askPrice = ask ?? price + halfSpread;
+    const change24h = asNumber(data.price24hPcnt) != null ? Number(data.price24hPcnt) * 100 : null;
 
-    this.market[pair] = {
-      pair,
-      symbol: prev?.symbol ?? symbol,
-      markPrice: price,
-      bidPrice,
-      askPrice,
-      change24h: asNumber(data.price24hPcnt) != null
-        ? Number(data.price24hPcnt) * 100
-        : prev?.change24h ?? null,
-      spreadBps: price > 0 ? ((askPrice - bidPrice) / price) * 10000 : SPREAD_BPS,
-      updatedAt: now,
-    };
-
-    // Tient la bougie courante du cache à jour pour que la prochaine
-    // requête historique reflète immédiatement le dernier tick Bybit.
-    engineCandlesCache.updateLastCandleFromTick(pair, price, now);
-
-    // Coalesce broadcasts : on accumule les pairs dirty, le flush timer
-    // émettra un seul market:tick toutes les 80 ms avec le dernier prix.
+    // Buffer uniquement — l'écriture effective dans `this.market` est
+    // gérée par `flushBybitPending` qui contrôle si Binance est silencieux.
+    this.bybitLatest.set(pair, { price, bid: bidPrice, askPrice, symbol, change24h, ts: Date.now() });
     this.bybitPendingPairs.add(pair);
   }
 
   private flushBybitPending(): void {
     if (this.bybitPendingPairs.size === 0) return;
-    const pairs = Array.from(this.bybitPendingPairs);
+    const candidates = Array.from(this.bybitPendingPairs);
     this.bybitPendingPairs.clear();
 
-    // SL/TP/limites + équité joueur (paper trading) : on utilise le prix
-    // Bybit comme mark price d'exécution (ils sont essentiellement les
-    // mêmes que Binance Futures sur les pairs liquides).
+    const now = Date.now();
+    const pairsTakenOver: string[] = [];
+
+    for (const pair of candidates) {
+      const buf = this.bybitLatest.get(pair);
+      if (!buf) continue;
+
+      // Failover : Bybit n'écrit que si Binance/Kraken n'a pas poussé de
+      // tick pour cette pair depuis BYBIT_TAKEOVER_MS. Sinon on laisse
+      // la source primaire dicter le rythme (1 Hz fluide, pas de
+      // vibration de la bougie).
+      const lastSourceTick = this.lastTickAt.get(pair) ?? 0;
+      if (now - lastSourceTick < BYBIT_TAKEOVER_MS) continue;
+
+      const prev = this.market[pair];
+      this.market[pair] = {
+        pair,
+        symbol: prev?.symbol ?? buf.symbol,
+        markPrice: buf.price,
+        bidPrice: buf.bid,
+        askPrice: buf.askPrice,
+        change24h: buf.change24h ?? prev?.change24h ?? null,
+        spreadBps: buf.price > 0 ? ((buf.askPrice - buf.bid) / buf.price) * 10000 : SPREAD_BPS,
+        updatedAt: now,
+      };
+      this.lastTickAt.set(pair, now);
+      engineCandlesCache.updateLastCandleFromTick(pair, buf.price, now);
+      pairsTakenOver.push(pair);
+    }
+
+    if (pairsTakenOver.length === 0) return;
+
     if (this.playersRef.length > 0) {
       this.processOpenOrders(this.playersRef);
       this.processRiskTriggers(this.playersRef);
-      const now = Date.now();
       for (const player of this.playersRef) {
         this.updatePlayerEquity(player);
         player.connected = true;
@@ -1180,7 +1202,7 @@ export class PaperTradingEngine {
       }
     }
 
-    this.onMarketPairsUpdated?.(pairs);
+    this.onMarketPairsUpdated?.(pairsTakenOver);
     this.onTick();
   }
 
@@ -1220,6 +1242,10 @@ export class PaperTradingEngine {
       spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
       updatedAt: now,
     };
+
+    // Marque ce pair comme servi par la source primaire (Binance/Kraken).
+    // Bybit ne prendra le relais que si on n'updatait plus depuis 3 s.
+    this.lastTickAt.set(pair, now);
 
     // Tenir la bougie courante du cache à jour pour que la prochaine
     // requête historique reflète immédiatement le dernier tick.
