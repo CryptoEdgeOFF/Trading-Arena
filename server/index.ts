@@ -1357,6 +1357,22 @@ app.post('/api/paper/risk', async (req, res) => {
 
 // --- Competition platform: auth, join, public leaderboard ---
 
+/**
+ * Login direct via pseudo magique (compte de test). Pas de mail/SMS,
+ * juste le pseudo `ARTEMTEST987` dans le champ login → session créée.
+ * Permet de tester la compete depuis n'importe quel navigateur.
+ */
+app.post('/api/competition/auth/test-login', async (req, res) => {
+  const { username } = req.body || {};
+  try {
+    await competitionManager.refresh();
+    const result = await competitionManager.loginTestAccount(String(username || ''));
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Connexion test impossible' });
+  }
+});
+
 app.post('/api/competition/auth/request', async (req, res) => {
   const { email, name, intent, phone } = req.body || {};
   const safeIntent = intent === 'signup' ? 'signup' : intent === 'login' ? 'login' : null;

@@ -361,6 +361,38 @@ export class CompetitionManager {
   }
 
   /**
+   * Backdoor pour le compte de test : pas de mail, pas de SMS, le user
+   * tape simplement le pseudo magique dans le champ email/login. Utilisé
+   * pour pouvoir tester rapidement la plateforme depuis n'importe quel
+   * navigateur sans avoir à recevoir un OTP. Le pseudo est case-sensitive.
+   */
+  static readonly TEST_ACCOUNT_USERNAME = 'ARTEMTEST987';
+
+  async loginTestAccount(username: string): Promise<{ token: string; user: CompetitionUser }> {
+    const trimmed = String(username || '').trim();
+    if (trimmed !== CompetitionManager.TEST_ACCOUNT_USERNAME) {
+      throw new Error('Compte de test invalide');
+    }
+    const fakeEmail = `${trimmed.toLowerCase()}@test.local`;
+    let user = this.findUserByEmail(fakeEmail);
+    if (!user) {
+      user = {
+        id: crypto.randomUUID(),
+        email: fakeEmail,
+        name: trimmed,
+        phone: null,
+        phoneVerifiedAt: Date.now(),
+        createdAt: Date.now(),
+      };
+      this.users.set(user.id, user);
+      await this.persist();
+    }
+    const token = crypto.randomBytes(24).toString('hex');
+    await this.writeSession(token, user.id);
+    return { token, user };
+  }
+
+  /**
    * Etape 2 (login) : valide directement et cree la session.
    * Etape 2 (signup) : valide le code email puis bascule en attente du SMS.
    * Retourne soit { token, user } soit { needsPhone: true, phoneMasked }.

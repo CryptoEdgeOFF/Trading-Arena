@@ -419,6 +419,25 @@ export default function CompetitionPlatform() {
     setBusy(true);
     setError('');
     try {
+      // Backdoor compte de test : si le pseudo magique est tapé dans
+      // le champ email (intent login), on bypass complètement l'OTP.
+      const trimmedEmail = email.trim();
+      if (intent === 'login' && trimmedEmail === 'ARTEMTEST987') {
+        const response = await fetch('/api/competition/auth/test-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: trimmedEmail }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Connexion test impossible');
+        window.localStorage.setItem(SESSION_KEY, data.token);
+        writeCachedUser(data.user);
+        setSession({ token: data.token, user: data.user });
+        void refreshMyCompetitions(data.token);
+        resetAuth();
+        return;
+      }
+
       const response = await fetch('/api/competition/auth/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
