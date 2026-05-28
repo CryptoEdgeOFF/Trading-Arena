@@ -260,6 +260,49 @@ export class PlayerManager {
         updated_at timestamptz not null default now()
       )
     `);
+    // Avatars du roster live admin stockés directement en Postgres pour
+    // survivre aux redéploiements Railway (filesystem éphémère). Servis
+    // via GET /api/roster/avatars/:id. Même pattern que comp_user_avatars.
+    await this.pool.query(`
+      create table if not exists live_roster_avatars (
+        player_id text primary key,
+        mime text not null,
+        data bytea not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
+  }
+
+  async putRosterAvatar(playerId: string, mime: string, data: Buffer): Promise<string> {
+    if (!this.pool) {
+      throw new Error('Database non configurée pour stocker les avatars');
+    }
+    await this.pool.query(
+      `insert into live_roster_avatars (player_id, mime, data, updated_at)
+       values ($1, $2, $3, now())
+       on conflict (player_id) do update
+         set mime = excluded.mime,
+             data = excluded.data,
+             updated_at = now()`,
+      [playerId, mime, data],
+    );
+    const player = this.players.get(playerId);
+    if (!player) throw new Error('Joueur introuvable');
+    const version = Date.now();
+    player.avatar = `/api/roster/avatars/${playerId}?v=${version}`;
+    this.saveRoster();
+    return player.avatar;
+  }
+
+  async getRosterAvatar(playerId: string): Promise<{ mime: string; data: Buffer } | null> {
+    if (!this.pool) return null;
+    const result = await this.pool.query(
+      'select mime, data from live_roster_avatars where player_id = $1 limit 1',
+      [playerId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { mime: String(row.mime), data: row.data as Buffer };
   }
 
   private applyStoredRoster(data: StoredPlayer[]): void {

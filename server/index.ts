@@ -828,18 +828,69 @@ app.patch('/api/roster/:id/toggle', requireAdmin, (req, res) => {
 
 // --- Avatar upload ---
 
-app.post('/api/roster/:id/avatar', requireAdmin, upload.single('avatar'), (req, res) => {
+app.post('/api/roster/:id/avatar', requireAdmin, upload.single('avatar'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'Fichier image requis' });
     return;
   }
-  const player = manager.setAvatar(req.params.id, uploadedImageUrl(req.file));
-  if (!player) {
-    res.status(404).json({ error: 'Joueur introuvable' });
-    return;
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const mime = req.file.mimetype || 'image/jpeg';
+    let avatarUrl: string;
+    try {
+      avatarUrl = await manager.putRosterAvatar(req.params.id, mime, buffer);
+    } catch (err: any) {
+      // Fallback dev local sans Postgres : data URL inline.
+      if (err?.message?.includes('Database')) {
+        avatarUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+        const fallback = manager.setAvatar(req.params.id, avatarUrl);
+        if (!fallback) {
+          res.status(404).json({ error: 'Joueur introuvable' });
+          return;
+        }
+      } else {
+        throw err;
+      }
+    }
+    const player = manager.getPublicPlayers().find((p) => p.id === req.params.id);
+    if (!player) {
+      res.status(404).json({ error: 'Joueur introuvable' });
+      return;
+    }
+    res.json(player);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Upload avatar impossible' });
   }
-  const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
-  res.json(publicPlayer);
+});
+
+/**
+ * Sert l'avatar d'un joueur du roster live depuis le blob Postgres.
+ * Same pattern que /api/avatars/:userId (compétition online) — l'URL
+ * inclut un `?v=<timestamp>` pour casser le cache au prochain upload.
+ */
+app.get('/api/roster/avatars/:playerId', async (req, res) => {
+  const playerId = String(req.params.playerId);
+  try {
+    const blob = await manager.getRosterAvatar(playerId);
+    if (!blob) {
+      res.status(404).json({ error: 'Avatar introuvable' });
+      return;
+    }
+    res.setHeader('Content-Type', blob.mime);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Content-Length', String(blob.data.length));
+    res.end(blob.data);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
 });
 
 // --- Active players (for dashboard) ---
