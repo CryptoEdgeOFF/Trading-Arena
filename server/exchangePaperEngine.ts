@@ -142,6 +142,27 @@ const BYBIT_LINEAR_WS = 'wss://stream.bybit.com/v5/public/linear';
  */
 const BYBIT_FLUSH_INTERVAL_MS = 1000;
 const BYBIT_TAKEOVER_MS = 3000;
+/**
+ * iTick crypto (region BA = spot Binance = TradingView) est la source
+ * PRIMAIRE des prix crypto. Kraken Futures et Bybit ne servent plus que de
+ * failover : ils n'écrivent un prix que si iTick n'a rien poussé depuis
+ * `ITICK_CRYPTO_TAKEOVER_MS`. `ITICK_CRYPTO_STALE_MS` borne la fraîcheur
+ * acceptée par le snapshot REST périodique.
+ */
+const ITICK_CRYPTO_TAKEOVER_MS = 3000;
+const ITICK_CRYPTO_STALE_MS = 10_000;
+
+/** Pairs crypto (source kraken_futures) qu'on alimente en live via iTick. */
+export const CRYPTO_LIVE_PAIRS = PAPER_PAIRS
+  .filter((item) => item.source === 'kraken_futures')
+  .map((item) => item.pair);
+
+/** "BTC/USD" ↔ "BTCUSDT" (code crypto iTick, region BA). */
+const cryptoPairToItickCode = new Map<string, string>();
+for (const pair of CRYPTO_LIVE_PAIRS) {
+  const base = pair.split('/')[0]?.trim().toUpperCase();
+  if (base) cryptoPairToItickCode.set(pair, `${base}USDT`);
+}
 
 const pairToDefinition = new Map(PAPER_PAIRS.map((item) => [item.pair, item]));
 const pairToKrakenSymbol = new Map(PAPER_PAIRS.filter((item) => item.krakenSymbol).map((item) => [item.pair, item.krakenSymbol as string]));
@@ -253,6 +274,8 @@ export class PaperTradingEngine {
   private bybitLatest = new Map<string, { price: number; bid: number; askPrice: number; symbol: string; change24h: number | null; ts: number }>();
   /** Timestamp du dernier tick reçu par pair, source réelle confondue. */
   private lastTickAt = new Map<string, number>();
+  /** Timestamp du dernier tick iTick crypto par pair (source primaire). */
+  private lastItickCryptoAt = new Map<string, number>();
   private playersRef: Player[] = [];
   private startingBalance = 10_000;
   private marketDataSource: MarketDataSource = 'kraken';
@@ -336,7 +359,12 @@ export class PaperTradingEngine {
 
     for (const [pair, quote] of Object.entries(quotes)) {
       const pairDef = PAPER_PAIRS.find((item) => item.pair === pair);
-      if (!pairDef || pairDef.source !== 'itick') continue;
+      if (!pairDef) continue;
+      // Forex/indices = source itick. Crypto = source kraken_futures mais
+      // désormais alimentée en live par iTick crypto (region BA = spot
+      // Binance = TradingView), Kraken/Bybit en failover.
+      const isCrypto = pairDef.source === 'kraken_futures';
+      if (pairDef.source !== 'itick' && !isCrypto) continue;
 
       const prev = this.market[pair];
       const markPrice = quote.markPrice;
@@ -344,6 +372,16 @@ export class PaperTradingEngine {
 
       const { bidPrice, askPrice } = applyPaperMarkSpread(markPrice);
       const updatedAt = quote.updatedAt || now;
+
+      // Crypto : marque iTick comme source primaire (gèle Kraken/Bybit) et
+      // tient la bougie courante du cache à jour, même si le prix n'a pas
+      // bougé depuis le dernier tick.
+      if (isCrypto) {
+        this.lastItickCryptoAt.set(pair, now);
+        this.lastTickAt.set(pair, now);
+        engineCandlesCache.updateLastCandleFromTick(pair, markPrice, updatedAt);
+      }
+
       if (
         prev
         && prev.markPrice === markPrice
@@ -859,6 +897,25 @@ export class PaperTradingEngine {
         } satisfies MarketTicker];
       }
 
+      // Pair crypto → iTick crypto (region BA = spot Binance = TradingView)
+      // en priorité si un tick frais existe, sinon Kraken / Binance.
+      const cryptoCode = cryptoPairToItickCode.get(item.pair);
+      const itickCryptoTick = cryptoCode ? itickFeed.getLatest(cryptoCode, 'crypto') : undefined;
+      if (itickCryptoTick && itickCryptoTick.price > 0 && now - itickCryptoTick.ts < ITICK_CRYPTO_STALE_MS) {
+        const markPrice = itickCryptoTick.price;
+        const { bidPrice, askPrice } = applyPaperMarkSpread(markPrice);
+        return [item.pair, {
+          pair: item.pair,
+          symbol: item.sourceSymbol,
+          markPrice,
+          bidPrice,
+          askPrice,
+          change24h: this.market[item.pair]?.change24h ?? null,
+          spreadBps: markPrice > 0 ? ((askPrice - bidPrice) / markPrice) * 10000 : SPREAD_BPS,
+          updatedAt: itickCryptoTick.ts,
+        } satisfies MarketTicker];
+      }
+
       // Pair crypto → Kraken / Binance.
       const sourceKey = this.marketDataSource === 'binance'
         ? item.binanceSymbol || item.krakenSymbol || item.sourceSymbol
@@ -1212,6 +1269,11 @@ export class PaperTradingEngine {
     const symbol = String(payload.product_id || payload.productId || payload.symbol || '').toUpperCase();
     const pair = symbolToPair.get(symbol);
     if (!pair) return;
+
+    // iTick crypto est la source primaire : Kraken n'est qu'un failover et
+    // ne touche au prix que si iTick n'a rien poussé depuis le seuil.
+    const lastItick = this.lastItickCryptoAt.get(pair) ?? 0;
+    if (Date.now() - lastItick < ITICK_CRYPTO_TAKEOVER_MS) return;
 
     const bid = asNumber(payload.bid) ?? asNumber(payload.bestBid);
     const ask = asNumber(payload.ask) ?? asNumber(payload.bestAsk);

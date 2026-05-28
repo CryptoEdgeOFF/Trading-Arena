@@ -575,7 +575,11 @@ class ItickClusterManager extends EventEmitter {
   private sendSubscribe(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) return;
     if (this.subscribedSymbols.size === 0) return;
-    const params = [...this.subscribedSymbols].map((s) => `${s}$${DEFAULT_REGION}`).join(',');
+    // La crypto iTick vit dans la region `BA` (Binance) = exactement le
+    // prix spot Binance affiché par TradingView. Forex/indices restent en
+    // region par défaut.
+    const region = this.asset === 'crypto' ? CRYPTO_REGION : DEFAULT_REGION;
+    const params = [...this.subscribedSymbols].map((s) => `${s}$${region}`).join(',');
     const msg = { ac: 'subscribe', params, types: 'quote,tick' };
     try {
       this.ws.send(JSON.stringify(msg));

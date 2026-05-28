@@ -7,9 +7,11 @@ import * as itick from './itick.js';
  * Source unique d'historique OHLC pour les pairs crypto, avec une chaîne
  * de fallback explicite et ordonnée :
  *
- *   1. Binance Futures   — gratuit, profond, rapide (source de référence).
- *   2. iTick (region BA) — relais de la data Binance depuis des serveurs
- *                          non géo-bloqués (couvre le 451 sur IP datacenter).
+ *   1. iTick (region BA) — spot Binance, EXACTEMENT ce que TradingView et
+ *                          notre flux live affichent. Source de référence
+ *                          pour que historique = live = TradingView, et non
+ *                          géo-bloquée (couvre le 451 sur IP datacenter).
+ *   2. Binance Futures   — fallback profond/rapide si iTick est indispo.
  *   3. Bybit V5          — venue indépendante, dernier recours toujours up.
  *
  * On passe au maillon suivant dès qu'un fournisseur échoue OU renvoie zéro
@@ -45,16 +47,16 @@ export async function getCryptoOhlc(
 ): Promise<CryptoCandleResult> {
   const providers: Provider[] = [
     {
-      name: 'binance',
-      enabled: true,
-      fetch: () => binance.getOhlcCandles(pair, interval, opts),
-    },
-    {
       name: 'itick',
       enabled: itick.isConfigured(),
       fetch: async () => itickRowsToOhlc(
         await itick.getCryptoKline(pair, interval, { countBack: opts.countBack, to: opts.to }),
       ),
+    },
+    {
+      name: 'binance',
+      enabled: true,
+      fetch: () => binance.getOhlcCandles(pair, interval, opts),
     },
     {
       name: 'bybit',
@@ -70,7 +72,7 @@ export async function getCryptoOhlc(
     try {
       const candles = await provider.fetch();
       if (candles.length > 0) {
-        if (provider.name !== 'binance') {
+        if (provider.name !== 'itick') {
           console.warn(`[cryptoCandles] ${pair} ${interval}m servi par ${provider.name} (fallback)`);
         }
         return { candles, source: provider.name };

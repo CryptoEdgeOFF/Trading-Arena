@@ -59,6 +59,42 @@ for (const inst of ITICK_INSTRUMENTS) {
   BY_CODE.set(`${inst.asset}:${inst.code.toUpperCase()}`, inst);
 }
 
+/**
+ * Registre crypto séparé (code iTick ↔ pair interne). Les pairs crypto
+ * vivent dans `exchangePaperEngine.PAPER_PAIRS` (source kraken_futures pour
+ * le failover), pas dans `ITICK_INSTRUMENTS`. On les enregistre au boot via
+ * `registerItickCrypto()` pour que le bridge iTick → paper engine sache
+ * mapper un tick crypto (`BTCUSDT`) vers notre pair (`BTC/USD`).
+ */
+const CRYPTO_PAIR_BY_CODE = new Map<string, string>();
+const CRYPTO_CODE_BY_PAIR = new Map<string, string>();
+
+/** "BTC/USD" → "BTCUSDT" (code crypto iTick, aligné Binance spot). */
+function pairToCryptoCode(pair: string): string | null {
+  const base = pair.split('/')[0]?.trim().toUpperCase();
+  if (!base) return null;
+  return `${base}USDT`;
+}
+
+export function registerItickCrypto(pairs: string[]): void {
+  for (const pair of pairs) {
+    const code = pairToCryptoCode(pair);
+    if (!code) continue;
+    CRYPTO_PAIR_BY_CODE.set(code, pair.trim().toUpperCase());
+    CRYPTO_CODE_BY_PAIR.set(pair.trim().toUpperCase(), code);
+  }
+}
+
+/** Code crypto iTick (`BTCUSDT`) → pair interne (`BTC/USD`). */
+export function findCryptoPairByCode(code: string): string | undefined {
+  return CRYPTO_PAIR_BY_CODE.get(code.trim().toUpperCase());
+}
+
+/** Liste des codes crypto enregistrés (pour la subscription WS). */
+export function cryptoCodes(): string[] {
+  return [...CRYPTO_PAIR_BY_CODE.keys()];
+}
+
 export function findByPair(pair: string): ItickInstrument | undefined {
   return BY_PAIR.get(pair.trim().toUpperCase());
 }

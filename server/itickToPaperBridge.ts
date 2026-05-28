@@ -11,7 +11,7 @@
  */
 
 import * as itick from './itick.js';
-import { findByCode } from './itickInstruments.js';
+import { findByCode, findCryptoPairByCode } from './itickInstruments.js';
 import type { ItickLiveTick } from './itick.js';
 import type { ExternalQuote } from './exchangePaperEngine.js';
 
@@ -48,10 +48,27 @@ export function startItickToPaperBridge(apply: ApplyFn, broadcast: BroadcastFn):
   started = true;
 
   itick.itickFeed.on('tick', (tick: ItickLiveTick) => {
-    const inst = findByCode(tick.asset, tick.symbol);
-    if (!inst) return;
     const price = tick.price;
     if (!Number.isFinite(price) || price <= 0) return;
+
+    // Crypto (region BA) : prix spot Binance = TradingView. On mappe le
+    // code iTick (`BTCUSDT`) vers notre pair (`BTC/USD`).
+    if (tick.asset === 'crypto') {
+      const pair = findCryptoPairByCode(tick.symbol);
+      if (!pair) return;
+      pendingByPair.set(pair, {
+        pair,
+        sourceSymbol: tick.symbol.toUpperCase(),
+        markPrice: price,
+        bidPrice: tick.bid && tick.bid > 0 ? tick.bid : price,
+        askPrice: tick.ask && tick.ask > 0 ? tick.ask : price,
+        updatedAt: tick.ts,
+      });
+      return;
+    }
+
+    const inst = findByCode(tick.asset, tick.symbol);
+    if (!inst) return;
 
     pendingByPair.set(inst.pair, {
       pair: inst.pair,

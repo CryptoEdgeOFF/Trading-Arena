@@ -16,9 +16,9 @@ import * as hyperliquid from './hyperliquid.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
 import * as itick from './itick.js';
 import * as itickCandles from './itickCandles.js';
-import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair } from './itickInstruments.js';
+import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair, registerItickCrypto, cryptoCodes as itickCryptoCodes } from './itickInstruments.js';
 import { startItickToPaperBridge } from './itickToPaperBridge.js';
-import { getPaperPairDefinition } from './exchangePaperEngine.js';
+import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine.js';
 import { CompetitionManager } from './competitionManager.js';
 import { sendOtpEmail } from './mailer.js';
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
@@ -1904,7 +1904,13 @@ if (!process.env.NETLIFY) {
       // historique en background, et alimente le paper engine.
       // Plan pro = 600 calls/min, 6 WS, 500 subs.
       if (itick.isConfigured()) {
+        // Enregistre les pairs crypto pour le mapping code↔pair du bridge,
+        // puis ajoute le cluster crypto (region BA = spot Binance =
+        // TradingView) aux subscriptions forex/indices.
+        registerItickCrypto(CRYPTO_LIVE_PAIRS);
         const subs = itickSymbolsByAsset();
+        const cryptoCodeList = itickCryptoCodes();
+        if (cryptoCodeList.length > 0) subs.crypto = cryptoCodeList;
         itick.itickFeed.setSubscriptions(subs);
         itickCandles.startLiveBuilder();
         startItickToPaperBridge(
