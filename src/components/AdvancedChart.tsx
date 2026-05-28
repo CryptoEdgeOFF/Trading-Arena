@@ -770,8 +770,8 @@ export default function AdvancedChart({
 
     // Build the desired set of logical line keys for the current pair.
     // Every TradingView line is locked at the chart level (lock: true,
-    // disableSelection: true). The overlay button on the left is the ONE
-    // and only drag UI — `draggable` controls whether that handle appears.
+    // disableSelection: true). The overlay button is the ONE and only drag
+    // UI — `draggable` controls whether the whole chip is draggable.
     const desired = new Map<string, { meta: LineMeta; price: number; label: string; draggable: boolean }>();
     const stablePrice = (key: string, sourcePrice: number) => {
       const draggingPrice = dragOverrideRef.current.get(key);
@@ -1542,7 +1542,9 @@ export default function AdvancedChart({
                 if (el) buttonElementsRef.current.set(btn.key, el);
                 else buttonElementsRef.current.delete(btn.key);
               }}
-              className="pointer-events-auto absolute flex select-none items-stretch overflow-hidden rounded text-[10px] font-medium leading-none text-white/90 shadow-[0_1px_4px_rgba(0,0,0,0.25)]"
+              onPointerDown={btn.draggable ? (e) => handlePointerDownOnDrag(e, btn) : undefined}
+              title={btn.draggable ? 'Glisser pour modifier' : undefined}
+              className={`pointer-events-auto absolute flex select-none items-stretch overflow-hidden rounded text-[10px] font-medium leading-none text-white/90 shadow-[0_1px_4px_rgba(0,0,0,0.25)]${btn.draggable ? ' cursor-row-resize' : ''}`}
               style={{
                 top: 0,
                 opacity: 0,
@@ -1555,10 +1557,9 @@ export default function AdvancedChart({
             >
               {btn.draggable && (
               <div
-                onPointerDown={(e) => handlePointerDownOnDrag(e, btn)}
-                className="flex cursor-row-resize items-center justify-center px-0.5 transition-colors hover:brightness-110"
+                className="flex items-center justify-center px-0.5"
                 style={{ background: bg, minWidth: 8 }}
-                title="Glisser pour modifier"
+                aria-hidden="true"
               >
                   <svg width="3" height="8" viewBox="0 0 3 8" aria-hidden="true">
                     <circle cx="1" cy="1.5" r="0.35" fill="rgba(255,255,255,0.7)" />
