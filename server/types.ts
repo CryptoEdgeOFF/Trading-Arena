@@ -182,6 +182,10 @@ export interface MarketTicker {
   change24h?: number | null;
   spreadBps: number;
   updatedAt: number;
+  /** false hors heures d'ouverture (forex, indices, commodities). */
+  marketOpen?: boolean;
+  /** Ex. « Marché fermé » quand marketOpen === false. */
+  marketClosedLabel?: string | null;
 }
 
 export interface GameState {

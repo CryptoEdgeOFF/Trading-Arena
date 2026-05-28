@@ -8,6 +8,7 @@ import * as engineCandlesCache from './engineCandlesCache.js';
 import { ITICK_INSTRUMENTS } from './itickInstruments.js';
 import { itickFeed } from './itick.js';
 import { pnlToAccountCcy } from './pairFx.js';
+import { assertMarketOpen, getMarketSessionForPair } from './marketHours.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -194,6 +195,15 @@ function applyPaperMarkSpread(markPrice: number): { bidPrice: number; askPrice: 
   };
 }
 
+function withMarketSession(ticker: MarketTicker): MarketTicker {
+  const session = getMarketSessionForPair(ticker.pair);
+  return {
+    ...ticker,
+    marketOpen: session.open,
+    marketClosedLabel: session.open ? null : session.label,
+  };
+}
+
 function validateRiskLevels(
   side: 'long' | 'short',
   referencePrice: number,
@@ -347,7 +357,9 @@ export class PaperTradingEngine {
   }
 
   getMarketSnapshot(): Record<string, MarketTicker> {
-    return this.market;
+    return Object.fromEntries(
+      Object.entries(this.market).map(([pair, ticker]) => [pair, withMarketSession(ticker)]),
+    );
   }
 
   async refreshMarketSnapshot(): Promise<Record<string, MarketTicker>> {
@@ -580,6 +592,7 @@ export class PaperTradingEngine {
     );
 
     if (!pairDefinition) throw new Error('Pair non supportée');
+    assertMarketOpen(pair);
     if (!Number.isFinite(size) || size <= 0) throw new Error('Taille de position invalide');
     if (!['market', 'limit'].includes(orderType)) throw new Error('Type d’ordre invalide');
     if (!this.market[pair]) {
@@ -686,6 +699,7 @@ export class PaperTradingEngine {
     }
 
     const pair = existing.pair;
+    assertMarketOpen(pair);
     if (!this.market[pair]) {
       await this.refreshTickers([player]);
     }
@@ -1334,6 +1348,7 @@ export class PaperTradingEngine {
     for (const player of players) {
       const executable = player.openOrders.filter((order) => {
         if (order.status !== 'open' || order.limitPrice == null) return false;
+        if (!getMarketSessionForPair(order.pair).open) return false;
         const ticker = this.market[order.pair];
         if (!ticker) return false;
         return order.side === 'long'

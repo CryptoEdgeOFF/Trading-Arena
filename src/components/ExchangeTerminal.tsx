@@ -4,6 +4,7 @@ import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, formatTime, timeAgo } from '../utils/formatters';
+import { getMarketSession } from '../utils/marketHours';
 import {
   engineSizeFromInput,
   fmtMarketPrice,
@@ -515,6 +516,13 @@ function PairSelectorMenu({
     if (next) setActiveCategory(next);
   }, [selectedPair, marketMetadata]);
 
+  // Recalcule « Marché fermé » à l'ouverture/fermeture des sessions (sans tick).
+  const [, setSessionClock] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setSessionClock((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const availableCategories = MARKET_CATEGORIES.filter((category) =>
     pairs.some((pair) => (marketMetadata[pair]?.category || 'crypto') === category.id),
   );
@@ -626,6 +634,8 @@ function PairSelectorMenu({
                 const marketPrice = marketTicker?.markPrice;
                 const change24h = marketTicker?.change24h;
                 const changePositive = (change24h ?? 0) >= 0;
+                const category = metadata?.category || 'crypto';
+                const marketOpen = marketTicker?.marketOpen ?? getMarketSession(pair, { category }).open;
                 const active = pair === selectedPair;
                 return (
                   <button
@@ -636,14 +646,18 @@ function PairSelectorMenu({
                       setOpen(false);
                       setSearch('');
                     }}
-                    className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_92px] items-center gap-2 px-3 py-2.5 text-left transition-colors sm:grid-cols-[1fr_120px] sm:gap-3 sm:px-4 ${active ? 'bg-[#241d30]' : 'hover:bg-[#211a2b]'}`}
+                    className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_92px] items-center gap-2 px-3 py-2.5 text-left transition-colors sm:grid-cols-[1fr_120px] sm:gap-3 sm:px-4 ${active ? 'bg-[#241d30]' : 'hover:bg-[#211a2b]'} ${!marketOpen ? 'opacity-60' : ''}`}
                   >
                     <span className="flex min-w-0 items-center gap-2.5">
                       <TokenIcon pair={pair} imageUrl={metadata?.imageUrl} />
                       <span className="min-w-0">
                         <span className="flex min-w-0 items-center gap-2">
                           <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
-                          {change24h != null && (
+                          {!marketOpen ? (
+                            <span className="shrink-0 rounded-md bg-[#3d2a14] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#fbbf24]">
+                              Marché fermé
+                            </span>
+                          ) : change24h != null && (
                             <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
                               {changePositive ? '+' : ''}{change24h.toFixed(2)}%
                             </span>
@@ -653,7 +667,11 @@ function PairSelectorMenu({
                       </span>
                     </span>
                     <span className="num truncate text-right text-[11px] font-semibold text-[#ece8f5] sm:text-[12.5px]">
-                      {marketPrice ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}` : '–'}
+                      {!marketOpen
+                        ? '—'
+                        : marketPrice
+                          ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}`
+                          : '–'}
                     </span>
                   </button>
                 );
@@ -693,6 +711,14 @@ function OrderForm(props: OrderFormProps) {
 
   const category = meta.marketMetadata[selectedPair]?.category || 'crypto';
   const lotBased = isLotBased(selectedPair);
+
+  const [, setSessionClock] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setSessionClock((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const marketOpen = ticker?.marketOpen ?? getMarketSession(selectedPair, { category }).open;
+
   const qty = Number(size) || 0;
   const engineQty = engineSizeFromInput(selectedPair, qty);
   const refPrice = orderType === 'market'
@@ -712,7 +738,7 @@ function OrderForm(props: OrderFormProps) {
   const sizeLabel = lotBased ? 'Lots' : 'Quantité';
   const sizeUnit = sizeUnitLabel(selectedPair, base);
   const sizeStep = inputSizeStep(selectedPair);
-  const canSubmit = eventStarted && Number.isFinite(qty) && qty > 0;
+  const canSubmit = eventStarted && marketOpen && Number.isFinite(qty) && qty > 0;
 
   useEffect(() => {
     setAccountPercent(Math.round(usedRatio * 100));
@@ -887,6 +913,11 @@ function OrderForm(props: OrderFormProps) {
         </div>
 
         {/* Prix du marché */}
+        {!marketOpen && (
+          <div className="mt-3 rounded-xl border border-[#fbbf24]/25 bg-[#fbbf24]/10 px-3 py-2 text-center text-[12px] font-semibold text-[#fbbf24]">
+            Marché fermé — trading indisponible hors heures d&apos;ouverture
+          </div>
+        )}
         <div className="mt-3 px-1">
           <div className="text-[12px] text-[#7a8090]">{orderType === 'market' ? 'Prix du marché' : 'Prix limite'}</div>
           {orderType === 'market' ? (
@@ -1068,6 +1099,8 @@ function OrderForm(props: OrderFormProps) {
         >
           {!eventStarted
             ? 'Waiting event'
+            : !marketOpen
+              ? 'Marché fermé'
             : qty <= 0
               ? 'Enter quantity'
             : busy
@@ -1248,6 +1281,7 @@ function PositionRow({
   const accent = isLong ? '#15c990' : '#c026d3';
   const pnlPos = position.pnl >= 0;
   const currentPrice = ticker?.pair === position.pair ? ticker.markPrice : position.markPrice;
+  const marketOpen = ticker?.marketOpen ?? getMarketSession(position.pair, { category }).open;
   const [panel, setPanel] = useState<'none' | 'close'>('none');
   const [riskOpen, setRiskOpen] = useState(false);
   const [closePercent, setClosePercent] = useState<number>(50);
@@ -1324,9 +1358,10 @@ function PositionRow({
           <div className="inline-flex items-stretch overflow-hidden rounded border border-[#2a262a]">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !marketOpen}
               onClick={() => onClosePosition(position.id)}
-              className="cursor-pointer px-2 py-1 text-[10px] text-[#e0e2ea] hover:bg-[#1a1820]"
+              className="cursor-pointer px-2 py-1 text-[10px] text-[#e0e2ea] hover:bg-[#1a1820] disabled:cursor-not-allowed disabled:opacity-40"
+              title={!marketOpen ? 'Marché fermé' : undefined}
             >
               Fermer
             </button>
@@ -1397,7 +1432,7 @@ function PositionRow({
                 </button>
                 <button
                   type="button"
-                  disabled={busy || partialSize <= 0}
+                  disabled={busy || !marketOpen || partialSize <= 0}
                   onClick={() => {
                     if (closePercent >= 100) onClosePosition(position.id);
                     else onClosePosition(position.id, partialSize);

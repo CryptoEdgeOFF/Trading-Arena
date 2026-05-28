@@ -238,6 +238,8 @@ function broadcastMarketTicks(pairs: string[]): void {
       bidPrice: ticker.bidPrice,
       askPrice: ticker.askPrice,
       updatedAt: ticker.updatedAt,
+      marketOpen: ticker.marketOpen,
+      marketClosedLabel: ticker.marketClosedLabel,
     }));
   if (ticks.length === 0) return;
   const msg = JSON.stringify({ type: 'market:tick', data: { ticks } });

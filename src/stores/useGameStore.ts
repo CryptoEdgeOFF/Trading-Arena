@@ -171,6 +171,8 @@ export interface MarketTicker {
   change24h?: number | null;
   spreadBps: number;
   updatedAt: number;
+  marketOpen?: boolean;
+  marketClosedLabel?: string | null;
 }
 
 export type EventMode = '1v1' | '1v1v1' | '1v1v1v1' | '4v4';
