@@ -71,7 +71,14 @@ export async function getAllMids(): Promise<Record<string, number>> {
 }
 
 function pairToHyperliquidCoin(pair: string): string | null {
-  return PAIR_TO_COIN[pair] || null;
+  const explicit = PAIR_TO_COIN[pair];
+  if (explicit) return explicit;
+  // La plupart des perps crypto sont listés sur Hyperliquid sous leur
+  // symbole de base (BNB/USD → BNB, DOGE/USD → DOGE, …). On dérive donc
+  // le coin du base symbol quand il n'est pas dans la map explicite, ce
+  // qui couvre le fallback candles quand Binance est geo/legal-bloqué.
+  const base = pair.split('/')[0]?.trim().toUpperCase();
+  return base || null;
 }
 
 function parseCandleRow(row: any): OhlcCandle | null {

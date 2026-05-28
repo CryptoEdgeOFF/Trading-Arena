@@ -52,10 +52,13 @@ async function fetchFromUpstream(
       return await binance.getOhlcCandles(pair, interval, { countBack });
     } catch (err) {
       const msg = (err as Error).message;
-      // Binance Futures occasionally rate-limits with HTTP 418 (IP ban) or
-      // 429. When that happens we transparently fall back to Hyperliquid
-      // which serves the same crypto pairs without rate limits.
-      if (/4(18|29)/.test(msg)) {
+      // Binance Futures peut bloquer l'IP avec :
+      //   - 418 / 429 : rate-limit / ban temporaire
+      //   - 403 / 451 : blocage géographique ou légal (ex: IP datacenter
+      //     Railway aux US → "451 Unavailable For Legal Reasons").
+      // Dans tous ces cas on bascule de façon transparente sur Hyperliquid
+      // qui sert les mêmes pairs crypto sans restriction.
+      if (/4(03|18|29|51)/.test(msg)) {
         console.warn(`[candles cache] Binance ${pair} ${interval}m KO (${msg}), fallback Hyperliquid`);
         try {
           return await hyperliquid.getOhlcCandles(pair, interval, { countBack });
