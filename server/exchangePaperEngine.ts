@@ -276,9 +276,13 @@ export class PaperTradingEngine {
     }
     this.startMarketFeed();
     this.startMarketFeedFallback();
-    // Bybit linear : feed crypto haute-fréquence pour la fluidité des
-    // charts, en parallèle de Kraken / Binance.
-    this.startBybitTickerSocket();
+    // Bybit linear (haute-fréquence ~10 Hz) reste désactivé par défaut :
+    // sur les chartings de la compete online il rendait les bougies trop
+    // agressives (vibration du close à chaque tick). Activable via
+    // ENABLE_BYBIT_FEED=true si Binance fstream est de nouveau geo-bloqué.
+    if (process.env.ENABLE_BYBIT_FEED === 'true') {
+      this.startBybitTickerSocket();
+    }
   }
 
   /** Récupère et vide la file des spotlights produits par le moteur. */
