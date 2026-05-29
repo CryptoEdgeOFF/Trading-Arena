@@ -1,3 +1,5 @@
+import { withDisplayWidth } from '../utils/imageUrl';
+
 interface PlayerAvatarProps {
   name: string;
   color: string;
@@ -16,6 +18,15 @@ const sizes = {
   '2xl': 'w-28 h-28 text-4xl',
 };
 
+const sizePxMap = {
+  xs: 24,
+  sm: 32,
+  md: 40,
+  lg: 56,
+  xl: 80,
+  '2xl': 112,
+};
+
 export default function PlayerAvatar({
   name,
   color,
@@ -27,17 +38,21 @@ export default function PlayerAvatar({
   const sizeClass = sizes[size];
   const glowStyle = glow ? { boxShadow: `0 0 20px ${color}50` } : {};
   const dimClass = dimmed ? 'opacity-60' : '';
+  const avatarSrc = withDisplayWidth(avatar, sizePxMap[size] * 2);
 
-  if (avatar) {
+  if (avatarSrc) {
     return (
       <div
         className={`${sizeClass} ${dimClass} rounded-full overflow-hidden border-2 shrink-0`}
         style={{ borderColor: color, ...glowStyle }}
       >
         <img
-          src={avatar}
+          src={avatarSrc}
           alt={name}
           className="w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
+          fetchPriority="low"
         />
       </div>
     );

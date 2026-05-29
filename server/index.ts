@@ -23,6 +23,9 @@ import { CompetitionManager } from './competitionManager.js';
 import { sendOtpEmail } from './mailer.js';
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
 import { getMarketMetadata } from './marketMetadata.js';
+import { optimizeUploadedImage } from './imageOptimize.js';
+import { invalidateBlobCache } from './blobCache.js';
+import { sendImageBlob } from './serveImageBlob.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -924,9 +927,10 @@ app.post('/api/roster/:id/avatar', requireAdmin, upload.single('avatar'), async 
       return;
     }
     const mime = req.file.mimetype || 'image/jpeg';
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 512, quality: 80 });
     let avatarUrl: string;
     try {
-      avatarUrl = await manager.putRosterAvatar(req.params.id, mime, buffer);
+      avatarUrl = await manager.putRosterAvatar(req.params.id, optimized.mime, optimized.buffer);
     } catch (err: any) {
       // Fallback dev local sans Postgres : data URL inline.
       if (err?.message?.includes('Database')) {
@@ -959,15 +963,12 @@ app.post('/api/roster/:id/avatar', requireAdmin, upload.single('avatar'), async 
 app.get('/api/roster/avatars/:playerId', async (req, res) => {
   const playerId = String(req.params.playerId);
   try {
-    const blob = await manager.getRosterAvatar(playerId);
-    if (!blob) {
-      res.status(404).json({ error: 'Avatar introuvable' });
-      return;
-    }
-    res.setHeader('Content-Type', blob.mime);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Content-Length', String(blob.data.length));
-    res.end(blob.data);
+    await sendImageBlob(
+      res,
+      `roster:${playerId}`,
+      () => manager.getRosterAvatar(playerId),
+      String(req.query.w || ''),
+    );
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Lecture impossible' });
   }
@@ -1669,11 +1670,13 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
       res.status(400).json({ error: 'Fichier image illisible' });
       return;
     }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 512, quality: 80 });
     const nextUser = await competitionManager.setUserAvatarBlob(
       user.id,
-      req.file.mimetype || 'image/jpeg',
-      buffer,
+      optimized.mime,
+      optimized.buffer,
     );
+    invalidateBlobCache(`avatar:${user.id}`);
     // Propage l'avatar à tous les paper players (1 par compétition) pour
     // que `/api/paper/me` renvoie la bonne URL — utilisée par le terminal
     // (TopBar) et le panel leaderboard côté terminal.
@@ -1695,16 +1698,12 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
 app.get('/api/avatars/:userId', async (req, res) => {
   const userId = String(req.params.userId);
   try {
-    const blob = await competitionManager.getUserAvatarBlob(userId);
-    if (!blob) {
-      console.warn(`[avatars] not found userId=${userId}`);
-      res.status(404).json({ error: 'Avatar introuvable' });
-      return;
-    }
-    res.setHeader('Content-Type', blob.mime);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Content-Length', String(blob.data.length));
-    res.end(blob.data);
+    await sendImageBlob(
+      res,
+      `avatar:${userId}`,
+      () => competitionManager.getUserAvatarBlob(userId),
+      String(req.query.w || ''),
+    );
   } catch (error: any) {
     console.error(`[avatars] failed userId=${userId}:`, error?.message);
     res.status(500).json({ error: error.message || 'Lecture impossible' });
@@ -1726,9 +1725,11 @@ app.post('/api/admin/prize-image', requireAdmin, upload.single('image'), async (
       res.status(400).json({ error: 'Fichier image illisible' });
       return;
     }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 960, quality: 82 });
     const id = crypto.randomUUID();
-    await competitionManager.putPrizeImage(id, req.file.mimetype || 'image/jpeg', buffer);
-    res.json({ imageUrl: `/api/prize-images/${id}` });
+    await competitionManager.putPrizeImage(id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`prize:${id}`);
+    res.json({ imageUrl: `/api/prize-images/${id}?v=${Date.now()}` });
   } catch (error: any) {
     console.error('[prize-image] upload failed:', error?.message);
     res.status(500).json({ error: error.message || 'Upload impossible' });
@@ -1738,15 +1739,12 @@ app.post('/api/admin/prize-image', requireAdmin, upload.single('image'), async (
 app.get('/api/prize-images/:id', async (req, res) => {
   const id = String(req.params.id);
   try {
-    const blob = await competitionManager.getPrizeImage(id);
-    if (!blob) {
-      res.status(404).json({ error: 'Image introuvable' });
-      return;
-    }
-    res.setHeader('Content-Type', blob.mime);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Content-Length', String(blob.data.length));
-    res.end(blob.data);
+    await sendImageBlob(
+      res,
+      `prize:${id}`,
+      () => competitionManager.getPrizeImage(id),
+      String(req.query.w || ''),
+    );
   } catch (error: any) {
     console.error(`[prize-image] read failed id=${id}:`, error?.message);
     res.status(500).json({ error: error.message || 'Lecture impossible' });

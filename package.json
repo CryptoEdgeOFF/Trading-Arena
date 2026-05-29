@@ -27,6 +27,7 @@
     "react-router-dom": "^7.14.0",
     "resend": "^6.12.3",
     "serverless-http": "^4.0.0",
+    "sharp": "^0.34.5",
     "tsx": "^4.21.0",
     "ws": "^8.20.0",
     "zustand": "^5.0.12"

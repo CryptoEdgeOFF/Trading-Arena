@@ -8,6 +8,7 @@ import {
   formatCompactUnsigned,
   formatPercent,
 } from './competeMetrics';
+import OptimizedImage, { AvatarImage } from './OptimizedImage';
 
 const REFRESH_MS = 2000;
 const CONTACT_EMAIL = 'breakout.pro.tv@gmail.com';
@@ -196,10 +197,10 @@ export default function CompetitionPublicLeaderboard() {
   }, [data]);
 
   return (
-    <div className="compete h-[100dvh] overflow-y-auto">
+    <div className="compete min-h-dvh-safe bg-[#050507]">
       <header
-        className="sticky top-0 z-40 border-b border-[#1a1a20] bg-[rgba(5,5,7,0.85)] backdrop-blur-xl"
-        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+        className="compete-header sticky top-0 z-40 border-b border-[#1a1a20] bg-[rgba(5,5,7,0.92)] backdrop-blur-xl"
+        style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4 md:px-10">
           <Link to="/compete" className="flex items-center gap-3">
@@ -215,7 +216,7 @@ export default function CompetitionPublicLeaderboard() {
         </div>
       </header>
 
-      <main className="compete-bg pb-20">
+      <main className="compete-bg pb-8">
         <div className="mx-auto max-w-6xl px-6 pt-10 md:px-10 md:pt-14">
           {error && (
             <div className="rounded-2xl border border-[#dc2626]/30 bg-[#dc2626]/10 px-5 py-4 text-sm text-[#fca5a5]">
@@ -403,7 +404,12 @@ function CashPrizeSection({ prize }: { prize: CashPrize }) {
           <div className="relative grid gap-6 sm:grid-cols-[150px_1fr] sm:items-center">
             <div className="overflow-hidden rounded-2xl border border-amber-400/25 bg-[#0a0a0d] shadow-[0_24px_80px_-45px_rgba(245,158,11,0.9)]">
               {prize.imageUrl ? (
-                <img src={prize.imageUrl} alt={prizeTitle} className="aspect-square w-full object-cover" loading="lazy" />
+                <OptimizedImage
+                  src={prize.imageUrl}
+                  alt={prizeTitle}
+                  className="aspect-square w-full object-cover"
+                  displayWidth={480}
+                />
               ) : (
                 <div className="flex aspect-square w-full items-center justify-center text-amber-200">
                   <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -483,12 +489,11 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
       <div className={`rank-circle ${tier} mx-auto`}>{place}</div>
       <div className="mx-auto mt-4 h-14 w-14 overflow-hidden rounded-2xl bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] shadow-inner">
         {row.avatarUrl ? (
-          <img
+          <AvatarImage
             src={row.avatarUrl}
             alt={row.name}
             className="h-full w-full object-cover"
-            loading="lazy"
-            decoding="async"
+            sizePx={56}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-base font-bold text-white">
@@ -535,12 +540,11 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white sm:h-8 sm:w-8 sm:text-[11px]">
           {row.avatarUrl ? (
-            <img
+            <AvatarImage
               src={row.avatarUrl}
               alt={row.name}
               className="h-full w-full object-cover"
-              loading="lazy"
-              decoding="async"
+              sizePx={32}
             />
           ) : (
             getInitials(row.name)

@@ -19,6 +19,8 @@ import {
   sizeUnitLabel,
 } from '../utils/positionSizing';
 import logoBtf from '../assets/pictures/logoBTF.webp';
+import { AvatarImage } from './OptimizedImage';
+import { withDisplayWidth } from '../utils/imageUrl';
 import {
   clearPaperSessionToken,
   extractPaperCompetitionContext,
@@ -218,7 +220,8 @@ function pairBase(pair: string): string {
 function TokenIcon({ pair, imageUrl, size = 'h-7 w-7' }: { pair: string; imageUrl?: string | null; size?: string }) {
   const base = pairBase(pair);
   if (imageUrl) {
-    return <img src={imageUrl} alt={base} className={`${size} shrink-0 rounded-full object-cover`} loading="lazy" />;
+    const src = withDisplayWidth(imageUrl, 56) || imageUrl;
+    return <img src={src} alt={base} className={`${size} shrink-0 rounded-full object-cover`} loading="lazy" decoding="async" fetchPriority="low" />;
   }
   return (
     <span className={`${size} flex shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white`} style={{ background: PAIR_COLOR[pair] || '#2c2638' }}>
@@ -2469,7 +2472,7 @@ function LiveRosterRow({
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           {player.avatar ? (
-            <img src={player.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+            <AvatarImage src={player.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" sizePx={20} />
           ) : (
             <span
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold uppercase text-white"
@@ -2502,7 +2505,7 @@ function LeaderboardMiniRow({ row, isMe, compact = false }: { row: LeaderboardRo
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           {row.avatarUrl ? (
-            <img src={row.avatarUrl} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+            <AvatarImage src={row.avatarUrl} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" sizePx={20} />
           ) : (
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-[8px] font-bold uppercase text-white">
               {row.name.slice(0, 2)}

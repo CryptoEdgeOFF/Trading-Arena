@@ -9,12 +9,31 @@ html, body, #root {
   min-height: 100%;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   font-family: 'Inter', sans-serif;
   background: #030712;
   color: white;
+  overflow-x: hidden;
+  overflow-y: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Terminal, dashboard, admin : scroll interne uniquement */
+body.app-scroll-lock {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+@supports (-webkit-touch-callout: none) {
+  .min-h-dvh-safe {
+    min-height: 100dvh;
+    min-height: -webkit-fill-available;
+  }
 }
 
 /*

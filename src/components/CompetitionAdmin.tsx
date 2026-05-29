@@ -275,7 +275,7 @@ export default function CompetitionAdmin() {
     // Compress côté client : limite à ~150 KB et évite le re-render lourd
     // d'un <img src=data:…> de plusieurs Mo qui faisait "sauter" la page
     // (decode synchrone du gros data URL bloquait le main thread).
-    const compressed = await compressImage(file, { maxSide: 1024, quality: 0.85 });
+    const compressed = await compressImage(file, { maxSide: 768, quality: 0.82 });
     const formData = new FormData();
     formData.append('image', compressed, file.name.replace(/\.\w+$/, '.jpg'));
     const res = await adminFetch('/api/admin/prize-image', {

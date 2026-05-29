@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { compressImage } from '../utils/imageUpload';
+import { AvatarImage } from './OptimizedImage';
 
 const SESSION_KEY = 'btf-comp-session';
 const SESSION_USER_KEY = 'btf-comp-user';
@@ -161,14 +162,22 @@ export default function CompetitionSettings() {
   }
 
   return (
-    <div className="compete h-[100dvh] overflow-y-auto">
-      <main className="compete-bg min-h-screen px-5 pb-24 pt-8 md:px-10">
-        <div className="mx-auto max-w-4xl">
-          <Link to="/compete" className="ghost-cta inline-flex px-4 py-2 text-xs uppercase tracking-[0.14em]">
+    <div className="compete min-h-dvh-safe bg-[#050507]">
+      <header
+        className="compete-header sticky top-0 z-40 border-b border-[#1a1a20] bg-[rgba(5,5,7,0.92)] backdrop-blur-xl"
+        style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
+      >
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-5 py-3 md:px-10 md:py-4">
+          <Link to="/compete" className="ghost-cta px-3 py-2 text-xs uppercase tracking-[0.14em]">
             Retour arena
           </Link>
+          <span className="micro text-[10px] text-[#dc2626]">Settings</span>
+        </div>
+      </header>
 
-          <section className="glass-card mt-6 overflow-hidden p-5 md:p-8">
+      <main className="compete-bg px-5 pb-8 pt-6 md:px-10 md:pt-8">
+        <div className="mx-auto max-w-4xl">
+          <section className="glass-card overflow-hidden p-5 md:p-8">
             <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
               <div>
                 <div className="micro text-[10px] text-[#dc2626]">Settings</div>
@@ -179,7 +188,7 @@ export default function CompetitionSettings() {
               </div>
               <div className="flex items-center gap-4 rounded-2xl border border-[#232329] bg-black/25 p-4">
                 {user?.avatarUrl ? (
-                  <img src={user.avatarUrl} alt="" className="h-16 w-16 rounded-2xl object-cover" />
+                  <AvatarImage src={user.avatarUrl} alt="" className="h-16 w-16 rounded-2xl object-cover" sizePx={64} />
                 ) : (
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-xl font-bold text-white">
                     {initials(user?.name || name)}

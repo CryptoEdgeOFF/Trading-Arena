@@ -9,6 +9,7 @@ import {
   formatCompactUnsigned,
   formatPercent,
 } from './competeMetrics';
+import OptimizedImage, { AvatarImage } from './OptimizedImage';
 import {
   clearPaperSessionToken,
   PAPER_BOOTSTRAP_KEY,
@@ -183,11 +184,11 @@ function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | un
   return (
     <div className={`flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/8 ${compact ? 'mt-3 p-2.5' : 'mt-4 p-3'}`}>
       {prize.imageUrl ? (
-        <img
+        <OptimizedImage
           src={prize.imageUrl}
           alt={title || 'Récompense'}
           className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} shrink-0 rounded-xl border border-amber-400/25 object-cover`}
-          loading="lazy"
+          displayWidth={compact ? 96 : 128}
         />
       ) : (
         <div className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} flex shrink-0 items-center justify-center rounded-xl border border-amber-400/25 bg-[#241a05] text-amber-200`}>
@@ -231,15 +232,14 @@ function ModePill({ mode }: { mode: 'paper' | 'real' }) {
 function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: string) {
   event.preventDefault();
   const target = document.getElementById(targetId);
-  const container = target?.closest('.compete') as HTMLElement | null;
-  if (!target || !container) return;
+  if (!target) return;
 
-  const containerRect = container.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const nextTop = container.scrollTop + targetRect.top - containerRect.top - 16;
+  const header = document.querySelector('.compete-header') as HTMLElement | null;
+  const headerOffset = (header?.offsetHeight ?? 64) + 8;
+  const top = window.scrollY + target.getBoundingClientRect().top - headerOffset;
 
-  container.scrollTo({
-    top: Math.max(nextTop, 0),
+  window.scrollTo({
+    top: Math.max(top, 0),
     behavior: 'smooth',
   });
   window.history.replaceState(null, '', `#${targetId}`);
@@ -248,7 +248,7 @@ function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: 
 function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?: () => void }) {
   return (
     <header
-      className="relative z-50 bg-[#050507] sm:bg-transparent sm:px-5 sm:pt-3"
+      className="compete-header sticky top-0 z-50 bg-[#050507]/95 backdrop-blur-xl sm:bg-[#050507]/80 sm:px-5 sm:pt-3"
       style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
     >
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 border-b border-white/10 bg-[#050507] px-3 py-2 shadow-[0_18px_60px_-42px_rgba(220,38,38,0.65)] sm:rounded-2xl sm:border sm:border-white/10 sm:bg-[#060609]/85 sm:px-4 sm:py-3 sm:backdrop-blur-2xl md:px-6">
@@ -272,7 +272,7 @@ function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?
               <div className="hidden items-center gap-2 rounded-full border border-[#232329] bg-[#0c0c10] px-3 py-1.5 md:flex">
                 <div tabIndex={0} className="group relative flex items-center gap-2 outline-none">
                   {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt="" className="h-6 w-6 rounded-full object-cover" />
+                    <AvatarImage src={user.avatarUrl} alt="" className="h-6 w-6 rounded-full object-cover" sizePx={24} />
                   ) : (
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-[11px] font-bold uppercase">
                       {user.name.slice(0, 2)}
@@ -655,18 +655,21 @@ export default function CompetitionPlatform() {
   }, [myCompetitions]);
 
   return (
-    <div className="compete h-[100dvh] overflow-y-auto">
+    <div className="compete min-h-dvh-safe bg-[#050507]">
       <CompeteHeader user={session?.user || null} onLogout={logout} />
 
-      <main className="compete-bg pb-20">
-        {/* HERO */}
-        <section id="signup" className="relative -mt-[58px] overflow-hidden pt-[58px] sm:-mt-[76px] sm:pt-[76px]">
+      <main className="compete-bg pb-8">
+        {/* HERO — pas de marge négative sur mobile : évite que le contenu passe sous le header / la barre d'URL Safari */}
+        <section id="signup" className="relative overflow-hidden pt-2 sm:-mt-[76px] sm:pt-[76px]">
           {/* Background trader silhouette */}
           <div aria-hidden className="pointer-events-none absolute inset-0 -z-0">
             <img
               src="/assets/pictures/Traderpng.webp"
               alt=""
               className="absolute inset-y-0 right-0 h-full w-[92%] object-cover object-[right_top] opacity-65 md:w-[68%] lg:w-[58%]"
+              loading="lazy"
+              decoding="async"
+              fetchPriority="low"
             />
             <div className="absolute inset-0 bg-[radial-gradient(90%_60%_at_85%_30%,rgba(220,38,38,0.18),transparent_60%)]" />
             <div className="absolute inset-0 bg-gradient-to-r from-[#050507] from-10% via-[#050507]/88 via-50% to-[#050507]/10" />
@@ -1146,10 +1149,11 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pn
       <div className="relative">
         <div className="flex items-center gap-2">
           {user.avatarUrl ? (
-            <img
+            <AvatarImage
               src={user.avatarUrl}
               alt=""
               className="h-9 w-9 shrink-0 rounded-xl object-cover shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]"
+              sizePx={36}
             />
           ) : (
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-sm font-bold uppercase text-white shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]">
