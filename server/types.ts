@@ -156,7 +156,7 @@ export interface EventConfig {
   eventDurationMinutes?: number;
 }
 
-export type SpotlightReason = 'manual' | 'stop-loss' | 'take-profit';
+export type SpotlightReason = 'manual' | 'stop-loss' | 'take-profit' | 'liquidation';
 
 export interface SpotlightTrade {
   id: string;

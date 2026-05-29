@@ -27,7 +27,10 @@ export async function sendOtpEmail(
   const html = renderOtpHtml(code, intent);
   const text = renderOtpText(code, intent);
 
-  console.log(`[mailer] OTP for ${to} (${intent}): ${code}`);
+  // Ne jamais logger l'OTP en clair en production (fuite via logs).
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[mailer] OTP for ${to} (${intent}): ${code}`);
+  }
 
   if (!client) {
     return { delivered: false, error: 'no-smtp' };

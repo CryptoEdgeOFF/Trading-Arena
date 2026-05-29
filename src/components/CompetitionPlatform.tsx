@@ -528,6 +528,14 @@ export default function CompetitionPlatform() {
   }
 
   function logout() {
+    const token = window.localStorage.getItem(SESSION_KEY);
+    // Révocation serveur de la session (best-effort) en plus du nettoyage local.
+    if (token) {
+      void fetch('/api/competition/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
+    }
     window.localStorage.removeItem(SESSION_KEY);
     writeCachedUser(null);
     writeCachedJSON(MINE_CACHE_KEY, []);

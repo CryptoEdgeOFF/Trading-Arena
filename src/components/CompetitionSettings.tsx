@@ -218,9 +218,9 @@ export default function CompetitionSettings() {
                       {phoneStatus}
                     </span>
                   </div>
-                  <input className="input-field" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+33 6 12 34 56 78" />
+                  <input className="input-field opacity-70" value={phone} readOnly placeholder="+33 6 12 34 56 78" />
                   <p className="mt-2 text-[11px] text-[#71717a]">
-                    Si tu modifies le numero, il devra etre reverifie plus tard pour garder l&apos;anti multi-comptes propre.
+                    Numero verifie a l&apos;inscription. Il ne peut pas etre modifie ici (anti multi-comptes).
                   </p>
                 </div>
               </div>

@@ -131,8 +131,59 @@ function uploadedImageUrl(file: Express.Multer.File): string {
   return `/uploads/${file.filename}`;
 }
 
-app.use(cors());
+// CORS : ouvert par défaut (front et back peuvent être sur des domaines
+// distincts), restreint à une liste blanche si CORS_ORIGINS est défini
+// (ex: "https://btf.app,https://www.btf.app").
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+if (CORS_ORIGINS.length > 0) {
+  app.use(cors({
+    origin: (origin, cb) => {
+      // Requêtes same-origin / outils serveur (pas de header Origin) autorisées.
+      if (!origin || CORS_ORIGINS.includes(origin)) return cb(null, true);
+      cb(new Error('Origine non autorisée'));
+    },
+  }));
+} else {
+  app.use(cors());
+}
 app.use(express.json());
+
+/**
+ * Rate limiter en mémoire (fenêtre glissante) par IP + clé de route.
+ * Suffisant sur un serveur Node persistant (Railway). Sur du serverless
+ * multi-instance, c'est best-effort (chaque instance a son compteur), mais
+ * ça reste une barrière utile contre le brute-force/spam.
+ */
+const rateBuckets = new Map<string, number[]>();
+function rateLimit(opts: { windowMs: number; max: number; key: string }) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+      || req.socket.remoteAddress
+      || 'unknown';
+    const bucketKey = `${opts.key}:${ip}`;
+    const now = Date.now();
+    const hits = (rateBuckets.get(bucketKey) || []).filter((ts) => now - ts < opts.windowMs);
+    if (hits.length >= opts.max) {
+      res.status(429).json({ error: 'Trop de requêtes, réessaie dans quelques minutes.' });
+      return;
+    }
+    hits.push(now);
+    rateBuckets.set(bucketKey, hits);
+    next();
+  };
+}
+// Purge périodique des buckets vides pour éviter une fuite mémoire.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, hits] of rateBuckets.entries()) {
+    const fresh = hits.filter((ts) => now - ts < 15 * 60 * 1000);
+    if (fresh.length === 0) rateBuckets.delete(key);
+    else rateBuckets.set(key, fresh);
+  }
+}, 5 * 60 * 1000).unref?.();
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -171,7 +222,20 @@ const arenaSnapshots = new Map<string, Map<string, {
 }>>();
 
 // --- Admin auth (single shared code, configurable via env) ---
-const ADMIN_CODE = (process.env.ADMIN_CODE || 'BTFb9Q6z69.9').trim();
+// Aucun fallback en dur : si ADMIN_CODE n'est pas défini, l'accès admin est
+// désactivé (fail-closed) plutôt que d'exposer un code par défaut connu.
+const ADMIN_CODE = (process.env.ADMIN_CODE || '').trim();
+if (!ADMIN_CODE) {
+  console.warn('[admin] ADMIN_CODE non défini — login admin désactivé jusqu’à sa configuration.');
+}
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+// Le compte de test (ARTEMTEST987) bypasse l'OTP : il ne doit JAMAIS être
+// actif en production sauf activation explicite via ALLOW_TEST_LOGIN=true.
+const ALLOW_TEST_LOGIN = process.env.ALLOW_TEST_LOGIN === 'true' || !IS_PRODUCTION;
+// Les codes OTP de secours (devCode/devSmsCode) ne sont renvoyés au client
+// qu'en dehors de la production.
+const EXPOSE_DEV_OTP = !IS_PRODUCTION;
 
 function getAdminToken(req: express.Request): string | null {
   const header = req.headers.authorization;
@@ -743,8 +807,12 @@ wss.on('connection', (ws, req) => {
 
 // --- Admin auth ---
 
-app.post('/api/admin/login', async (req, res) => {
+app.post('/api/admin/login', rateLimit({ windowMs: 10 * 60 * 1000, max: 10, key: 'admin-login' }), async (req, res) => {
   const code = String(req.body?.code || '').trim();
+  if (!ADMIN_CODE) {
+    res.status(503).json({ error: 'Admin non configuré' });
+    return;
+  }
   if (!code || code !== ADMIN_CODE) {
     res.status(401).json({ error: 'Code admin incorrect' });
     return;
@@ -1114,7 +1182,7 @@ app.get('/api/paper/candles', async (req, res) => {
   }
 });
 
-app.post('/api/paper/session', async (req, res) => {
+app.post('/api/paper/session', rateLimit({ windowMs: 10 * 60 * 1000, max: 15, key: 'paper-session' }), async (req, res) => {
   if (manager.getPlatformMode() !== 'paper') {
     res.status(400).json({ error: 'Le mode paper n’est pas actif' });
     return;
@@ -1204,6 +1272,10 @@ app.post('/api/paper/order', async (req, res) => {
   }
 
   const { pair, side, size, orderType, limitPrice, leverage, stopLoss, takeProfit } = req.body || {};
+  if (side !== 'long' && side !== 'short') {
+    res.status(400).json({ error: 'Sens d’ordre invalide (long ou short)' });
+    return;
+  }
   try {
     const competitionId = await assertCompetitionTraderCanTrade(token);
     const handler = competitionId
@@ -1355,7 +1427,11 @@ app.post('/api/paper/risk', async (req, res) => {
  * juste le pseudo `ARTEMTEST987` dans le champ login → session créée.
  * Permet de tester la compete depuis n'importe quel navigateur.
  */
-app.post('/api/competition/auth/test-login', async (req, res) => {
+app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 1000, max: 10, key: 'test-login' }), async (req, res) => {
+  if (!ALLOW_TEST_LOGIN) {
+    res.status(404).json({ error: 'Indisponible' });
+    return;
+  }
   const { username } = req.body || {};
   try {
     await competitionManager.refresh();
@@ -1366,7 +1442,7 @@ app.post('/api/competition/auth/test-login', async (req, res) => {
   }
 });
 
-app.post('/api/competition/auth/request', async (req, res) => {
+app.post('/api/competition/auth/request', rateLimit({ windowMs: 10 * 60 * 1000, max: 8, key: 'auth-request' }), async (req, res) => {
   const { email, name, intent, phone } = req.body || {};
   const safeIntent = intent === 'signup' ? 'signup' : intent === 'login' ? 'login' : null;
   if (!safeIntent) {
@@ -1393,17 +1469,16 @@ app.post('/api/competition/auth/request', async (req, res) => {
       expiresAt,
       delivered: result.delivered,
       deliveryError: result.error,
-      // Surface the OTP in the response when no mailer is configured (dev mode)
-      // OR when the configured mailer rejected the send (e.g. Resend trial limit).
-      // This avoids being stuck on a "Mode dev" screen with no actual code visible.
-      devCode: !result.delivered ? code : undefined,
+      // En dev uniquement : si le mail n'a pas pu être livré, on renvoie le
+      // code pour ne pas rester bloqué. JAMAIS en production (fuite OTP).
+      devCode: (EXPOSE_DEV_OTP && !result.delivered) ? code : undefined,
     });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Demande OTP impossible' });
   }
 });
 
-app.post('/api/competition/auth/verify', async (req, res) => {
+app.post('/api/competition/auth/verify', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: 'auth-verify' }), async (req, res) => {
   const { email, code } = req.body || {};
   try {
     await competitionManager.refresh();
@@ -1432,16 +1507,16 @@ app.post('/api/competition/auth/verify', async (req, res) => {
       phoneMasked: result.phoneMasked,
       smsDelivered: send.delivered,
       smsError: send.error,
-      // Code SMS expose seulement quand Twilio n'est pas configure (mode dev).
-      // Twilio Verify gere son propre code, on ignore localCode dans ce cas.
-      devSmsCode: !isSmsLive() ? phoneInfo.localCode : undefined,
+      // Code SMS exposé seulement hors production ET quand Twilio n'est pas
+      // configuré (mode dev). En prod sans Twilio, on ne fuite rien.
+      devSmsCode: (EXPOSE_DEV_OTP && !isSmsLive()) ? phoneInfo.localCode : undefined,
     });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Verification impossible' });
   }
 });
 
-app.post('/api/competition/auth/verify-phone', async (req, res) => {
+app.post('/api/competition/auth/verify-phone', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: 'auth-verify-phone' }), async (req, res) => {
   const { email, code } = req.body || {};
   const emailStr = String(email || '').trim();
   const codeStr = String(code || '').trim();
@@ -1474,14 +1549,10 @@ app.post('/api/competition/auth/verify-phone', async (req, res) => {
   }
 });
 
-app.get('/api/competition/auth/exists', async (req, res) => {
-  const email = String(req.query.email || '').trim();
-  if (!email) {
-    res.status(400).json({ error: 'email requis' });
-    return;
-  }
-  await competitionManager.refresh();
-  res.json({ exists: competitionManager.emailExists(email) });
+app.post('/api/competition/auth/logout', async (req, res) => {
+  const token = getSessionToken(req);
+  if (token) await competitionManager.deleteSession(token);
+  res.json({ ok: true });
 });
 
 app.get('/api/competition/me', async (req, res) => {

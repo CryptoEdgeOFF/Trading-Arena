@@ -47,7 +47,10 @@ export interface SmsCheckResult {
 export async function sendSmsOtp(phone: string): Promise<SmsSendResult> {
   if (!isLive) {
     const localCode = String(Math.floor(100_000 + Math.random() * 900_000));
-    console.log(`[sms] OTP for ${phone}: ${localCode}`);
+    // Pas de log d'OTP en clair en production.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[sms] OTP for ${phone}: ${localCode}`);
+    }
     return { delivered: false, localCode };
   }
 

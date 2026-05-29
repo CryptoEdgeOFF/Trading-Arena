@@ -37,7 +37,7 @@ interface LeaderboardResponse {
   competition: {
     id: string;
     title: string;
-    code: string;
+    code?: string;
     startAt: number;
     endAt: number;
     status: 'upcoming' | 'live' | 'ended';

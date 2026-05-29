@@ -78,6 +78,13 @@ interface CompetitionStore {
 const STORE_FILE = path.join(process.cwd(), 'data', 'competition-platform.json');
 const STORE_DB_KEY = 'competition-platform';
 
+// Durée de vie des sessions. Au-delà, le token est considéré expiré (et
+// purgé). Les sessions user/trader durent plus longtemps qu'une session
+// admin (privilèges élevés). Valeurs entières inlinées dans les intervalles
+// SQL (sûr car constantes).
+const USER_SESSION_TTL_DAYS = 30;
+const ADMIN_SESSION_TTL_DAYS = 7;
+
 function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -196,13 +203,29 @@ interface PendingOtp {
   attempts: number;
   // Etape franchie : 'email' = email pas encore verifie, 'phone' = email ok, en attente du SMS
   step: 'email' | 'phone';
+  // Anti-amplification du brute-force : nombre de renvois de code et
+  // timestamp du dernier envoi (cooldown). Voir requestOtp.
+  resends?: number;
+  lastSentAt?: number;
 }
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
+// Nombre maximal de participants par arène (configurable via env). Borne la
+// charge WebSocket/DB et évite qu'une arène publique soit floodée.
+const MAX_ARENA_PARTICIPANTS = Math.max(
+  1,
+  Number(process.env.MAX_ARENA_PARTICIPANTS) || 2000,
+);
+// Cooldown minimal entre deux envois de code pour un même email, et nombre
+// maximal de renvois dans la durée de vie d'une demande. Empêche de remettre
+// le compteur de tentatives à zéro en boucle pour brute-forcer l'OTP.
+const OTP_RESEND_COOLDOWN_MS = 30 * 1000;
+const OTP_MAX_RESENDS = 4;
 
 function generateOtp(): string {
-  return String(Math.floor(100_000 + Math.random() * 900_000));
+  // crypto.randomInt est cryptographiquement sûr (vs Math.random prédictible).
+  return String(crypto.randomInt(100_000, 1_000_000));
 }
 
 export class CompetitionManager {
@@ -243,6 +266,14 @@ export class CompetitionManager {
     const normalized = normalizePhone(phone);
     if (!normalized) return null;
     return Array.from(this.users.values()).find((entry) => entry.phone === normalized) || null;
+  }
+
+  private findUserByName(name: string, exceptId?: string): CompetitionUser | null {
+    const normalized = String(name || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return Array.from(this.users.values()).find((entry) => (
+      entry.id !== exceptId && (entry.name || '').trim().toLowerCase() === normalized
+    )) || null;
   }
 
   private async findPendingByPhone(phone: string, exceptEmail?: string): Promise<PendingOtp | null> {
@@ -330,6 +361,12 @@ export class CompetitionManager {
       if (!name) {
         throw new Error('Pseudo requis pour l inscription');
       }
+      if (name.length < 2 || name.length > 32) {
+        throw new Error('Pseudo invalide (2 a 32 caracteres)');
+      }
+      if (this.findUserByName(name)) {
+        throw new Error('Ce pseudo est deja pris');
+      }
       phone = normalizePhone(String(input.phone || ''));
       if (!isValidPhone(phone)) {
         throw new Error('Numero de telephone invalide (format international ex: +33612345678)');
@@ -344,6 +381,24 @@ export class CompetitionManager {
       }
     }
 
+    // Anti-spam / anti-amplification : si une demande est déjà en cours pour
+    // cet email, on impose un cooldown entre deux envois et on plafonne le
+    // nombre de renvois. Sinon un attaquant pourrait redemander un code en
+    // boucle pour repartir à OTP_MAX_ATTEMPTS et brute-forcer le code.
+    const existing = await this.readPendingOtp(email);
+    let resends = 0;
+    if (existing && existing.step === 'email') {
+      const now = Date.now();
+      if (existing.lastSentAt && now - existing.lastSentAt < OTP_RESEND_COOLDOWN_MS) {
+        const wait = Math.ceil((OTP_RESEND_COOLDOWN_MS - (now - existing.lastSentAt)) / 1000);
+        throw new Error(`Patiente ${wait}s avant de redemander un code`);
+      }
+      resends = (existing.resends ?? 0) + 1;
+      if (resends > OTP_MAX_RESENDS) {
+        throw new Error('Trop de demandes de code, reessaie plus tard');
+      }
+    }
+
     const code = generateOtp();
     const expiresAt = Date.now() + OTP_TTL_MS;
     await this.writePendingOtp({
@@ -355,6 +410,8 @@ export class CompetitionManager {
       expiresAt,
       attempts: 0,
       step: 'email',
+      resends,
+      lastSentAt: Date.now(),
     });
 
     return { code, expiresAt };
@@ -524,11 +581,15 @@ export class CompetitionManager {
     if (this.findUserByPhone(pending.phone)) {
       throw new Error('Ce numero est deja associe a un compte');
     }
+    const finalName = pending.name || email.split('@')[0];
+    if (this.findUserByName(finalName)) {
+      throw new Error('Ce pseudo est deja pris');
+    }
 
     const user: CompetitionUser = {
       id: crypto.randomUUID(),
       email,
-      name: pending.name || email.split('@')[0],
+      name: finalName,
       phone: pending.phone,
       phoneVerifiedAt: Date.now(),
       createdAt: Date.now(),
@@ -654,11 +715,16 @@ export class CompetitionManager {
     if (!token) return null;
     if (this.pool) {
       const result = await this.pool.query(
-        'select player_id, competition_id from comp_trader_sessions where token = $1 limit 1',
+        `select player_id, competition_id from comp_trader_sessions
+         where token = $1 and created_at > now() - interval '${USER_SESSION_TTL_DAYS} days'
+         limit 1`,
         [token],
       );
       const row = result.rows[0];
-      if (!row) return null;
+      if (!row) {
+        void this.pool.query('delete from comp_trader_sessions where token = $1', [token]).catch(() => undefined);
+        return null;
+      }
       return { playerId: row.player_id as string, competitionId: (row.competition_id as string | null) || null };
     }
     return this.traderSessions.get(token) || null;
@@ -854,10 +920,16 @@ export class CompetitionManager {
     if (!token) return false;
     if (this.pool) {
       const result = await this.pool.query(
-        'select 1 from comp_admin_sessions where token = $1 limit 1',
+        `select 1 from comp_admin_sessions
+         where token = $1 and created_at > now() - interval '${ADMIN_SESSION_TTL_DAYS} days'
+         limit 1`,
         [token],
       );
-      return result.rowCount! > 0;
+      if (result.rowCount! === 0) {
+        void this.pool.query('delete from comp_admin_sessions where token = $1', [token]).catch(() => undefined);
+        return false;
+      }
+      return true;
     }
     return this.localAdminTokens.has(token);
   }
@@ -946,11 +1018,17 @@ export class CompetitionManager {
     if (!token) return null;
     if (this.pool) {
       const result = await this.pool.query(
-        'select user_id from comp_user_sessions where token = $1 limit 1',
+        `select user_id from comp_user_sessions
+         where token = $1 and created_at > now() - interval '${USER_SESSION_TTL_DAYS} days'
+         limit 1`,
         [token],
       );
       const userId = result.rows[0]?.user_id as string | undefined;
-      if (!userId) return null;
+      if (!userId) {
+        // Purge paresseuse des sessions expirées rencontrées.
+        void this.pool.query('delete from comp_user_sessions where token = $1', [token]).catch(() => undefined);
+        return null;
+      }
       let user = this.users.get(userId) || null;
       if (!user) {
         // Le user a peut-etre ete cree par un autre Lambda (signup tres recent).
@@ -997,23 +1075,19 @@ export class CompetitionManager {
     const name = String(input.name ?? user.name).trim();
     if (!name || name.length < 2) throw new Error('Pseudo invalide');
     if (name.length > 32) throw new Error('Pseudo trop long');
+    if (this.findUserByName(name, user.id)) throw new Error('Ce pseudo est deja pris');
 
-    let phone = user.phone || null;
-    let phoneVerifiedAt = user.phoneVerifiedAt || null;
+    const phone = user.phone || null;
+    const phoneVerifiedAt = user.phoneVerifiedAt || null;
     if (input.phone !== undefined) {
       const nextPhone = normalizePhone(String(input.phone || ''));
-      if (!isValidPhone(nextPhone)) {
-        throw new Error('Numero de telephone invalide (format international ex: +33612345678)');
-      }
-      const owner = this.findUserByPhone(nextPhone);
-      if (owner && owner.id !== user.id) {
-        throw new Error('Ce numero est deja associe a un compte');
-      }
-      if (nextPhone !== user.phone) {
-        phone = nextPhone;
-        // Pour le MVP on accepte le changement, mais on marque explicitement
-        // que ce nouveau numero n'a pas encore repasse un challenge SMS.
-        phoneVerifiedAt = null;
+      // Le numéro est vérifié par SMS à l'inscription. Comme il n'existe pas
+      // (encore) de flux de re-vérification, on refuse tout changement vers un
+      // numéro différent : sinon on associerait un numéro non vérifié au
+      // compte, ce qui casse l'anti multi-comptes. Renvoyer le même numéro
+      // est sans effet (le formulaire profil pré-remplit ce champ).
+      if (phone && nextPhone && nextPhone !== phone) {
+        throw new Error('Le numero de telephone ne peut pas etre modifie');
       }
     }
 
@@ -1142,6 +1216,11 @@ export class CompetitionManager {
     }
     const already = competition.entries.some((entry) => entry.userId === userId);
     if (!already) {
+      // Plafond de participants (anti-DoS / charge WS+DB). Les inscrits déjà
+      // présents peuvent toujours rejouer ; on ne refuse que les nouveaux.
+      if (competition.entries.length >= MAX_ARENA_PARTICIPANTS) {
+        throw new Error('Cette arene est complete');
+      }
       competition.entries.push({
         userId,
         joinedAt: Date.now(),
@@ -1375,6 +1454,12 @@ export class CompetitionManager {
     const competition = this.competitions.get(input.competitionId);
     if (!competition) throw new Error('Competition introuvable');
     if (!this.users.has(input.userId)) throw new Error('Participant introuvable');
+    // Une fois la compétition finalisée, les résultats sont figés : on
+    // interdit toute réécriture (même côté admin) pour préserver l'intégrité
+    // du classement officiel.
+    if (competition.finalizedAt) {
+      throw new Error('Competition finalisee : resultats verrouilles');
+    }
 
     const existing = competition.entries.find((entry) => entry.userId === input.userId);
     if (existing) {
@@ -1450,7 +1535,6 @@ export class CompetitionManager {
     competition: {
       id: string;
       title: string;
-      code: string;
       startAt: number;
       endAt: number;
       status: 'upcoming' | 'live' | 'ended';
@@ -1491,7 +1575,6 @@ export class CompetitionManager {
       competition: {
         id: competition.id,
         title: competition.title,
-        code: competition.code,
         startAt: competition.startAt,
         endAt: competition.endAt,
         status: inferCompetitionStatus(competition.startAt, competition.endAt),

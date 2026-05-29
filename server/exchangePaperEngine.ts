@@ -128,6 +128,8 @@ const TAKER_FEE_RATE = 0.00005 / 3; // ~0,00167 % — ordres au marché
 const MAKER_FEE_RATE = 0.00002 / 3; // ~0,00067 % — ordres limites
 const MAX_LEVERAGE = 50;
 const MIN_LEVERAGE = 1;
+/** Notional minimal d'un ordre (anti-spam de positions "dust"). */
+const MIN_ORDER_NOTIONAL = 0.01;
 const KRAKEN_FUTURES_WS = 'wss://futures.kraken.com/ws/v1';
 const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream?streams=';
 const BYBIT_LINEAR_WS = 'wss://stream.bybit.com/v5/public/linear';
@@ -305,6 +307,27 @@ export class PaperTradingEngine {
    * SL/TP automatiques). Drainée par le PlayerManager à chaque tick.
    */
   private engineSpotlights: SpotlightTrade[] = [];
+  /**
+   * Verrou par joueur : sérialise les mutations financières (ouverture /
+   * fermeture de position) d'un même joueur. Sans ça, deux requêtes
+   * concurrentes peuvent s'intercaler autour de l'`await refreshTickers()`
+   * et passer deux fois le contrôle de marge → double dépense du capital.
+   */
+  private playerLocks = new Map<string, Promise<unknown>>();
+
+  private withPlayerLock<T>(playerId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.playerLocks.get(playerId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(fn);
+    // On garde la dernière promesse en chaîne ; on nettoie quand c'est la
+    // dernière pour éviter une fuite mémoire sur les joueurs inactifs.
+    this.playerLocks.set(playerId, next);
+    void next.catch(() => undefined).finally(() => {
+      if (this.playerLocks.get(playerId) === next) {
+        this.playerLocks.delete(playerId);
+      }
+    });
+    return next;
+  }
 
   constructor(onTick: () => void, onMarketPairsUpdated?: (pairs: string[]) => void) {
     this.onTick = onTick;
@@ -574,6 +597,10 @@ export class PaperTradingEngine {
   }
 
   async placeOrder(player: Player, input: PaperOrderInput): Promise<PaperOrderResult> {
+    return this.withPlayerLock(player.id, () => this.placeOrderLocked(player, input));
+  }
+
+  private async placeOrderLocked(player: Player, input: PaperOrderInput): Promise<PaperOrderResult> {
     const pair = input.pair;
     const side = input.side;
     const size = Number(input.size);
@@ -593,6 +620,7 @@ export class PaperTradingEngine {
 
     if (!pairDefinition) throw new Error('Pair non supportée');
     assertMarketOpen(pair);
+    if (side !== 'long' && side !== 'short') throw new Error('Sens d’ordre invalide');
     if (!Number.isFinite(size) || size <= 0) throw new Error('Taille de position invalide');
     if (!['market', 'limit'].includes(orderType)) throw new Error('Type d’ordre invalide');
     if (!this.market[pair]) {
@@ -606,6 +634,9 @@ export class PaperTradingEngine {
 
     if (orderType === 'market') {
       const executionPrice = side === 'long' ? ticker.askPrice : ticker.bidPrice;
+      if (executionPrice * size < MIN_ORDER_NOTIONAL) {
+        throw new Error('Taille de position trop faible');
+      }
       validateRiskLevels(side, executionPrice, inputStopLoss, inputTakeProfit);
       return this.executeOrder(player, {
         id: crypto.randomUUID(),
@@ -628,6 +659,9 @@ export class PaperTradingEngine {
     const limitPrice = Number(input.limitPrice);
     if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
       throw new Error('Prix limite invalide');
+    }
+    if (limitPrice * size < MIN_ORDER_NOTIONAL) {
+      throw new Error('Taille de position trop faible');
     }
 
     validateRiskLevels(side, limitPrice, inputStopLoss, inputTakeProfit);
@@ -692,6 +726,10 @@ export class PaperTradingEngine {
   }
 
   async closePosition(player: Player, positionRef: string, partialSize?: number): Promise<PaperOrderResult> {
+    return this.withPlayerLock(player.id, () => this.closePositionLocked(player, positionRef, partialSize));
+  }
+
+  private async closePositionLocked(player: Player, positionRef: string, partialSize?: number): Promise<PaperOrderResult> {
     const existing = player.openPositions.find((position) => position.id === positionRef)
       ?? player.openPositions.find((position) => position.pair === positionRef);
     if (!existing) {
@@ -822,6 +860,7 @@ export class PaperTradingEngine {
     }
 
     const pair = position.pair;
+    assertMarketOpen(pair);
     const normalizedStopLoss = stopLoss == null ? null : Number(stopLoss);
     const normalizedTakeProfit = takeProfit == null ? null : Number(takeProfit);
 
@@ -1357,13 +1396,23 @@ export class PaperTradingEngine {
       });
 
       for (const order of executable) {
+        const ticker = this.market[order.pair];
+        // Price improvement : un ordre limite croisable se remplit au
+        // meilleur des deux prix pour le trader (jamais pire que le marché),
+        // exactement comme un vrai carnet d'ordres. On évite ainsi qu'un
+        // ordre limite posté à un prix déjà franchi exécute à un prix
+        // arbitraire (meilleur OU pire) côté client.
+        const marketPrice = order.side === 'long' ? ticker.askPrice : ticker.bidPrice;
+        const fillPrice = order.side === 'long'
+          ? Math.min(order.limitPrice || marketPrice, marketPrice)
+          : Math.max(order.limitPrice || marketPrice, marketPrice);
         console.log(
           `[paper] limit fill ${player.name} ${order.pair} ${order.side} `
-          + `limit=${order.limitPrice} mark=${this.market[order.pair]?.markPrice} `
+          + `limit=${order.limitPrice} fill=${fillPrice} mark=${ticker?.markPrice} `
           + `size=${order.size} orderId=${order.id} placedAt=${order.createdAt ?? '?'}`,
         );
         player.openOrders = player.openOrders.filter((entry) => entry.id !== order.id);
-        this.executeOrder(player, order, order.limitPrice || 0, MAKER_FEE_RATE);
+        this.executeOrder(player, order, fillPrice, MAKER_FEE_RATE);
       }
     }
   }
@@ -1375,6 +1424,24 @@ export class PaperTradingEngine {
         if (!player.openPositions.includes(position)) continue;
         const ticker = this.market[position.pair];
         if (!ticker) continue;
+        // Cohérence avec le blocage manuel : aucun déclenchement automatique
+        // (liquidation / SL / TP) tant que le marché de la pair est fermé.
+        if (!getMarketSessionForPair(position.pair).open) continue;
+
+        // Liquidation serveur : si le mark franchit le prix de liquidation,
+        // la position est fermée de force avant toute autre logique. Sans ça
+        // un trader sur-levier pouvait "survivre" à une mèche qui aurait dû
+        // le liquider sur un vrai exchange (avantage déloyal) et faire passer
+        // son équité en négatif.
+        if (position.liquidationPrice != null && position.liquidationPrice > 0) {
+          const liquidated = position.side === 'long'
+            ? ticker.markPrice <= position.liquidationPrice
+            : ticker.markPrice >= position.liquidationPrice;
+          if (liquidated) {
+            this.closePositionAtPrice(player, position, position.liquidationPrice, undefined, 'liquidation');
+            continue;
+          }
+        }
 
         let trigger: 'sl' | 'tp' | null = null;
         if (position.side === 'long') {
@@ -1414,7 +1481,7 @@ export class PaperTradingEngine {
     existing: Position,
     exitPrice: number,
     partialSize?: number,
-    reason: 'manual' | 'stop-loss' | 'take-profit' = 'manual',
+    reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'manual',
   ): void {
     let sizeToClose = existing.size;
     let isPartial = false;
