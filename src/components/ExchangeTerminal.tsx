@@ -21,13 +21,14 @@ import {
 import logoBtf from '../assets/pictures/logoBTF.webp';
 import {
   clearPaperSessionToken,
-  getPaperSessionStorageKey,
+  extractPaperCompetitionContext,
+  getCompetitionIdFromUrl,
   getTerminalPlatformFromUrl,
-  isCompetitionPaperSession,
   PAPER_BOOTSTRAP_KEY,
   readPaperSessionToken,
   type TerminalPlatform,
   writePaperSessionToken,
+  buildCompeteTradeUrl,
 } from '../lib/paperSession';
 
 const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
@@ -3106,47 +3107,63 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   }, [demoMode]);
 
   function mergeCompetitionFromMe(payload: any) {
-    if (!payload || typeof payload !== 'object') return;
-    const ctx = payload.competition;
-    const top = payload as any;
-    const id = String(ctx?.id || top.id || '');
-    if (!id) return;
+    const extracted = extractPaperCompetitionContext(
+      payload?.competition != null && typeof payload === 'object' && !payload.player
+        ? { competition: payload }
+        : payload,
+    );
+    if (!extracted?.id) return;
     setCompetitionContext((prev) => ({
-      id,
-      title: String(ctx?.title || prev?.title || 'Competition'),
-      mode: ctx?.executionMode === 'real' ? 'real' : (prev?.mode || 'paper'),
-      userId: top?.userId ?? prev?.userId ?? null,
-      startAt: ctx?.startAt ?? prev?.startAt,
-      endAt: ctx?.endAt ?? prev?.endAt,
-      status: ctx?.status ?? prev?.status,
-      participants: ctx?.participants ?? prev?.participants,
-      rank: top?.rank ?? prev?.rank ?? null,
-      pnlPercent: top?.pnlPercent ?? prev?.pnlPercent,
+      id: extracted.id,
+      title: extracted.title || prev?.title || 'Competition',
+      mode: extracted.executionMode === 'real' ? 'real' : (prev?.mode || 'paper'),
+      userId: extracted.userId ?? prev?.userId ?? null,
+      startAt: extracted.startAt ?? prev?.startAt,
+      endAt: extracted.endAt ?? prev?.endAt,
+      status: (extracted.status as CompetitionContext['status']) ?? prev?.status,
+      participants: extracted.participants ?? prev?.participants,
+      rank: extracted.rank ?? prev?.rank ?? null,
+      pnlPercent: extracted.pnlPercent ?? prev?.pnlPercent,
     }));
   }
 
   function reconcileTerminalSession(
     token: string,
-    payload: { competition?: { id?: string; title?: string; executionMode?: string } | null },
+    payload: { competition?: unknown } | null | undefined,
   ): boolean {
-    const isCompetition = isCompetitionPaperSession(payload);
-    if (terminalPlatform === 'live' && isCompetition) {
+    const urlCompetitionId = getCompetitionIdFromUrl();
+    const competition = extractPaperCompetitionContext(payload);
+
+    // Session ONLINE sur une URL LIVE → renvoyer vers le bon terminal Compete.
+    if (terminalPlatform === 'live' && competition?.id) {
       clearPaperSessionToken('live');
       writePaperSessionToken('compete', token);
-      const ctx = payload.competition!;
-      const params = new URLSearchParams();
-      params.set('competitionId', String(ctx.id ?? ''));
-      if (ctx.title) params.set('competitionTitle', ctx.title);
-      params.set('competitionMode', ctx.executionMode === 'real' ? 'real' : 'paper');
-      window.location.replace(`/trade?${params.toString()}`);
+      window.location.replace(buildCompeteTradeUrl({
+        id: competition.id,
+        title: competition.title,
+        executionMode: competition.executionMode,
+      }));
       return false;
     }
-    if (terminalPlatform === 'compete' && !isCompetition) {
-      clearPaperSessionToken('compete');
+
+    // URL ONLINE (`?competitionId=`) : ne jamais basculer vers LIVE.
+    if (terminalPlatform === 'compete' && (competition?.id || urlCompetitionId)) {
+      writePaperSessionToken('compete', token);
+      return true;
+    }
+
+    // Session LIVE confirmée sur URL LIVE.
+    if (terminalPlatform === 'live' && !competition?.id) {
       writePaperSessionToken('live', token);
-      window.location.replace('/trade?live=true');
+      return true;
+    }
+
+    // Terminal ONLINE sans session compétition valide → demander reconnexion Compete.
+    if (terminalPlatform === 'compete') {
+      clearPaperSessionToken('compete');
       return false;
     }
+
     writePaperSessionToken(terminalPlatform, token);
     return true;
   }
@@ -3212,7 +3229,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         setLivePlayer(reconcilePlayerWithPending(data.player as Player));
         if (data.market) setLiveMarket(data.market);
         if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
-        mergeCompetitionFromMe(data?.competition);
+        mergeCompetitionFromMe(data);
       })
       .finally(() => {
         setBootstrapping(false);

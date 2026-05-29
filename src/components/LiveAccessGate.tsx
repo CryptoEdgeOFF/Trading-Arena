@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 
 import {
   clearPaperSessionToken,
+  extractPaperCompetitionContext,
   isCompetitionPaperSession,
   PAPER_BOOTSTRAP_KEY,
   readPaperSessionToken,
@@ -36,13 +37,18 @@ export default function LiveAccessGate() {
   // directement vers le terminal — l'utilisateur n'a pas besoin de re-saisir
   // son code à chaque ouverture d'onglet.
   useEffect(() => {
-    const token = readPaperSessionToken('live');
-    if (!token) {
+    const liveToken = readPaperSessionToken('live');
+    const competeToken = readPaperSessionToken('compete');
+    // Une session ONLINE ne doit jamais ouvrir la porte LIVE.
+    if (!liveToken || competeToken) {
+      if (competeToken && liveToken) {
+        clearPaperSessionToken('live');
+      }
       setCheckingExisting(false);
       return;
     }
     fetch('/api/paper/me', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${liveToken}` },
     })
       .then((response) => {
         if (!response.ok) {
@@ -57,14 +63,16 @@ export default function LiveAccessGate() {
           setCheckingExisting(false);
           return;
         }
-        // Si la session courante appartient à une compétition, on n'auto-rebondit
-        // pas en Live : on laisse l'utilisateur saisir un code Live distinct.
         if (isCompetitionPaperSession(data)) {
           clearPaperSessionToken('live');
+          const competition = extractPaperCompetitionContext(data);
+          if (competition?.id) {
+            writePaperSessionToken('compete', liveToken);
+          }
           setCheckingExisting(false);
           return;
         }
-        writePaperSessionToken('live', token);
+        writePaperSessionToken('live', liveToken);
         navigate(TRADE_URL, { replace: true });
       })
       .catch(() => setCheckingExisting(false));

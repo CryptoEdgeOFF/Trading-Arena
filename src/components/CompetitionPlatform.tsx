@@ -541,7 +541,7 @@ export default function CompetitionPlatform() {
       }).catch(() => undefined);
     }
     window.localStorage.removeItem(SESSION_KEY);
-    clearPaperSessionToken('compete');
+    clearPaperSessionToken();
     writeCachedUser(null);
     writeCachedJSON(MINE_CACHE_KEY, []);
     setSession(null);
