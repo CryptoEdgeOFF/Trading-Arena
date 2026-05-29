@@ -556,6 +556,15 @@ function getSessionToken(req: express.Request): string | null {
   return header.slice('Bearer '.length);
 }
 
+function resyncCompetitionPlayerIsolation(): void {
+  manager.reconcileOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
+}
+
+async function refreshManagerState(): Promise<void> {
+  await manager.refresh();
+  resyncCompetitionPlayerIsolation();
+}
+
 async function getSessionPlayer(req: express.Request) {
   const token = getSessionToken(req);
   if (!token) return null;
@@ -568,10 +577,11 @@ async function getSessionPlayer(req: express.Request) {
   // were just created by a concurrent mutation. We only refresh as a
   // last-resort fallback when the player is unknown to memory.
   if (IS_SERVERLESS) {
-    await manager.refresh();
+    await competitionManager.refresh();
+    await refreshManagerState();
     player = manager.getPlayerById(info.playerId);
   } else if (!player) {
-    await manager.refresh();
+    await refreshManagerState();
     player = manager.getPlayerById(info.playerId);
   }
   return player;
@@ -1200,6 +1210,18 @@ app.post('/api/paper/session', rateLimit({ windowMs: 10 * 60 * 1000, max: 15, ke
     return;
   }
 
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const competitionPaperIds = new Set(competitionManager.getPaperPlayerIds());
+  if (
+    competitionPaperIds.has(player.id)
+    || manager.isOnlineCompetitionPlayer(player.id)
+  ) {
+    res.status(403).json({
+      error: 'Ce compte est réservé à BTF Arena Compete. Connecte-toi via /compete.',
+    });
+    return;
+  }
+
   const token = crypto.randomBytes(24).toString('hex');
   await competitionManager.setTraderSession(token, player.id, null);
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
@@ -1298,6 +1320,36 @@ app.post('/api/paper/order', async (req, res) => {
   }
 });
 
+app.post('/api/paper/order/limit', async (req, res) => {
+  const token = getSessionToken(req);
+  const player = await getSessionPlayer(req);
+  if (!player) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+
+  const { orderId, limitPrice } = req.body || {};
+  try {
+    const competitionId = await assertCompetitionTraderCanTrade(token);
+    const oid = String(orderId || '');
+    const price = Number(limitPrice);
+    if (competitionId) {
+      await manager.updateCompetitionPaperOrderLimitPrice(player.id, oid, price);
+      await syncCompetitionResultForPlayer(player.id);
+    } else {
+      manager.updatePaperOrderLimitPrice(player.id, oid, price);
+    }
+    res.json({ ok: true });
+  } catch (error: any) {
+    const msg = error?.message || 'Modification du prix limite refusée';
+    if (typeof msg === 'string' && msg.includes('Ordre introuvable')) {
+      res.json({ ok: true, alreadyClosed: true });
+      return;
+    }
+    res.status(400).json({ error: msg });
+  }
+});
+
 app.post('/api/paper/cancel', async (req, res) => {
   const token = getSessionToken(req);
   const player = await getSessionPlayer(req);
@@ -1391,7 +1443,7 @@ app.post('/api/paper/risk', async (req, res) => {
     return;
   }
 
-  const { pair, positionId, stopLoss, takeProfit, stopLossSize, takeProfitSize } = req.body || {};
+  const { pair, positionId, orderId, stopLoss, takeProfit, stopLossSize, takeProfitSize } = req.body || {};
   try {
     const competitionId = await assertCompetitionTraderCanTrade(token);
     const isCompetition = Boolean(competitionId);
@@ -1401,6 +1453,17 @@ app.post('/api/paper/risk', async (req, res) => {
     };
     const sl = stopLoss == null ? null : Number(stopLoss);
     const tp = takeProfit == null ? null : Number(takeProfit);
+    if (orderId) {
+      const oid = String(orderId);
+      if (isCompetition) {
+        await manager.updateCompetitionPaperOrderRisk(player.id, oid, sl, tp);
+        await syncCompetitionResultForPlayer(player.id);
+      } else {
+        manager.updatePaperOrderRisk(player.id, oid, sl, tp);
+      }
+      res.json({ ok: true });
+      return;
+    }
     const positionRef = String(positionId || pair || '');
     if (isCompetition) {
       await manager.updateCompetitionPaperPositionRisk(player.id, positionRef, sl, tp, options);
@@ -1774,7 +1837,8 @@ app.post('/api/competition/trade/session', async (req, res) => {
     // On a persistent Node server the in-memory state is the source of
     // truth, so we skip the round-trip and answer instantly.
     if (IS_SERVERLESS) {
-      await Promise.all([competitionManager.refresh(), manager.refresh()]);
+      await competitionManager.refresh();
+      await refreshManagerState();
     }
     await finalizeEndedCompetitions();
     const { competition, entry } = competitionManager.getCompetitionForUser(competitionId, user.id);
@@ -1947,7 +2011,7 @@ const serverReady = Promise.all([
   manager.ready,
   itickCandles.initItickCandlesStore(),
 ]).then(async () => {
-  manager.markOnlineCompetitionPlayers(competitionManager.getPaperPlayerIds());
+  resyncCompetitionPlayerIsolation();
   await manager.ensurePublicMarketFeed();
 });
 

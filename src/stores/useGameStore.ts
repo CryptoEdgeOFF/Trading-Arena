@@ -136,6 +136,9 @@ export interface Order {
   feeEstimate: number;
   createdAt: number;
   updatedAt: number;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  placedAtMark?: number | null;
 }
 
 export interface Badge {

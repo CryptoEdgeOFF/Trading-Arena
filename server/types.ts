@@ -118,6 +118,8 @@ export interface Order {
   updatedAt: number;
   stopLoss?: number | null;
   takeProfit?: number | null;
+  /** Mark au moment du placement — sert au déclenchement « au prix limite ». */
+  placedAtMark?: number | null;
 }
 
 export type BadgeType =

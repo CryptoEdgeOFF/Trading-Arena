@@ -19,13 +19,37 @@ import {
   sizeUnitLabel,
 } from '../utils/positionSizing';
 import logoBtf from '../assets/pictures/logoBTF.webp';
+import {
+  clearPaperSessionToken,
+  getPaperSessionStorageKey,
+  getTerminalPlatformFromUrl,
+  isCompetitionPaperSession,
+  PAPER_BOOTSTRAP_KEY,
+  readPaperSessionToken,
+  type TerminalPlatform,
+  writePaperSessionToken,
+} from '../lib/paperSession';
 
-const SESSION_KEY = 'btf-paper-session';
 const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
 const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
 const DEMO_TAKER_FEE = 0.00005 / 3;
 const DEMO_MAKER_FEE = 0.00002 / 3;
+
+/** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
+function isRestingLimitTriggered(
+  side: 'long' | 'short',
+  limitPrice: number,
+  placedAtMark: number,
+  markPrice: number,
+): boolean {
+  if (side === 'long') {
+    if (placedAtMark >= limitPrice) return markPrice <= limitPrice;
+    return markPrice >= limitPrice;
+  }
+  if (placedAtMark <= limitPrice) return markPrice >= limitPrice;
+  return markPrice <= limitPrice;
+}
 
 interface PaperMeta {
   enabled: boolean;
@@ -689,6 +713,97 @@ function PairSelectorMenu({
   );
 }
 
+function AccountSizeSlider({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (percent: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  const updateFromClientX = useCallback((clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return;
+    const { left, width } = track.getBoundingClientRect();
+    if (width <= 0) return;
+    const pct = Math.round(Math.max(0, Math.min(100, ((clientX - left) / width) * 100)));
+    onChange(pct);
+  }, [onChange]);
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateFromClientX(event.clientX);
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    updateFromClientX(event.clientX);
+  };
+
+  const presets = [25, 50, 75, 100];
+
+  return (
+    <div className="select-none">
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <span className="text-[11px] text-[#9f98af]">Account size</span>
+        <div className="flex items-center gap-1">
+          {presets.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              onClick={() => onChange(preset)}
+              className={`cursor-pointer rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors ${
+                value === preset
+                  ? 'bg-[#f43f6e]/18 text-[#ff8fb0]'
+                  : 'text-[#6f687e] hover:bg-[#241e30] hover:text-[#c8c2d4]'
+              }`}
+            >
+              {preset}%
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#241e30] bg-[#15121f] px-3 py-2">
+        <div
+          ref={trackRef}
+          className="relative h-6 cursor-pointer touch-none"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          role="slider"
+          aria-label="Taille de position"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={value}
+        >
+          <div className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 overflow-hidden rounded-full bg-[#252030]">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#f43f6e] via-[#e0448a] to-[#a855f7]"
+              style={{ width: `${value}%` }}
+            />
+          </div>
+
+          <div
+            className="absolute top-1/2 z-10"
+            style={{
+              left: `${value}%`,
+              transform: 'translate(-50%, -50%)',
+            }}
+          >
+            <div className="flex h-6 min-w-[42px] items-center justify-center rounded-full border-2 border-[#10091c] bg-white px-2 shadow-[0_2px_8px_rgba(0,0,0,0.4)] ring-2 ring-[#f43f6e]/20">
+              <span className="num text-[10px] font-bold leading-none tabular-nums text-[#15121f]">
+                {value}%
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrderForm(props: OrderFormProps) {
   const {
     meta, pairs, selectedPair, setSelectedPair,
@@ -743,6 +858,15 @@ function OrderForm(props: OrderFormProps) {
   useEffect(() => {
     setAccountPercent(Math.round(usedRatio * 100));
   }, [usedRatio]);
+
+  useEffect(() => {
+    const qty = Number(size) || 0;
+    if (qty <= 0) {
+      setAccountPercent(0);
+      setUsdAmount('');
+      setLastEditedAmount('qty');
+    }
+  }, [size]);
 
   useEffect(() => {
     if (lastEditedAmount === 'usd') return;
@@ -980,22 +1104,12 @@ function OrderForm(props: OrderFormProps) {
           </div>
         </div>
 
-        {/* Slider 0% */}
+        {/* Slider taille de position */}
         <div className="mt-3 px-1">
-          <div className="mb-1 flex items-center justify-between text-[11px] text-[#9f98af]">
-            <span>Account size</span>
-            <span className="num text-white">{accountPercent}%</span>
-          </div>
-          <div className="rounded-xl border border-[#241e30] bg-[#15121f] px-3 py-2.5">
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={accountPercent}
-              onChange={(event) => applyAccountPercent(Number(event.target.value))}
-              className="order-size-slider w-full cursor-pointer"
-            />
-          </div>
+          <AccountSizeSlider
+            value={accountPercent}
+            onChange={applyAccountPercent}
+          />
         </div>
 
         <button
@@ -1155,7 +1269,10 @@ function ChartArea({
   onPreviewRiskChange,
   onPreviewEntryChange,
   onUpdateRisk,
+  onUpdateOrderRisk,
+  onUpdateOrderLimit,
   onCancelOrder,
+  onClosePosition,
   onPairChange,
   interval,
   setInterval,
@@ -1180,7 +1297,14 @@ function ChartArea({
     stopLoss: number | null,
     takeProfit: number | null,
   ) => Promise<void> | void;
+  onUpdateOrderRisk: (
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ) => Promise<void> | void;
+  onUpdateOrderLimit: (orderId: string, limitPrice: number) => Promise<void> | void;
   onCancelOrder: (orderId: string) => Promise<void> | void;
+  onClosePosition: (positionId: string, partialSize?: number) => Promise<void> | void;
   onPairChange?: (pair: string) => void;
   interval: number;
   setInterval: (interval: number) => void;
@@ -1198,6 +1322,8 @@ function ChartArea({
       price: order.limitPrice as number,
       size: order.size,
       status: order.status,
+      stopLoss: order.stopLoss ?? null,
+      takeProfit: order.takeProfit ?? null,
     }));
 
   return (
@@ -1244,7 +1370,10 @@ function ChartArea({
           onIntervalChange={setInterval}
           onPairChange={onPairChange}
           onUpdateRisk={onUpdateRisk}
+          onUpdateOrderRisk={onUpdateOrderRisk}
+          onUpdateOrderLimit={onUpdateOrderLimit}
           onCancelOrder={onCancelOrder}
+          onClosePosition={(positionId) => onClosePosition(positionId)}
           isMobile={isMobile}
           chartLiveTickRef={chartLiveTickRef}
         />
@@ -2499,6 +2628,10 @@ function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'p
 /* ------------------------------------------------------------------ MAIN */
 
 export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalProps) {
+  const [terminalPlatform] = useState<TerminalPlatform>(() => (
+    demoMode ? 'compete' : getTerminalPlatformFromUrl()
+  ));
+
   const players = useGameStore((state) => state.players);
   const recentTrades = useGameStore((state) => state.recentTrades);
   const eventStarted = useGameStore((state) => state.eventStarted);
@@ -2528,7 +2661,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return { token: 'demo-token', player: { id: 'tradingview-demo', name: 'TradingView Demo', color: '#dc2626', avatar: null } };
     }
     try {
-      const raw = window.localStorage.getItem('btf-paper-bootstrap');
+      const raw = window.localStorage.getItem(PAPER_BOOTSTRAP_KEY);
       if (raw) {
         const cached = JSON.parse(raw);
         if (cached?.token && cached?.player) {
@@ -2546,7 +2679,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   // simply sees a loading state instead of a brief error popup.
   const [bootstrapping, setBootstrapping] = useState(() => {
     if (demoMode) return false;
-    return Boolean(window.localStorage.getItem(SESSION_KEY));
+    return Boolean(readPaperSessionToken(getTerminalPlatformFromUrl()));
   });
   const [accessCode, setAccessCode] = useState('');
   const [selectedPair, setSelectedPair] = useState('BTC/USD');
@@ -2589,21 +2722,13 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardResponse | null>(null);
   const [leaderboardError, setLeaderboardError] = useState('');
 
-  // Mode Live (BTF event roster, accès par traderCode admin) vs mode
-  // compétition online. Détecté en lisant `?live=true` dans l'URL au mount
-  // pour éviter un flash de l'UI compétition. En mode Live :
-  //   - pas de polling /api/competition/leaderboard
-  //   - pas de bouton "Accueil" vers /compete (renvoie vers /trader)
-  //   - placeholder "Acces requis" redirige vers /trader
-  //   - logout() ramène sur /trader
-  const [liveMode] = useState<boolean>(() => {
-    if (typeof window === 'undefined' || demoMode) return false;
-    try {
-      return new URLSearchParams(window.location.search).get('live') === 'true';
-    } catch {
-      return false;
-    }
-  });
+  // Mode Live (BTF event roster) vs compétition online Compete.
+  // L'URL indique l'intention (`?live=true` vs `?competitionId=`), mais la
+  // session serveur (`/api/paper/me`) fait foi : une session Compete ne doit
+  // jamais afficher l'UI Live, et inversement.
+  const [liveMode, setLiveMode] = useState<boolean>(() => (
+    !demoMode && terminalPlatform === 'live'
+  ));
 
   const [livePlayer, setLivePlayer] = useState<Player | null>(null);
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
@@ -2616,6 +2741,11 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     setTakeProfitInput('');
     setStopLossInput('');
   }, []);
+
+  const resetLimitOrderDraft = useCallback(() => {
+    setSize('0');
+    clearOrderDraftRisk();
+  }, [clearOrderDraftRisk]);
 
   // Tracks ids of positions/orders that the user has just closed/cancelled
   // optimistically. Each entry expires after a short delay so an in-flight
@@ -2812,15 +2942,20 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const ticker = market[selectedPair];
 
   const wsPlayer = useMemo(
-    () => (session ? players.find((entry) => entry.id === session.player.id) || null : null),
-    [players, session],
+    () => (
+      competitionContext?.id || !liveMode
+        ? null
+        : (session ? players.find((entry) => entry.id === session.player.id) || null : null)
+    ),
+    [competitionContext?.id, liveMode, players, session],
   );
   const player = useMemo(() => {
     if (demoMode) return demoPlayer;
+    if (competitionContext?.id) return livePlayer;
     if (!livePlayer) return wsPlayer;
     if (!wsPlayer) return livePlayer;
     return (wsPlayer.lastUpdate || 0) > (livePlayer.lastUpdate || 0) ? wsPlayer : livePlayer;
-  }, [demoMode, demoPlayer, livePlayer, wsPlayer]);
+  }, [competitionContext?.id, demoMode, demoPlayer, livePlayer, wsPlayer]);
 
   const playerTrades = useMemo(() => {
     if (demoMode) {
@@ -2829,9 +2964,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (livePlayer?.trades?.length) {
       return [...livePlayer.trades].sort((a, b) => b.time - a.time).slice(0, 30);
     }
+    if (competitionContext?.id || !liveMode) return [];
     if (!player) return [];
     return recentTrades.filter((trade) => trade.playerName === player.name).slice(0, 30);
-  }, [demoMode, demoPlayer.trades, livePlayer, player, recentTrades]);
+  }, [competitionContext?.id, demoMode, demoPlayer.trades, liveMode, livePlayer, player, recentTrades]);
 
   useEffect(() => {
     if (!demoMode) return;
@@ -2859,6 +2995,87 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
     return () => window.clearInterval(id);
   }, [demoMode]);
+
+  useEffect(() => {
+    if (!demoMode) return;
+    setDemoPlayer((current) => {
+      const openOrders = current.openOrders.filter((order) => order.status === 'open' && order.limitPrice != null);
+      if (openOrders.length === 0) return current;
+
+      let changed = false;
+      let feesAdded = 0;
+      let filledCount = 0;
+      const remainingOrders = [...current.openOrders];
+      const newPositions = [...current.openPositions];
+      const newTrades = [...current.trades];
+
+      for (const order of openOrders) {
+        const ticker = demoMarket[order.pair];
+        const limitPrice = order.limitPrice;
+        if (!ticker || limitPrice == null) continue;
+        const placedAtMark = order.placedAtMark != null && order.placedAtMark > 0
+          ? order.placedAtMark
+          : ticker.markPrice;
+        if (!isRestingLimitTriggered(order.side, limitPrice, placedAtMark, ticker.markPrice)) continue;
+
+        changed = true;
+        filledCount += 1;
+        const fillPrice = limitPrice;
+        const idx = remainingOrders.findIndex((entry) => entry.id === order.id);
+        if (idx >= 0) remainingOrders.splice(idx, 1);
+
+        const notional = fillPrice * order.size;
+        const margin = notional / order.leverage;
+        const fee = notional * DEMO_MAKER_FEE;
+        feesAdded += fee;
+        const openedAt = Date.now();
+        newPositions.unshift({
+          id: order.id,
+          pair: order.pair,
+          side: order.side,
+          size: order.size,
+          entryPrice: fillPrice,
+          markPrice: ticker.markPrice,
+          pnl: 0,
+          unrealizedFunding: 0,
+          leverage: order.leverage,
+          margin,
+          feesPaid: fee,
+          liquidationPrice: order.side === 'long'
+            ? fillPrice * (1 - 0.9 / order.leverage)
+            : fillPrice * (1 + 0.9 / order.leverage),
+          stopLoss: order.stopLoss ?? null,
+          takeProfit: order.takeProfit ?? null,
+          openedAt,
+        });
+        newTrades.unshift({
+          id: order.id,
+          playerName: current.name,
+          playerColor: current.color,
+          pair: order.pair,
+          side: order.side,
+          size: order.size,
+          price: fillPrice,
+          fee,
+          leverage: order.leverage,
+          orderType: 'limit',
+          pnl: 0,
+          time: openedAt,
+          action: 'open',
+        });
+      }
+
+      if (!changed) return current;
+      return normalizeDemoPlayer({
+        ...current,
+        feesPaid: current.feesPaid + feesAdded,
+        tradeCount: current.tradeCount + filledCount,
+        openOrders: remainingOrders,
+        openPositions: newPositions,
+        trades: newTrades.slice(0, 60),
+      }, demoMarket);
+    });
+  }, [demoMode, demoMarket]);
 
   useEffect(() => {
     if (!demoMode) return;
@@ -2908,6 +3125,38 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }));
   }
 
+  function reconcileTerminalSession(
+    token: string,
+    payload: { competition?: { id?: string; title?: string; executionMode?: string } | null },
+  ): boolean {
+    const isCompetition = isCompetitionPaperSession(payload);
+    if (terminalPlatform === 'live' && isCompetition) {
+      clearPaperSessionToken('live');
+      writePaperSessionToken('compete', token);
+      const ctx = payload.competition!;
+      const params = new URLSearchParams();
+      params.set('competitionId', String(ctx.id ?? ''));
+      if (ctx.title) params.set('competitionTitle', ctx.title);
+      params.set('competitionMode', ctx.executionMode === 'real' ? 'real' : 'paper');
+      window.location.replace(`/trade?${params.toString()}`);
+      return false;
+    }
+    if (terminalPlatform === 'compete' && !isCompetition) {
+      clearPaperSessionToken('compete');
+      writePaperSessionToken('live', token);
+      window.location.replace('/trade?live=true');
+      return false;
+    }
+    writePaperSessionToken(terminalPlatform, token);
+    return true;
+  }
+
+  useEffect(() => {
+    if (demoMode) return;
+    const hasCompetition = Boolean(competitionContext?.id);
+    setLiveMode(terminalPlatform === 'live' && !hasCompetition);
+  }, [competitionContext?.id, demoMode, terminalPlatform]);
+
   useEffect(() => {
     if (demoMode) return;
     fetch('/api/paper/meta')
@@ -2922,7 +3171,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useEffect(() => {
     if (demoMode) return;
-    const token = window.localStorage.getItem(SESSION_KEY);
+    const token = readPaperSessionToken(terminalPlatform);
     if (!token) {
       setBootstrapping(false);
       return;
@@ -2931,7 +3180,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     // Consume the bootstrap cache deposited by CompetitionPlatform when the
     // user clicked "TRADER" so the terminal renders populated immediately.
     try {
-      const raw = window.localStorage.getItem('btf-paper-bootstrap');
+      const raw = window.localStorage.getItem(PAPER_BOOTSTRAP_KEY);
       if (raw) {
         const cached = JSON.parse(raw);
         const fresh = cached?.cachedAt && Date.now() - cached.cachedAt < 30_000;
@@ -2942,7 +3191,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
           mergeCompetitionFromMe(cached.competition);
         }
         // Single-use cache: drop it now so a refresh always re-validates.
-        window.localStorage.removeItem('btf-paper-bootstrap');
+        window.localStorage.removeItem(PAPER_BOOTSTRAP_KEY);
       }
     } catch {
       // ignore
@@ -2951,25 +3200,25 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } })
       .then(async (response) => {
         if (!response.ok) {
-          window.localStorage.removeItem(SESSION_KEY);
+          clearPaperSessionToken(terminalPlatform);
           return null;
         }
         return response.json();
       })
       .then((data) => {
-        if (data?.player) {
-          setSession({ token, player: data.player });
-          setLivePlayer(reconcilePlayerWithPending(data.player as Player));
-          if (data.market) setLiveMarket(data.market);
-          if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
-          mergeCompetitionFromMe(data?.competition);
-        }
+        if (!data?.player) return;
+        if (!reconcileTerminalSession(token, data)) return;
+        setSession({ token, player: data.player });
+        setLivePlayer(reconcilePlayerWithPending(data.player as Player));
+        if (data.market) setLiveMarket(data.market);
+        if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
+        mergeCompetitionFromMe(data?.competition);
       })
       .finally(() => {
         setBootstrapping(false);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoMode]);
+  }, [demoMode, terminalPlatform]);
 
   useEffect(() => {
     if (demoMode) return;
@@ -2991,13 +3240,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         });
         if (cancelled) return;
         if (response.status === 401) {
-          window.localStorage.removeItem(SESSION_KEY);
+          clearPaperSessionToken(terminalPlatform);
           setSession(null);
           return;
         }
         if (!response.ok) return;
         const data = await response.json();
         if (cancelled) return;
+        if (!reconcileTerminalSession(session.token, data)) return;
         if (data?.player) setLivePlayer(reconcilePlayerWithPending(data.player as Player));
         if (data?.market) setLiveMarket(data.market);
         if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
@@ -3016,7 +3266,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [demoMode, session]);
+  }, [demoMode, session, terminalPlatform]);
 
   useEffect(() => {
     if (orderType === 'limit' && ticker && !limitPrice) {
@@ -3077,7 +3327,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Connexion impossible');
-      window.localStorage.setItem(SESSION_KEY, data.token);
+      writePaperSessionToken('live', data.token);
       setSession({ token: data.token, player: data.player });
       setAccessCode('');
     } catch (err: any) {
@@ -3091,22 +3341,102 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     setDemoPlayer((current) => normalizeDemoPlayer(updater(current), demoMarket));
   }
 
+  function updateDemoOrderLimit(orderId: string, limitPrice: number) {
+    pushDemoPlayer((current) => {
+      const order = current.openOrders.find((entry) => entry.id === orderId);
+      if (!order || order.limitPrice == null) return current;
+
+      const notional = limitPrice * order.size;
+      const marginRequired = notional / order.leverage;
+      const feeEstimate = notional * DEMO_MAKER_FEE;
+
+      return {
+        ...current,
+        openOrders: current.openOrders.map((entry) => (
+          entry.id === orderId
+            ? {
+                ...entry,
+                limitPrice,
+                marginReserved: marginRequired,
+                feeEstimate,
+                updatedAt: Date.now(),
+              }
+            : entry
+        )),
+      };
+    });
+  }
+
+  function updateDemoOrderRisk(
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ) {
+    pushDemoPlayer((current) => ({
+      ...current,
+      openOrders: current.openOrders.map((order) => (
+        order.id === orderId
+          ? { ...order, stopLoss, takeProfit, updatedAt: Date.now() }
+          : order
+      )),
+    }));
+  }
+
   function submitDemoOrder(extras?: { stopLoss: number | null; takeProfit: number | null }) {
     const currentTicker = demoMarket[selectedPair];
     if (!currentTicker) return;
 
     const qty = engineSizeFromInput(selectedPair, Number(size));
-    const price = orderType === 'limit' && Number(limitPrice) > 0
-      ? Number(limitPrice)
-      : (side === 'long' ? currentTicker.askPrice : currentTicker.bidPrice);
-    const notional = price * qty;
-    const margin = leverage > 0 ? notional / leverage : 0;
-    const fee = notional * DEMO_TAKER_FEE;
-
     if (!Number.isFinite(qty) || qty <= 0) {
       setError('Quantité invalide pour la démo.');
       return;
     }
+
+    if (orderType === 'limit') {
+      const limit = Number(limitPrice);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        setError('Prix limite invalide.');
+        return;
+      }
+      const notional = limit * qty;
+      const margin = leverage > 0 ? notional / leverage : 0;
+      const fee = notional * DEMO_MAKER_FEE;
+      if (margin + fee > demoPlayer.availableMargin) {
+        setError('Marge demo insuffisante.');
+        return;
+      }
+      const openedAt = Date.now();
+      const order = {
+        id: crypto.randomUUID(),
+        pair: selectedPair,
+        side,
+        size: qty,
+        orderType: 'limit' as const,
+        status: 'open' as const,
+        limitPrice: limit,
+        leverage,
+        marginReserved: margin,
+        feeEstimate: fee,
+        createdAt: openedAt,
+        updatedAt: openedAt,
+        stopLoss: extras?.stopLoss ?? null,
+        takeProfit: extras?.takeProfit ?? null,
+        placedAtMark: currentTicker.markPrice,
+      };
+      setError('');
+      pushDemoPlayer((current) => ({
+        ...current,
+        openOrders: [order, ...current.openOrders],
+      }));
+      resetLimitOrderDraft();
+      return;
+    }
+
+    const price = side === 'long' ? currentTicker.askPrice : currentTicker.bidPrice;
+    const notional = price * qty;
+    const margin = leverage > 0 ? notional / leverage : 0;
+    const fee = notional * DEMO_TAKER_FEE;
+
     if (margin + fee > demoPlayer.availableMargin) {
       setError('Marge demo insuffisante.');
       return;
@@ -3271,8 +3601,11 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Ordre refusé');
-      clearOrderDraftRisk();
-      setOrderPreview(null);
+      if (orderType === 'limit') {
+        resetLimitOrderDraft();
+      } else {
+        clearOrderDraftRisk();
+      }
       void refreshLive();
     } catch (err: any) {
       setError(err.message);
@@ -3377,6 +3710,65 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }
   }
 
+  async function updateOrderLimit(orderId: string, limitPrice: number) {
+    if (demoMode) {
+      updateDemoOrderLimit(orderId, limitPrice);
+      return;
+    }
+    if (!session) return;
+    setError('');
+    setLivePlayer((prev) => (
+      prev
+        ? {
+            ...prev,
+            openOrders: prev.openOrders.map((order) => (
+              order.id === orderId ? { ...order, limitPrice } : order
+            )),
+          }
+        : prev
+    ));
+    try {
+      const response = await fetch('/api/paper/order/limit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.token}`,
+        },
+        body: JSON.stringify({ orderId, limitPrice }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Modification du prix limite refusée');
+      void refreshLive();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Modification du prix limite refusée');
+      void refreshLive();
+    }
+  }
+
+  async function updateOrderRisk(
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ) {
+    if (demoMode) {
+      updateDemoOrderRisk(orderId, stopLoss, takeProfit);
+      return;
+    }
+    if (!session) return;
+    setError('');
+    const response = await fetch('/api/paper/risk', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.token}`,
+      },
+      body: JSON.stringify({ orderId, stopLoss, takeProfit }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Modification SL/TP refusée');
+    void refreshLive();
+  }
+
   async function updateRisk(
     positionId: string,
     stopLoss: number | null,
@@ -3427,7 +3819,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   function logout() {
     if (demoMode) return;
-    window.localStorage.removeItem(SESSION_KEY);
+    clearPaperSessionToken(terminalPlatform);
     setSession(null);
     // En mode Live, ramener directement sur la page de login par code
     // pour ne pas afficher le placeholder "Aller sur BTF Arena".
@@ -3555,7 +3947,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       onPreviewRiskChange={updateOrderPreviewRisk}
       onPreviewEntryChange={updateOrderPreviewEntry}
       onUpdateRisk={updateRisk}
+      onUpdateOrderRisk={updateOrderRisk}
+      onUpdateOrderLimit={updateOrderLimit}
       onCancelOrder={cancelOrder}
+      onClosePosition={closePosition}
       onPairChange={(p) => {
         if (meta.pairs.includes(p)) setSelectedPair(p);
       }}

@@ -820,6 +820,26 @@ export class PlayerManager {
     if (changed) this.broadcastState();
   }
 
+  /** Resync in-memory isolation after a DB refresh (serverless cold start). */
+  reconcileOnlineCompetitionPlayers(playerIds: string[]): void {
+    const next = new Set(playerIds);
+    let changed = false;
+    for (const playerId of Array.from(this.onlineCompetitionPlayerIds)) {
+      if (!next.has(playerId)) {
+        this.onlineCompetitionPlayerIds.delete(playerId);
+        changed = true;
+      }
+    }
+    for (const playerId of next) {
+      if (!this.onlineCompetitionPlayerIds.has(playerId)) {
+        this.onlineCompetitionPlayerIds.add(playerId);
+        changed = true;
+      }
+      this.playerQueue = this.playerQueue.filter((id) => id !== playerId);
+    }
+    if (changed) this.broadcastState();
+  }
+
   unmarkOnlineCompetitionPlayers(playerIds: string[]): void {
     let changed = false;
     for (const playerId of playerIds) {
@@ -1305,6 +1325,72 @@ export class PlayerManager {
 
     this.paperEngine.updatePositionRisk(player, pair, stopLoss, takeProfit, options);
     this.saveRoster();
+    this.broadcastState();
+  }
+
+  updatePaperOrderRisk(
+    playerId: string,
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ): void {
+    if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
+      throw new Error('Le paper trading n’est pas disponible');
+    }
+
+    const player = this.players.get(playerId);
+    if (!player || !player.active) {
+      throw new Error('Trader introuvable');
+    }
+
+    this.paperEngine.updateOrderRisk(player, orderId, stopLoss, takeProfit);
+    this.saveRoster();
+    this.broadcastState();
+  }
+
+  async updateCompetitionPaperOrderRisk(
+    playerId: string,
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ): Promise<void> {
+    const player = this.players.get(playerId);
+    if (!player) {
+      throw new Error('Trader introuvable');
+    }
+    await this.ensureCompetitionPaperRuntime(player);
+    this.paperEngine.updateOrderRisk(player, orderId, stopLoss, takeProfit);
+    await this.persistTradingMutation(player.id);
+    this.broadcastState();
+  }
+
+  updatePaperOrderLimitPrice(playerId: string, orderId: string, limitPrice: number): void {
+    if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
+      throw new Error('Le paper trading n’est pas disponible');
+    }
+
+    const player = this.players.get(playerId);
+    if (!player || !player.active) {
+      throw new Error('Trader introuvable');
+    }
+
+    this.paperEngine.updateOrderLimitPrice(player, orderId, limitPrice);
+    this.saveRoster();
+    this.broadcastState();
+  }
+
+  async updateCompetitionPaperOrderLimitPrice(
+    playerId: string,
+    orderId: string,
+    limitPrice: number,
+  ): Promise<void> {
+    const player = this.players.get(playerId);
+    if (!player) {
+      throw new Error('Trader introuvable');
+    }
+    await this.ensureCompetitionPaperRuntime(player);
+    this.paperEngine.updateOrderLimitPrice(player, orderId, limitPrice);
+    await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
 

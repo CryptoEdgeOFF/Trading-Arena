@@ -236,6 +236,21 @@ function validateRiskLevels(
   }
 }
 
+/** Ordre limite passif : se déclenche quand le mark atteint le prix limite (pas d'exécution market immédiate). */
+function isRestingLimitTriggered(
+  side: 'long' | 'short',
+  limitPrice: number,
+  placedAtMark: number,
+  markPrice: number,
+): boolean {
+  if (side === 'long') {
+    if (placedAtMark >= limitPrice) return markPrice <= limitPrice;
+    return markPrice >= limitPrice;
+  }
+  if (placedAtMark <= limitPrice) return markPrice >= limitPrice;
+  return markPrice <= limitPrice;
+}
+
 function getRealizedPnl(player: Player): number {
   return player.trades
     .filter((trade) => trade.action === 'close')
@@ -674,6 +689,7 @@ export class PaperTradingEngine {
     }
 
     const now = Date.now();
+    const placedAtMark = ticker.markPrice > 0 ? ticker.markPrice : limitPrice;
     const order: Order = {
       id: crypto.randomUUID(),
       pair,
@@ -689,6 +705,7 @@ export class PaperTradingEngine {
       updatedAt: now,
       stopLoss: inputStopLoss,
       takeProfit: inputTakeProfit,
+      placedAtMark,
     };
 
     player.openOrders.push(order);
@@ -843,6 +860,72 @@ export class PaperTradingEngine {
       throw new Error('Ordre introuvable');
     }
     player.openOrders = player.openOrders.filter((entry) => entry.id !== orderId);
+    this.updatePlayerEquity(player);
+  }
+
+  updateOrderRisk(
+    player: Player,
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ): void {
+    const order = player.openOrders.find((entry) => entry.id === orderId && entry.status === 'open');
+    if (!order) {
+      throw new Error('Ordre introuvable');
+    }
+    assertMarketOpen(order.pair);
+    const limitPrice = order.limitPrice;
+    if (limitPrice == null || !Number.isFinite(limitPrice) || limitPrice <= 0) {
+      throw new Error('Prix limite invalide');
+    }
+    const normalizedStopLoss = stopLoss == null ? null : Number(stopLoss);
+    const normalizedTakeProfit = takeProfit == null ? null : Number(takeProfit);
+    validateRiskLevels(order.side, limitPrice, normalizedStopLoss, normalizedTakeProfit);
+    order.stopLoss = normalizedStopLoss;
+    order.takeProfit = normalizedTakeProfit;
+    order.updatedAt = Date.now();
+    this.updatePlayerEquity(player);
+  }
+
+  updateOrderLimitPrice(player: Player, orderId: string, limitPrice: number): void {
+    const order = player.openOrders.find((entry) => entry.id === orderId && entry.status === 'open');
+    if (!order) {
+      throw new Error('Ordre introuvable');
+    }
+    if (order.orderType !== 'limit' || order.limitPrice == null) {
+      throw new Error('Seuls les ordres limites peuvent être modifiés');
+    }
+    assertMarketOpen(order.pair);
+
+    const newLimit = Number(limitPrice);
+    if (!Number.isFinite(newLimit) || newLimit <= 0) {
+      throw new Error('Prix limite invalide');
+    }
+    if (newLimit * order.size < MIN_ORDER_NOTIONAL) {
+      throw new Error('Taille de position trop faible');
+    }
+
+    validateRiskLevels(
+      order.side,
+      newLimit,
+      order.stopLoss ?? null,
+      order.takeProfit ?? null,
+    );
+
+    const notional = newLimit * order.size;
+    const marginRequired = notional / order.leverage;
+    const feeEstimate = notional * MAKER_FEE_RATE;
+    const previousReserve = order.marginReserved + order.feeEstimate;
+    const nextReserve = marginRequired + feeEstimate;
+    const extraNeeded = nextReserve - previousReserve;
+    if (extraNeeded > player.availableMargin) {
+      throw new Error(`Capital disponible insuffisant (${player.availableMargin.toFixed(2)}$)`);
+    }
+
+    order.limitPrice = newLimit;
+    order.marginReserved = marginRequired;
+    order.feeEstimate = feeEstimate;
+    order.updatedAt = Date.now();
     this.updatePlayerEquity(player);
   }
 
@@ -1389,26 +1472,23 @@ export class PaperTradingEngine {
         if (order.status !== 'open' || order.limitPrice == null) return false;
         if (!getMarketSessionForPair(order.pair).open) return false;
         const ticker = this.market[order.pair];
-        if (!ticker) return false;
-        return order.side === 'long'
-          ? ticker.askPrice <= order.limitPrice
-          : ticker.bidPrice >= order.limitPrice;
+        if (!ticker || !Number.isFinite(ticker.markPrice) || ticker.markPrice <= 0) return false;
+        const placedAtMark = order.placedAtMark != null && order.placedAtMark > 0
+          ? order.placedAtMark
+          : ticker.markPrice;
+        return isRestingLimitTriggered(
+          order.side,
+          order.limitPrice,
+          placedAtMark,
+          ticker.markPrice,
+        );
       });
 
       for (const order of executable) {
-        const ticker = this.market[order.pair];
-        // Price improvement : un ordre limite croisable se remplit au
-        // meilleur des deux prix pour le trader (jamais pire que le marché),
-        // exactement comme un vrai carnet d'ordres. On évite ainsi qu'un
-        // ordre limite posté à un prix déjà franchi exécute à un prix
-        // arbitraire (meilleur OU pire) côté client.
-        const marketPrice = order.side === 'long' ? ticker.askPrice : ticker.bidPrice;
-        const fillPrice = order.side === 'long'
-          ? Math.min(order.limitPrice || marketPrice, marketPrice)
-          : Math.max(order.limitPrice || marketPrice, marketPrice);
+        const fillPrice = order.limitPrice!;
         console.log(
           `[paper] limit fill ${player.name} ${order.pair} ${order.side} `
-          + `limit=${order.limitPrice} fill=${fillPrice} mark=${ticker?.markPrice} `
+          + `limit=${order.limitPrice} fill=${fillPrice} mark=${this.market[order.pair]?.markPrice} `
           + `size=${order.size} orderId=${order.id} placedAt=${order.createdAt ?? '?'}`,
         );
         player.openOrders = player.openOrders.filter((entry) => entry.id !== order.id);

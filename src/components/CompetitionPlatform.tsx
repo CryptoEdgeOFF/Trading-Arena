@@ -9,10 +9,14 @@ import {
   formatCompactUnsigned,
   formatPercent,
 } from './competeMetrics';
+import {
+  clearPaperSessionToken,
+  PAPER_BOOTSTRAP_KEY,
+  writePaperSessionToken,
+} from '../lib/paperSession';
 
 const SESSION_KEY = 'btf-comp-session';
 const SESSION_USER_KEY = 'btf-comp-user';
-const PAPER_SESSION_KEY = 'btf-paper-session';
 
 function readCachedUser(): SessionUser | null {
   try {
@@ -537,6 +541,7 @@ export default function CompetitionPlatform() {
       }).catch(() => undefined);
     }
     window.localStorage.removeItem(SESSION_KEY);
+    clearPaperSessionToken('compete');
     writeCachedUser(null);
     writeCachedJSON(MINE_CACHE_KEY, []);
     setSession(null);
@@ -610,7 +615,7 @@ export default function CompetitionPlatform() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Acces trading impossible');
-      window.localStorage.setItem(PAPER_SESSION_KEY, data.token);
+      writePaperSessionToken('compete', data.token);
       // Cache the player snapshot returned by /trade/session so the
       // ExchangeTerminal can render immediately on mount without waiting
       // for the /api/paper/me round-trip. The terminal still revalidates
@@ -618,7 +623,7 @@ export default function CompetitionPlatform() {
       if (data.player) {
         try {
           window.localStorage.setItem(
-            'btf-paper-bootstrap',
+            PAPER_BOOTSTRAP_KEY,
             JSON.stringify({
               token: data.token,
               player: data.player,

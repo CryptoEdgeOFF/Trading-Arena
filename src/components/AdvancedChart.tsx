@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BtfDatafeed } from '../charting_library/datafeed';
 import type {
   EntityId,
@@ -8,6 +8,7 @@ import type {
 } from '../charting_library/charting_library';
 import type { MarketTicker, Position } from '../stores/useGameStore';
 import { fmtMarketPrice, isValidRiskPrice, roundPriceForCategory } from '../utils/positionSizing';
+import { pnlToAccountCcy } from '../utils/positionPnl';
 
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js';
 
@@ -64,6 +65,8 @@ interface PendingOrder {
   price: number;
   size: number;
   status: string;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 
 export interface ChartOrderPreview {
@@ -97,9 +100,16 @@ export interface AdvancedChartProps {
     stopLoss: number | null,
     takeProfit: number | null,
   ) => Promise<void> | void;
+  onUpdateOrderRisk?: (
+    orderId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+  ) => Promise<void> | void;
+  onUpdateOrderLimit?: (orderId: string, limitPrice: number) => Promise<void> | void;
   onPreviewRiskChange?: (patch: { stopLoss?: number | null; takeProfit?: number | null }) => void;
   onPreviewEntryChange?: (price: number) => void;
   onCancelOrder?: (orderId: string) => Promise<void> | void;
+  onClosePosition?: (positionId: string) => Promise<void> | void;
   isMobile?: boolean;
   /** Optional bridge for high-frequency market:tick WS events (bypasses React market state). */
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
@@ -124,6 +134,8 @@ interface LineMeta {
   positionId?: string;
   orderId?: string;
   isPreview?: boolean;
+  /** SL/TP créé via l'excroissance sur le bouton d'entrée (pas encore persisté). */
+  isPlacementDraft?: boolean;
 }
 
 // Entry / pending-order lines are blue to stay neutral re: trade direction —
@@ -252,6 +264,87 @@ interface OverlayButton {
   draggable: boolean;
   closable: boolean;
   riskContext?: RiskValidationContext;
+  /** Renseigné sur le chip d'entrée d'une position ouverte (excroissances TP/SL). */
+  positionSide?: 'long' | 'short';
+  positionSize?: number;
+  /** Contexte pour afficher le PnL projeté sur les chips SL / TP. */
+  riskPnlContext?: {
+    pair: string;
+    side: 'long' | 'short';
+    size: number;
+    entryPrice: number;
+  };
+}
+
+function projectedExitPnlUsd(
+  pairKey: string,
+  side: 'long' | 'short',
+  size: number,
+  entryPrice: number,
+  exitPrice: number,
+): number {
+  if (
+    !Number.isFinite(size) || size <= 0
+    || !Number.isFinite(entryPrice) || entryPrice <= 0
+    || !Number.isFinite(exitPrice) || exitPrice <= 0
+  ) {
+    return 0;
+  }
+  const raw = side === 'long'
+    ? (exitPrice - entryPrice) * size
+    : (entryPrice - exitPrice) * size;
+  return pnlToAccountCcy(pairKey, raw, exitPrice);
+}
+
+function formatProjectedPnl(pnl: number): string {
+  const sign = pnl >= 0 ? '+' : '-';
+  const abs = Math.abs(pnl);
+  const formatted = abs >= 1000 ? abs.toFixed(0) : abs.toFixed(2);
+  return `${sign}${formatted} $`;
+}
+
+interface RiskPlacementDraft {
+  positionId?: string;
+  orderId?: string;
+  isPreview?: boolean;
+  kind: 'sl' | 'tp';
+  side: 'long' | 'short';
+  size: number;
+  initialPrice: number;
+  entryPrice: number;
+}
+
+function riskLineKey(
+  kind: 'sl' | 'tp',
+  anchor: { positionId?: string; orderId?: string; isPreview?: boolean },
+): string {
+  if (anchor.orderId) return `order-${kind}:${anchor.orderId}`;
+  if (anchor.isPreview && anchor.positionId) return `preview:${kind}:${anchor.positionId}`;
+  return `${kind}:${anchor.positionId ?? ''}`;
+}
+
+function riskAnchorsMatch(a: LineMeta, b: LineMeta): boolean {
+  if (a.orderId && b.orderId) return a.orderId === b.orderId;
+  if (a.isPreview && b.isPreview) return a.positionId === b.positionId;
+  if (a.positionId && b.positionId && !a.isPreview && !b.isPreview && !a.orderId && !b.orderId) {
+    return a.positionId === b.positionId;
+  }
+  return false;
+}
+
+/** Prix de départ plausible quand l'utilisateur « prend » un SL/TP depuis l'entrée. */
+function initialRiskPlacementPrice(
+  entryPrice: number,
+  side: 'long' | 'short',
+  kind: 'sl' | 'tp',
+  markPrice?: number,
+): number {
+  const ref = markPrice && markPrice > 0 ? markPrice : entryPrice;
+  const offset = Math.max(ref * 0.0015, ref * 1e-6);
+  if (side === 'long') {
+    return kind === 'sl' ? ref - offset : ref + offset;
+  }
+  return kind === 'sl' ? ref + offset : ref - offset;
 }
 
 export default function AdvancedChart({
@@ -269,9 +362,12 @@ export default function AdvancedChart({
   onIntervalChange,
   onPairChange,
   onUpdateRisk,
+  onUpdateOrderRisk,
+  onUpdateOrderLimit,
   onPreviewRiskChange,
   onPreviewEntryChange,
   onCancelOrder,
+  onClosePosition,
   isMobile = false,
   chartLiveTickRef,
 }: AdvancedChartProps) {
@@ -308,11 +404,23 @@ export default function AdvancedChart({
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const dragInvalidRef = useRef<Map<string, boolean>>(new Map());
   const [, forcePriceRender] = useState(0);
+  /** Chip d'entrée survolé → affiche les excroissances TP / SL. */
+  const [expandedPeKey, setExpandedPeKey] = useState<string | null>(null);
+  /** Brouillon SL/TP lancé depuis une excroissance (ligne + chip avant persist). */
+  const [riskPlacement, setRiskPlacement] = useState<RiskPlacementDraft | null>(null);
+  const overlayButtonsRef = useRef<OverlayButton[]>([]);
+  const pendingAutoDragRef = useRef<{ key: string; pointerId: number; clientY: number } | null>(null);
+  const placementDraftKeysRef = useRef<Set<string>>(new Set());
+  const expandPeHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onUpdateRiskRef = useRef(onUpdateRisk);
+  const onUpdateOrderRiskRef = useRef(onUpdateOrderRisk);
+  const onUpdateOrderLimitRef = useRef(onUpdateOrderLimit);
   const onPreviewRiskChangeRef = useRef(onPreviewRiskChange);
+  const orderPreviewRef = useRef(orderPreview);
   const onPreviewEntryChangeRef = useRef(onPreviewEntryChange);
   const onCancelOrderRef = useRef(onCancelOrder);
+  const onClosePositionRef = useRef(onClosePosition);
   const onPairChangeRef = useRef(onPairChange);
   const onIntervalChangeRef = useRef(onIntervalChange);
   const positionsRef = useRef<Position[]>([]);
@@ -340,6 +448,15 @@ export default function AdvancedChart({
     onUpdateRiskRef.current = onUpdateRisk;
   }, [onUpdateRisk]);
   useEffect(() => {
+    onUpdateOrderRiskRef.current = onUpdateOrderRisk;
+  }, [onUpdateOrderRisk]);
+  useEffect(() => {
+    onUpdateOrderLimitRef.current = onUpdateOrderLimit;
+  }, [onUpdateOrderLimit]);
+  useEffect(() => {
+    orderPreviewRef.current = orderPreview;
+  }, [orderPreview]);
+  useEffect(() => {
     onPreviewRiskChangeRef.current = onPreviewRiskChange;
   }, [onPreviewRiskChange]);
   useEffect(() => {
@@ -348,6 +465,12 @@ export default function AdvancedChart({
   useEffect(() => {
     onCancelOrderRef.current = onCancelOrder;
   }, [onCancelOrder]);
+  useEffect(() => {
+    onClosePositionRef.current = onClosePosition;
+  }, [onClosePosition]);
+  useEffect(() => {
+    overlayButtonsRef.current = overlayButtons;
+  }, [overlayButtons]);
   useEffect(() => {
     onPairChangeRef.current = onPairChange;
   }, [onPairChange]);
@@ -817,6 +940,34 @@ export default function AdvancedChart({
       }
     }
 
+    // 1b) Brouillon SL/TP lancé depuis l'excroissance sur le chip d'entrée.
+    if (riskPlacement) {
+      const draft = riskPlacement;
+      const anchor = draft.orderId
+        ? { orderId: draft.orderId }
+        : { positionId: draft.positionId, isPreview: draft.isPreview };
+      const key = riskLineKey(draft.kind, anchor);
+      if (!desired.has(key)) {
+        const draftPrice = dragOverrideRef.current.get(key)
+          ?? optimisticPriceRef.current.get(key)
+          ?? draft.initialPrice;
+        desired.set(key, {
+          meta: {
+            kind: draft.kind,
+            key,
+            ...(draft.orderId
+              ? { orderId: draft.orderId }
+              : { positionId: draft.positionId, isPreview: draft.isPreview }),
+            isPlacementDraft: true,
+          },
+          price: stablePrice(key, draftPrice),
+          label: draft.kind === 'sl' ? `Stop · ${qtyLabel(draft.size)}` : `Take profit · ${qtyLabel(draft.size)}`,
+          draggable: true,
+        });
+        placementDraftKeysRef.current.add(key);
+      }
+    }
+
     // 2) Order draft preview:
     //    - market: NEVER show an entry preview line. Only SL/TP if user set them.
     //    - limit: show a draggable entry line at the limit price + SL/TP if set.
@@ -864,15 +1015,34 @@ export default function AdvancedChart({
       }
     }
 
-    // 3) Pending limit orders already on book: locked, just visible.
+    // 3) Ordres limites en attente sur le carnet.
     for (const order of visibleOrders) {
-      const key = `order:${order.id}`;
-      desired.set(key, {
-        meta: { kind: 'order', key, orderId: order.id },
-        price: order.price,
+      const peKey = `order-pe:${order.id}`;
+      desired.set(peKey, {
+        meta: { kind: 'pe', key: peKey, orderId: order.id },
+        price: stablePrice(peKey, order.price),
         label: `${previewSide(order.side)} · Limite · ${qtyLabel(order.size)}`,
-        draggable: false,
+        draggable: true,
       });
+
+      if (order.stopLoss != null && Number.isFinite(order.stopLoss)) {
+        const key = riskLineKey('sl', { orderId: order.id });
+        desired.set(key, {
+          meta: { kind: 'sl', key, orderId: order.id },
+          price: stablePrice(key, order.stopLoss),
+          label: `Stop · ${qtyLabel(order.size)}`,
+          draggable: true,
+        });
+      }
+      if (order.takeProfit != null && Number.isFinite(order.takeProfit)) {
+        const key = riskLineKey('tp', { orderId: order.id });
+        desired.set(key, {
+          meta: { kind: 'tp', key, orderId: order.id },
+          price: stablePrice(key, order.takeProfit),
+          label: `Take profit · ${qtyLabel(order.size)}`,
+          draggable: true,
+        });
+      }
     }
 
     const previousKeys = new Set(lineByKeyRef.current.keys());
@@ -1017,7 +1187,9 @@ export default function AdvancedChart({
     for (const [key, spec] of desired) {
       const closable = spec.meta.kind === 'order'
         || spec.meta.kind === 'sl'
-        || spec.meta.kind === 'tp';
+        || spec.meta.kind === 'tp'
+        || (spec.meta.kind === 'pe' && Boolean(spec.meta.positionId) && !spec.meta.isPreview)
+        || (spec.meta.kind === 'pe' && Boolean(spec.meta.orderId));
       let riskContext: RiskValidationContext | undefined;
       if (spec.meta.kind === 'sl' || spec.meta.kind === 'tp') {
         if (spec.meta.isPreview && visiblePreview) {
@@ -1029,6 +1201,16 @@ export default function AdvancedChart({
             refPrice: visiblePreview.entryPrice,
             kind: spec.meta.kind,
           };
+        } else if (spec.meta.orderId) {
+          const ord = visibleOrders.find((o) => o.id === spec.meta.orderId);
+          if (ord) {
+            riskContext = {
+              side: ord.side,
+              refPrice: ord.price,
+              kind: spec.meta.kind,
+              positionPair: ord.pair,
+            };
+          }
         } else if (spec.meta.positionId) {
           const pos = visiblePositions.find((p) => p.id === spec.meta.positionId);
           if (pos) {
@@ -1047,6 +1229,43 @@ export default function AdvancedChart({
           }
         }
       }
+      let riskPnlContext: OverlayButton['riskPnlContext'];
+      if (spec.meta.kind === 'sl' || spec.meta.kind === 'tp') {
+        if (spec.meta.orderId) {
+          const ord = visibleOrders.find((o) => o.id === spec.meta.orderId);
+          if (ord) {
+            riskPnlContext = { pair, side: ord.side, size: ord.size, entryPrice: ord.price };
+          }
+        } else if (spec.meta.isPreview && visiblePreview) {
+          riskPnlContext = {
+            pair,
+            side: visiblePreview.side,
+            size: visiblePreview.size,
+            entryPrice: visiblePreview.entryPrice,
+          };
+        } else if (spec.meta.positionId) {
+          const pos = visiblePositions.find((p) => p.id === spec.meta.positionId);
+          if (pos) {
+            riskPnlContext = { pair, side: pos.side, size: pos.size, entryPrice: pos.entryPrice };
+          }
+        }
+        if (!riskPnlContext && riskPlacement) {
+          const anchorMatches = spec.meta.orderId
+            ? riskPlacement.orderId === spec.meta.orderId
+            : spec.meta.positionId != null && (
+              riskPlacement.positionId === spec.meta.positionId
+              || (spec.meta.isPreview && riskPlacement.isPreview && riskPlacement.positionId === spec.meta.positionId)
+            );
+          if (anchorMatches) {
+            riskPnlContext = {
+              pair,
+              side: riskPlacement.side,
+              size: riskPlacement.size,
+              entryPrice: riskPlacement.entryPrice,
+            };
+          }
+        }
+      }
       nextButtons.push({
         key,
         meta: spec.meta,
@@ -1055,6 +1274,29 @@ export default function AdvancedChart({
         draggable: spec.draggable,
         closable,
         riskContext,
+        riskPnlContext,
+        ...(spec.meta.kind === 'pe' && spec.meta.positionId && !spec.meta.isPreview
+          ? (() => {
+            const pos = visiblePositions.find((p) => p.id === spec.meta.positionId);
+            return pos
+              ? { positionSide: pos.side as 'long' | 'short', positionSize: pos.size }
+              : {};
+          })()
+          : {}),
+        ...(spec.meta.kind === 'pe' && spec.meta.isPreview && visiblePreview
+          ? {
+            positionSide: visiblePreview.side as 'long' | 'short',
+            positionSize: visiblePreview.size,
+          }
+          : {}),
+        ...(spec.meta.kind === 'pe' && spec.meta.orderId
+          ? (() => {
+            const ord = visibleOrders.find((o) => o.id === spec.meta.orderId);
+            return ord
+              ? { positionSide: ord.side as 'long' | 'short', positionSize: ord.size }
+              : {};
+          })()
+          : {}),
       });
     }
     // Stable order: PE first, then SL/TP, then orders. Within each kind, by key.
@@ -1081,7 +1323,7 @@ export default function AdvancedChart({
       }
       return prev;
     });
-  }, [pair, position, positions, pendingOrders, orderPreview, intervalMinutes, chartReady]);
+  }, [pair, position, positions, pendingOrders, orderPreview, intervalMinutes, chartReady, riskPlacement]);
 
   // ---- Coordinate conversion price ↔ pixel Y in container space ----
   // TradingView Charting Library Standalone renders the chart inside an
@@ -1302,21 +1544,20 @@ export default function AdvancedChart({
   }, [overlayButtons, getPaneRect, priceToY]);
 
   // ---- Drag interaction on overlay buttons ----
-  const handlePointerDownOnDrag = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>, btn: OverlayButton) => {
+  const beginDragSession = useCallback(
+    (
+      btn: OverlayButton,
+      captureTarget: HTMLElement,
+      pointerId: number,
+      clientY: number,
+    ) => {
       if (!btn.draggable) return;
-      event.preventDefault();
-      event.stopPropagation();
 
       const startKey = btn.key;
-      const startPrice = btn.price;
+      const startPrice = dragOverrideRef.current.get(startKey) ?? btn.price;
       const riskContext = btn.riskContext;
       const category = pairCategories?.[pair];
 
-      // For an open position, the validation reference must be the LIVE
-      // mark price so the user can drag SL/TP into profit as the trade
-      // moves their way. We resolve it on every move() tick from
-      // marketRef/tickerRef, falling back to the seeded refPrice.
       const resolveRefPrice = (): number => {
         if (!riskContext) return 0;
         const pairKey = riskContext.positionPair;
@@ -1336,20 +1577,19 @@ export default function AdvancedChart({
         try { chart = widget.activeChart(); } catch { chart = null; }
       }
 
-      // Suppress drawing_event reactions for the entire drag so we don't
-      // bounce updates back from the chart while we drive the line ourselves.
       suppressEventsRef.current = true;
       setDraggingKey(startKey);
+      setExpandedPeKey(null);
       try {
-        event.currentTarget.setPointerCapture(event.pointerId);
+        captureTarget.setPointerCapture(pointerId);
       } catch {
-        // ignore: capture can fail if the browser already released the pointer.
+        // ignore
       }
       dragOverrideRef.current.set(startKey, startPrice);
       dragInvalidRef.current.delete(startKey);
       forcePriceRender((n) => (n + 1) % 1000000);
 
-      const move = (e: PointerEvent) => {
+      const move = (e: globalThis.PointerEvent) => {
         const container = containerRef.current;
         if (!container) return;
         const rect = container.getBoundingClientRect();
@@ -1370,7 +1610,6 @@ export default function AdvancedChart({
         dragOverrideRef.current.set(startKey, newPrice);
         forcePriceRender((n) => (n + 1) % 1000000);
 
-        // Sync the underlying horzline so the dashed line follows the button.
         if (chart) {
           const id = lineByKeyRef.current.get(startKey);
           if (id != null) {
@@ -1378,16 +1617,27 @@ export default function AdvancedChart({
               const shape = chart.getShapeById(id) as ILineDataSourceApi;
               shape.setPoints([{ time: nowSec(), price: newPrice }]);
             } catch {
-              // ignore — the shape may be transiently unavailable.
+              // ignore
             }
           }
         }
 
-        // Live-sync the form input while dragging so the user sees the
-        // limit price update in real time. Skip if invalid (entry has no
-        // validation but keep the contract for future kinds).
         if (btn.meta.isPreview && btn.meta.kind === 'pe' && !invalid) {
           onPreviewEntryChangeRef.current?.(newPrice);
+        }
+      };
+
+      const cleanupPlacementDraft = (removeLine: boolean) => {
+        if (!btn.meta.isPlacementDraft && !placementDraftKeysRef.current.has(startKey)) return;
+        placementDraftKeysRef.current.delete(startKey);
+        setRiskPlacement(null);
+        if (removeLine && chart) {
+          const id = lineByKeyRef.current.get(startKey);
+          if (id != null) {
+            try { chart.removeEntity(id); } catch { /* ignore */ }
+            lineByKeyRef.current.delete(startKey);
+            entityMetaRef.current.delete(id);
+          }
         }
       };
 
@@ -1397,35 +1647,29 @@ export default function AdvancedChart({
         document.removeEventListener('pointercancel', up);
 
         const dropInvalid = lastInvalid;
+        const wasPlacementDraft = btn.meta.isPlacementDraft
+          || placementDraftKeysRef.current.has(startKey);
         dragInvalidRef.current.delete(startKey);
 
-        // ATOMIC HANDOFF: before clearing the drag override, install the
-        // new price (or revert) into either optimisticPriceRef or
-        // dragOverrideRef so the rAF positioning loop never sees a frame
-        // where neither is set and falls back to the stale btn.price
-        // (which would cause a visible 1–2 frame jump back to the old
-        // position right after release).
         if (dropInvalid) {
-          // Discard the drop entirely: snap visual back to startPrice.
           optimisticPriceRef.current.set(startKey, startPrice);
           window.setTimeout(() => {
             optimisticPriceRef.current.delete(startKey);
             forcePriceRender((n) => (n + 1) % 1000000);
           }, 600);
+          if (wasPlacementDraft) cleanupPlacementDraft(true);
         } else if (lastValidPrice > 0 && Number.isFinite(lastValidPrice)) {
-          // Hold the just-dropped price until the server echo catches up.
           optimisticPriceRef.current.set(startKey, lastValidPrice);
           window.setTimeout(() => {
             optimisticPriceRef.current.delete(startKey);
             forcePriceRender((n) => (n + 1) % 1000000);
           }, 2500);
+          if (wasPlacementDraft) cleanupPlacementDraft(false);
         }
         dragOverrideRef.current.delete(startKey);
         setDraggingKey(null);
 
-        // If the user released over an invalid zone, snap the chart line
-        // back to the original price and discard the change entirely.
-        if (dropInvalid && chart) {
+        if (dropInvalid && chart && !wasPlacementDraft) {
           const id = lineByKeyRef.current.get(startKey);
           if (id != null) {
             try {
@@ -1437,9 +1681,6 @@ export default function AdvancedChart({
           }
         }
 
-        // Release the event lock slightly after the drag so any trailing
-        // points_changed event from our own setPoints calls doesn't trigger
-        // a redundant onUpdateRisk roundtrip.
         setTimeout(() => {
           suppressEventsRef.current = false;
         }, 60);
@@ -1449,14 +1690,7 @@ export default function AdvancedChart({
         if (dropInvalid) return;
         if (lastValidPrice <= 0 || !Number.isFinite(lastValidPrice)) return;
 
-        // Round to the category's natural precision so the form input,
-        // the server-side stored price and our optimistic value all
-        // match exactly. Without this, a forex drop at 1.16260432 would
-        // be stored as 1.1626 (4 decimals) and visually jump 1–2 pips
-        // when the server echo arrives.
         const snappedPrice = roundPriceForCategory(lastValidPrice, category);
-        // Keep the optimistic + chart line in sync with the snapped value
-        // (overwrite the in-flight optimistic that was set just above).
         optimisticPriceRef.current.set(startKey, snappedPrice);
         if (chart) {
           const id = lineByKeyRef.current.get(startKey);
@@ -1475,7 +1709,15 @@ export default function AdvancedChart({
           else if (meta.kind === 'pe') onPreviewEntryChangeRef.current?.(snappedPrice);
           return;
         }
-        if (meta.kind === 'sl' && meta.positionId) {
+        if (meta.kind === 'pe' && meta.orderId) {
+          void onUpdateOrderLimitRef.current?.(meta.orderId, snappedPrice);
+        } else if (meta.kind === 'sl' && meta.orderId) {
+          const ord = ordersRef.current.find((o) => o.id === meta.orderId);
+          void onUpdateOrderRiskRef.current?.(meta.orderId, snappedPrice, ord?.takeProfit ?? null);
+        } else if (meta.kind === 'tp' && meta.orderId) {
+          const ord = ordersRef.current.find((o) => o.id === meta.orderId);
+          void onUpdateOrderRiskRef.current?.(meta.orderId, ord?.stopLoss ?? null, snappedPrice);
+        } else if (meta.kind === 'sl' && meta.positionId) {
           const pos = positionsRef.current.find((p) => p.id === meta.positionId);
           void onUpdateRiskRef.current?.(meta.positionId, snappedPrice, pos?.takeProfit ?? null);
         } else if (meta.kind === 'tp' && meta.positionId) {
@@ -1491,11 +1733,110 @@ export default function AdvancedChart({
     [yToPrice, pair, pairCategories],
   );
 
+  const handlePointerDownOnDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, btn: OverlayButton) => {
+      if (!btn.draggable) return;
+      event.preventDefault();
+      event.stopPropagation();
+      beginDragSession(btn, event.currentTarget, event.pointerId, event.clientY);
+    },
+    [beginDragSession],
+  );
+
+  const handleProtrusionPick = useCallback(
+    (
+      event: ReactPointerEvent<HTMLButtonElement>,
+      launcherMeta: LineMeta,
+      side: 'long' | 'short',
+      size: number,
+      entryPrice: number,
+      pairKey: string,
+      kind: 'sl' | 'tp',
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (expandPeHideTimerRef.current) {
+        clearTimeout(expandPeHideTimerRef.current);
+        expandPeHideTimerRef.current = null;
+      }
+      setExpandedPeKey(null);
+
+      const anchor = launcherMeta.orderId
+        ? { orderId: launcherMeta.orderId }
+        : { positionId: launcherMeta.positionId, isPreview: launcherMeta.isPreview };
+      const key = riskLineKey(kind, anchor);
+      const existing = overlayButtonsRef.current.find((b) => b.key === key);
+
+      if (existing) {
+        pendingAutoDragRef.current = {
+          key,
+          pointerId: event.pointerId,
+          clientY: event.clientY,
+        };
+        const el = buttonElementsRef.current.get(key);
+        if (el) {
+          beginDragSession(existing, el, event.pointerId, event.clientY);
+          pendingAutoDragRef.current = null;
+        }
+        return;
+      }
+
+      const mark = tickerRef.current?.pair === pairKey
+        ? tickerRef.current.markPrice
+        : marketRef.current?.[pairKey]?.markPrice;
+      const initialPrice = initialRiskPlacementPrice(
+        entryPrice,
+        side,
+        kind,
+        typeof mark === 'number' && mark > 0 ? mark : undefined,
+      );
+      dragOverrideRef.current.set(key, initialPrice);
+      setRiskPlacement({
+        ...(launcherMeta.orderId
+          ? { orderId: launcherMeta.orderId }
+          : { positionId: launcherMeta.positionId, isPreview: launcherMeta.isPreview }),
+        kind,
+        side,
+        size,
+        initialPrice,
+        entryPrice,
+      });
+      pendingAutoDragRef.current = {
+        key,
+        pointerId: event.pointerId,
+        clientY: event.clientY,
+      };
+      forcePriceRender((n) => (n + 1) % 1000000);
+    },
+    [beginDragSession],
+  );
+
+  // Démarre le drag automatiquement une fois le chip SL/TP brouillon monté.
+  useEffect(() => {
+    const pending = pendingAutoDragRef.current;
+    if (!pending) return;
+    const btn = overlayButtonsRef.current.find((b) => b.key === pending.key);
+    const el = buttonElementsRef.current.get(pending.key);
+    if (!btn || !el) return;
+    beginDragSession(btn, el, pending.pointerId, pending.clientY);
+    pendingAutoDragRef.current = null;
+  }, [overlayButtons, riskPlacement, beginDragSession]);
+
   const handleClose = useCallback((btn: OverlayButton) => {
     const meta = btn.meta;
     if (meta.isPreview) {
       if (meta.kind === 'sl') onPreviewRiskChangeRef.current?.({ stopLoss: null });
       else if (meta.kind === 'tp') onPreviewRiskChangeRef.current?.({ takeProfit: null });
+      return;
+    }
+    if (meta.kind === 'sl' && meta.orderId) {
+      const ord = ordersRef.current.find((o) => o.id === meta.orderId);
+      void onUpdateOrderRiskRef.current?.(meta.orderId, null, ord?.takeProfit ?? null);
+      return;
+    }
+    if (meta.kind === 'tp' && meta.orderId) {
+      const ord = ordersRef.current.find((o) => o.id === meta.orderId);
+      void onUpdateOrderRiskRef.current?.(meta.orderId, ord?.stopLoss ?? null, null);
       return;
     }
     if (meta.kind === 'sl' && meta.positionId) {
@@ -1510,15 +1851,72 @@ export default function AdvancedChart({
     }
     if (meta.kind === 'order' && meta.orderId) {
       void onCancelOrderRef.current?.(meta.orderId);
+      return;
+    }
+    if (meta.kind === 'pe' && meta.orderId) {
+      setExpandedPeKey(null);
+      void onCancelOrderRef.current?.(meta.orderId);
+      return;
+    }
+    if (meta.kind === 'pe' && meta.positionId && !meta.isPreview) {
+      setExpandedPeKey(null);
+      void onClosePositionRef.current?.(meta.positionId);
     }
   }, []);
+
+  const openPeLauncher = useCallback((key: string) => {
+    if (expandPeHideTimerRef.current) {
+      clearTimeout(expandPeHideTimerRef.current);
+      expandPeHideTimerRef.current = null;
+    }
+    setExpandedPeKey(key);
+  }, []);
+
+  const scheduleCollapsePeLauncher = useCallback(() => {
+    if (expandPeHideTimerRef.current) clearTimeout(expandPeHideTimerRef.current);
+    expandPeHideTimerRef.current = setTimeout(() => {
+      setExpandedPeKey(null);
+      expandPeHideTimerRef.current = null;
+    }, 240);
+  }, []);
+
+  const renderRiskProtrusion = (
+    kind: 'sl' | 'tp',
+    slot: 'above' | 'below',
+    launcherMeta: LineMeta,
+    side: 'long' | 'short',
+    size: number,
+    entryPrice: number,
+    pairKey: string,
+    peKey: string,
+  ) => (
+    <button
+      key={`${peKey}-${kind}-${slot}`}
+      type="button"
+      title={kind === 'sl' ? 'Placer le stop loss' : 'Placer le take profit'}
+      className="absolute left-1/2 z-20 flex -translate-x-1/2 items-center justify-center rounded-md px-5 py-1 min-w-[72px] text-[10px] font-bold uppercase tracking-wide text-white shadow-[0_2px_8px_rgba(0,0,0,0.45)] transition-transform duration-150 hover:scale-105 active:scale-95"
+      style={{
+        background: LINE_COLORS[kind],
+        ...(slot === 'above'
+          ? { bottom: 'calc(100% + 5px)' }
+          : { top: 'calc(100% + 5px)' }),
+      }}
+      onPointerEnter={() => openPeLauncher(peKey)}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        handleProtrusionPick(e, launcherMeta, side, size, entryPrice, pairKey, kind);
+      }}
+    >
+      {kind === 'sl' ? 'SL' : 'TP'}
+    </button>
+  );
 
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#0e0c0d]">
       <div ref={widgetContainerRef} className="absolute inset-0 z-0" />
       <div
         ref={overlayRef}
-        className={`${draggingKey ? 'pointer-events-auto' : 'pointer-events-none'} absolute inset-0 z-[30]`}
+        className={`${draggingKey || expandedPeKey ? 'pointer-events-auto' : 'pointer-events-none'} absolute inset-0 z-[30]`}
         style={{
           contain: 'layout paint',
           cursor: draggingKey ? 'row-resize' : undefined,
@@ -1535,26 +1933,42 @@ export default function AdvancedChart({
             ? livePrice
             : optimisticPrice != null ? optimisticPrice : btn.price;
           const category = pairCategories?.[pair];
-          return (
-            <div
-              key={btn.key}
-              ref={(el) => {
-                if (el) buttonElementsRef.current.set(btn.key, el);
-                else buttonElementsRef.current.delete(btn.key);
-              }}
-              onPointerDown={btn.draggable ? (e) => handlePointerDownOnDrag(e, btn) : undefined}
-              title={btn.draggable ? 'Glisser pour modifier' : undefined}
-              className={`pointer-events-auto absolute flex select-none items-stretch overflow-hidden rounded text-[10px] font-medium leading-none text-white/90 shadow-[0_1px_4px_rgba(0,0,0,0.25)]${btn.draggable ? ' cursor-row-resize' : ''}`}
-              style={{
-                top: 0,
-                opacity: 0,
-                transition: 'opacity 0.12s linear',
-                transform: 'translate3d(0,-9999px,0)',
-                fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-                outline: isPreview ? `1px dashed ${bg}` : 'none',
-                outlineOffset: -1,
-              }}
-            >
+          const isPeLauncher = btn.meta.kind === 'pe'
+            && Boolean(btn.positionSide)
+            && (
+              (Boolean(btn.meta.positionId) && !btn.meta.isPreview)
+              || Boolean(btn.meta.isPreview)
+              || Boolean(btn.meta.orderId)
+            );
+          const expanded = expandedPeKey === btn.key && isPeLauncher;
+          const tpAbove = btn.positionSide === 'long';
+          const launcherMeta = btn.meta;
+          const launcherSide = btn.positionSide ?? 'long';
+          const launcherSize = btn.positionSize ?? 0;
+          const launcherEntry = btn.price;
+          const launcherPair = btn.meta.orderId
+            ? (ordersRef.current.find((o) => o.id === btn.meta.orderId)?.pair ?? pair)
+            : btn.meta.isPreview
+              ? (orderPreviewRef.current?.pair ?? pair)
+              : pair;
+          const hasSl = overlayButtons.some(
+            (b) => b.meta.kind === 'sl' && riskAnchorsMatch(b.meta, launcherMeta),
+          );
+          const hasTp = overlayButtons.some(
+            (b) => b.meta.kind === 'tp' && riskAnchorsMatch(b.meta, launcherMeta),
+          );
+          const projectedPnl = (btn.meta.kind === 'sl' || btn.meta.kind === 'tp') && btn.riskPnlContext
+            ? projectedExitPnlUsd(
+              btn.riskPnlContext.pair,
+              btn.riskPnlContext.side,
+              btn.riskPnlContext.size,
+              btn.riskPnlContext.entryPrice,
+              displayPrice,
+            )
+            : null;
+
+          const chipBody = (
+            <>
               {btn.draggable && (
               <div
                 className="flex items-center justify-center px-0.5"
@@ -1597,6 +2011,18 @@ export default function AdvancedChart({
                 {priceLabel(displayPrice, category)}
               </div>
 
+              {projectedPnl != null && (
+                <div
+                  className="flex items-center px-1.5 py-0.5 tabular-nums text-[10px] font-semibold"
+                  style={{
+                    background: priceBg,
+                    color: projectedPnl >= 0 ? '#5af0a6' : '#ffb3c7',
+                  }}
+                >
+                  {formatProjectedPnl(projectedPnl)}
+                </div>
+              )}
+
               {btn.closable && (
                 <button
                   type="button"
@@ -1608,13 +2034,70 @@ export default function AdvancedChart({
                   }}
                   className="flex items-center justify-center px-1 text-white/85 transition-colors hover:bg-black/35 hover:text-white"
                   style={{ background: priceBg }}
-                  title="Annuler"
+                  title={
+                    btn.meta.kind === 'pe' && btn.meta.orderId
+                      ? 'Annuler l\'ordre'
+                      : btn.meta.kind === 'pe'
+                        ? 'Fermer la position'
+                        : btn.meta.kind === 'order'
+                          ? 'Annuler l\'ordre'
+                          : 'Retirer'
+                  }
                 >
                   <svg width="7" height="7" viewBox="0 0 7 7" aria-hidden="true">
                     <path d="M1 1 L6 6 M6 1 L1 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                   </svg>
                 </button>
               )}
+            </>
+          );
+
+          return (
+            <div
+              key={btn.key}
+              ref={(el) => {
+                if (el) buttonElementsRef.current.set(btn.key, el);
+                else buttonElementsRef.current.delete(btn.key);
+              }}
+              onPointerEnter={isPeLauncher && !isMobile ? () => openPeLauncher(btn.key) : undefined}
+              onPointerLeave={isPeLauncher && !isMobile ? scheduleCollapsePeLauncher : undefined}
+              onClick={isPeLauncher && isMobile
+                ? () => setExpandedPeKey((prev) => (prev === btn.key ? null : btn.key))
+                : undefined}
+              className={`pointer-events-auto absolute${isPeLauncher ? ' overflow-visible' : ''}`}
+              style={{
+                top: 0,
+                opacity: 0,
+                transition: 'opacity 0.12s linear',
+                transform: 'translate3d(0,-9999px,0)',
+                fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+              }}
+            >
+              {expanded && !hasTp && tpAbove && renderRiskProtrusion('tp', 'above', launcherMeta, launcherSide, launcherSize, launcherEntry, launcherPair, btn.key)}
+              {expanded && !hasSl && !tpAbove && renderRiskProtrusion('sl', 'above', launcherMeta, launcherSide, launcherSize, launcherEntry, launcherPair, btn.key)}
+
+              <div
+                onPointerDown={btn.draggable ? (e) => handlePointerDownOnDrag(e, btn) : undefined}
+                title={
+                  btn.draggable && btn.meta.kind === 'pe' && btn.meta.orderId
+                    ? 'Glisser pour modifier le prix limite'
+                    : btn.draggable
+                      ? 'Glisser pour modifier'
+                      : isPeLauncher
+                        ? 'Survoler pour placer SL / TP'
+                        : undefined
+                }
+                className={`flex select-none items-stretch overflow-hidden rounded text-[10px] font-medium leading-none text-white/90 shadow-[0_1px_4px_rgba(0,0,0,0.25)]${btn.draggable ? ' cursor-row-resize' : ''}${expanded ? ' ring-1 ring-white/25' : ''}`}
+                style={{
+                  outline: isPreview ? `1px dashed ${bg}` : 'none',
+                  outlineOffset: -1,
+                }}
+              >
+                {chipBody}
+              </div>
+
+              {expanded && !hasSl && tpAbove && renderRiskProtrusion('sl', 'below', launcherMeta, launcherSide, launcherSize, launcherEntry, launcherPair, btn.key)}
+              {expanded && !hasTp && !tpAbove && renderRiskProtrusion('tp', 'below', launcherMeta, launcherSide, launcherSize, launcherEntry, launcherPair, btn.key)}
             </div>
           );
         })}

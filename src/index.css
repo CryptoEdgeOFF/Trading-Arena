@@ -129,26 +129,6 @@ body {
   cursor: pointer;
 }
 
-.terminal .order-size-slider {
-  height: 7px;
-  background: linear-gradient(90deg, #f43f6e, #7c3aed);
-  border-radius: 999px;
-}
-.terminal .order-size-slider::-webkit-slider-thumb {
-  width: 18px;
-  height: 18px;
-  border: 3px solid #15121f;
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(244, 63, 110, 0.22), 0 8px 20px rgba(0, 0, 0, 0.35);
-}
-.terminal .order-size-slider::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border: 3px solid #15121f;
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(244, 63, 110, 0.22), 0 8px 20px rgba(0, 0, 0, 0.35);
-}
-
 .terminal .btn-primary-shadow {
   box-shadow: 0 6px 18px -9px rgba(244, 63, 110, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }

@@ -2,8 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
-const SESSION_KEY = 'btf-paper-session';
-const BOOTSTRAP_KEY = 'btf-paper-bootstrap';
+import {
+  clearPaperSessionToken,
+  isCompetitionPaperSession,
+  PAPER_BOOTSTRAP_KEY,
+  readPaperSessionToken,
+  writePaperSessionToken,
+} from '../lib/paperSession';
+
 const TRADE_URL = '/trade?live=true';
 
 /**
@@ -14,7 +20,7 @@ const TRADE_URL = '/trade?live=true';
  *
  * Sur succès :
  *   1. POST /api/paper/session { accessCode } → token + bootstrap complet
- *   2. localStorage.btf-paper-session = token
+ *   2. localStorage `btf-paper-session-live` = token
  *   3. localStorage.btf-paper-bootstrap = snapshot consommé une seule fois
  *      par ExchangeTerminal au mount pour rendre l'UI sans round-trip /me.
  *   4. SPA navigation vers /trade?live=true (mode Live, pas compétition).
@@ -30,7 +36,7 @@ export default function LiveAccessGate() {
   // directement vers le terminal — l'utilisateur n'a pas besoin de re-saisir
   // son code à chaque ouverture d'onglet.
   useEffect(() => {
-    const token = window.localStorage.getItem(SESSION_KEY);
+    const token = readPaperSessionToken('live');
     if (!token) {
       setCheckingExisting(false);
       return;
@@ -40,7 +46,7 @@ export default function LiveAccessGate() {
     })
       .then((response) => {
         if (!response.ok) {
-          window.localStorage.removeItem(SESSION_KEY);
+          clearPaperSessionToken('live');
           setCheckingExisting(false);
           return null;
         }
@@ -53,11 +59,12 @@ export default function LiveAccessGate() {
         }
         // Si la session courante appartient à une compétition, on n'auto-rebondit
         // pas en Live : on laisse l'utilisateur saisir un code Live distinct.
-        if (data?.competition?.id) {
-          window.localStorage.removeItem(SESSION_KEY);
+        if (isCompetitionPaperSession(data)) {
+          clearPaperSessionToken('live');
           setCheckingExisting(false);
           return;
         }
+        writePaperSessionToken('live', token);
         navigate(TRADE_URL, { replace: true });
       })
       .catch(() => setCheckingExisting(false));
@@ -77,12 +84,12 @@ export default function LiveAccessGate() {
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || 'Connexion impossible');
 
-      window.localStorage.setItem(SESSION_KEY, data.token);
+      writePaperSessionToken('live', data.token);
 
       // Cache bootstrap consommé par ExchangeTerminal (TTL 30s côté lecteur).
       try {
         window.localStorage.setItem(
-          BOOTSTRAP_KEY,
+          PAPER_BOOTSTRAP_KEY,
           JSON.stringify({
             token: data.token,
             player: data.player,
