@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { EVENT_INTRO_COUNTDOWN_MS, EVENT_INTRO_COUNTDOWN_SEC } from '../utils/liveEvent';
 
@@ -75,13 +76,13 @@ export default function LiveEventTraderOverlay({
 
   if (phase === 'done') return null;
 
-  return (
+  const overlay = (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.35 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-[#05030a]/95 backdrop-blur-md"
+      className="fixed inset-0 z-[200] flex items-center justify-center overflow-visible bg-[#05030a]/95 backdrop-blur-md"
     >
       <div
         className="pointer-events-none absolute inset-0"
@@ -119,6 +120,9 @@ export default function LiveEventTraderOverlay({
       </div>
     </motion.div>
   );
+
+  // Portal hors du `.terminal { overflow: hidden }` — sinon le texte est rogné à droite.
+  return typeof document !== 'undefined' ? createPortal(overlay, document.body) : overlay;
 }
 
 function TraderBadge({ trader, size = 132 }: { trader: TraderInfo; size?: number }) {
@@ -271,21 +275,23 @@ function CountdownContent({ value }: { value: number }) {
 function FightGoTitle() {
   const lineStyle: CSSProperties = {
     display: 'block',
-    width: 'fit-content',
+    width: 'max-content',
+    maxWidth: '100%',
     marginInline: 'auto',
-    paddingInline: '0.14em',
-    fontSize: 'clamp(36px, 9.5vw, 76px)',
+    paddingInline: '0.1em',
+    fontSize: 'clamp(28px, 8vw, 68px)',
     fontWeight: 700,
     letterSpacing: '0.02em',
-    lineHeight: 1.08,
+    lineHeight: 1.1,
+    whiteSpace: 'nowrap',
     color: '#fff5f5',
     textShadow: '0 0 28px rgba(239,68,68,0.85), 0 0 8px rgba(254,202,202,0.9), 0 2px 0 #fecaca',
   };
 
   return (
-    <div className="overflow-visible" aria-label="Le fight commence">
+    <div className="font-rajdhani w-full overflow-visible" aria-label="Le fight commence">
       <span style={lineStyle}>LE FIGHT</span>
-      <span style={lineStyle}>COMMENCE !</span>
+      <span style={lineStyle}>COMMENCE{'\u00A0'}!</span>
     </div>
   );
 }
