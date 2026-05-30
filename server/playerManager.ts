@@ -144,6 +144,8 @@ export class PlayerManager {
     openPositionsFp: string;
     openOrdersFp: string;
     badgesFp: string;
+    /** Historique trades (opens + closes) — les closes n'incrémentent pas tradeCount. */
+    tradesFp: string;
   }> = new Map();
   private snapshotMarket: Map<string, {
     markPrice: number;
@@ -1918,6 +1920,7 @@ export class PlayerManager {
         openPositionsFp: this.fingerprintPositions(player.openPositions),
         openOrdersFp: this.fingerprintOrders(player.openOrders),
         badgesFp: this.fingerprintBadges(player.badges),
+        tradesFp: this.fingerprintTrades(player.trades),
       });
       for (const trade of player.trades) this.snapshotTradeIds.add(trade.id);
     }
@@ -1974,6 +1977,14 @@ export class PlayerManager {
       .join(';');
   }
 
+  /** Détecte ouvertures ET clôtures (tradeCount ne bouge qu'à l'open). */
+  private fingerprintTrades(trades: Trade[]): string {
+    if (!trades.length) return '';
+    return trades
+      .map((t) => `${t.id}|${t.action}|${t.pnl}|${t.time}|${t.pair}|${t.size}`)
+      .join(';');
+  }
+
   private computeStatePatch(): StatePatch | null {
     const patch: StatePatch = {};
     const players = this.getPublicPlayers();
@@ -1987,6 +1998,7 @@ export class PlayerManager {
       const positionsFp = this.fingerprintPositions(player.openPositions);
       const ordersFp = this.fingerprintOrders(player.openOrders);
       const badgesFp = this.fingerprintBadges(player.badges);
+      const tradesFp = this.fingerprintTrades(player.trades);
       if (!previous) {
         addedPlayers.push(player as Player);
         this.snapshotPlayers.set(player.id, {
@@ -2004,6 +2016,7 @@ export class PlayerManager {
           openPositionsFp: positionsFp,
           openOrdersFp: ordersFp,
           badgesFp,
+          tradesFp,
         });
         continue;
       }
@@ -2015,9 +2028,12 @@ export class PlayerManager {
       if (previous.previousRank !== player.previousRank) { diff.previousRank = player.previousRank; changed = true; }
       if (previous.tradeCount !== player.tradeCount) {
         diff.tradeCount = player.tradeCount;
-        // Le nombre de trades a changé (ouverture/clôture) → on pousse aussi
-        // l'historique complet pour que la carte joueur et le recalcul du PnL
-        // réalisé soient à jour immédiatement (pas seulement au refresh).
+        changed = true;
+      }
+      if (previous.tradesFp !== tradesFp) {
+        // Clôture (et parfois open) : l'historique doit suivre pour la carte
+        // joueur et le recalcul client du PnL réalisé (tradeCount seul ne suffit
+        // pas — les closes n'incrémentent pas tradeCount).
         diff.trades = player.trades;
         changed = true;
       }
@@ -2055,6 +2071,7 @@ export class PlayerManager {
         previous.openPositionsFp = positionsFp;
         previous.openOrdersFp = ordersFp;
         previous.badgesFp = badgesFp;
+        previous.tradesFp = tradesFp;
       }
     }
 
