@@ -3,6 +3,7 @@ import type {
   ArchivedEventSnapshot,
   ArchivedPlayerSnapshot,
   ShowcasePayload,
+  TeamInfo,
 } from '../stores/useGameStore';
 import { formatPnl, formatPercent, formatUSD } from '../utils/formatters';
 import { TEAM_MODE_LABEL } from '../utils/teamMode';
@@ -14,12 +15,37 @@ const MODE_LABELS: Record<string, string> = {
   '4v4': TEAM_MODE_LABEL,
 };
 
+interface TeamGroup {
+  team: TeamInfo;
+  players: ArchivedPlayerSnapshot[];
+  totalPnl: number;
+  avgPnlPercent: number;
+}
+
+/** Regroupe les joueurs archivés par équipe, classés par P&L total décroissant. */
+function buildTeamGroups(archive: ArchivedEventSnapshot): TeamGroup[] | null {
+  if (archive.eventMode !== '4v4' || !archive.teams) return null;
+  const byId = new Map(archive.players.map((p) => [p.id, p]));
+  const groups = archive.teams.map((team) => {
+    const players = team.playerIds
+      .map((id) => byId.get(id))
+      .filter(Boolean) as ArchivedPlayerSnapshot[];
+    const totalPnl = players.reduce((sum, p) => sum + p.pnl, 0);
+    const avgPnlPercent = players.length
+      ? players.reduce((sum, p) => sum + p.pnlPercent, 0) / players.length
+      : 0;
+    return { team, players, totalPnl, avgPnlPercent };
+  });
+  return groups.sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
 /**
  * Overlay plein écran diffusé sur le dashboard quand aucun round n'est en
  * cours et que l'admin a sélectionné une archive à montrer (podium ou stats).
  */
 export default function EventShowcase({ payload }: { payload: ShowcasePayload }) {
   const { mode, archive } = payload;
+  const teamGroups = buildTeamGroups(archive);
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -32,7 +58,13 @@ export default function EventShowcase({ payload }: { payload: ShowcasePayload })
 
       <div className="relative h-full overflow-y-auto px-8 py-6 scrollbar-hide">
         <ShowcaseHeader archive={archive} />
-        {mode === 'podium' ? (
+        {teamGroups ? (
+          mode === 'podium' ? (
+            <TeamPodiumView groups={teamGroups} />
+          ) : (
+            <TeamStatsView groups={teamGroups} />
+          )
+        ) : mode === 'podium' ? (
           <PodiumView archive={archive} />
         ) : (
           <StatsView archive={archive} />
@@ -75,6 +107,269 @@ function ShowcaseHeader({ archive }: { archive: ArchivedEventSnapshot }) {
         <span>{durationMin} min</span>
       </div>
     </motion.div>
+  );
+}
+
+/* ---------------- Podium par équipe (mode 5v5) ---------------- */
+
+function TeamPodiumView({ groups }: { groups: TeamGroup[] }) {
+  const [winner, runnerUp] = groups;
+  if (!winner) return null;
+
+  return (
+    <div className="mx-auto max-w-[1280px]">
+      {/* Bannière équipe gagnante */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 180, damping: 20 }}
+        className="relative overflow-hidden rounded-3xl border p-8 text-center"
+        style={{
+          borderColor: `${winner.team.color}80`,
+          background: `
+            radial-gradient(700px 280px at 50% 0%, ${winner.team.color}33, transparent 65%),
+            linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)),
+            #08080c
+          `,
+          boxShadow: `0 40px 120px -30px ${winner.team.color}99, inset 0 1px 0 rgba(255,255,255,0.06)`,
+        }}
+      >
+        <div
+          className="absolute top-0 left-0 right-0 h-[4px]"
+          style={{ background: `linear-gradient(90deg, transparent, ${winner.team.color}, transparent)` }}
+        />
+        <div
+          className="display mb-2 text-sm font-bold uppercase tracking-[0.4em]"
+          style={{ color: winner.team.color, textShadow: `0 0 24px ${winner.team.color}aa` }}
+        >
+          ★ Équipe victorieuse ★
+        </div>
+        <h2
+          className="display text-6xl font-bold uppercase tracking-[0.04em] text-white"
+          style={{ textShadow: `0 0 50px ${winner.team.color}80` }}
+        >
+          {winner.team.name.trim() || 'Équipe 1'}
+        </h2>
+        <div className="mt-4 inline-flex items-center gap-4">
+          <div
+            className={`num text-5xl font-bold tabular-nums leading-none ${
+              winner.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+            }`}
+            style={{
+              textShadow: winner.totalPnl >= 0
+                ? '0 0 32px rgba(16,185,129,0.45)'
+                : '0 0 32px rgba(239,68,68,0.45)',
+            }}
+          >
+            {formatPnl(winner.totalPnl)}
+          </div>
+          <div className="text-left">
+            <div className="micro text-[9px] text-zinc-500">P&L cumulé</div>
+            <div className={`num text-sm ${winner.avgPnlPercent >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+              {formatPercent(winner.avgPnlPercent)} moy.
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Cartes des 5 membres de l'équipe gagnante */}
+      <div className="mt-6 grid grid-cols-5 gap-3">
+        {winner.players.map((player, idx) => (
+          <TeamMemberCard
+            key={player.id}
+            player={player}
+            color={winner.team.color}
+            index={idx}
+            highlight
+          />
+        ))}
+      </div>
+
+      {/* Équipe adverse */}
+      {runnerUp && (
+        <div className="mt-8">
+          <div className="mb-3 flex items-center gap-3">
+            <span className="h-3 w-3 rounded-full" style={{ background: runnerUp.team.color }} />
+            <span className="display text-lg font-bold uppercase tracking-[0.12em] text-zinc-300">
+              {runnerUp.team.name.trim() || 'Équipe 2'}
+            </span>
+            <span
+              className={`num text-base font-bold ${runnerUp.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+            >
+              {formatPnl(runnerUp.totalPnl)}
+            </span>
+            <span className="num text-xs text-zinc-500">{formatPercent(runnerUp.avgPnlPercent)} moy.</span>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            {runnerUp.players.map((player, idx) => (
+              <TeamMemberCard
+                key={player.id}
+                player={player}
+                color={runnerUp.team.color}
+                index={idx}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamMemberCard({
+  player,
+  color,
+  index,
+  highlight = false,
+}: {
+  player: ArchivedPlayerSnapshot;
+  color: string;
+  index: number;
+  highlight?: boolean;
+}) {
+  const isPositive = player.pnl >= 0;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.15 + index * 0.08, type: 'spring', stiffness: 200, damping: 22 }}
+      className="relative flex flex-col items-center rounded-2xl border bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-4 text-center backdrop-blur"
+      style={{
+        borderColor: highlight ? `${color}66` : 'rgba(255,255,255,0.08)',
+        boxShadow: highlight ? `0 18px 50px -22px ${color}aa` : 'none',
+      }}
+    >
+      <div
+        className="mb-3 overflow-hidden rounded-2xl border-2"
+        style={{ width: 72, height: 72, borderColor: color }}
+      >
+        {player.avatar ? (
+          <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+        ) : (
+          <div
+            className="flex h-full w-full items-center justify-center display text-3xl font-bold text-white"
+            style={{ background: player.color }}
+          >
+            {player.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+      </div>
+      <div className="display w-full truncate text-base font-bold text-white">{player.name}</div>
+      <div className="micro mt-0.5 text-[9px] text-zinc-500">
+        {player.tradeCount} trade{player.tradeCount > 1 ? 's' : ''}
+      </div>
+      <div
+        className={`num mt-2 text-2xl font-bold tabular-nums leading-none ${
+          isPositive ? 'text-emerald-400' : 'text-red-400'
+        }`}
+        style={{
+          textShadow: isPositive
+            ? '0 0 20px rgba(16,185,129,0.35)'
+            : '0 0 20px rgba(239,68,68,0.35)',
+        }}
+      >
+        {formatPnl(player.pnl)}
+      </div>
+      <div className={`num text-xs ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+        {formatPercent(player.pnlPercent)}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ---------------- Stats par équipe (mode 5v5) ---------------- */
+
+function TeamStatsView({ groups }: { groups: TeamGroup[] }) {
+  const allPlayers = groups.flatMap((g) => g.players);
+  const totalTrades = allPlayers.reduce((sum, p) => sum + p.tradeCount, 0);
+  const totalFees = allPlayers.reduce((sum, p) => sum + p.feesPaid, 0);
+  const winners = allPlayers.filter((p) => p.pnl > 0).length;
+  const totalPnl = allPlayers.reduce((sum, p) => sum + p.pnl, 0);
+
+  return (
+    <div className="mx-auto max-w-[1280px]">
+      <div className="grid grid-cols-4 gap-3 mb-6">
+        <Aggregate label="P&L total" value={formatPnl(totalPnl)} accent={totalPnl >= 0 ? 'pos' : 'neg'} />
+        <Aggregate label="Trades exécutés" value={totalTrades.toString()} />
+        <Aggregate label="Frais cumulés" value={`$${formatUSD(totalFees)}`} />
+        <Aggregate label="Traders gagnants" value={`${winners} / ${allPlayers.length}`} />
+      </div>
+
+      <div className="space-y-5">
+        {groups.map((group, gIdx) => (
+          <div
+            key={group.team.name + gIdx}
+            className="rounded-2xl border bg-black/40 backdrop-blur overflow-hidden"
+            style={{ borderColor: `${group.team.color}55` }}
+          >
+            {/* En-tête équipe */}
+            <div
+              className="flex items-center gap-3 px-5 py-3"
+              style={{ background: `linear-gradient(90deg, ${group.team.color}22, transparent 70%)` }}
+            >
+              <span className="h-3 w-3 rounded-full" style={{ background: group.team.color, boxShadow: `0 0 12px ${group.team.color}` }} />
+              <span className="display text-lg font-bold uppercase tracking-[0.1em] text-white">
+                {group.team.name.trim() || `Équipe ${gIdx + 1}`}
+              </span>
+              {gIdx === 0 && (
+                <span
+                  className="display rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.15em]"
+                  style={{ background: group.team.color, color: '#0a0a0e' }}
+                >
+                  Vainqueur
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-3">
+                <span className={`num text-xl font-bold ${group.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatPnl(group.totalPnl)}
+                </span>
+                <span className={`num text-xs ${group.avgPnlPercent >= 0 ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
+                  {formatPercent(group.avgPnlPercent)} moy.
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-3 px-5 py-2 border-y border-white/10 text-[10px] uppercase tracking-[0.32em] text-zinc-500">
+              <div className="col-span-4">Trader</div>
+              <div className="col-span-2 text-right">P&L</div>
+              <div className="col-span-2 text-right">%</div>
+              <div className="col-span-2 text-right">Trades</div>
+              <div className="col-span-2 text-right">Frais</div>
+            </div>
+
+            {[...group.players]
+              .sort((a, b) => b.pnl - a.pnl)
+              .map((p, idx) => (
+                <motion.div
+                  key={p.id}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="grid grid-cols-12 gap-3 px-5 py-3 items-center border-b border-white/5 last:border-b-0"
+                >
+                  <div className="col-span-4 flex items-center gap-3 min-w-0">
+                    <PlayerThumb player={p} size={36} />
+                    <div className="min-w-0">
+                      <div className="display text-sm font-bold text-white truncate">{p.name}</div>
+                      <div className="num text-[10px] text-zinc-500">
+                        ${formatUSD(p.initialBalance)} → ${formatUSD(p.currentBalance)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`col-span-2 num text-right font-bold ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatPnl(p.pnl)}
+                  </div>
+                  <div className={`col-span-2 num text-right ${p.pnl >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+                    {formatPercent(p.pnlPercent)}
+                  </div>
+                  <div className="col-span-2 num text-right text-white">{p.tradeCount}</div>
+                  <div className="col-span-2 num text-right text-zinc-500">${formatUSD(p.feesPaid)}</div>
+                </motion.div>
+              ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

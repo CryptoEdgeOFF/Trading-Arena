@@ -937,6 +937,29 @@ export class PlayerManager {
     }
     this.paperEngine.setMarketDataSource(this.marketDataSource);
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
+
+    // En mode équipe, les joueurs sont sélectionnés via les rosters d'équipe
+    // (pas le toggle individuel). On reflète l'assignation dans le flag
+    // `active` dès la configuration pour que le dashboard affiche les cartes
+    // AVANT le démarrage de l'événement, comme dans les autres modes.
+    if (!this.eventStarted && config.mode === '4v4' && this.teams) {
+      const teamIds = new Set([...this.teams[0].playerIds, ...this.teams[1].playerIds]);
+      let changed = false;
+      for (const player of this.players.values()) {
+        if (player.isCompetitionPlayer || this.onlineCompetitionPlayerIds.has(player.id)) continue;
+        const shouldBeActive = teamIds.has(player.id);
+        if (player.active !== shouldBeActive) {
+          player.active = shouldBeActive;
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.playerQueue = Array.from(teamIds);
+        this.saveRoster();
+        this.rebuildRankings();
+        this.broadcastState();
+      }
+    }
   }
 
   getEventConfig(): EventConfig {
