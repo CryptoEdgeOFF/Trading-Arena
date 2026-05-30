@@ -1,5 +1,4 @@
 import type { SpotlightTrade } from '../stores/useGameStore';
-import { EVENT_INTRO_COUNTDOWN_MS } from './liveEvent';
 
 /** Sons servis depuis `public/assets/Sounds/` (même origine que le dashboard). */
 export const ARENA_SOUND_URLS = {
@@ -43,7 +42,6 @@ const shownSpotlightIds = new Set<string>();
 let countdownEndPlayedFor: number | null = null;
 let winnerSoundLaunched = false;
 let malusWheelPlayedFor: string | null = null;
-let introCountdownStopTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** File FX séquentielle — aucun son court perdu, pas de chevauchement du même key. */
 type FxJob = { src: string; key: string; volume: number };
@@ -234,7 +232,7 @@ export function isIntroCountdownPlaying(): boolean {
   return Boolean(audio && !audio.paused && audio.currentTime > 0.05);
 }
 
-/** Lance la piste « Countdown Start » (~15s) pendant le décompte d'intro. */
+/** Lance « Countdown Start » (~21s) — joue jusqu'à la fin du fichier, pas coupé au timer 15s. */
 export async function startIntroCountdownMusic(): Promise<boolean> {
   unlockArenaSounds();
   stopLongFormSound(ARENA_SOUND_URLS.countdownEnd);
@@ -244,28 +242,10 @@ export async function startIntroCountdownMusic(): Promise<boolean> {
   if (!audio.paused && audio.currentTime > 0.05) return true;
 
   audio.loop = false;
-  const ok = await playAudioElement(audio, 0.92);
-  if (!ok) return false;
-
-  if (introCountdownStopTimer) {
-    clearTimeout(introCountdownStopTimer);
-  }
-  introCountdownStopTimer = window.setTimeout(() => {
-    introCountdownStopTimer = null;
-    if (!audio.paused) {
-      audio.pause();
-      audio.currentTime = 0;
-    }
-  }, EVENT_INTRO_COUNTDOWN_MS);
-
-  return true;
+  return playAudioElement(audio, 0.92);
 }
 
 export function stopIntroCountdownMusic(): void {
-  if (introCountdownStopTimer) {
-    clearTimeout(introCountdownStopTimer);
-    introCountdownStopTimer = null;
-  }
   stopLongFormSound(ARENA_SOUND_URLS.countdownStart);
 }
 
