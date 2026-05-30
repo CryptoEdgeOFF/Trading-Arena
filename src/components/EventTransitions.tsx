@@ -312,14 +312,14 @@ function FightStartOverlay() {
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 1.3, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 260, damping: 16 }}
-        className="relative text-center"
+        className="relative overflow-visible text-center px-4"
       >
         <div className="micro mb-6 text-lg tracking-[0.42em] text-red-300">
           BREAKOUT TRADING FIGHT
         </div>
         <TransitionBrandAbove variant="fight-start" />
         <div
-          className="display"
+          className="display inline-block overflow-visible px-[0.08em]"
           style={{
             fontSize: 'clamp(72px, 10vw, 140px)',
             fontWeight: 700,
@@ -330,9 +330,11 @@ function FightStartOverlay() {
             backgroundClip: 'text',
             color: 'transparent',
             filter: 'drop-shadow(0 20px 60px rgba(220,38,38,0.8))',
+            WebkitBoxDecorationBreak: 'clone',
+            boxDecorationBreak: 'clone',
           }}
         >
-          LE FIGHT COMMENCE !
+          LE FIGHT COMMENCE&nbsp;!
         </div>
         <motion.div
           initial={{ width: 0, opacity: 0 }}

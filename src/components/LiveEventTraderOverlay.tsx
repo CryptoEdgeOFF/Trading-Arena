@@ -280,7 +280,7 @@ function GoContent() {
         Breakout Trading Fight
       </div>
       <div
-        className="font-rajdhani font-bold uppercase"
+        className="font-rajdhani inline-block overflow-visible px-[0.08em] font-bold uppercase"
         style={{
           fontSize: 'clamp(44px, 12vw, 92px)',
           letterSpacing: '0.03em',
@@ -290,9 +290,11 @@ function GoContent() {
           backgroundClip: 'text',
           color: 'transparent',
           filter: 'drop-shadow(0 18px 50px rgba(220,38,38,0.8))',
+          WebkitBoxDecorationBreak: 'clone',
+          boxDecorationBreak: 'clone',
         }}
       >
-        Le fight commence !
+        Le fight commence&nbsp;!
       </div>
       <div className="mt-5 text-[11px] uppercase tracking-[0.32em] text-zinc-400">
         Ton terminal est ouvert
