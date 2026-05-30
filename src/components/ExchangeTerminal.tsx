@@ -23,6 +23,8 @@ import {
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import logoBtf from '../assets/pictures/logoBTF.webp';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
+import EventEndOverlay from './EventEndOverlay';
+import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
 import { AvatarImage } from './OptimizedImage';
 import { withDisplayWidth } from '../utils/imageUrl';
 import {
@@ -2765,6 +2767,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
   const chartLiveTickRef = useRef<ChartLiveTickHandler | null>(null);
+  // Animation de fin de round (podium / stats) rejouée sur le terminal trader.
+  const { result: liveEndResult, dismiss: dismissLiveEnd } = useLiveEventEndSnapshot();
 
   const clearOrderDraftRisk = useCallback(() => {
     setOrderPreview(null);
@@ -4115,11 +4119,23 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       )}
 
       {liveMode && session && (
-        <LiveEventTraderOverlay
-          trader={session.player}
-          eventStarted={eventStarted}
-          eventStartTime={eventStartTime}
-        />
+        <>
+          {!liveEndResult && (
+            <LiveEventTraderOverlay
+              trader={session.player}
+              eventStarted={eventStarted}
+              eventStartTime={eventStartTime}
+            />
+          )}
+          {liveEndResult && (
+            <EventEndOverlay
+              players={liveEndResult.players}
+              teams={liveEndResult.teams}
+              eventMode={liveEndResult.eventMode}
+              onClose={dismissLiveEnd}
+            />
+          )}
+        </>
       )}
 
       {livePaperMode && session && (
