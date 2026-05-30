@@ -2,101 +2,113 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGameStore } from '../stores/useGameStore';
 import {
-  MALUS_SEGMENTS,
   MALUS_LABELS,
   MALUS_SPIN_MS,
   getMalusPhase,
-  malusWheelRotation,
   formatMalusClock,
   type MalusPhase,
+  type MalusType,
 } from '../utils/malus';
 
-const WHEEL_BOX = 340;
-const WHEEL_CENTER = WHEEL_BOX / 2;
-const WHEEL_RADIUS = 158;
-const SEGMENT_ANGLE = 360 / MALUS_SEGMENTS.length;
+const ITEM_W = 190;
+const GAP = 14;
+const STEP = ITEM_W + GAP;
+const WINDOW_W = 620;
+const WINDOW_CENTER = WINDOW_W / 2;
+const ITEM_COUNT = 34;
+/** Index sur lequel le carousel s'arrête (selon la parité = type). */
+const TARGET_INDEX: Record<MalusType, number> = { direction: 28, asset: 29 };
 
-function polar(angleDeg: number, radius: number): { x: number; y: number } {
-  const rad = ((angleDeg - 90) * Math.PI) / 180;
-  return {
-    x: WHEEL_CENTER + radius * Math.cos(rad),
-    y: WHEEL_CENTER + radius * Math.sin(rad),
-  };
+function buildItems(): MalusType[] {
+  return Array.from({ length: ITEM_COUNT }, (_, i) => (i % 2 === 0 ? 'direction' : 'asset'));
 }
 
-function wedgePath(startAngle: number, endAngle: number): string {
-  const start = polar(startAngle, WHEEL_RADIUS);
-  const end = polar(endAngle, WHEEL_RADIUS);
-  const large = endAngle - startAngle > 180 ? 1 : 0;
-  return `M ${WHEEL_CENTER} ${WHEEL_CENTER} L ${start.x} ${start.y} A ${WHEEL_RADIUS} ${WHEEL_RADIUS} 0 ${large} 1 ${end.x} ${end.y} Z`;
-}
-
-const SEGMENT_FILLS: Record<string, [string, string]> = {
-  direction: ['#ef4444', '#dc2626'],
-  asset: ['#f59e0b', '#d97706'],
-};
-
-function Wheel({ rotation, animate, highlightIndex }: { rotation: number; animate: boolean; highlightIndex: number | null }) {
+function MalusIcon({ type, size = 34 }: { type: MalusType; size?: number }) {
+  if (type === 'direction') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3v18" />
+        <path d="M7 8l5-5 5 5" />
+        <path d="M7 16l5 5 5-5" />
+      </svg>
+    );
+  }
   return (
-    <div className="relative" style={{ width: WHEEL_BOX, height: WHEEL_BOX }}>
-      {/* Pointeur en haut */}
-      <div className="absolute left-1/2 top-[-6px] z-10 -translate-x-1/2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="3.4" />
+    </svg>
+  );
+}
+
+function Carousel({ type, animate, landed }: { type: MalusType; animate: boolean; landed: boolean }) {
+  const items = useMemo(buildItems, []);
+  const targetIndex = TARGET_INDEX[type];
+  const finalX = WINDOW_CENTER - (targetIndex * STEP + ITEM_W / 2);
+  const initialX = WINDOW_CENTER - ITEM_W / 2;
+  const accent = MALUS_LABELS[type].color;
+
+  return (
+    <div className="relative" style={{ width: WINDOW_W, height: 150 }}>
+      {/* Cadre de sélection central */}
+      <div
+        className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-2xl"
+        style={{
+          width: ITEM_W + 8,
+          height: 138,
+          border: `2px solid ${landed ? accent : 'rgba(255,255,255,0.25)'}`,
+          boxShadow: landed ? `0 0 30px ${accent}66` : 'none',
+          transition: 'border-color 0.3s, box-shadow 0.3s',
+        }}
+      />
+      {/* Pointeur haut */}
+      <div className="pointer-events-none absolute left-1/2 top-[2px] z-30 -translate-x-1/2">
         <div
           className="h-0 w-0"
           style={{
-            borderLeft: '16px solid transparent',
-            borderRight: '16px solid transparent',
-            borderTop: '26px solid #f8fafc',
-            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))',
+            borderLeft: '8px solid transparent',
+            borderRight: '8px solid transparent',
+            borderTop: `12px solid ${landed ? accent : '#f8fafc'}`,
           }}
         />
       </div>
-      <motion.svg
-        width={WHEEL_BOX}
-        height={WHEEL_BOX}
-        viewBox={`0 0 ${WHEEL_BOX} ${WHEEL_BOX}`}
-        initial={{ rotate: animate ? 0 : rotation }}
-        animate={{ rotate: rotation }}
-        transition={animate ? { duration: MALUS_SPIN_MS / 1000, ease: [0.16, 1, 0.3, 1] } : { duration: 0 }}
-        style={{ filter: 'drop-shadow(0 0 40px rgba(0,0,0,0.6))' }}
+
+      {/* Piste avec fondu sur les bords */}
+      <div
+        className="absolute inset-0 overflow-hidden"
+        style={{ maskImage: 'linear-gradient(to right, transparent, #000 14%, #000 86%, transparent)', WebkitMaskImage: 'linear-gradient(to right, transparent, #000 14%, #000 86%, transparent)' }}
       >
-        <circle cx={WHEEL_CENTER} cy={WHEEL_CENTER} r={WHEEL_RADIUS + 6} fill="#0f172a" stroke="#f8fafc" strokeWidth={4} />
-        {MALUS_SEGMENTS.map((type, i) => {
-          const start = i * SEGMENT_ANGLE;
-          const end = start + SEGMENT_ANGLE;
-          const [a, b] = SEGMENT_FILLS[type];
-          const fill = i % 4 < 2 ? a : b;
-          const center = start + SEGMENT_ANGLE / 2;
-          const dim = highlightIndex != null && highlightIndex !== i;
-          return (
-            <g key={i} opacity={dim ? 0.35 : 1}>
-              <path d={wedgePath(start, end)} fill={fill} stroke="rgba(15,23,42,0.55)" strokeWidth={2} />
-              <g transform={`rotate(${center} ${WHEEL_CENTER} ${WHEEL_CENTER})`}>
-                <text
-                  x={WHEEL_CENTER}
-                  y={WHEEL_CENTER - WHEEL_RADIUS + 44}
-                  textAnchor="middle"
-                  fontSize={30}
-                >
-                  {MALUS_LABELS[type].icon}
-                </text>
-                <text
-                  x={WHEEL_CENTER}
-                  y={WHEEL_CENTER - WHEEL_RADIUS + 70}
-                  textAnchor="middle"
-                  fontSize={15}
-                  fontWeight={800}
-                  fill="#fff"
-                  style={{ letterSpacing: '0.04em' }}
-                >
-                  {MALUS_LABELS[type].short.toUpperCase()}
-                </text>
-              </g>
-            </g>
-          );
-        })}
-        <circle cx={WHEEL_CENTER} cy={WHEEL_CENTER} r={26} fill="#0f172a" stroke="#f8fafc" strokeWidth={4} />
-      </motion.svg>
+        <motion.div
+          className="absolute top-1/2 flex -translate-y-1/2"
+          style={{ gap: GAP }}
+          initial={{ x: animate ? initialX : finalX }}
+          animate={{ x: finalX }}
+          transition={animate ? { duration: MALUS_SPIN_MS / 1000, ease: [0.12, 0.8, 0.12, 1] } : { duration: 0 }}
+        >
+          {items.map((itemType, i) => {
+            const selected = landed && i === targetIndex;
+            const meta = MALUS_LABELS[itemType];
+            return (
+              <div
+                key={i}
+                className="flex shrink-0 flex-col items-center justify-center gap-2 rounded-2xl"
+                style={{
+                  width: ITEM_W,
+                  height: 130,
+                  background: selected ? `${meta.color}1f` : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${selected ? meta.color : 'rgba(255,255,255,0.08)'}`,
+                  color: selected ? meta.color : 'rgba(255,255,255,0.55)',
+                  transform: selected ? 'scale(1.04)' : 'scale(1)',
+                  transition: 'all 0.3s',
+                }}
+              >
+                <MalusIcon type={itemType} />
+                <span className="text-xs font-bold uppercase tracking-[0.18em]">{meta.short}</span>
+              </div>
+            );
+          })}
+        </motion.div>
+      </div>
     </div>
   );
 }
@@ -105,7 +117,6 @@ export default function MalusWheelOverlay() {
   const malus = useGameStore((s) => s.malus);
   const [now, setNow] = useState(() => Date.now());
 
-  // Phase au montage de CE malus : détermine si on joue l'animation de spin.
   const mountInfoRef = useRef<{ id: string; animate: boolean } | null>(null);
   if (malus && mountInfoRef.current?.id !== malus.id) {
     mountInfoRef.current = {
@@ -126,9 +137,7 @@ export default function MalusWheelOverlay() {
   if (!malus || !phase) return null;
 
   const meta = MALUS_LABELS[malus.type];
-  const rotation = malusWheelRotation(malus.segmentIndex);
   const animateSpin = mountInfoRef.current?.animate ?? false;
-
   const isBig = phase === 'spinning' || phase === 'prep';
 
   return (
@@ -136,51 +145,40 @@ export default function MalusWheelOverlay() {
       {isBig ? (
         <motion.div
           key="malus-modal"
-          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-[140] flex items-center justify-center bg-black/85 backdrop-blur-md"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
           <motion.div
-            className="flex flex-col items-center gap-6 px-6 text-center"
-            initial={{ scale: 0.85, y: 20 }}
+            className="flex flex-col items-center gap-8 px-6 text-center"
+            initial={{ scale: 0.92, y: 16 }}
             animate={{ scale: 1, y: 0 }}
-            transition={{ type: 'spring', stiffness: 200, damping: 22 }}
+            transition={{ type: 'spring', stiffness: 220, damping: 24 }}
           >
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🎡</span>
-              <h2 className="text-3xl font-black uppercase tracking-[0.15em] text-white">Malus</h2>
-            </div>
+            <span className="text-xs font-bold uppercase tracking-[0.4em] text-slate-400">Malus</span>
 
-            <Wheel rotation={rotation} animate={animateSpin} highlightIndex={phase === 'prep' ? malus.segmentIndex : null} />
+            <Carousel type={malus.type} animate={animateSpin} landed={phase === 'prep'} />
 
             {phase === 'spinning' ? (
               <motion.p
-                className="text-lg font-semibold text-slate-300"
-                animate={{ opacity: [0.4, 1, 0.4] }}
+                className="text-sm font-medium uppercase tracking-[0.25em] text-slate-500"
+                animate={{ opacity: [0.3, 0.9, 0.3] }}
                 transition={{ duration: 1.2, repeat: Infinity }}
               >
-                La roue tourne…
+                Tirage en cours
               </motion.p>
             ) : (
-              <motion.div
-                className="flex flex-col items-center gap-3"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-              >
-                <div
-                  className="rounded-2xl px-6 py-3 text-2xl font-black uppercase tracking-wide text-white shadow-lg"
-                  style={{ background: `linear-gradient(135deg, ${meta.color}, ${meta.color}cc)` }}
-                >
-                  {meta.icon} {meta.title}
+              <motion.div className="flex max-w-md flex-col items-center gap-4" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="flex items-center gap-2" style={{ color: meta.color }}>
+                  <MalusIcon type={malus.type} size={26} />
+                  <h2 className="text-2xl font-black uppercase tracking-wide text-white">{meta.title}</h2>
                 </div>
-                <p className="max-w-md text-base text-slate-200">{meta.description}</p>
-                <p className="max-w-md text-sm text-amber-300">{meta.prep}</p>
-                <div className="mt-2 flex flex-col items-center gap-1">
-                  <span className="text-xs uppercase tracking-widest text-slate-400">Préparation — coupez vos positions</span>
-                  <span className="font-mono text-5xl font-black tabular-nums text-white">
-                    {formatMalusClock(malus.prepEndAt - now)}
-                  </span>
+                <p className="text-base text-slate-300">{meta.description}</p>
+                <p className="text-sm text-amber-300/90">{meta.prep}</p>
+                <div className="mt-1 flex flex-col items-center gap-1">
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Préparation</span>
+                  <span className="font-mono text-5xl font-black tabular-nums text-white">{formatMalusClock(malus.prepEndAt - now)}</span>
                 </div>
               </motion.div>
             )}
@@ -198,10 +196,10 @@ export default function MalusWheelOverlay() {
           <div className="h-1 w-full" style={{ background: meta.color }} />
           <div className="flex items-center gap-3 p-4">
             <div
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl"
-              style={{ background: `${meta.color}22`, border: `1px solid ${meta.color}` }}
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
+              style={{ background: `${meta.color}22`, border: `1px solid ${meta.color}`, color: meta.color }}
             >
-              {meta.icon}
+              <MalusIcon type={malus.type} size={26} />
             </div>
             <div className="min-w-0 flex-1">
               {phase === 'active' ? (
@@ -211,15 +209,13 @@ export default function MalusWheelOverlay() {
                     Malus actif
                   </div>
                   <div className="truncate text-sm font-bold text-white">{meta.title}</div>
-                  <div className="font-mono text-2xl font-black tabular-nums text-white">
-                    {formatMalusClock(malus.endAt - now)}
-                  </div>
+                  <div className="font-mono text-2xl font-black tabular-nums text-white">{formatMalusClock(malus.endAt - now)}</div>
                 </>
               ) : (
                 <>
                   <div className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">Malus terminé</div>
                   <div className="truncate text-sm font-bold text-white">{meta.title}</div>
-                  <div className="text-xs text-slate-400">Le malus est levé ✅</div>
+                  <div className="text-xs text-slate-400">Le malus est levé</div>
                 </>
               )}
             </div>
