@@ -22,6 +22,7 @@ import {
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import logoBtf from '../assets/pictures/logoBTF.webp';
+import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import { AvatarImage } from './OptimizedImage';
 import { withDisplayWidth } from '../utils/imageUrl';
 import {
@@ -4111,6 +4112,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             </a>
           </div>
         </div>
+      )}
+
+      {liveMode && session && (
+        <LiveEventTraderOverlay
+          trader={session.player}
+          eventStarted={eventStarted}
+          eventStartTime={eventStartTime}
+        />
       )}
 
       {livePaperMode && session && (

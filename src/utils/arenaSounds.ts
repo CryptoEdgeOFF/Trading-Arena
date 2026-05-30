@@ -1,4 +1,5 @@
 import type { SpotlightTrade } from '../stores/useGameStore';
+import { EVENT_INTRO_COUNTDOWN_MS } from './liveEvent';
 
 /** Sons servis depuis `public/assets/Sounds/` (même origine que le dashboard). */
 export const ARENA_SOUND_URLS = {
@@ -15,6 +16,10 @@ const COUNTDOWN_END_DURATION_FALLBACK_MS = 73_837;
 const MAX_PLAYED_KEYS = 500;
 const COUNTDOWN_END_STORAGE_PREFIX = 'btf-countdown-end:';
 
+function resolveAudioSrc(src: string): string {
+  return encodeURI(src);
+}
+
 /** Sons longs : un seul élément, pas de superposition. */
 const longFormBySrc = new Map<string, HTMLAudioElement>();
 /** FX courts : nouvelle instance à chaque lecture (évite les coupures / doubles reset). */
@@ -29,6 +34,7 @@ const shownSpotlightIds = new Set<string>();
 
 let countdownEndPlayedFor: number | null = null;
 let winnerSoundLaunched = false;
+let introCountdownStopTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** File FX séquentielle — aucun son court perdu, pas de chevauchement du même key. */
 type FxJob = { src: string; key: string; volume: number };
@@ -54,9 +60,10 @@ function rememberKey(set: Set<string>, key: string): void {
 
 function getLongFormAudio(src: string): HTMLAudioElement | null {
   if (typeof window === 'undefined') return null;
+  const resolved = resolveAudioSrc(src);
   let audio = longFormBySrc.get(src);
   if (!audio) {
-    audio = new Audio(src);
+    audio = new Audio(resolved);
     audio.preload = 'auto';
     longFormBySrc.set(src, audio);
     if (src === ARENA_SOUND_URLS.countdownEnd) {
@@ -74,7 +81,7 @@ function getLongFormAudio(src: string): HTMLAudioElement | null {
 
 function createFxAudio(src: string): HTMLAudioElement | null {
   if (typeof window === 'undefined') return null;
-  const audio = new Audio(src);
+  const audio = new Audio(resolveAudioSrc(src));
   audio.preload = 'auto';
   return audio;
 }
@@ -183,12 +190,62 @@ export function unlockArenaSounds(): void {
   });
 }
 
+function stopLongFormSound(src: string): void {
+  const audio = longFormBySrc.get(src);
+  if (!audio) return;
+  audio.pause();
+  audio.currentTime = 0;
+}
+
 export function resetArenaRoundSounds(): void {
   countdownEndPlayedFor = null;
   winnerSoundLaunched = false;
   shownSpotlightIds.clear();
   fxQueuedOrPlayedKeys.clear();
   fxQueue.length = 0;
+  stopIntroCountdownMusic();
+  // Fin 5v5 : Countdown END (~73s) peut encore tourner quand l'admin relance.
+  stopLongFormSound(ARENA_SOUND_URLS.countdownEnd);
+}
+
+export function isIntroCountdownPlaying(): boolean {
+  const audio = longFormBySrc.get(ARENA_SOUND_URLS.countdownStart);
+  return Boolean(audio && !audio.paused && audio.currentTime > 0.05);
+}
+
+/** Lance la piste « Countdown Start » (~15s) pendant le décompte d'intro. */
+export async function startIntroCountdownMusic(): Promise<boolean> {
+  unlockArenaSounds();
+  stopLongFormSound(ARENA_SOUND_URLS.countdownEnd);
+
+  const audio = getLongFormAudio(ARENA_SOUND_URLS.countdownStart);
+  if (!audio) return false;
+  if (!audio.paused && audio.currentTime > 0.05) return true;
+
+  audio.loop = false;
+  const ok = await playAudioElement(audio, 0.92);
+  if (!ok) return false;
+
+  if (introCountdownStopTimer) {
+    clearTimeout(introCountdownStopTimer);
+  }
+  introCountdownStopTimer = window.setTimeout(() => {
+    introCountdownStopTimer = null;
+    if (!audio.paused) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+  }, EVENT_INTRO_COUNTDOWN_MS);
+
+  return true;
+}
+
+export function stopIntroCountdownMusic(): void {
+  if (introCountdownStopTimer) {
+    clearTimeout(introCountdownStopTimer);
+    introCountdownStopTimer = null;
+  }
+  stopLongFormSound(ARENA_SOUND_URLS.countdownStart);
 }
 
 export function resetSpotlightNotifications(): void {
@@ -202,11 +259,8 @@ export function releaseSpotlightSlot(): void {
 }
 
 /** Une seule lecture par eventStartTime (anti Strict Mode / double patch). */
-export function playCountdownStartSound(eventStartTime: number | null | undefined): void {
-  if (eventStartTime == null || !Number.isFinite(eventStartTime)) return;
-  const key = `countdown-start:${eventStartTime}`;
-  if (fxQueuedOrPlayedKeys.has(key)) return;
-  enqueueFx(ARENA_SOUND_URLS.countdownStart, key, 0.92);
+export function playCountdownStartSound(_eventStartTime?: number | null): void {
+  startIntroCountdownMusic();
 }
 
 function launchWinnerSound(eventEndTime: number): void {

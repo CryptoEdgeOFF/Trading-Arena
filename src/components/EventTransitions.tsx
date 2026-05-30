@@ -3,7 +3,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { useGameStore, type EventMode, type Player, type TeamInfo } from '../stores/useGameStore';
 import { formatPnl, formatPercent, formatUSD } from '../utils/formatters';
-import { playCountdownStartSound, resetArenaRoundSounds } from '../utils/arenaSounds';
+import {
+  isIntroCountdownPlaying,
+  resetArenaRoundSounds,
+  startIntroCountdownMusic,
+  unlockArenaSounds,
+} from '../utils/arenaSounds';
 import { EVENT_INTRO_COUNTDOWN_SEC } from '../utils/liveEvent';
 import { buildTeamGroups, type TeamGroup, type TeamResultPlayer } from '../utils/teamResults';
 
@@ -54,7 +59,6 @@ function TransitionBrandAbove({ variant = 'countdown' }: { variant?: 'countdown'
  */
 export default function EventTransitions() {
   const eventStarted = useGameStore((s) => s.eventStarted);
-  const eventStartTime = useGameStore((s) => s.eventStartTime);
   const eventMode = useGameStore((s) => s.eventMode);
   const teams = useGameStore((s) => s.teams);
   const showcase = useGameStore((s) => s.showcase);
@@ -70,7 +74,6 @@ export default function EventTransitions() {
   // null = état serveur pas encore reçu. Après le 1er state:init, on
   // synchronise sans animer pour ne pas rejouer le countdown au refresh.
   const previousStartedRef = useRef<boolean | null>(null);
-  const countdownStartPlayedForRef = useRef<number | null>(null);
   // Dernier snapshot des joueurs PENDANT que l'event tournait, avec stats
   // non vides. Utilisé pour le podium/stats : le serveur purge les PnL
   // dans le même patch que `eventStarted=false`, donc on ne peut pas se
@@ -113,10 +116,6 @@ export default function EventTransitions() {
       setSnapshotEventMode('1v1');
       setPhase('countdown');
       setCountdownValue(COUNTDOWN_FROM);
-      if (eventStartTime != null && countdownStartPlayedForRef.current !== eventStartTime) {
-        countdownStartPlayedForRef.current = eventStartTime;
-        playCountdownStartSound(eventStartTime);
-      }
       return;
     }
 
@@ -147,7 +146,31 @@ export default function EventTransitions() {
       setSnapshotEventMode(endedMode);
       setPhase('event-end');
     }
-  }, [liveStateSynced, eventStarted, eventStartTime, eventMode, teams, showcase, players, resetClientLiveState]);
+  }, [liveStateSynced, eventStarted, eventMode, teams, showcase, players, resetClientLiveState]);
+
+  // Musique du décompte 15s — retries tant que l'autoplay n'est pas débloqué.
+  useEffect(() => {
+    if (phase !== 'countdown') return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryStartCountdownMusic = () => {
+      if (cancelled || isIntroCountdownPlaying()) return;
+      unlockArenaSounds();
+      void startIntroCountdownMusic().then((started) => {
+        if (cancelled || started || isIntroCountdownPlaying()) return;
+        retryTimer = setTimeout(tryStartCountdownMusic, 400);
+      });
+    };
+
+    tryStartCountdownMusic();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [phase]);
 
   // Tick du countdown
   useEffect(() => {
