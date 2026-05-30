@@ -9,6 +9,7 @@ export const ARENA_SOUND_URLS = {
   newOrder: '/assets/Sounds/New Order.mp3',
   stopLoss: '/assets/Sounds/Stoploss.wav',
   takeProfit: '/assets/Sounds/Take Profit.wav',
+  wheel: '/assets/Sounds/wheel.mp3',
 } as const;
 
 const SPOTLIGHT_COOLDOWN_MS = 5000;
@@ -41,6 +42,7 @@ const shownSpotlightIds = new Set<string>();
 
 let countdownEndPlayedFor: number | null = null;
 let winnerSoundLaunched = false;
+let malusWheelPlayedFor: string | null = null;
 let introCountdownStopTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** File FX séquentielle — aucun son court perdu, pas de chevauchement du même key. */
@@ -214,6 +216,8 @@ export function resetArenaRoundSounds(): void {
   stopIntroCountdownMusic();
   // Fin 5v5 : Countdown END (~73s) peut encore tourner quand l'admin relance.
   stopLongFormSound(ARENA_SOUND_URLS.countdownEnd);
+  stopMalusWheelSound();
+  malusWheelPlayedFor = null;
 }
 
 export function isArenaAudioReady(): boolean {
@@ -342,6 +346,26 @@ export function playWinnerSound(eventEndTime?: number | null): void {
     return;
   }
   enqueueFx(ARENA_SOUND_URLS.winner, `winner:fallback:${Date.now()}`, 0.95);
+}
+
+export function isMalusWheelPlaying(): boolean {
+  const audio = longFormBySrc.get(ARENA_SOUND_URLS.wheel);
+  return Boolean(audio && !audio.paused && audio.currentTime > 0.05);
+}
+
+/** Son du carousel malus (~5s) au lancement du tirage. */
+export async function playMalusWheelSound(malusId: string): Promise<boolean> {
+  if (malusWheelPlayedFor === malusId && isMalusWheelPlaying()) return true;
+  unlockArenaSounds();
+  const audio = getLongFormAudio(ARENA_SOUND_URLS.wheel);
+  if (!audio) return false;
+  const ok = await playAudioElement(audio, 0.92);
+  if (ok) malusWheelPlayedFor = malusId;
+  return ok;
+}
+
+export function stopMalusWheelSound(): void {
+  stopLongFormSound(ARENA_SOUND_URLS.wheel);
 }
 
 function spotlightSoundSrc(trade: SpotlightTrade): string | null {

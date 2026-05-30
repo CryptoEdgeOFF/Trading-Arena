@@ -9,6 +9,11 @@ import {
   type MalusPhase,
   type MalusType,
 } from '../utils/malus';
+import {
+  isMalusWheelPlaying,
+  playMalusWheelSound,
+  unlockArenaSounds,
+} from '../utils/arenaSounds';
 
 const ITEM_W = 190;
 const GAP = 14;
@@ -130,6 +135,31 @@ export default function MalusWheelOverlay() {
     if (!malus) return;
     const interval = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(interval);
+  }, [malus]);
+
+  // Son wheel.mp3 au lancement du carousel — retries si autoplay bloqué.
+  useEffect(() => {
+    if (!malus) return;
+    if (Date.now() >= malus.triggeredAt + MALUS_SPIN_MS) return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryPlayWheel = () => {
+      if (cancelled || isMalusWheelPlaying()) return;
+      unlockArenaSounds();
+      void playMalusWheelSound(malus.id).then((started) => {
+        if (cancelled || started || isMalusWheelPlaying()) return;
+        retryTimer = setTimeout(tryPlayWheel, 400);
+      });
+    };
+
+    tryPlayWheel();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [malus]);
 
   const phase: MalusPhase | null = useMemo(() => (malus ? getMalusPhase(malus, now) : null), [malus, now]);
