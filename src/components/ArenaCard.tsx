@@ -111,9 +111,30 @@ function PositionRow({ position, compact = false }: { position: Position; compac
   );
 }
 
-function ClosedTradeRow({ trade }: { trade: Trade }) {
+function ClosedTradeRow({ trade, compact = false }: { trade: Trade; compact?: boolean }) {
   const isLong = trade.side === 'long';
   const isProfit = trade.pnl >= 0;
+
+  if (compact) {
+    return (
+      <div className="pos-row closed !py-1.5 !px-2 !gap-1.5">
+        <CryptoIcon pair={trade.pair} className="w-5 h-5 shrink-0" />
+        <span className={`side-pill ${isLong ? 'long' : 'short'} opacity-70 !py-px !px-1.5 !text-[8px]`}>
+          {isLong ? 'L' : 'S'}
+        </span>
+        <span className="num truncate text-[11px] font-medium text-zinc-400">
+          {trade.pair.split('/')[0]}
+        </span>
+        <span
+          className={`num shrink-0 ml-auto text-[11px] font-bold tabular-nums ${
+            isProfit ? 'text-emerald-400' : 'text-red-400'
+          }`}
+        >
+          {formatPnl(trade.pnl)}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="pos-row closed">
@@ -371,24 +392,43 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             </div>
           </div>
 
-          {/* Positions actives — section principale, prend le reste de la carte */}
-          <div className="flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center justify-between mb-1">
-              <div className="micro flex items-center gap-1.5 !text-[8.5px]">
-                <span className="live-dot" />
-                Positions
+          {/* Positions + historique */}
+          <div className="flex-1 min-h-0 flex flex-col gap-2">
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-1">
+                <div className="micro flex items-center gap-1.5 !text-[8.5px]">
+                  <span className="live-dot" />
+                  Positions
+                </div>
+                <span className="num text-[9.5px] text-zinc-500">{player.openPositions.length}</span>
               </div>
-              <span className="num text-[9.5px] text-zinc-500">{player.openPositions.length}</span>
+              {player.openPositions.length > 0 ? (
+                <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide space-y-1 pr-0.5">
+                  {player.openPositions.map((pos) => (
+                    <PositionRow key={pos.pair} position={pos} compact />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-white/[0.06] bg-white/[0.01] px-3 py-2 text-center text-[10px] text-zinc-600">
+                  Aucune position ouverte
+                </div>
+              )}
             </div>
-            {player.openPositions.length > 0 ? (
-              <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide space-y-1 pr-0.5">
-                {player.openPositions.map((pos) => (
-                  <PositionRow key={pos.pair} position={pos} compact />
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-white/[0.06] bg-white/[0.01] px-3 py-2 text-center text-[10px] text-zinc-600">
-                Aucune position ouverte
+
+            {closedTrades.length > 0 && (
+              <div className="flex-1 min-h-0 flex flex-col border-t border-white/[0.05] pt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="micro flex items-center gap-1.5 !text-[8.5px]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
+                    Historique
+                  </div>
+                  <span className="num text-[9.5px] text-zinc-500">{closedTrades.length}</span>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide space-y-1 pr-0.5">
+                  {closedTrades.slice(0, 4).map((trade) => (
+                    <ClosedTradeRow key={trade.id} trade={trade} compact />
+                  ))}
+                </div>
               </div>
             )}
           </div>
