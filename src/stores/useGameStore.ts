@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { tryAcceptSpotlight, resetSpotlightNotifications } from '../utils/arenaSounds';
+import type { EventMalus } from '../utils/malus';
 
 function refreshAllPlayersPositions(
   players: Player[],
@@ -256,6 +257,7 @@ export interface StatePatch {
   paperStartingBalance?: number;
   marketDataSource?: MarketDataSource;
   showcase?: ShowcasePayload | null;
+  malus?: EventMalus | null;
 }
 
 interface GameState {
@@ -274,6 +276,7 @@ interface GameState {
   eventMode: EventMode;
   teams?: [TeamInfo, TeamInfo];
   showcase: ShowcasePayload | null;
+  malus: EventMalus | null;
 
   badgeQueue: { playerId: string; playerName: string; badge: Badge }[];
   celebrationQueue: { type: 'leader-change' | 'big-trade'; playerId: string }[];
@@ -308,6 +311,7 @@ export const useGameStore = create<GameState>((set) => ({
   eventMode: '1v1',
   teams: undefined,
   showcase: null,
+  malus: null,
   badgeQueue: [],
   celebrationQueue: [],
   spotlightTrade: null,
@@ -419,6 +423,9 @@ export const useGameStore = create<GameState>((set) => ({
       if (patch.marketDataSource !== undefined) next.marketDataSource = patch.marketDataSource;
       if (patch.teams !== undefined) {
         next.teams = patch.teams === null ? undefined : patch.teams;
+      }
+      if (patch.malus !== undefined) {
+        next.malus = patch.malus ?? null;
       }
       if (patch.showcase !== undefined) {
         next.showcase = patch.showcase ?? null;

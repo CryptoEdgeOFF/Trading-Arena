@@ -7,6 +7,8 @@ import {
   Badge,
   BadgeType,
   EventConfig,
+  EventMalus,
+  MalusType,
   MarketDataSource,
   EventMode,
   GameState,
@@ -47,6 +49,15 @@ const LEADER_STABLE_MS = 10_000;
 const LEADER_ANNOUNCE_COOLDOWN_MS = 45_000;
 /** Décompte cinématique avant ouverture du trading (aligné EventTransitions). */
 const EVENT_INTRO_COUNTDOWN_MS = 15_000;
+
+/** Malus (roue) — doit rester aligné avec src/utils/malus.ts. */
+const MALUS_SPIN_MS = 5_000;
+const MALUS_PREP_MS = 60_000;
+const MALUS_ACTIVE_MS = 600_000;
+/** Marge avant nettoyage de l'état malus (laisse la notif de fin s'afficher). */
+const MALUS_CLEAR_GRACE_MS = 12_000;
+/** Layout roue : alternance direction / asset sur 6 parts (index pairs = direction). */
+const MALUS_SEGMENT_TYPES: MalusType[] = ['direction', 'asset', 'direction', 'asset', 'direction', 'asset'];
 
 /** Seuils minimum avant d'attribuer un badge compétitif (évite le spam au 1er trade). */
 const BADGE_THRESHOLDS: Record<
@@ -181,8 +192,12 @@ export class PlayerManager {
     marketDataSource: null as MarketDataSource | null,
     teamsSignature: '' as string,
     showcaseSignature: '' as string,
+    malusSignature: '' as string,
   };
   private archiveStore = new EventArchiveStore();
+  /** Malus courant (roue de la fortune, annoncé à l'oral). */
+  private malus: EventMalus | null = null;
+  private malusClearTimer: ReturnType<typeof setTimeout> | null = null;
   private marketTickBroadcaster: ((pairs: string[]) => void) | null = null;
   readonly ready: Promise<void>;
 
@@ -1109,6 +1124,7 @@ export class PlayerManager {
 
     this.stopRealtimeLoops();
     this.resetCompetitionState(active);
+    this.clearMalus();
     this.eventStarted = true;
     this.eventStartTime = Date.now();
     this.eventTradingStartTime = this.eventStartTime + EVENT_INTRO_COUNTDOWN_MS;
@@ -1142,6 +1158,7 @@ export class PlayerManager {
     this.eventEndTime = null;
     this.eventTradingStartTime = null;
     this.clearTradingUnlockTimer();
+    this.clearMalus();
     this.stopEventTimerLoop();
     this.stopRealtimeLoops();
     // Purge — voir commentaire dans finalizeLiveEvent.
@@ -1216,6 +1233,7 @@ export class PlayerManager {
     this.eventEndTime = null;
     this.eventTradingStartTime = null;
     this.clearTradingUnlockTimer();
+    this.clearMalus();
     this.stopRealtimeLoops();
     // Purge des stats des joueurs immédiatement après archivage : on
     // veut que le dashboard inter-rounds reparte propre (badges, PnL,
@@ -1279,6 +1297,56 @@ export class PlayerManager {
 
   getEventShowcasePayload(): { mode: ShowcaseMode; archive: EventArchive } | null {
     return this.archiveStore.getShowcasePayload();
+  }
+
+  getMalus(): EventMalus | null {
+    return this.malus;
+  }
+
+  /**
+   * Déclenche un malus (roue de la fortune). Le type et la part sont tirés au
+   * sort côté serveur pour que tous les écrans s'arrêtent au même endroit.
+   * Purement visuel : aucune contrainte n'est appliquée aux ordres.
+   */
+  triggerMalus(forcedType?: MalusType): EventMalus | null {
+    if (!this.eventStarted) return null;
+    const type: MalusType = forcedType ?? (Math.random() < 0.5 ? 'direction' : 'asset');
+    const candidates = MALUS_SEGMENT_TYPES
+      .map((t, i) => ({ t, i }))
+      .filter((s) => s.t === type)
+      .map((s) => s.i);
+    const segmentIndex = candidates[Math.floor(Math.random() * candidates.length)] ?? 0;
+    const triggeredAt = Date.now();
+    const prepEndAt = triggeredAt + MALUS_SPIN_MS + MALUS_PREP_MS;
+    const endAt = prepEndAt + MALUS_ACTIVE_MS;
+    this.malus = {
+      id: `malus-${triggeredAt}-${Math.random().toString(36).slice(2, 8)}`,
+      type,
+      segmentIndex,
+      triggeredAt,
+      prepEndAt,
+      endAt,
+    };
+    if (this.malusClearTimer) clearTimeout(this.malusClearTimer);
+    this.malusClearTimer = setTimeout(() => {
+      this.malusClearTimer = null;
+      this.malus = null;
+      this.broadcastState();
+    }, endAt - triggeredAt + MALUS_CLEAR_GRACE_MS);
+    if (typeof this.malusClearTimer.unref === 'function') this.malusClearTimer.unref();
+    this.broadcastState();
+    return this.malus;
+  }
+
+  clearMalus(): void {
+    if (this.malusClearTimer) {
+      clearTimeout(this.malusClearTimer);
+      this.malusClearTimer = null;
+    }
+    if (this.malus) {
+      this.malus = null;
+      this.broadcastState();
+    }
   }
 
   async placePaperOrder(playerId: string, order: PaperOrderInput): Promise<void> {
@@ -1975,6 +2043,7 @@ export class PlayerManager {
       leaderChanges: [],
       spotlightTrades: [],
       showcase: this.archiveStore.getShowcasePayload() ?? null,
+      malus: this.malus,
     };
   }
 
@@ -2024,6 +2093,7 @@ export class PlayerManager {
       marketDataSource: this.marketDataSource,
       teamsSignature: JSON.stringify(this.teams || null),
       showcaseSignature: JSON.stringify(this.archiveStore.getShowcase() || null),
+      malusSignature: JSON.stringify(this.malus || null),
     };
   }
 
@@ -2261,6 +2331,11 @@ export class PlayerManager {
     if (this.snapshotEvent.showcaseSignature !== showcaseSignature) {
       patch.showcase = this.archiveStore.getShowcasePayload() ?? null;
       this.snapshotEvent.showcaseSignature = showcaseSignature;
+    }
+    const malusSignature = JSON.stringify(this.malus || null);
+    if (this.snapshotEvent.malusSignature !== malusSignature) {
+      patch.malus = this.malus;
+      this.snapshotEvent.malusSignature = malusSignature;
     }
 
     // One-shot signals always go in the patch when present.

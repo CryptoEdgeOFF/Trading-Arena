@@ -1105,6 +1105,23 @@ app.post('/api/event/showcase', requireAdmin, async (req, res) => {
   res.json({ ok: true, showcase: manager.getEventShowcase() });
 });
 
+// --- Malus (roue de la fortune, déclenché par l'admin) ---
+
+app.post('/api/event/malus', requireAdmin, (req, res) => {
+  const forced = req.body?.type === 'direction' || req.body?.type === 'asset' ? req.body.type : undefined;
+  const malus = manager.triggerMalus(forced);
+  if (!malus) {
+    res.status(409).json({ error: 'Aucun événement en cours' });
+    return;
+  }
+  res.json({ ok: true, malus });
+});
+
+app.delete('/api/event/malus', requireAdmin, (_req, res) => {
+  manager.clearMalus();
+  res.json({ ok: true });
+});
+
 // --- Paper trading meta & auth ---
 
 app.get('/api/paper/meta', async (_req, res) => {

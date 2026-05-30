@@ -185,6 +185,7 @@ export default function AdminPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [eventStarted, setEventStarted] = useState(false);
+  const [malusFeedback, setMalusFeedback] = useState('');
   const [mode, setMode] = useState<EventMode>('1v1');
   const [platformMode, setPlatformMode] = useState<PlatformMode>('kraken');
   const [marketDataSource, setMarketDataSource] = useState<MarketDataSource>('kraken');
@@ -497,6 +498,21 @@ export default function AdminPanel() {
       }
       setEventStarted(!eventStarted);
       setError('');
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function triggerMalus() {
+    try {
+      const res = await adminFetch('/api/event/malus', { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Erreur');
+      }
+      setMalusFeedback('🎡 Malus lancé sur le dashboard !');
+      setError('');
+      window.setTimeout(() => setMalusFeedback(''), 4000);
     } catch (err: any) {
       setError(err.message);
     }
@@ -1142,6 +1158,23 @@ export default function AdminPanel() {
               ? `LANCER ${MODE_LABELS[mode].label} (${PLATFORM_LABELS[platformMode].label})`
               : `${MODE_LABELS[mode].label} — ${currentCount}/${expectedPlayers} joueurs`}
         </button>
+
+        {eventStarted && (
+          <div className="space-y-2">
+            <button
+              onClick={triggerMalus}
+              className="w-full rounded-2xl bg-gradient-to-r from-rose-600 to-amber-600 px-6 py-4 text-lg font-bold text-white transition-all hover:from-rose-500 hover:to-amber-500"
+            >
+              🎡 INFLIGER UN MALUS
+            </button>
+            {malusFeedback && (
+              <p className="text-center text-sm font-semibold text-amber-300">{malusFeedback}</p>
+            )}
+            <p className="text-center text-xs text-slate-500">
+              Tire un malus au hasard (Direction ou Asset only) et l'affiche sur le dashboard : roue → 1 min de préparation → 10 min de malus → notification de fin.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

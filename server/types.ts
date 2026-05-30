@@ -215,12 +215,30 @@ export interface GameState {
   spotlightTrades: SpotlightTrade[];
   /** Showcase courant (archive d'un round précédent diffusée sur le dashboard). */
   showcase?: ShowcasePayload | null;
+  /** Malus en cours (roue de la fortune, purement visuel). */
+  malus?: EventMalus | null;
 }
 
 /** Payload diffusé pour afficher une archive de round sur le dashboard. */
 export interface ShowcasePayload {
   mode: 'podium' | 'stats';
   archive: ArchivedEventSnapshot;
+}
+
+export type MalusType = 'direction' | 'asset';
+
+/** Malus déclenché par l'admin (annoncé à l'oral, pas d'enforcement logiciel). */
+export interface EventMalus {
+  id: string;
+  type: MalusType;
+  /** Part de roue (0..5) sur laquelle elle s'arrête. */
+  segmentIndex: number;
+  /** Début de l'animation de roue. */
+  triggeredAt: number;
+  /** Fin de la phase de préparation (roue + 1 min). */
+  prepEndAt: number;
+  /** Fin du malus (prepEndAt + 10 min). */
+  endAt: number;
 }
 
 export interface ArchivedEventSnapshot {
@@ -313,6 +331,8 @@ export interface StatePatch {
   marketDataSource?: MarketDataSource;
   /** Push de l'archive showcase courante. `null` = retire l'overlay. */
   showcase?: ShowcasePayload | null;
+  /** Push du malus courant. `null` = retire l'overlay. */
+  malus?: EventMalus | null;
 }
 
 export const BADGE_DEFS: Record<BadgeType, Omit<Badge, 'awardedAt'>> = {

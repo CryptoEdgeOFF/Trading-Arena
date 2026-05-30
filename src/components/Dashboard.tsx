@@ -9,6 +9,7 @@ import Achievements from './Achievements';
 import CelebrationOverlay from './CelebrationOverlay';
 import TradeSpotlight from './TradeSpotlight';
 import EventTransitions from './EventTransitions';
+import MalusWheelOverlay from './MalusWheelOverlay';
 import EventShowcase from './EventShowcase';
 import ArenaSoundController from './ArenaSoundController';
 import Leaderboard from './Leaderboard';
@@ -197,6 +198,7 @@ export default function Dashboard() {
       <Achievements />
       <CelebrationOverlay />
       <EventTransitions />
+      <MalusWheelOverlay />
     </div>
   );
 }
