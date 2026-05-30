@@ -5,6 +5,7 @@ import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, formatTime, timeAgo } from '../utils/formatters';
+import { EVENT_INTRO_COUNTDOWN_MS } from '../utils/liveEvent';
 import { getMarketSession } from '../utils/marketHours';
 import {
   engineSizeFromInput,
@@ -2649,9 +2650,27 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const players = useGameStore((state) => state.players);
   const recentTrades = useGameStore((state) => state.recentTrades);
   const eventStarted = useGameStore((state) => state.eventStarted);
+  const eventStartTime = useGameStore((state) => state.eventStartTime);
   const platformMode = useGameStore((state) => state.platformMode);
   const paperStartingBalance = useGameStore((state) => state.paperStartingBalance);
   const wsMarket = useGameStore((state) => state.market);
+  const [introCountdownDone, setIntroCountdownDone] = useState(false);
+
+  useEffect(() => {
+    if (!eventStarted || eventStartTime == null) {
+      setIntroCountdownDone(false);
+      return;
+    }
+    const unlockAt = eventStartTime + EVENT_INTRO_COUNTDOWN_MS;
+    const remaining = unlockAt - Date.now();
+    if (remaining <= 0) {
+      setIntroCountdownDone(true);
+      return;
+    }
+    setIntroCountdownDone(false);
+    const id = setTimeout(() => setIntroCountdownDone(true), remaining);
+    return () => clearTimeout(id);
+  }, [eventStarted, eventStartTime]);
 
   const [demoMarket, setDemoMarket] = useState<Record<string, MarketTicker>>(() => createDemoMarket());
   const [demoPlayer, setDemoPlayer] = useState<Player>(() => loadDemoPlayer(createDemoMarket()));
@@ -3900,9 +3919,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   }
 
   const livePaperMode = (competitionContext?.mode === 'paper') || platformMode === 'paper' || meta.enabled;
+  const liveEventTradingAllowed = eventStarted && introCountdownDone;
   const canTradeNow = liveCanTrade !== null
     ? liveCanTrade
-    : (demoMode ? true : (competitionContext ? competitionContext.mode === 'paper' : eventStarted));
+    : (demoMode
+      ? true
+      : (competitionContext ? competitionContext.mode === 'paper' : liveEventTradingAllowed));
   void paperStartingBalance;
 
   const selectedCategory = meta.marketMetadata[selectedPair]?.category;

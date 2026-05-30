@@ -292,6 +292,7 @@ const manager = new PlayerManager((patch: StatePatch) => {
 });
 
 manager.setMarketTickBroadcaster((pairs) => broadcastMarketTicks(pairs));
+manager.setTradingUnlockHandler(() => broadcastPaperUpdates());
 
 function broadcastMarketTicks(pairs: string[]): void {
   if (pairs.length === 0 || clients.size === 0) return;
@@ -1052,7 +1053,7 @@ app.post('/api/event/start', requireAdmin, async (_req, res) => {
 });
 
 app.post('/api/event/stop', requireAdmin, async (_req, res) => {
-  manager.stopEvent();
+  await manager.stopEvent();
   res.json({ ok: true });
 });
 

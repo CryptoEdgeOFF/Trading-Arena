@@ -57,6 +57,7 @@ export default function EventTransitions() {
   const eventStartTime = useGameStore((s) => s.eventStartTime);
   const eventMode = useGameStore((s) => s.eventMode);
   const teams = useGameStore((s) => s.teams);
+  const showcase = useGameStore((s) => s.showcase);
   const liveStateSynced = useGameStore((s) => s.liveStateSynced);
   const players = useGameStore((s) => s.players);
   const resetClientLiveState = useGameStore((s) => s.resetClientLiveState);
@@ -120,6 +121,8 @@ export default function EventTransitions() {
     }
 
     if (wasStarted && !eventStarted) {
+      const endedMode = liveEventModeSnapshotRef.current ?? eventMode;
+      const endedTeams = liveTeamsSnapshotRef.current ?? teams ?? null;
       // Fin d'événement : on prend le DERNIER snapshot capturé pendant que
       // l'event tournait (avant le reset serveur). Si pour une raison
       // quelconque on n'en a pas, fallback sur l'état courant.
@@ -127,16 +130,24 @@ export default function EventTransitions() {
         ? liveSnapshotRef.current
         : players;
       const snapshot = [...source].sort((a, b) => b.pnl - a.pnl);
-      if (snapshot.length > 0) {
-        setSnapshotPlayers(snapshot);
-        setSnapshotTeams(liveTeamsSnapshotRef.current);
-        setSnapshotEventMode(liveEventModeSnapshotRef.current);
-        setPhase('event-end');
-      } else {
+      if (snapshot.length === 0) {
         setPhase('idle');
+        return;
       }
+
+      // 5v5 : le serveur pousse le showcase (même vue que l'admin) — ne pas
+      // recouvrir avec le podium individuel live.
+      if (endedMode === '4v4' && showcase?.archive?.eventMode === '4v4') {
+        setPhase('idle');
+        return;
+      }
+
+      setSnapshotPlayers(snapshot);
+      setSnapshotTeams(endedTeams);
+      setSnapshotEventMode(endedMode);
+      setPhase('event-end');
     }
-  }, [liveStateSynced, eventStarted, eventStartTime, players, resetClientLiveState]);
+  }, [liveStateSynced, eventStarted, eventStartTime, eventMode, teams, showcase, players, resetClientLiveState]);
 
   // Tick du countdown
   useEffect(() => {
@@ -344,10 +355,10 @@ function EventEndOverlay({
   onClose: () => void;
 }) {
   const teamGroups = useMemo(() => {
-    if (eventMode !== '4v4' || !teams) return null;
+    if (!teams) return null;
     const groups = buildTeamGroups(teams, players);
     return groups.some((g) => g.players.length > 0) ? groups : null;
-  }, [eventMode, teams, players]);
+  }, [teams, players]);
 
   if (teamGroups) {
     return (

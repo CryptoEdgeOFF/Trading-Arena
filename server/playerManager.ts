@@ -45,6 +45,8 @@ const ROSTER_DB_KEY = 'paper-roster';
 /** Leader #1 doit rester stable avant d'annoncer un changement (évite le ping-pong PnL). */
 const LEADER_STABLE_MS = 10_000;
 const LEADER_ANNOUNCE_COOLDOWN_MS = 45_000;
+/** Décompte cinématique avant ouverture du trading (aligné EventTransitions). */
+const EVENT_INTRO_COUNTDOWN_MS = 15_000;
 
 /** Seuils minimum avant d'attribuer un badge compétitif (évite le spam au 1er trade). */
 const BADGE_THRESHOLDS: Record<
@@ -71,6 +73,10 @@ export class PlayerManager {
   private players: Map<string, Player> = new Map();
   private eventStarted = false;
   private eventStartTime: number | null = null;
+  /** Trading autorisé seulement après le décompte d'intro (eventStartTime + 15s). */
+  private eventTradingStartTime: number | null = null;
+  private tradingUnlockTimer: ReturnType<typeof setTimeout> | null = null;
+  private onTradingUnlock: (() => void) | null = null;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private tickerInterval: ReturnType<typeof setInterval> | null = null;
   private playerQueue: string[] = [];
@@ -957,8 +963,10 @@ export class PlayerManager {
         this.playerQueue = Array.from(teamIds);
         this.saveRoster();
         this.rebuildRankings();
-        this.broadcastState();
       }
+    }
+    if (!this.eventStarted) {
+      this.broadcastState(true);
     }
   }
 
@@ -983,8 +991,13 @@ export class PlayerManager {
 
   canTradeLiveEvent(): boolean {
     if (!this.eventStarted) return false;
+    if (this.eventTradingStartTime != null && Date.now() < this.eventTradingStartTime) return false;
     if (this.eventEndTime != null && Date.now() >= this.eventEndTime) return false;
     return true;
+  }
+
+  getEventTradingStartTime(): number | null {
+    return this.eventTradingStartTime;
   }
 
   getPlatformMode(): PlatformMode {
@@ -1023,6 +1036,31 @@ export class PlayerManager {
 
   setMarketTickBroadcaster(fn: (pairs: string[]) => void): void {
     this.marketTickBroadcaster = fn;
+  }
+
+  /** Notifie les terminaux paper quand le trading s'ouvre après le décompte. */
+  setTradingUnlockHandler(fn: () => void): void {
+    this.onTradingUnlock = fn;
+  }
+
+  private clearTradingUnlockTimer(): void {
+    if (this.tradingUnlockTimer) {
+      clearTimeout(this.tradingUnlockTimer);
+      this.tradingUnlockTimer = null;
+    }
+  }
+
+  private scheduleTradingUnlockBroadcast(): void {
+    this.clearTradingUnlockTimer();
+    if (!this.eventTradingStartTime) return;
+    const delay = Math.max(0, this.eventTradingStartTime - Date.now());
+    this.tradingUnlockTimer = setTimeout(() => {
+      this.tradingUnlockTimer = null;
+      this.onTradingUnlock?.();
+    }, delay);
+    if (typeof this.tradingUnlockTimer.unref === 'function') {
+      this.tradingUnlockTimer.unref();
+    }
   }
 
   /** Démarre le flux prix crypto (Binance/Kraken) pour les charts, always-on. */
@@ -1073,10 +1111,12 @@ export class PlayerManager {
     this.resetCompetitionState(active);
     this.eventStarted = true;
     this.eventStartTime = Date.now();
+    this.eventTradingStartTime = this.eventStartTime + EVENT_INTRO_COUNTDOWN_MS;
     this.eventEndTime = this.eventDurationMinutes > 0
       ? this.eventStartTime + this.eventDurationMinutes * 60_000
       : null;
     this.playerQueue = active.map((player) => player.id);
+    this.scheduleTradingUnlockBroadcast();
 
     // Assigner les rangs AVANT le démarrage du moteur paper pour éviter
     // un faux « nouveau leader » (0 → #1) sur le premier tick marché.
@@ -1094,12 +1134,14 @@ export class PlayerManager {
     this.broadcastState();
   }
 
-  stopEvent(): void {
+  async stopEvent(): Promise<void> {
     if (this.eventStarted) {
-      void this.archiveCurrentEvent('manual-stop');
+      await this.archiveCurrentEvent('manual-stop');
     }
     this.eventStarted = false;
     this.eventEndTime = null;
+    this.eventTradingStartTime = null;
+    this.clearTradingUnlockTimer();
     this.stopEventTimerLoop();
     this.stopRealtimeLoops();
     // Purge — voir commentaire dans finalizeLiveEvent.
@@ -1167,11 +1209,13 @@ export class PlayerManager {
       this.saveRoster();
     }
 
-    void this.archiveCurrentEvent('timer');
+    await this.archiveCurrentEvent('timer');
 
     this.pendingLeaderChange = null;
     this.eventStarted = false;
     this.eventEndTime = null;
+    this.eventTradingStartTime = null;
+    this.clearTradingUnlockTimer();
     this.stopRealtimeLoops();
     // Purge des stats des joueurs immédiatement après archivage : on
     // veut que le dashboard inter-rounds reparte propre (badges, PnL,
@@ -1205,6 +1249,9 @@ export class PlayerManager {
     });
     try {
       await this.archiveStore.add(archive);
+      if (this.eventMode === '4v4') {
+        await this.archiveStore.setShowcase({ archiveId: archive.id, mode: 'podium' });
+      }
     } catch (err) {
       console.error('[archive] add failed:', (err as Error).message || err);
     }
@@ -2174,6 +2221,12 @@ export class PlayerManager {
     if (this.snapshotEvent.eventStarted !== this.eventStarted) {
       patch.eventStarted = this.eventStarted;
       this.snapshotEvent.eventStarted = this.eventStarted;
+      if (!this.eventStarted) {
+        patch.eventMode = this.eventMode;
+        this.snapshotEvent.eventMode = this.eventMode;
+        patch.teams = this.teams ?? null;
+        this.snapshotEvent.teamsSignature = JSON.stringify(this.teams || null);
+      }
     }
     if (this.snapshotEvent.eventStartTime !== this.eventStartTime) {
       patch.eventStartTime = this.eventStartTime;
