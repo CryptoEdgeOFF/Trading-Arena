@@ -10,18 +10,22 @@ const DISPLAY_DURATION = 5200;
 const STOP_LOSS_DURATION = 6000;
 const TAKE_PROFIT_DURATION = 6000;
 
-type Variant = 'open' | 'manual-close' | 'stop-loss' | 'take-profit';
+type Variant = 'open' | 'manual-close' | 'stop-loss' | 'trailing-stop' | 'take-profit';
 
 function getVariant(trade: SpotlightTrade): Variant {
   if (trade.action === 'open') return 'open';
-  if (trade.reason === 'stop-loss') return 'stop-loss';
+  if (trade.reason === 'stop-loss') {
+    // Stop loss suiveur : SL déclenché en gain → traité comme un take profit
+    // (vert, son TP). Le trader a sécurisé du profit en suivant le prix.
+    return trade.pnl > 0 ? 'trailing-stop' : 'stop-loss';
+  }
   if (trade.reason === 'take-profit') return 'take-profit';
   return 'manual-close';
 }
 
 function getDuration(variant: Variant): number {
   if (variant === 'stop-loss') return STOP_LOSS_DURATION;
-  if (variant === 'take-profit') return TAKE_PROFIT_DURATION;
+  if (variant === 'take-profit' || variant === 'trailing-stop') return TAKE_PROFIT_DURATION;
   return DISPLAY_DURATION;
 }
 
@@ -56,6 +60,16 @@ function getStyle(variant: Variant, playerColor: string): VariantStyle {
         bg: 'linear-gradient(135deg, #042417 0%, #0a3a26 50%, #021810 100%)',
         accent: '#6ee7b7',
         glyph: '💰',
+      };
+    case 'trailing-stop':
+      return {
+        banner: 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 text-white',
+        bannerLabel: '⤴ STOP LOSS SUIVEUR ⤴',
+        border: '#10b981',
+        glow: 'rgba(16, 185, 129, 0.55)',
+        bg: 'linear-gradient(135deg, #042417 0%, #0a3a26 50%, #021810 100%)',
+        accent: '#6ee7b7',
+        glyph: '🛡️',
       };
     case 'manual-close':
       return {
@@ -109,7 +123,7 @@ export default function TradeSpotlight() {
   const isLong = current.side === 'long';
   const duration = getDuration(variant);
   const isPnlPositive = current.pnl >= 0;
-  const isHero = variant === 'stop-loss' || variant === 'take-profit';
+  const isHero = variant === 'stop-loss' || variant === 'take-profit' || variant === 'trailing-stop';
   const base = current.pair.split('/')[0] || '';
   const sizeDisplay = formatEngineSizeDisplay(current.pair, current.size, base);
   const sizeLabel = `${sizeDisplay.text} ${sizeDisplay.unit}`;
@@ -192,6 +206,7 @@ export default function TradeSpotlight() {
                 </div>
                 <div className={`mt-1.5 text-zinc-400 ${isHero ? 'text-base' : 'text-sm'}`}>
                   {variant === 'stop-loss' && 'a touché son stop loss'}
+                  {variant === 'trailing-stop' && 'a sécurisé son gain au stop suiveur'}
                   {variant === 'take-profit' && 'a sécurisé son take profit'}
                   {variant === 'manual-close' && 'a fermé sa position'}
                   {variant === 'open' && "vient d'ouvrir une position"}
@@ -285,10 +300,10 @@ export default function TradeSpotlight() {
                   {current.pnl.toFixed(2)} $
                 </motion.div>
                 {isHero && (
-                  <div className={`mt-3 text-center ${variant === 'take-profit' ? 'text-emerald-300' : 'text-red-300'} text-sm tracking-[0.2em] uppercase`}>
-                    {variant === 'take-profit'
-                      ? 'objectif sécurisé · le combat continue'
-                      : 'risque coupé · prochaine offensive en préparation'}
+                  <div className={`mt-3 text-center ${variant === 'stop-loss' ? 'text-red-300' : 'text-emerald-300'} text-sm tracking-[0.2em] uppercase`}>
+                    {variant === 'take-profit' && 'objectif sécurisé · le combat continue'}
+                    {variant === 'trailing-stop' && 'gain verrouillé au stop suiveur · le combat continue'}
+                    {variant === 'stop-loss' && 'risque coupé · prochaine offensive en préparation'}
                   </div>
                 )}
               </motion.div>

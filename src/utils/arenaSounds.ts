@@ -276,7 +276,11 @@ export function playWinnerSound(eventEndTime?: number | null): void {
 function spotlightSoundSrc(trade: SpotlightTrade): string | null {
   if (trade.action === 'open') return ARENA_SOUND_URLS.newOrder;
   if (trade.action === 'close') {
-    if (trade.reason === 'stop-loss') return ARENA_SOUND_URLS.stopLoss;
+    // Stop loss suiveur : un SL qui se déclenche en gain (le trader a remonté
+    // son stop au-dessus de l'entrée) → son de Take Profit, pas de Stop Loss.
+    if (trade.reason === 'stop-loss') {
+      return trade.pnl > 0 ? ARENA_SOUND_URLS.takeProfit : ARENA_SOUND_URLS.stopLoss;
+    }
     if (trade.reason === 'take-profit') return ARENA_SOUND_URLS.takeProfit;
     return trade.pnl >= 0 ? ARENA_SOUND_URLS.takeProfit : ARENA_SOUND_URLS.stopLoss;
   }
