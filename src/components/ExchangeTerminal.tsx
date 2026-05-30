@@ -25,6 +25,7 @@ import logoBtf from '../assets/pictures/logoBTF.webp';
 import { AvatarImage } from './OptimizedImage';
 import { withDisplayWidth } from '../utils/imageUrl';
 import {
+  clearAllPaperSessions,
   clearPaperSessionToken,
   extractPaperCompetitionContext,
   getCompetitionIdFromUrl,
@@ -379,11 +380,13 @@ function TopBar({
   trader,
   competition,
   liveMode = false,
+  onLogout,
 }: {
   player: Player | null;
   trader: SessionPlayer;
   competition: CompetitionContext | null;
   liveMode?: boolean;
+  onLogout?: () => void;
 }) {
   const eventEndTime = useGameStore((s) => s.eventEndTime);
   const eventStarted = useGameStore((s) => s.eventStarted);
@@ -402,14 +405,10 @@ function TopBar({
   const pnlPos = pnl >= 0;
   const rank = competition?.rank ?? player?.rank ?? null;
   const participants = competition?.participants ?? null;
-  // En mode Live (BTF event roster), l'home renvoie sur la page de login
-  // par code et le bouton "Leaderboard" pointe sur le dashboard public Live.
-  const homeHref = liveMode ? '/trader' : '/compete';
-  const leaderboardHref = liveMode
-    ? '/live-dashboard'
-    : (competition?.id && competition.id !== 'unknown'
-        ? `/compete/leaderboard/${competition.id}`
-        : '/compete');
+  const homeHref = '/compete';
+  const leaderboardHref = competition?.id && competition.id !== 'unknown'
+    ? `/compete/leaderboard/${competition.id}`
+    : '/compete';
 
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2.5 py-2 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
@@ -458,12 +457,24 @@ function TopBar({
             <div className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</div>
           </div>
         )}
-        <a href={homeHref} className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
-          {liveMode ? 'Sortir' : 'Accueil'}
-        </a>
-        <a href={leaderboardHref} className="cursor-pointer rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
-          {liveMode ? 'Dashboard' : 'Leaderboard'}
-        </a>
+        {liveMode ? (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-red-500/50 hover:text-white"
+          >
+            Déconnexion
+          </button>
+        ) : (
+          <>
+            <a href={homeHref} className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
+              Accueil
+            </a>
+            <a href={leaderboardHref} className="cursor-pointer rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
+              Leaderboard
+            </a>
+          </>
+        )}
         <div className="hidden items-center gap-2 px-2 text-[11.5px] text-[#e0e2ea] xl:flex">
           {trader.avatar ? (
             <img
@@ -2414,19 +2425,9 @@ function LiveRosterLeaderboardPanel({
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#2a2236] bg-[#10091c]">
       <div className="shrink-0 border-b border-[#171321] px-3 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-[#dc2626]">Leaderboard</div>
-            <div className="truncate text-[14px] font-bold text-white">BTF Live event</div>
-          </div>
-          <a
-            href="/live-dashboard"
-            target="_blank"
-            rel="noreferrer"
-            className="shrink-0 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-white"
-          >
-            Dashboard
-          </a>
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#dc2626]">Leaderboard</div>
+          <div className="truncate text-[14px] font-bold text-white">BTF Live event</div>
         </div>
         {myPlayer && (
           <div className="mt-3 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/12 px-3 py-2">
@@ -3874,12 +3875,13 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   function logout() {
     if (demoMode) return;
-    clearPaperSessionToken(terminalPlatform);
+    clearAllPaperSessions();
     setSession(null);
-    // En mode Live, ramener directement sur la page de login par code
-    // pour ne pas afficher le placeholder "Aller sur BTF Arena".
+    setLivePlayer(null);
+    setLiveMarket(null);
+    setLiveCanTrade(null);
     if (liveMode && typeof window !== 'undefined') {
-      window.location.href = '/trader';
+      window.location.replace('/trader');
     }
   }
 
@@ -4118,6 +4120,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             trader={session.player}
             competition={competitionContext}
             liveMode={liveMode}
+            onLogout={logout}
           />
 
           <div className="flex min-h-0 flex-1 flex-col lg:hidden">

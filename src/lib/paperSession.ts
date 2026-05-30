@@ -187,6 +187,12 @@ export function clearPaperSessionToken(platform?: TerminalPlatform): void {
   }
   window.localStorage.removeItem(getPaperSessionStorageKey(platform));
   window.localStorage.removeItem(LEGACY_PAPER_SESSION_KEY);
+  window.localStorage.removeItem(PAPER_BOOTSTRAP_KEY);
+}
+
+/** Déconnexion complète du terminal paper (live + compete + cache bootstrap). */
+export function clearAllPaperSessions(): void {
+  clearPaperSessionToken();
 }
 
 export function buildCompeteTradeUrl(competition: {
