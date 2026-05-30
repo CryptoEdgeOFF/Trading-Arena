@@ -15,27 +15,22 @@ import {
   PAPER_BOOTSTRAP_KEY,
   writePaperSessionToken,
 } from '../lib/paperSession';
+import {
+  COMPETE_SESSION_KEY,
+  mergeSessionUser,
+  readCachedCompeteUser,
+  writeCachedCompeteUser,
+  type CompeteSessionUser,
+} from '../lib/competeSession';
 
-const SESSION_KEY = 'btf-comp-session';
-const SESSION_USER_KEY = 'btf-comp-user';
+const SESSION_KEY = COMPETE_SESSION_KEY;
 
-function readCachedUser(): SessionUser | null {
-  try {
-    const raw = window.localStorage.getItem(SESSION_USER_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as SessionUser;
-  } catch {
-    return null;
-  }
+function readCachedUser(): CompeteSessionUser | null {
+  return readCachedCompeteUser();
 }
 
-function writeCachedUser(user: SessionUser | null) {
-  try {
-    if (user) window.localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
-    else window.localStorage.removeItem(SESSION_USER_KEY);
-  } catch {
-    // ignore quota errors
-  }
+function writeCachedUser(user: CompeteSessionUser | null): void {
+  writeCachedCompeteUser(user);
 }
 
 function readCachedJSON<T>(key: string): T | null {
@@ -95,20 +90,7 @@ interface CompetitionMine {
   cashPrize?: CashPrize | null;
 }
 
-interface SessionUser {
-  id: string;
-  email: string;
-  name: string;
-  phone?: string | null;
-  phoneVerifiedAt?: number | null;
-  avatarUrl?: string | null;
-  socials?: {
-    x?: string;
-    instagram?: string;
-    discord?: string;
-    website?: string;
-  };
-}
+type SessionUser = CompeteSessionUser;
 
 type AuthIntent = 'login' | 'signup';
 type AuthStep = 'request' | 'verify-email' | 'verify-phone';
@@ -272,7 +254,13 @@ function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?
               <div className="hidden items-center gap-2 rounded-full border border-[#232329] bg-[#0c0c10] px-3 py-1.5 md:flex">
                 <div tabIndex={0} className="group relative flex items-center gap-2 outline-none">
                   {user.avatarUrl ? (
-                    <AvatarImage src={user.avatarUrl} alt="" className="h-6 w-6 rounded-full object-cover" sizePx={24} />
+                    <AvatarImage
+                      key={user.avatarUrl}
+                      src={user.avatarUrl}
+                      alt=""
+                      className="h-6 w-6 rounded-full object-cover"
+                      sizePx={24}
+                    />
                   ) : (
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-[11px] font-bold uppercase">
                       {user.name.slice(0, 2)}
@@ -358,8 +346,9 @@ export default function CompetitionPlatform() {
 
         if (token) {
           if (data.user) {
-            setSession({ token, user: data.user });
-            writeCachedUser(data.user);
+            const merged = mergeSessionUser(readCachedCompeteUser(), data.user as CompeteSessionUser);
+            setSession({ token, user: merged });
+            writeCachedCompeteUser(merged);
           } else {
             // Token rejected by server -> clear the optimistic session.
             window.localStorage.removeItem(SESSION_KEY);
@@ -379,9 +368,33 @@ export default function CompetitionPlatform() {
     };
   }, []);
 
+  // Re-sync depuis le cache quand on revient sur l'onglet (ex. après Settings).
+  useEffect(() => {
+    function syncSessionFromCache() {
+      const token = window.localStorage.getItem(SESSION_KEY);
+      const cached = readCachedCompeteUser();
+      if (!token || !cached) return;
+      setSession((prev) => {
+        if (!prev || prev.token !== token) return { token, user: cached };
+        return { token, user: mergeSessionUser(prev.user, cached) };
+      });
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') syncSessionFromCache();
+    }
+
+    window.addEventListener('focus', syncSessionFromCache);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', syncSessionFromCache);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
   // Keep the cached user in sync if it changes (e.g. profile update).
   useEffect(() => {
-    if (session?.user) writeCachedUser(session.user);
+    if (session?.user) writeCachedCompeteUser(session.user);
   }, [session?.user]);
 
   async function refreshPublicCompetitions() {
@@ -1150,6 +1163,7 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pn
         <div className="flex items-center gap-2">
           {user.avatarUrl ? (
             <AvatarImage
+              key={user.avatarUrl}
               src={user.avatarUrl}
               alt=""
               className="h-9 w-9 shrink-0 rounded-xl object-cover shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]"

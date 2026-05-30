@@ -1,65 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { compressImage } from '../utils/imageUpload';
+import {
+  COMPETE_SESSION_KEY,
+  mergeSessionUser,
+  readCachedCompeteUser,
+  writeCachedCompeteUser,
+  type CompeteSessionUser,
+} from '../lib/competeSession';
 import { AvatarImage } from './OptimizedImage';
 
-const SESSION_KEY = 'btf-comp-session';
-const SESSION_USER_KEY = 'btf-comp-user';
-
-function avatarVersion(avatarUrl?: string | null): number {
-  if (!avatarUrl) return 0;
-  try {
-    const v = new URL(avatarUrl, 'http://local').searchParams.get('v');
-    const parsed = v ? Number.parseInt(v, 10) : 0;
-    return Number.isFinite(parsed) ? parsed : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function mergeSessionUser(current: SessionUser | null, incoming: SessionUser): SessionUser {
-  if (!current) return incoming;
-  const currentV = avatarVersion(current.avatarUrl);
-  const incomingV = avatarVersion(incoming.avatarUrl);
-  if (currentV > incomingV) {
-    return { ...incoming, avatarUrl: current.avatarUrl };
-  }
-  return incoming;
-}
-
-function readCachedUser(): SessionUser | null {
-  try {
-    const raw = window.localStorage.getItem(SESSION_USER_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as SessionUser;
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedUser(user: SessionUser | null) {
-  try {
-    if (user) window.localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
-    else window.localStorage.removeItem(SESSION_USER_KEY);
-  } catch {
-    // ignore
-  }
-}
-
-interface SessionUser {
-  id: string;
-  email: string;
-  name: string;
-  phone?: string | null;
-  phoneVerifiedAt?: number | null;
-  avatarUrl?: string | null;
-  socials?: {
-    x?: string;
-    instagram?: string;
-    discord?: string;
-    website?: string;
-  };
-}
+type SessionUser = CompeteSessionUser;
 
 function initials(name: string): string {
   return name.trim().slice(0, 2).toUpperCase() || 'BT';
@@ -78,7 +29,7 @@ export default function CompetitionSettings() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(SESSION_KEY);
+    const stored = window.localStorage.getItem(COMPETE_SESSION_KEY);
     if (!stored) {
       navigate('/compete');
       return;
@@ -89,7 +40,7 @@ export default function CompetitionSettings() {
 
     // Hydrate the form from the cached user immediately so the page renders
     // populated even before the backend roundtrip lands.
-    const cached = readCachedUser();
+    const cached = readCachedCompeteUser();
     if (cached) {
       setUser(cached);
       setName(cached.name || '');
@@ -112,9 +63,9 @@ export default function CompetitionSettings() {
       })
       .then((data) => {
         if (controller.signal.aborted) return;
-        const nextUser = mergeSessionUser(readCachedUser(), data.user as SessionUser);
+        const nextUser = mergeSessionUser(readCachedCompeteUser(), data.user as SessionUser);
         setUser(nextUser);
-        writeCachedUser(nextUser);
+        writeCachedCompeteUser(nextUser);
         setName(nextUser.name || '');
         setPhone(nextUser.phone || '');
         setSocials({
@@ -127,8 +78,8 @@ export default function CompetitionSettings() {
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
-        window.localStorage.removeItem(SESSION_KEY);
-        writeCachedUser(null);
+        window.localStorage.removeItem(COMPETE_SESSION_KEY);
+        writeCachedCompeteUser(null);
         navigate('/compete');
       });
 
@@ -156,7 +107,7 @@ export default function CompetitionSettings() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Modification impossible');
       setUser(data.user);
-      writeCachedUser(data.user);
+      writeCachedCompeteUser(data.user);
       setMessage('Profil mis a jour');
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');
@@ -183,7 +134,7 @@ export default function CompetitionSettings() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload impossible');
       setUser(data.user);
-      writeCachedUser(data.user);
+      writeCachedCompeteUser(data.user);
       setMessage('Photo de profil mise a jour');
     } catch (err: any) {
       setError(err.message || 'Erreur inconnue');
