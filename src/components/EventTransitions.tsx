@@ -19,6 +19,7 @@ const PODIUM_DURATION_MS = 5000;
  */
 export default function EventTransitions() {
   const eventStarted = useGameStore((s) => s.eventStarted);
+  const eventStartTime = useGameStore((s) => s.eventStartTime);
   const liveStateSynced = useGameStore((s) => s.liveStateSynced);
   const players = useGameStore((s) => s.players);
   const resetClientLiveState = useGameStore((s) => s.resetClientLiveState);
@@ -29,6 +30,7 @@ export default function EventTransitions() {
   // null = état serveur pas encore reçu. Après le 1er state:init, on
   // synchronise sans animer pour ne pas rejouer le countdown au refresh.
   const previousStartedRef = useRef<boolean | null>(null);
+  const countdownStartPlayedForRef = useRef<number | null>(null);
   // Dernier snapshot des joueurs PENDANT que l'event tournait, avec stats
   // non vides. Utilisé pour le podium/stats : le serveur purge les PnL
   // dans le même patch que `eventStarted=false`, donc on ne peut pas se
@@ -65,7 +67,10 @@ export default function EventTransitions() {
       setSnapshotPlayers(null);
       setPhase('countdown');
       setCountdownValue(COUNTDOWN_FROM);
-      playCountdownStartSound();
+      if (eventStartTime != null && countdownStartPlayedForRef.current !== eventStartTime) {
+        countdownStartPlayedForRef.current = eventStartTime;
+        playCountdownStartSound(eventStartTime);
+      }
       return;
     }
 
@@ -84,7 +89,7 @@ export default function EventTransitions() {
         setPhase('idle');
       }
     }
-  }, [liveStateSynced, eventStarted, players, resetClientLiveState]);
+  }, [liveStateSynced, eventStarted, eventStartTime, players, resetClientLiveState]);
 
   // Tick du countdown
   useEffect(() => {

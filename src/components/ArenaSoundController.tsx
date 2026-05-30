@@ -3,26 +3,27 @@ import { useGameStore } from '../stores/useGameStore';
 import {
   getCountdownEndLeadMs,
   playCountdownEndSound,
+  playSpotlightTradeSound,
   preloadArenaSounds,
   unlockArenaSounds,
 } from '../utils/arenaSounds';
 
 /**
- * Sons liés au timer du round.
- * Countdown END démarre à T − durée(audio) pour finir pile sur le 0,
- * puis Winner.wav s'enchaîne sur l'événement `ended`.
+ * Hub central des sons du dashboard LIVE :
+ * - déverrouillage autoplay
+ * - Countdown END (T − durée fichier)
+ * - FX trade spotlight (dédoublonnés, file séquentielle)
  */
 export default function ArenaSoundController() {
   const eventStarted = useGameStore((s) => s.eventStarted);
   const eventEndTime = useGameStore((s) => s.eventEndTime);
-  const playedForEndTimeRef = useRef<number | null>(null);
+  const spotlightTrade = useGameStore((s) => s.spotlightTrade);
+
+  const playedEndForRef = useRef<number | null>(null);
+  const lastSpotlightSoundIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     preloadArenaSounds();
-    // On tente de déverrouiller à chaque interaction tant que ce n'est
-    // pas fait — `unlockArenaSounds` est idempotent (early return après
-    // succès). Plus de `once: true` : si un premier clic se passe avant
-    // que les Audio ne soient prêts, le suivant prendra le relais.
     const onUnlock = () => unlockArenaSounds();
     window.addEventListener('pointerdown', onUnlock);
     window.addEventListener('keydown', onUnlock);
@@ -36,7 +37,7 @@ export default function ArenaSoundController() {
 
   useEffect(() => {
     if (!eventStarted) {
-      playedForEndTimeRef.current = null;
+      playedEndForRef.current = null;
     }
   }, [eventStarted]);
 
@@ -46,15 +47,28 @@ export default function ArenaSoundController() {
     const tick = () => {
       const remaining = eventEndTime - Date.now();
       if (remaining > getCountdownEndLeadMs()) return;
-      if (playedForEndTimeRef.current === eventEndTime) return;
-      playedForEndTimeRef.current = eventEndTime;
-      playCountdownEndSound(eventEndTime);
+      if (playedEndForRef.current === eventEndTime) return;
+
+      const started = playCountdownEndSound(eventEndTime);
+      if (started) {
+        playedEndForRef.current = eventEndTime;
+      }
     };
 
     tick();
     const id = window.setInterval(tick, 400);
     return () => window.clearInterval(id);
   }, [eventStarted, eventEndTime]);
+
+  useEffect(() => {
+    if (!spotlightTrade) {
+      lastSpotlightSoundIdRef.current = null;
+      return;
+    }
+    if (lastSpotlightSoundIdRef.current === spotlightTrade.id) return;
+    lastSpotlightSoundIdRef.current = spotlightTrade.id;
+    playSpotlightTradeSound(spotlightTrade);
+  }, [spotlightTrade]);
 
   return null;
 }

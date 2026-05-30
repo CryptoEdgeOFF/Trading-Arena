@@ -11,28 +11,54 @@ export const ARENA_SOUND_URLS = {
 } as const;
 
 const SPOTLIGHT_COOLDOWN_MS = 5000;
-/** Durée mesurée de Countdown END.mp3 (~73,84 s) — fallback si metadata pas encore chargée. */
 const COUNTDOWN_END_DURATION_FALLBACK_MS = 73_837;
-
-const audioBySrc = new Map<string, HTMLAudioElement>();
-let countdownEndDurationMs: number | null = null;
-let lastSpotlightAt = 0;
-let spotlightActive = false;
-/** eventEndTime du round pour lequel Countdown END a déjà été joué. */
-let countdownEndPlayedFor: number | null = null;
-/** Garantit qu'on joue Winner.wav une seule fois par round. */
-let winnerSoundLaunched = false;
-let unlocked = false;
-
+const MAX_PLAYED_KEYS = 500;
 const COUNTDOWN_END_STORAGE_PREFIX = 'btf-countdown-end:';
 
-function getAudio(src: string): HTMLAudioElement | null {
+/** Sons longs : un seul élément, pas de superposition. */
+const longFormBySrc = new Map<string, HTMLAudioElement>();
+/** FX courts : nouvelle instance à chaque lecture (évite les coupures / doubles reset). */
+let countdownEndDurationMs: number | null = null;
+
+let unlockSucceeded = false;
+let unlockInFlight = false;
+
+let lastSpotlightAt = 0;
+let spotlightActive = false;
+const shownSpotlightIds = new Set<string>();
+
+let countdownEndPlayedFor: number | null = null;
+let winnerSoundLaunched = false;
+
+/** File FX séquentielle — aucun son court perdu, pas de chevauchement du même key. */
+type FxJob = { src: string; key: string; volume: number };
+const fxQueue: FxJob[] = [];
+const fxQueuedOrPlayedKeys = new Set<string>();
+let fxDrainRunning = false;
+
+function trimPlayedKeys(set: Set<string>): void {
+  if (set.size <= MAX_PLAYED_KEYS) return;
+  const drop = set.size - MAX_PLAYED_KEYS;
+  const iter = set.values();
+  for (let i = 0; i < drop; i += 1) {
+    const next = iter.next();
+    if (next.done) break;
+    set.delete(next.value);
+  }
+}
+
+function rememberKey(set: Set<string>, key: string): void {
+  set.add(key);
+  trimPlayedKeys(set);
+}
+
+function getLongFormAudio(src: string): HTMLAudioElement | null {
   if (typeof window === 'undefined') return null;
-  let audio = audioBySrc.get(src);
+  let audio = longFormBySrc.get(src);
   if (!audio) {
     audio = new Audio(src);
     audio.preload = 'auto';
-    audioBySrc.set(src, audio);
+    longFormBySrc.set(src, audio);
     if (src === ARENA_SOUND_URLS.countdownEnd) {
       const captureDuration = () => {
         if (Number.isFinite(audio!.duration) && audio!.duration > 0) {
@@ -46,145 +72,205 @@ function getAudio(src: string): HTMLAudioElement | null {
   return audio;
 }
 
-/**
- * Délai avant la fin du round auquel Countdown END doit démarrer pour
- * terminer pile sur le 0 du timer (= durée exacte du fichier audio).
- */
+function createFxAudio(src: string): HTMLAudioElement | null {
+  if (typeof window === 'undefined') return null;
+  const audio = new Audio(src);
+  audio.preload = 'auto';
+  return audio;
+}
+
+async function playAudioElement(audio: HTMLAudioElement, volume: number): Promise<boolean> {
+  try {
+    audio.volume = volume;
+    audio.currentTime = 0;
+    await audio.play();
+    unlockSucceeded = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function drainFxQueue(): Promise<void> {
+  if (fxDrainRunning) return;
+  fxDrainRunning = true;
+  try {
+    while (fxQueue.length > 0) {
+      const job = fxQueue.shift();
+      if (!job) continue;
+      if (fxQueuedOrPlayedKeys.has(job.key)) continue;
+
+      const audio = createFxAudio(job.src);
+      if (!audio) continue;
+
+      const played = await new Promise<boolean>((resolve) => {
+        const finish = (ok: boolean) => {
+          audio.removeEventListener('ended', onEnded);
+          audio.removeEventListener('error', onError);
+          resolve(ok);
+        };
+        const onEnded = () => finish(true);
+        const onError = () => finish(false);
+
+        audio.addEventListener('ended', onEnded, { once: true });
+        audio.addEventListener('error', onError, { once: true });
+
+        void playAudioElement(audio, job.volume).then((ok) => {
+          if (!ok) finish(false);
+        });
+      });
+
+      if (played) rememberKey(fxQueuedOrPlayedKeys, job.key);
+    }
+  } finally {
+    fxDrainRunning = false;
+  }
+}
+
+function enqueueFx(src: string, key: string, volume = 0.88): void {
+  if (fxQueuedOrPlayedKeys.has(key)) return;
+  if (fxQueue.some((job) => job.key === key)) return;
+  fxQueue.push({ src, key, volume });
+  void drainFxQueue();
+}
+
 export function getCountdownEndLeadMs(): number {
-  const audio = getAudio(ARENA_SOUND_URLS.countdownEnd);
+  const audio = getLongFormAudio(ARENA_SOUND_URLS.countdownEnd);
   if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
     return Math.ceil(audio.duration * 1000);
   }
   return countdownEndDurationMs ?? COUNTDOWN_END_DURATION_FALLBACK_MS;
 }
 
-async function playSrc(src: string, volume = 0.92): Promise<void> {
-  const audio = getAudio(src);
-  if (!audio) return;
-  try {
-    audio.volume = volume;
-    audio.currentTime = 0;
-    await audio.play();
-    unlocked = true;
-  } catch {
-    // Autoplay bloqué tant qu'il n'y a pas eu d'interaction utilisateur.
-  }
-}
-
-/** Précharge les fichiers (utile après le premier clic sur la page). */
 export function preloadArenaSounds(): void {
   for (const src of Object.values(ARENA_SOUND_URLS)) {
-    getAudio(src);
+    getLongFormAudio(src);
+    const probe = createFxAudio(src);
+    if (probe) probe.load();
   }
 }
 
 /**
- * Déverrouille l'audio après un geste utilisateur.
- *
- * Les navigateurs bloquent `audio.play()` tant qu'aucune interaction
- * n'a eu lieu sur la page. Pour que le « Countdown Start » puisse
- * partir quand l'admin clique « Démarrer » depuis un AUTRE onglet,
- * on doit avoir déjà appelé `.play()` au moins une fois sur chaque
- * élément Audio pendant un user gesture sur la page dashboard.
- *
- * On lance donc un play+pause silencieux sur chaque son à la première
- * interaction utilisateur (clic, touche, focus). Ça « débloque » le
- * pipeline pour les futurs `.play()` non liés à un geste.
+ * Déverrouille l'autoplay après un geste utilisateur.
+ * Reste ré-essayable tant qu'aucun play() n'a réussi.
  */
 export function unlockArenaSounds(): void {
-  if (unlocked) return;
-  unlocked = true;
-  for (const src of Object.values(ARENA_SOUND_URLS)) {
-    const audio = getAudio(src);
-    if (!audio) continue;
+  if (unlockSucceeded || unlockInFlight) return;
+  unlockInFlight = true;
+
+  const attempts = Object.values(ARENA_SOUND_URLS).map(async (src) => {
+    const audio = createFxAudio(src);
+    if (!audio) return false;
     const wasMuted = audio.muted;
     audio.muted = true;
     audio.volume = 0;
-    audio
-      .play()
-      .then(() => {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.muted = wasMuted;
-        audio.volume = 0.92;
-      })
-      .catch(() => {
-        audio.muted = wasMuted;
-        audio.volume = 0.92;
-      });
-  }
+    try {
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+      unlockSucceeded = true;
+      return true;
+    } catch {
+      return false;
+    } finally {
+      audio.muted = wasMuted;
+      audio.volume = 0.92;
+    }
+  });
+
+  void Promise.all(attempts).finally(() => {
+    unlockInFlight = false;
+  });
 }
 
 export function resetArenaRoundSounds(): void {
   countdownEndPlayedFor = null;
   winnerSoundLaunched = false;
+  shownSpotlightIds.clear();
+  fxQueuedOrPlayedKeys.clear();
+  fxQueue.length = 0;
 }
 
 export function resetSpotlightNotifications(): void {
   lastSpotlightAt = 0;
   spotlightActive = false;
+  shownSpotlightIds.clear();
 }
 
-/** Appelé quand l'overlay spotlight se ferme. */
 export function releaseSpotlightSlot(): void {
   spotlightActive = false;
 }
 
-/** Au lancement du countdown d'ouverture (bouton « Commencer l'événement »). */
-export function playCountdownStartSound(): void {
-  void playSrc(ARENA_SOUND_URLS.countdownStart);
+/** Une seule lecture par eventStartTime (anti Strict Mode / double patch). */
+export function playCountdownStartSound(eventStartTime: number | null | undefined): void {
+  if (eventStartTime == null || !Number.isFinite(eventStartTime)) return;
+  const key = `countdown-start:${eventStartTime}`;
+  if (fxQueuedOrPlayedKeys.has(key)) return;
+  enqueueFx(ARENA_SOUND_URLS.countdownStart, key, 0.92);
 }
 
-/**
- * Une seule fois par round (clé = eventEndTime).
- * sessionStorage évite les doubles lectures au refresh ou multi-onglets.
- */
-function launchWinnerSound(): void {
-  if (winnerSoundLaunched) return;
+function launchWinnerSound(eventEndTime: number): void {
+  const key = `winner:${eventEndTime}`;
+  if (winnerSoundLaunched || fxQueuedOrPlayedKeys.has(key)) return;
   winnerSoundLaunched = true;
-  void playSrc(ARENA_SOUND_URLS.winner, 0.95);
+  enqueueFx(ARENA_SOUND_URLS.winner, key, 0.95);
 }
 
-export function playCountdownEndSound(eventEndTime: number): void {
-  if (!Number.isFinite(eventEndTime) || eventEndTime <= 0) return;
-  if (countdownEndPlayedFor === eventEndTime) return;
+export function playCountdownEndSound(eventEndTime: number): boolean {
+  if (!Number.isFinite(eventEndTime) || eventEndTime <= 0) return false;
+  if (countdownEndPlayedFor === eventEndTime) return false;
 
   const storageKey = `${COUNTDOWN_END_STORAGE_PREFIX}${eventEndTime}`;
   try {
     if (sessionStorage.getItem(storageKey)) {
       countdownEndPlayedFor = eventEndTime;
-      return;
+      return false;
     }
-    sessionStorage.setItem(storageKey, '1');
   } catch {
-    // Mode privé / storage indisponible — on garde le garde-fou mémoire.
+    // storage indisponible
   }
 
-  countdownEndPlayedFor = eventEndTime;
+  const audio = getLongFormAudio(ARENA_SOUND_URLS.countdownEnd);
+  if (!audio) return false;
 
-  const audio = getAudio(ARENA_SOUND_URLS.countdownEnd);
-  if (!audio) return;
-  // Déjà en lecture → ne pas relancer par-dessus.
-  if (!audio.paused && audio.currentTime > 0.3) return;
+  if (!audio.paused && audio.currentTime > 0.3) {
+    countdownEndPlayedFor = eventEndTime;
+    try {
+      sessionStorage.setItem(storageKey, '1');
+    } catch {
+      // ignore
+    }
+    return false;
+  }
 
-  // Chaîne directement Winner.wav sur l'événement `ended` du Countdown END :
-  // Winner doit partir EXACTEMENT à la fin de l'avant-dernière musique,
-  // pas à l'apparition de l'overlay champion.
-  audio.addEventListener('ended', launchWinnerSound, { once: true });
+  const onEnded = () => {
+    audio.removeEventListener('ended', onEnded);
+    launchWinnerSound(eventEndTime);
+  };
+  audio.addEventListener('ended', onEnded, { once: true });
 
-  audio.volume = 0.92;
-  audio.currentTime = 0;
-  void audio.play().catch(() => {
-    // Autoplay bloqué tant qu'il n'y a pas eu d'interaction utilisateur.
+  void playAudioElement(audio, 0.92).then((ok) => {
+    if (!ok) {
+      audio.removeEventListener('ended', onEnded);
+      return;
+    }
+    countdownEndPlayedFor = eventEndTime;
+    try {
+      sessionStorage.setItem(storageKey, '1');
+    } catch {
+      // ignore
+    }
   });
+
+  return true;
 }
 
-/**
- * Fallback uniquement (stop manuel, refresh…) — le cas normal est le
- * chaînage `ended` → Winner depuis playCountdownEndSound.
- */
-export function playWinnerSound(): void {
-  launchWinnerSound();
+export function playWinnerSound(eventEndTime?: number | null): void {
+  if (eventEndTime != null && Number.isFinite(eventEndTime)) {
+    launchWinnerSound(eventEndTime);
+    return;
+  }
+  enqueueFx(ARENA_SOUND_URLS.winner, `winner:fallback:${Date.now()}`, 0.95);
 }
 
 function spotlightSoundSrc(trade: SpotlightTrade): string | null {
@@ -192,26 +278,29 @@ function spotlightSoundSrc(trade: SpotlightTrade): string | null {
   if (trade.action === 'close') {
     if (trade.reason === 'stop-loss') return ARENA_SOUND_URLS.stopLoss;
     if (trade.reason === 'take-profit') return ARENA_SOUND_URLS.takeProfit;
-    // Fermeture manuelle : TP si gain, SL si perte.
     return trade.pnl >= 0 ? ARENA_SOUND_URLS.takeProfit : ARENA_SOUND_URLS.stopLoss;
   }
   return null;
 }
 
 /**
- * Affiche + son trade si le cooldown de 5 s est passé et qu'aucun spotlight
- * n'est déjà à l'écran. Sinon ignore — pas de file d'attente.
+ * Admission UI spotlight (sans lecture audio — le son part de ArenaSoundController).
  */
 export function tryAcceptSpotlight(trade: SpotlightTrade): boolean {
+  if (shownSpotlightIds.has(trade.id)) return false;
   if (spotlightActive) return false;
   const now = Date.now();
   if (now - lastSpotlightAt < SPOTLIGHT_COOLDOWN_MS) return false;
 
-  const src = spotlightSoundSrc(trade);
-  if (!src) return false;
-
+  shownSpotlightIds.add(trade.id);
   lastSpotlightAt = now;
   spotlightActive = true;
-  void playSrc(src, 0.88);
   return true;
+}
+
+/** Lecture FX liée à un trade spotlight (dédoublonnée par trade.id). */
+export function playSpotlightTradeSound(trade: SpotlightTrade): void {
+  const src = spotlightSoundSrc(trade);
+  if (!src) return;
+  enqueueFx(src, `spotlight:${trade.id}`, 0.88);
 }

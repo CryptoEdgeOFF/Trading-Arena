@@ -92,7 +92,10 @@ export default function TradeSpotlight() {
       dismissSpotlight();
       releaseSpotlightSlot();
     }, duration);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      releaseSpotlightSlot();
+    };
   }, [current, dismissSpotlight]);
 
   if (!current) {
