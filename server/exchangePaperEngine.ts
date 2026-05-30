@@ -311,6 +311,8 @@ export class PaperTradingEngine {
   /** Timestamp du dernier tick iTick crypto par pair (source primaire). */
   private lastItickCryptoAt = new Map<string, number>();
   private playersRef: Player[] = [];
+  /** Résout l'objet Player courant (Map) à partir d'un id — évite les refs périmées. */
+  private resolvePlayer: ((id: string) => Player | undefined) | null = null;
   private startingBalance = 10_000;
   private marketDataSource: MarketDataSource = 'kraken';
   private onTick: () => void;
@@ -384,6 +386,46 @@ export class PaperTradingEngine {
 
   setStartingBalance(balance: number): void {
     this.startingBalance = balance;
+  }
+
+  /** Branche le PlayerManager pour réaligner playersRef avant SL/TP / ordres. */
+  setPlayerResolver(resolver: (id: string) => Player | undefined): void {
+    this.resolvePlayer = resolver;
+  }
+
+  /**
+   * Réaligne playersRef sur les Player courants (Map). Indispensable après un
+   * refresh Postgres ou une mutation API : sinon le moteur garde d'anciennes
+   * refs sans SL/TP et les déclenchements LIVE ne tournent plus.
+   */
+  refreshPlayerRefs(): void {
+    if (!this.resolvePlayer || this.playersRef.length === 0) return;
+    const next: Player[] = [];
+    const seen = new Set<string>();
+    for (const ref of this.playersRef) {
+      const fresh = this.resolvePlayer(ref.id);
+      if (!fresh || seen.has(fresh.id)) continue;
+      next.push(fresh);
+      seen.add(fresh.id);
+    }
+    this.playersRef = next;
+  }
+
+  /** Ajoute ou remplace les joueurs suivis (upsert par id). */
+  syncPlayerRefs(players: Player[]): void {
+    for (const player of players) {
+      const idx = this.playersRef.findIndex((entry) => entry.id === player.id);
+      if (idx >= 0) {
+        this.playersRef[idx] = player;
+      } else {
+        this.playersRef.push(player);
+      }
+    }
+  }
+
+  private getEnginePlayers(): Player[] {
+    this.refreshPlayerRefs();
+    return this.playersRef;
   }
 
   getStartingBalance(): number {
@@ -464,10 +506,11 @@ export class PaperTradingEngine {
 
     if (changed.length === 0) return changed;
 
-    this.processOpenOrders(this.playersRef);
-    this.processRiskTriggers(this.playersRef);
+    const enginePlayers = this.getEnginePlayers();
+    this.processOpenOrders(enginePlayers);
+    this.processRiskTriggers(enginePlayers);
 
-    for (const player of this.playersRef) {
+    for (const player of enginePlayers) {
       this.updatePlayerEquity(player);
       player.connected = true;
       player.lastUpdate = now;
@@ -511,18 +554,16 @@ export class PaperTradingEngine {
   }
 
   trackPlayers(players: Player[]): void {
-    const known = new Set(this.playersRef.map((player) => player.id));
-    for (const player of players) {
-      if (!known.has(player.id)) {
-        this.playersRef.push(player);
-        known.add(player.id);
-      }
-    }
+    this.syncPlayerRefs(players);
   }
 
   async start(players: Player[], options: { reset?: boolean } = {}): Promise<void> {
-    this.stopSession();
-    this.playersRef = players;
+    // Ne pas stopSession() ici : stopRealtimeLoops() l'a déjà fait au boot
+    // d'événement. On (re)pose la session LIVE sans écraser d'éventuels joueurs
+    // compete ajoutés entre-temps via trackPlayers.
+    const liveIds = new Set(players.map((player) => player.id));
+    const kept = this.playersRef.filter((player) => !liveIds.has(player.id));
+    this.playersRef = [...kept, ...players];
     if (options.reset !== false) {
       this.resetPlayers(players);
     }
@@ -1087,10 +1128,11 @@ export class PaperTradingEngine {
       } satisfies MarketTicker];
     }));
 
-    this.processOpenOrders(players);
-    this.processRiskTriggers(players);
+    const enginePlayers = this.getEnginePlayers();
+    this.processOpenOrders(enginePlayers);
+    this.processRiskTriggers(enginePlayers);
 
-    for (const player of players) {
+    for (const player of enginePlayers) {
       this.updatePlayerEquity(player);
       player.connected = true;
       player.lastUpdate = Date.now();
@@ -1385,10 +1427,11 @@ export class PaperTradingEngine {
 
     if (pairsTakenOver.length === 0) return;
 
-    if (this.playersRef.length > 0) {
-      this.processOpenOrders(this.playersRef);
-      this.processRiskTriggers(this.playersRef);
-      for (const player of this.playersRef) {
+    const enginePlayers = this.getEnginePlayers();
+    if (enginePlayers.length > 0) {
+      this.processOpenOrders(enginePlayers);
+      this.processRiskTriggers(enginePlayers);
+      for (const player of enginePlayers) {
         this.updatePlayerEquity(player);
         player.connected = true;
         player.lastUpdate = now;
@@ -1447,10 +1490,10 @@ export class PaperTradingEngine {
     // requête historique reflète immédiatement le dernier tick.
     engineCandlesCache.updateLastCandleFromTick(pair, markPrice, now);
 
-    this.processOpenOrders(this.playersRef);
-    this.processRiskTriggers(this.playersRef);
+    this.processOpenOrders(this.getEnginePlayers());
+    this.processRiskTriggers(this.getEnginePlayers());
 
-    for (const player of this.playersRef) {
+    for (const player of this.getEnginePlayers()) {
       this.updatePlayerEquity(player);
       player.connected = true;
       player.lastUpdate = now;

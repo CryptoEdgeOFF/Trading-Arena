@@ -207,6 +207,7 @@ export class PlayerManager {
         this.marketTickBroadcaster?.(pairs);
       },
     );
+    this.paperEngine.setPlayerResolver((id) => this.players.get(id));
     this.paperEngine.setStartingBalance(this.paperStartingBalance);
     this.archiveStore.setPool(this.pool);
     this.archiveStore.onChange(() => this.broadcastState(true));
@@ -375,6 +376,7 @@ export class PlayerManager {
         }
       }
     }
+    this.paperEngine.refreshPlayerRefs();
   }
 
   private currentRoster(): StoredPlayer[] {
@@ -918,6 +920,7 @@ export class PlayerManager {
     this.saveRoster();
 
     await this.ensureCompetitionPaperRuntime(player);
+    this.paperEngine.syncPlayerRefs([player]);
 
     this.broadcastState();
     return player;
@@ -1058,6 +1061,7 @@ export class PlayerManager {
 
     if (this.platformMode === 'paper') {
       await this.paperEngine.start(active);
+      this.paperEngine.syncPlayerRefs(active);
     } else {
       await this.initializeBalances();
       this.startPolling();
@@ -1223,6 +1227,7 @@ export class PlayerManager {
       this.firstTradeAwarded = true;
       this.awardBadge(player, 'first-blood');
     }
+    this.paperEngine.syncPlayerRefs([player]);
     this.updateRankings();
     this.checkBadges();
     this.saveRoster();
@@ -1254,6 +1259,7 @@ export class PlayerManager {
 
     const result = await this.paperEngine.closePosition(player, pair, partialSize);
     this.pendingSpotlights.push(result.spotlight);
+    this.paperEngine.syncPlayerRefs([player]);
     this.updateRankings();
     this.checkBadges();
     this.saveRoster();
@@ -1360,6 +1366,7 @@ export class PlayerManager {
     }
 
     this.paperEngine.updatePositionRisk(player, pair, stopLoss, takeProfit, options);
+    this.paperEngine.syncPlayerRefs([player]);
     this.saveRoster();
     this.broadcastState();
   }
@@ -1380,6 +1387,7 @@ export class PlayerManager {
     }
 
     this.paperEngine.updateOrderRisk(player, orderId, stopLoss, takeProfit);
+    this.paperEngine.syncPlayerRefs([player]);
     this.saveRoster();
     this.broadcastState();
   }
@@ -1396,6 +1404,7 @@ export class PlayerManager {
     }
     await this.ensureCompetitionPaperRuntime(player);
     this.paperEngine.updateOrderRisk(player, orderId, stopLoss, takeProfit);
+    this.paperEngine.syncPlayerRefs([player]);
     await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
@@ -1443,6 +1452,7 @@ export class PlayerManager {
     }
     await this.ensureCompetitionPaperRuntime(player);
     this.paperEngine.updatePositionRisk(player, pair, stopLoss, takeProfit, options);
+    this.paperEngine.syncPlayerRefs([player]);
     await this.persistTradingMutation(player.id);
     this.broadcastState();
   }
