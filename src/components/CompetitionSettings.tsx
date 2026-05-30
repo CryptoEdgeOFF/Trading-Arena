@@ -6,6 +6,27 @@ import { AvatarImage } from './OptimizedImage';
 const SESSION_KEY = 'btf-comp-session';
 const SESSION_USER_KEY = 'btf-comp-user';
 
+function avatarVersion(avatarUrl?: string | null): number {
+  if (!avatarUrl) return 0;
+  try {
+    const v = new URL(avatarUrl, 'http://local').searchParams.get('v');
+    const parsed = v ? Number.parseInt(v, 10) : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function mergeSessionUser(current: SessionUser | null, incoming: SessionUser): SessionUser {
+  if (!current) return incoming;
+  const currentV = avatarVersion(current.avatarUrl);
+  const incomingV = avatarVersion(incoming.avatarUrl);
+  if (currentV > incomingV) {
+    return { ...incoming, avatarUrl: current.avatarUrl };
+  }
+  return incoming;
+}
+
 function readCachedUser(): SessionUser | null {
   try {
     const raw = window.localStorage.getItem(SESSION_USER_KEY);
@@ -64,6 +85,8 @@ export default function CompetitionSettings() {
     }
     setToken(stored);
 
+    const controller = new AbortController();
+
     // Hydrate the form from the cached user immediately so the page renders
     // populated even before the backend roundtrip lands.
     const cached = readCachedUser();
@@ -79,13 +102,17 @@ export default function CompetitionSettings() {
       });
     }
 
-    fetch('/api/competition/me', { headers: { Authorization: `Bearer ${stored}` } })
+    fetch('/api/competition/me', {
+      headers: { Authorization: `Bearer ${stored}` },
+      signal: controller.signal,
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error('Session invalide');
         return response.json();
       })
       .then((data) => {
-        const nextUser = data.user as SessionUser;
+        if (controller.signal.aborted) return;
+        const nextUser = mergeSessionUser(readCachedUser(), data.user as SessionUser);
         setUser(nextUser);
         writeCachedUser(nextUser);
         setName(nextUser.name || '');
@@ -97,11 +124,15 @@ export default function CompetitionSettings() {
           website: nextUser.socials?.website || '',
         });
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        if (err instanceof DOMException && err.name === 'AbortError') return;
         window.localStorage.removeItem(SESSION_KEY);
         writeCachedUser(null);
         navigate('/compete');
       });
+
+    return () => controller.abort();
   }, [navigate]);
 
   const phoneStatus = useMemo(() => {
@@ -188,7 +219,13 @@ export default function CompetitionSettings() {
               </div>
               <div className="flex items-center gap-4 rounded-2xl border border-[#232329] bg-black/25 p-4">
                 {user?.avatarUrl ? (
-                  <AvatarImage src={user.avatarUrl} alt="" className="h-16 w-16 rounded-2xl object-cover" sizePx={64} />
+                  <AvatarImage
+                    key={user.avatarUrl}
+                    src={user.avatarUrl}
+                    alt=""
+                    className="h-16 w-16 rounded-2xl object-cover"
+                    sizePx={64}
+                  />
                 ) : (
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-xl font-bold text-white">
                     {initials(user?.name || name)}

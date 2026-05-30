@@ -1014,6 +1014,43 @@ export class CompetitionManager {
    * dans Postgres (table comp_user_sessions). Cela evite les pertes
    * d'updates dues aux ecritures concurrentes sur le blob JSON.
    */
+  private parseAvatarVersion(avatarUrl?: string | null): number {
+    if (!avatarUrl) return 0;
+    try {
+      const base = 'http://local';
+      const v = new URL(avatarUrl, base).searchParams.get('v');
+      const parsed = v ? Number.parseInt(v, 10) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Aligne `avatarUrl` sur `comp_user_avatars.updated_at` pour éviter
+   * les URLs sans `?v=` (uploads antérieurs) et la mémoire stale serverless.
+   */
+  private async hydrateUserAvatar(user: CompetitionUser): Promise<CompetitionUser> {
+    if (!this.pool) return user;
+    const result = await this.pool.query(
+      'select updated_at from comp_user_avatars where user_id = $1 limit 1',
+      [user.id],
+    );
+    const row = result.rows[0];
+    if (!row) return user;
+
+    const updatedAt = new Date(row.updated_at as string | Date).getTime();
+    if (!Number.isFinite(updatedAt) || updatedAt <= 0) return user;
+
+    const currentVersion = this.parseAvatarVersion(user.avatarUrl);
+    if (currentVersion >= updatedAt) return user;
+
+    const avatarUrl = `/api/avatars/${user.id}?v=${updatedAt}`;
+    const nextUser = { ...user, avatarUrl };
+    this.users.set(user.id, nextUser);
+    return nextUser;
+  }
+
   async getUserFromToken(token: string): Promise<CompetitionUser | null> {
     if (!token) return null;
     if (this.pool) {
@@ -1035,7 +1072,8 @@ export class CompetitionManager {
         await this.refresh();
         user = this.users.get(userId) || null;
       }
-      return user;
+      if (!user) return null;
+      return this.hydrateUserAvatar(user);
     }
     const userId = this.sessions.get(token);
     if (!userId) return null;

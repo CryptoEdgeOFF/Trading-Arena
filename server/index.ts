@@ -1620,6 +1620,7 @@ app.post('/api/competition/auth/logout', async (req, res) => {
 });
 
 app.get('/api/competition/me', async (req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
   const user = await getCompetitionUser(req);
   if (!user) {
     res.status(401).json({ error: 'Session invalide' });
@@ -1785,6 +1786,7 @@ app.get('/api/competition/mine', async (req, res) => {
  * on Netlify (each cold start is ~1-3s).
  */
 app.get('/api/competition/bootstrap', async (req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
   const [user] = await Promise.all([
     getCompetitionUser(req),
     maybeFinalizeEndedCompetitions(),

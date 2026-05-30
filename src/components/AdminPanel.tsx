@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import PlayerAvatar from './PlayerAvatar';
 import EventArchivesAdmin from './EventArchivesAdmin';
+import ItickFeedPanel, { type ItickFeedStatus, type ItickInstrument } from './ItickFeedPanel';
 import type { EventMode, MarketDataSource, PlatformMode, TeamInfo } from '../stores/useGameStore';
 import { TEAM_MODE_LABEL, TEAM_MODE_TOTAL_PLAYERS, TEAM_PLAYERS_PER_SIDE } from '../utils/teamMode';
 
@@ -72,18 +73,14 @@ const PLATFORM_LABELS: Record<PlatformMode, { label: string; desc: string; accen
   },
 };
 
-const DATA_SOURCE_LABELS: Record<MarketDataSource, { label: string; desc: string; accent: string }> = {
-  kraken: {
-    label: 'Kraken',
-    desc: 'Flux prix + bougies depuis Kraken',
-    accent: 'border-indigo-500 bg-indigo-500/10 text-indigo-300',
-  },
-  binance: {
-    label: 'Binance Futures',
-    desc: 'Flux prix + bougies depuis Binance USDT-M Futures',
-    accent: 'border-yellow-500 bg-yellow-500/10 text-yellow-200',
-  },
-};
+function resolveMarketDataSource(
+  platform: PlatformMode,
+  fallback: MarketDataSource,
+  override?: MarketDataSource,
+): MarketDataSource {
+  if (platform === 'paper') return 'binance';
+  return override || fallback;
+}
 
 function AvatarUpload({ player, onUploaded, adminToken }: { player: RosterPlayer; onUploaded: () => void; adminToken: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -222,6 +219,27 @@ export default function AdminPanel() {
     prizeSecond: string;
     prizeThird: string;
   } | null>(null);
+  const [itickStatus, setItickStatus] = useState<ItickFeedStatus | null>(null);
+  const [itickInstruments, setItickInstruments] = useState<ItickInstrument[]>([]);
+
+  const fetchItickStatus = useCallback(async () => {
+    try {
+      const [statusRes, instrumentsRes] = await Promise.all([
+        fetch('/api/itick/status'),
+        fetch('/api/itick/instruments'),
+      ]);
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        setItickStatus({ configured: Boolean(data.configured), feed: data.feed });
+      }
+      if (instrumentsRes.ok) {
+        const data = await instrumentsRes.json();
+        setItickInstruments(Array.isArray(data.instruments) ? data.instruments : []);
+      }
+    } catch {
+      // feed status is informational only
+    }
+  }, []);
 
   useEffect(() => {
     if (!adminToken) return;
@@ -246,8 +264,15 @@ export default function AdminPanel() {
     fetchRoster();
     fetchStatus();
     fetchConfig();
+    fetchItickStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken]);
+
+  useEffect(() => {
+    if (!adminToken) return;
+    const timer = window.setInterval(fetchItickStatus, 30_000);
+    return () => window.clearInterval(timer);
+  }, [adminToken, fetchItickStatus]);
 
   async function loginAdmin(event?: React.FormEvent) {
     event?.preventDefault();
@@ -331,7 +356,7 @@ export default function AdminPanel() {
         mode: '4v4',
         platformMode,
         paperStartingBalance,
-        marketDataSource,
+        marketDataSource: resolveMarketDataSource(platformMode, marketDataSource),
         eventDurationMinutes,
         teams: [nextA, nextB],
       }),
@@ -361,11 +386,12 @@ export default function AdminPanel() {
   }
 
   async function saveConfig(next?: Partial<{ mode: EventMode; platformMode: PlatformMode; paperStartingBalance: number; marketDataSource: MarketDataSource; eventDurationMinutes: number }>) {
+    const nextPlatform = next?.platformMode || platformMode;
     const body: any = {
       mode: next?.mode || mode,
-      platformMode: next?.platformMode || platformMode,
+      platformMode: nextPlatform,
       paperStartingBalance: next?.paperStartingBalance ?? paperStartingBalance,
-      marketDataSource: next?.marketDataSource || marketDataSource,
+      marketDataSource: resolveMarketDataSource(nextPlatform, marketDataSource, next?.marketDataSource),
       eventDurationMinutes: next?.eventDurationMinutes ?? eventDurationMinutes,
     };
     if ((next?.mode || mode) === '4v4') {
@@ -440,12 +466,6 @@ export default function AdminPanel() {
     setPlatformMode(nextPlatform);
     setError('');
     await saveConfig({ platformMode: nextPlatform });
-  }
-
-  async function handleDataSourceChange(nextSource: MarketDataSource) {
-    setMarketDataSource(nextSource);
-    setError('');
-    await saveConfig({ marketDataSource: nextSource });
   }
 
   async function handlePaperStartingBalanceBlur() {
@@ -803,27 +823,16 @@ export default function AdminPanel() {
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
-            <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Source du datafeed</p>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-              {(['binance', 'kraken'] as MarketDataSource[]).map((option) => {
-                const isActive = marketDataSource === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => handleDataSourceChange(option)}
-                    disabled={eventStarted}
-                    className={`cursor-pointer rounded-2xl border p-4 text-left transition-all ${isActive ? DATA_SOURCE_LABELS[option].accent : 'border-slate-700 bg-slate-800/70 hover:border-slate-600'} ${eventStarted ? 'cursor-not-allowed opacity-60' : ''}`}
-                  >
-                    <div className="mb-1 font-rajdhani text-2xl font-bold text-white">{DATA_SOURCE_LABELS[option].label}</div>
-                    <p className="text-sm text-slate-400">{DATA_SOURCE_LABELS[option].desc}</p>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-3 text-xs text-slate-500">
-              Pour une room paper crypto, Binance Futures est recommandé pour une meilleure liquidité.
-            </p>
+            <ItickFeedPanel status={itickStatus} instruments={itickInstruments} context="live" />
+            {platformMode === 'paper' ? (
+              <p className="mt-3 text-xs text-slate-500">
+                Mode paper live : le moteur est verrouillé sur Binance côté serveur pour exposer toutes les paires crypto compatibles iTick.
+              </p>
+            ) : (
+              <p className="mt-3 text-xs text-slate-500">
+                Mode Kraken : les identifiants API servent uniquement à lire les comptes réels. Les prix du dashboard passent par iTick.
+              </p>
+            )}
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">

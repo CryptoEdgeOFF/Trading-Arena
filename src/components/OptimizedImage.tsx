@@ -21,6 +21,7 @@ export default function OptimizedImage({
 
   return (
     <img
+      key={resolved}
       src={resolved}
       alt={alt}
       className={className}

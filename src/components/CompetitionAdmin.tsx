@@ -1,9 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { EventMode, MarketDataSource } from '../stores/useGameStore';
+import type { EventMode } from '../stores/useGameStore';
 import { compressImage } from '../utils/imageUpload';
+import ItickFeedPanel from './ItickFeedPanel';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
+
+type ItickFeedStatus = {
+  configured: boolean;
+  feed?: {
+    connected?: boolean;
+    authenticated?: boolean;
+    symbols?: string[];
+    lastError?: string | null;
+    cooldownRemainingMs?: number;
+    latest?: Array<{ symbol: string; price: number; ageMs: number }>;
+    clusters?: Array<{
+      asset: string;
+      connected: boolean;
+      authenticated: boolean;
+      symbols: string[];
+    }>;
+  };
+};
+
+type ItickInstrument = {
+  pair: string;
+  asset: string;
+  category?: string;
+  label?: string;
+};
 
 interface AdminCompetitionEntry {
   userId: string;
@@ -72,19 +98,6 @@ const EMPTY_DRAFT: CompetitionDraft = {
   endAt: '',
   isPublic: true,
   prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '', description: '' },
-};
-
-const DATA_SOURCE_LABELS: Record<MarketDataSource, { label: string; desc: string; accent: string }> = {
-  kraken: {
-    label: 'Kraken',
-    desc: 'Source historique existante. Utile en fallback crypto.',
-    accent: 'border-indigo-500 bg-indigo-500/10 text-indigo-200',
-  },
-  binance: {
-    label: 'Binance Futures',
-    desc: 'USDT-M Futures, meilleure liquidité pour les cryptos.',
-    accent: 'border-amber-400 bg-amber-400/10 text-amber-200',
-  },
 };
 
 function toLocalInput(value: number): string {
@@ -173,10 +186,11 @@ export default function CompetitionAdmin() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<CompetitionDraft | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [arenaMarketDataSource, setArenaMarketDataSource] = useState<MarketDataSource>('binance');
   const [arenaStartingBalance, setArenaStartingBalance] = useState(10000);
   const [arenaEventMode, setArenaEventMode] = useState<EventMode>('1v1');
   const [savingArenaSettings, setSavingArenaSettings] = useState(false);
+  const [itickStatus, setItickStatus] = useState<ItickFeedStatus | null>(null);
+  const [itickInstruments, setItickInstruments] = useState<ItickInstrument[]>([]);
 
   const adminFetch = useCallback(
     async (url: string, init: RequestInit = {}) => {
@@ -212,15 +226,31 @@ export default function CompetitionAdmin() {
       const res = await adminFetch('/api/event/config');
       if (!res.ok) return;
       const data = await res.json();
-      if (data.marketDataSource) {
-        setArenaMarketDataSource(data.marketDataSource === 'hyperliquid' ? 'binance' : data.marketDataSource);
-      }
       if (data.paperStartingBalance) setArenaStartingBalance(data.paperStartingBalance);
       if (data.mode) setArenaEventMode(data.mode);
     } catch {
       // ignore; the competitions list remains usable.
     }
   }, [adminFetch, adminToken]);
+
+  const fetchItickStatus = useCallback(async () => {
+    try {
+      const [statusRes, instrumentsRes] = await Promise.all([
+        fetch('/api/itick/status'),
+        fetch('/api/itick/instruments'),
+      ]);
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        setItickStatus({ configured: Boolean(data.configured), feed: data.feed });
+      }
+      if (instrumentsRes.ok) {
+        const data = await instrumentsRes.json();
+        setItickInstruments(Array.isArray(data.instruments) ? data.instruments : []);
+      }
+    } catch {
+      // feed status is informational only
+    }
+  }, []);
 
   useEffect(() => {
     if (!adminToken) return;
@@ -235,18 +265,24 @@ export default function CompetitionAdmin() {
       } else {
         fetchCompetitions();
         fetchArenaSettings();
+        fetchItickStatus();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [adminToken, fetchArenaSettings, fetchCompetitions]);
+  }, [adminToken, fetchArenaSettings, fetchCompetitions, fetchItickStatus]);
 
-  async function saveArenaSettings(next?: Partial<{ marketDataSource: MarketDataSource; paperStartingBalance: number }>) {
+  useEffect(() => {
+    if (!adminToken) return;
+    const timer = window.setInterval(fetchItickStatus, 30_000);
+    return () => window.clearInterval(timer);
+  }, [adminToken, fetchItickStatus]);
+
+  async function saveArenaSettings(next?: Partial<{ paperStartingBalance: number }>) {
     setSavingArenaSettings(true);
     setError('');
     setInfo('');
-    const nextSource = next?.marketDataSource || arenaMarketDataSource;
     const nextBalance = next?.paperStartingBalance ?? arenaStartingBalance;
     try {
       const res = await adminFetch('/api/event/config', {
@@ -256,12 +292,14 @@ export default function CompetitionAdmin() {
           mode: arenaEventMode,
           platformMode: 'paper',
           paperStartingBalance: nextBalance,
-          marketDataSource: nextSource,
+          // Les arènes online sont alimentées par iTick (crypto + forex +
+          // indices + matières premières). On verrouille binance côté moteur
+          // paper pour exposer toutes les paires crypto compatibles iTick.
+          marketDataSource: 'binance',
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Réglages arène impossibles');
-      setArenaMarketDataSource(nextSource);
       setArenaStartingBalance(nextBalance);
       setInfo('Réglages paper arène sauvegardés');
     } catch (err: any) {
@@ -528,7 +566,7 @@ export default function CompetitionAdmin() {
               <h2 className="font-rajdhani text-xl font-semibold text-white">Réglages paper trading des arènes online</h2>
               <p className="text-xs text-slate-400">
                 Ces paramètres concernent uniquement les joueurs qui rejoignent une arène depuis `/compete`.
-                Le terminal/dashboard réel reste géré séparément via `/admin`.
+                Les prix live passent par iTick. Le terminal LIVE physique reste géré via `/admin`.
               </p>
             </div>
             <button
@@ -542,28 +580,7 @@ export default function CompetitionAdmin() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-[1.4fr_0.8fr]">
-            <div>
-              <p className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">Datafeed crypto</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {(['binance', 'kraken'] as MarketDataSource[]).map((source) => {
-                  const active = arenaMarketDataSource === source;
-                  return (
-                    <button
-                      key={source}
-                      type="button"
-                      onClick={() => saveArenaSettings({ marketDataSource: source })}
-                      disabled={savingArenaSettings}
-                      className={`rounded-xl border px-4 py-3 text-left transition-all ${
-                        active ? DATA_SOURCE_LABELS[source].accent : 'border-slate-700 bg-slate-950/70 text-slate-300 hover:border-slate-500'
-                      } disabled:cursor-not-allowed disabled:opacity-60`}
-                    >
-                      <div className="font-semibold text-white">{DATA_SOURCE_LABELS[source].label}</div>
-                      <div className="mt-1 text-xs text-slate-400">{DATA_SOURCE_LABELS[source].desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <ItickFeedPanel status={itickStatus} instruments={itickInstruments} />
 
             <Field label="Balance initiale par joueur">
               <input
