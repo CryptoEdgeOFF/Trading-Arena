@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
-import { useGameStore, type Player } from '../stores/useGameStore';
+import { useGameStore, type EventMode, type Player, type TeamInfo } from '../stores/useGameStore';
 import { formatPnl, formatPercent, formatUSD } from '../utils/formatters';
 import { playCountdownStartSound, resetArenaRoundSounds } from '../utils/arenaSounds';
+import { EVENT_INTRO_COUNTDOWN_SEC } from '../utils/liveEvent';
+import { buildTeamGroups, type TeamGroup, type TeamResultPlayer } from '../utils/teamResults';
 
 type Phase = 'idle' | 'countdown' | 'fight-start' | 'event-end';
 
-const COUNTDOWN_FROM = 15;
+const COUNTDOWN_FROM = EVENT_INTRO_COUNTDOWN_SEC;
 const FIGHT_START_DURATION = 1800;
 const WINNER_SCREEN_DURATION_MS = 4500;
 const PODIUM_DURATION_MS = 5000;
@@ -53,6 +55,8 @@ function TransitionBrandAbove({ variant = 'countdown' }: { variant?: 'countdown'
 export default function EventTransitions() {
   const eventStarted = useGameStore((s) => s.eventStarted);
   const eventStartTime = useGameStore((s) => s.eventStartTime);
+  const eventMode = useGameStore((s) => s.eventMode);
+  const teams = useGameStore((s) => s.teams);
   const liveStateSynced = useGameStore((s) => s.liveStateSynced);
   const players = useGameStore((s) => s.players);
   const resetClientLiveState = useGameStore((s) => s.resetClientLiveState);
@@ -60,6 +64,8 @@ export default function EventTransitions() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [countdownValue, setCountdownValue] = useState(COUNTDOWN_FROM);
   const [snapshotPlayers, setSnapshotPlayers] = useState<Player[] | null>(null);
+  const [snapshotTeams, setSnapshotTeams] = useState<[TeamInfo, TeamInfo] | null>(null);
+  const [snapshotEventMode, setSnapshotEventMode] = useState<EventMode>('1v1');
   // null = état serveur pas encore reçu. Après le 1er state:init, on
   // synchronise sans animer pour ne pas rejouer le countdown au refresh.
   const previousStartedRef = useRef<boolean | null>(null);
@@ -69,6 +75,8 @@ export default function EventTransitions() {
   // dans le même patch que `eventStarted=false`, donc on ne peut pas se
   // baser sur le state courant au moment de la transition.
   const liveSnapshotRef = useRef<Player[]>([]);
+  const liveTeamsSnapshotRef = useRef<[TeamInfo, TeamInfo] | null>(null);
+  const liveEventModeSnapshotRef = useRef<EventMode>('1v1');
 
   useEffect(() => {
     if (!eventStarted) return;
@@ -78,7 +86,9 @@ export default function EventTransitions() {
     if (hasMeaningfulStats || liveSnapshotRef.current.length === 0) {
       liveSnapshotRef.current = players;
     }
-  }, [eventStarted, players]);
+    if (teams) liveTeamsSnapshotRef.current = teams;
+    liveEventModeSnapshotRef.current = eventMode;
+  }, [eventStarted, players, teams, eventMode]);
 
   useEffect(() => {
     if (!liveStateSynced) return;
@@ -98,6 +108,8 @@ export default function EventTransitions() {
       resetArenaRoundSounds();
       liveSnapshotRef.current = [];
       setSnapshotPlayers(null);
+      setSnapshotTeams(null);
+      setSnapshotEventMode('1v1');
       setPhase('countdown');
       setCountdownValue(COUNTDOWN_FROM);
       if (eventStartTime != null && countdownStartPlayedForRef.current !== eventStartTime) {
@@ -117,6 +129,8 @@ export default function EventTransitions() {
       const snapshot = [...source].sort((a, b) => b.pnl - a.pnl);
       if (snapshot.length > 0) {
         setSnapshotPlayers(snapshot);
+        setSnapshotTeams(liveTeamsSnapshotRef.current);
+        setSnapshotEventMode(liveEventModeSnapshotRef.current);
         setPhase('event-end');
       } else {
         setPhase('idle');
@@ -159,6 +173,8 @@ export default function EventTransitions() {
         <EventEndOverlay
           key="event-end"
           players={snapshotPlayers}
+          teams={snapshotTeams}
+          eventMode={snapshotEventMode}
           onClose={() => setPhase('idle')}
         />
       )}
@@ -317,6 +333,400 @@ function FightStartOverlay() {
 /* ---------------- Winner + Podium ---------------- */
 
 function EventEndOverlay({
+  players,
+  teams,
+  eventMode,
+  onClose,
+}: {
+  players: Player[];
+  teams: [TeamInfo, TeamInfo] | null;
+  eventMode: EventMode;
+  onClose: () => void;
+}) {
+  const teamGroups = useMemo(() => {
+    if (eventMode !== '4v4' || !teams) return null;
+    const groups = buildTeamGroups(teams, players);
+    return groups.some((g) => g.players.length > 0) ? groups : null;
+  }, [eventMode, teams, players]);
+
+  if (teamGroups) {
+    return (
+      <TeamEventEndOverlay groups={teamGroups} onClose={onClose} />
+    );
+  }
+
+  return (
+    <IndividualEventEndOverlay players={players} onClose={onClose} />
+  );
+}
+
+function TeamEventEndOverlay({
+  groups,
+  onClose,
+}: {
+  groups: TeamGroup<Player>[];
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<'winner' | 'roster' | 'stats'>('winner');
+  const [winner, runnerUp] = groups;
+
+  useEffect(() => {
+    if (step !== 'winner') return;
+    const end = Date.now() + 3500;
+    const tick = () => {
+      confetti({
+        particleCount: 5,
+        angle: 60,
+        spread: 70,
+        origin: { x: 0, y: 0.65 },
+        colors: ['#fbbf24', '#f59e0b', '#fde68a', '#fff'],
+      });
+      confetti({
+        particleCount: 5,
+        angle: 120,
+        spread: 70,
+        origin: { x: 1, y: 0.65 },
+        colors: ['#fbbf24', '#f59e0b', '#fde68a', '#fff'],
+      });
+      if (Date.now() < end) requestAnimationFrame(tick);
+    };
+    tick();
+  }, [step]);
+
+  useEffect(() => {
+    if (step === 'winner') {
+      const id = setTimeout(() => setStep('roster'), WINNER_SCREEN_DURATION_MS);
+      return () => clearTimeout(id);
+    }
+    if (step === 'roster') {
+      const id = setTimeout(() => setStep('stats'), PODIUM_DURATION_MS);
+      return () => clearTimeout(id);
+    }
+    return undefined;
+  }, [step]);
+
+  if (!winner) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.4 }}
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/92 backdrop-blur-xl overflow-y-auto py-10"
+    >
+      <div className="pointer-events-none absolute inset-0" style={{
+        background:
+          'radial-gradient(800px 500px at 50% 30%, rgba(245,179,0,0.18), transparent 60%),' +
+          'radial-gradient(700px 400px at 50% 100%, rgba(220,38,38,0.18), transparent 65%)',
+      }} />
+
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-6 right-6 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-black/60 text-zinc-400 transition-colors hover:border-red-500/50 hover:text-white"
+        aria-label="Fermer"
+      >
+        ✕
+      </button>
+
+      <AnimatePresence mode="wait">
+        {step === 'winner' ? (
+          <TeamWinnerScreen key="team-winner" group={winner} />
+        ) : step === 'roster' ? (
+          <TeamRosterScreen key="team-roster" winner={winner} runnerUp={runnerUp} />
+        ) : (
+          <TeamStatsScreen key="team-stats" groups={groups} />
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function TeamWinnerScreen({ group }: { group: TeamGroup<Player> }) {
+  const isPositive = group.totalPnl >= 0;
+  return (
+    <motion.div
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.85, opacity: 0 }}
+      transition={{ type: 'spring', stiffness: 180, damping: 22 }}
+      className="relative max-w-[900px] w-full px-8 text-center"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="micro mb-4 text-lg tracking-[0.42em]"
+        style={{ color: group.team.color, textShadow: `0 0 24px ${group.team.color}aa` }}
+      >
+        ★ ÉQUIPE VICTORIEUSE ★
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+        className="display font-bold uppercase tracking-[0.04em] text-white"
+        style={{
+          fontSize: 'clamp(56px, 7vw, 96px)',
+          textShadow: `0 0 50px ${group.team.color}80`,
+        }}
+      >
+        {group.team.name.trim() || 'Équipe 1'}
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.45 }}
+        className="mt-8 inline-flex flex-col items-center gap-1 rounded-2xl border px-10 py-5 backdrop-blur"
+        style={{
+          borderColor: `${group.team.color}66`,
+          background: `linear-gradient(180deg, ${group.team.color}22, ${group.team.color}08)`,
+        }}
+      >
+        <div className="micro text-zinc-400">P&amp;L cumulé de l&apos;équipe</div>
+        <div
+          className={`display num font-bold tabular-nums leading-none ${
+            isPositive ? 'text-emerald-400' : 'text-red-400'
+          }`}
+          style={{
+            fontSize: 'clamp(48px, 6vw, 76px)',
+            textShadow: isPositive
+              ? '0 0 40px rgba(16,185,129,0.45)'
+              : '0 0 40px rgba(239,68,68,0.45)',
+          }}
+        >
+          {formatPnl(group.totalPnl)}
+        </div>
+        <div className={`num text-base ${group.avgPnlPercent >= 0 ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
+          {formatPercent(group.avgPnlPercent)} moy. · {group.players.length} traders
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function TeamRosterScreen({
+  winner,
+  runnerUp,
+}: {
+  winner: TeamGroup<Player>;
+  runnerUp?: TeamGroup<Player>;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ duration: 0.5 }}
+      className="relative w-full max-w-[1280px] px-10"
+    >
+      <div className="mb-8 text-center">
+        <div className="micro mb-2 text-base tracking-[0.42em] text-red-300/80">
+          BREAKOUT TRADING FIGHT — RÉSULTATS
+        </div>
+        <h2 className="display text-5xl font-bold text-white tracking-[0.04em]">
+          {winner.team.name.trim() || 'Équipe 1'}
+          <span className="text-red-500"> · </span>
+          VAINQUEURS
+        </h2>
+      </div>
+
+      <div className="grid grid-cols-5 gap-3">
+        {winner.players.map((player, idx) => (
+          <TeamMemberCard key={player.id} player={player} color={winner.team.color} index={idx} highlight />
+        ))}
+      </div>
+
+      {runnerUp && runnerUp.players.length > 0 && (
+        <div className="mt-10">
+          <div className="mb-3 flex items-center gap-3">
+            <span className="h-3 w-3 rounded-full" style={{ background: runnerUp.team.color }} />
+            <span className="display text-lg font-bold uppercase tracking-[0.12em] text-zinc-300">
+              {runnerUp.team.name.trim() || 'Équipe 2'}
+            </span>
+            <span className={`num text-base font-bold ${runnerUp.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {formatPnl(runnerUp.totalPnl)}
+            </span>
+            <span className="num text-xs text-zinc-500">{formatPercent(runnerUp.avgPnlPercent)} moy.</span>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            {runnerUp.players.map((player, idx) => (
+              <TeamMemberCard key={player.id} player={player} color={runnerUp.team.color} index={idx} />
+            ))}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function TeamMemberCard({
+  player,
+  color,
+  index,
+  highlight = false,
+}: {
+  player: TeamResultPlayer;
+  color: string;
+  index: number;
+  highlight?: boolean;
+}) {
+  const isPositive = player.pnl >= 0;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.15 + index * 0.08, type: 'spring', stiffness: 200, damping: 22 }}
+      className="relative flex flex-col items-center rounded-2xl border bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-4 text-center backdrop-blur"
+      style={{
+        borderColor: highlight ? `${color}66` : 'rgba(255,255,255,0.08)',
+        boxShadow: highlight ? `0 18px 50px -22px ${color}aa` : 'none',
+      }}
+    >
+      <div
+        className="mb-3 overflow-hidden rounded-2xl border-2"
+        style={{ width: 72, height: 72, borderColor: color }}
+      >
+        {player.avatar ? (
+          <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+        ) : (
+          <div
+            className="flex h-full w-full items-center justify-center display text-3xl font-bold text-white"
+            style={{ background: player.color }}
+          >
+            {player.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+      </div>
+      <div className="display w-full truncate text-base font-bold text-white">{player.name}</div>
+      <div className="micro mt-0.5 text-[9px] text-zinc-500">
+        {player.tradeCount} trade{player.tradeCount > 1 ? 's' : ''}
+      </div>
+      <div
+        className={`num mt-2 text-2xl font-bold tabular-nums leading-none ${
+          isPositive ? 'text-emerald-400' : 'text-red-400'
+        }`}
+      >
+        {formatPnl(player.pnl)}
+      </div>
+      <div className={`num text-xs ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+        {formatPercent(player.pnlPercent)}
+      </div>
+    </motion.div>
+  );
+}
+
+function TeamStatsScreen({ groups }: { groups: TeamGroup<Player>[] }) {
+  const allPlayers = groups.flatMap((g) => g.players);
+  const totalTrades = allPlayers.reduce((sum, p) => sum + p.tradeCount, 0);
+  const totalFees = allPlayers.reduce((sum, p) => sum + (p.feesPaid ?? 0), 0);
+  const winners = allPlayers.filter((p) => p.pnl > 0).length;
+  const totalPnl = allPlayers.reduce((sum, p) => sum + p.pnl, 0);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -16 }}
+      transition={{ duration: 0.45 }}
+      className="relative w-full max-w-[1280px] px-10"
+    >
+      <div className="mb-8 text-center">
+        <div className="micro mb-2 text-base tracking-[0.42em] text-red-300/80">
+          BREAKOUT TRADING FIGHT — STATISTIQUES
+        </div>
+        <h2 className="display text-5xl font-bold text-white tracking-[0.04em]">
+          RÉSULTATS <span className="text-red-500">·</span> PAR ÉQUIPE
+        </h2>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-4">
+        <StatsAggregate label="P&L total" value={formatPnl(totalPnl)} accent={totalPnl >= 0 ? 'pos' : 'neg'} />
+        <StatsAggregate label="Trades exécutés" value={totalTrades.toString()} />
+        <StatsAggregate label="Frais cumulés" value={`$${formatUSD(totalFees)}`} />
+        <StatsAggregate label="Traders gagnants" value={`${winners} / ${allPlayers.length}`} />
+      </div>
+
+      <div className="space-y-5">
+        {groups.map((group, gIdx) => (
+          <div
+            key={group.team.name + gIdx}
+            className="rounded-2xl border bg-black/40 backdrop-blur overflow-hidden"
+            style={{ borderColor: `${group.team.color}55` }}
+          >
+            <div
+              className="flex items-center gap-3 px-5 py-3"
+              style={{ background: `linear-gradient(90deg, ${group.team.color}22, transparent 70%)` }}
+            >
+              <span className="h-3 w-3 rounded-full" style={{ background: group.team.color, boxShadow: `0 0 12px ${group.team.color}` }} />
+              <span className="display text-lg font-bold uppercase tracking-[0.1em] text-white">
+                {group.team.name.trim() || `Équipe ${gIdx + 1}`}
+              </span>
+              {gIdx === 0 && (
+                <span
+                  className="display rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.15em]"
+                  style={{ background: group.team.color, color: '#0a0a0e' }}
+                >
+                  Vainqueur
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-3">
+                <span className={`num text-xl font-bold ${group.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatPnl(group.totalPnl)}
+                </span>
+                <span className={`num text-xs ${group.avgPnlPercent >= 0 ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
+                  {formatPercent(group.avgPnlPercent)} moy.
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-3 px-5 py-2 border-y border-white/10 text-[10px] uppercase tracking-[0.32em] text-zinc-500">
+              <div className="col-span-4">Trader</div>
+              <div className="col-span-2 text-right">P&L</div>
+              <div className="col-span-2 text-right">%</div>
+              <div className="col-span-2 text-right">Trades</div>
+              <div className="col-span-2 text-right">Frais</div>
+            </div>
+
+            {[...group.players]
+              .sort((a, b) => b.pnl - a.pnl)
+              .map((p, idx) => (
+                <motion.div
+                  key={p.id}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.03 }}
+                  className="grid grid-cols-12 gap-3 px-5 py-3 items-center border-b border-white/5 last:border-b-0"
+                >
+                  <div className="col-span-4 flex items-center gap-3 min-w-0">
+                    <PlayerThumb player={p} size={36} />
+                    <div className="min-w-0">
+                      <div className="display text-sm font-bold text-white truncate">{p.name}</div>
+                      <div className="num text-[10px] text-zinc-500">
+                        ${formatUSD(p.initialBalance ?? 0)} → ${formatUSD(p.currentBalance ?? 0)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`col-span-2 num text-right font-bold ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatPnl(p.pnl)}
+                  </div>
+                  <div className={`col-span-2 num text-right ${p.pnl >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+                    {formatPercent(p.pnlPercent)}
+                  </div>
+                  <div className="col-span-2 num text-right text-white">{p.tradeCount}</div>
+                  <div className="col-span-2 num text-right text-zinc-500">${formatUSD(p.feesPaid ?? 0)}</div>
+                </motion.div>
+              ))}
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+function IndividualEventEndOverlay({
   players,
   onClose,
 }: {

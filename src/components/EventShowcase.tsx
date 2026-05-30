@@ -3,10 +3,10 @@ import type {
   ArchivedEventSnapshot,
   ArchivedPlayerSnapshot,
   ShowcasePayload,
-  TeamInfo,
 } from '../stores/useGameStore';
 import { formatPnl, formatPercent, formatUSD } from '../utils/formatters';
 import { TEAM_MODE_LABEL } from '../utils/teamMode';
+import { buildTeamGroups, type TeamGroup, type TeamResultPlayer } from '../utils/teamResults';
 
 const MODE_LABELS: Record<string, string> = {
   '1v1': '1 vs 1',
@@ -15,37 +15,17 @@ const MODE_LABELS: Record<string, string> = {
   '4v4': TEAM_MODE_LABEL,
 };
 
-interface TeamGroup {
-  team: TeamInfo;
-  players: ArchivedPlayerSnapshot[];
-  totalPnl: number;
-  avgPnlPercent: number;
-}
-
-/** Regroupe les joueurs archivés par équipe, classés par P&L total décroissant. */
-function buildTeamGroups(archive: ArchivedEventSnapshot): TeamGroup[] | null {
+function buildArchiveTeamGroups(archive: ArchivedEventSnapshot): TeamGroup<ArchivedPlayerSnapshot>[] | null {
   if (archive.eventMode !== '4v4' || !archive.teams) return null;
-  const byId = new Map(archive.players.map((p) => [p.id, p]));
-  const groups = archive.teams.map((team) => {
-    const players = team.playerIds
-      .map((id) => byId.get(id))
-      .filter(Boolean) as ArchivedPlayerSnapshot[];
-    const totalPnl = players.reduce((sum, p) => sum + p.pnl, 0);
-    const avgPnlPercent = players.length
-      ? players.reduce((sum, p) => sum + p.pnlPercent, 0) / players.length
-      : 0;
-    return { team, players, totalPnl, avgPnlPercent };
-  });
-  return groups.sort((a, b) => b.totalPnl - a.totalPnl);
+  return buildTeamGroups(archive.teams, archive.players);
 }
-
 /**
  * Overlay plein écran diffusé sur le dashboard quand aucun round n'est en
  * cours et que l'admin a sélectionné une archive à montrer (podium ou stats).
  */
 export default function EventShowcase({ payload }: { payload: ShowcasePayload }) {
   const { mode, archive } = payload;
-  const teamGroups = buildTeamGroups(archive);
+  const teamGroups = buildArchiveTeamGroups(archive);
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -222,7 +202,7 @@ function TeamMemberCard({
   index,
   highlight = false,
 }: {
-  player: ArchivedPlayerSnapshot;
+  player: TeamResultPlayer;
   color: string;
   index: number;
   highlight?: boolean;
@@ -282,7 +262,7 @@ function TeamMemberCard({
 function TeamStatsView({ groups }: { groups: TeamGroup[] }) {
   const allPlayers = groups.flatMap((g) => g.players);
   const totalTrades = allPlayers.reduce((sum, p) => sum + p.tradeCount, 0);
-  const totalFees = allPlayers.reduce((sum, p) => sum + p.feesPaid, 0);
+  const totalFees = allPlayers.reduce((sum, p) => sum + (p.feesPaid ?? 0), 0);
   const winners = allPlayers.filter((p) => p.pnl > 0).length;
   const totalPnl = allPlayers.reduce((sum, p) => sum + p.pnl, 0);
 
@@ -352,7 +332,7 @@ function TeamStatsView({ groups }: { groups: TeamGroup[] }) {
                     <div className="min-w-0">
                       <div className="display text-sm font-bold text-white truncate">{p.name}</div>
                       <div className="num text-[10px] text-zinc-500">
-                        ${formatUSD(p.initialBalance)} → ${formatUSD(p.currentBalance)}
+                        ${formatUSD(p.initialBalance ?? 0)} → ${formatUSD(p.currentBalance ?? 0)}
                       </div>
                     </div>
                   </div>
@@ -363,7 +343,7 @@ function TeamStatsView({ groups }: { groups: TeamGroup[] }) {
                     {formatPercent(p.pnlPercent)}
                   </div>
                   <div className="col-span-2 num text-right text-white">{p.tradeCount}</div>
-                  <div className="col-span-2 num text-right text-zinc-500">${formatUSD(p.feesPaid)}</div>
+                  <div className="col-span-2 num text-right text-zinc-500">${formatUSD(p.feesPaid ?? 0)}</div>
                 </motion.div>
               ))}
           </div>
@@ -664,7 +644,7 @@ function PlayerThumb({
   player,
   size,
 }: {
-  player: ArchivedPlayerSnapshot;
+  player: TeamResultPlayer;
   size: number;
 }) {
   if (player.avatar) {
