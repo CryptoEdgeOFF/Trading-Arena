@@ -18,6 +18,40 @@ import { useWebSocket } from '../hooks/useWebSocket';
 
 type RightPanel = 'trades' | 'positions';
 
+const BTF_LOGO_SRC = '/assets/pictures/btf-dashboard.webp';
+const KRAKEN_LOGO_SRC = '/assets/pictures/kraken-logo-white.webp';
+
+function BrandRail({ side }: { side: 'left' | 'right' }) {
+  const isLeft = side === 'left';
+  return (
+    <div
+      className={`pointer-events-none relative z-10 flex w-14 shrink-0 flex-col items-center justify-center border-white/[0.04] px-2 xl:w-[4.5rem] ${
+        isLeft ? 'border-r' : 'border-l'
+      }`}
+      aria-hidden
+    >
+      <div
+        className={`absolute inset-y-8 w-px bg-gradient-to-b from-transparent via-red-500/25 to-transparent ${
+          isLeft ? 'right-0' : 'left-0'
+        }`}
+      />
+      {isLeft ? (
+        <img
+          src={BTF_LOGO_SRC}
+          alt=""
+          className="max-h-[4.5rem] w-full object-contain opacity-90 drop-shadow-[0_0_28px_rgba(220,38,38,0.35)] xl:max-h-[5.5rem]"
+        />
+      ) : (
+        <img
+          src={KRAKEN_LOGO_SRC}
+          alt=""
+          className="max-h-8 w-full object-contain opacity-85 drop-shadow-[0_0_20px_rgba(255,255,255,0.12)] xl:max-h-10"
+        />
+      )}
+    </div>
+  );
+}
+
 function sortArenaSlots(players: Player[]): Player[] {
   return [...players].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
 }
@@ -85,7 +119,9 @@ export default function Dashboard() {
       {!eventStarted && showcase ? (
         <EventShowcase payload={showcase} />
       ) : !eventStarted && players.length === 0 ? (
-        <div className="relative flex-1 flex items-center justify-center">
+        <div className="relative flex-1 flex overflow-hidden">
+          <BrandRail side="left" />
+          <div className="relative flex-1 flex items-center justify-center">
           <motion.div
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
@@ -121,9 +157,12 @@ export default function Dashboard() {
               traders <a href="/trader" className="text-red-400 hover:text-red-300 transition-colors">/trader</a>
             </p>
           </motion.div>
+          </div>
+          <BrandRail side="right" />
         </div>
       ) : (
         <div className="relative flex-1 flex overflow-hidden">
+          <BrandRail side="left" />
           {/* Left: Leaderboard */}
           {showFeed && (
             <div className="w-60 xl:w-72 shrink-0 border-r border-white/[0.05] px-4 py-5 overflow-y-auto scrollbar-hide">
@@ -183,6 +222,7 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+          <BrandRail side="right" />
         </div>
       )}
 
