@@ -12,7 +12,8 @@ import {
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
 import {
   clearPaperSessionToken,
-  PAPER_BOOTSTRAP_KEY,
+  LEGACY_PAPER_SESSION_KEY,
+  writePaperBootstrapCache,
   writePaperSessionToken,
 } from '../lib/paperSession';
 import {
@@ -328,6 +329,9 @@ export default function CompetitionPlatform() {
   // round-trip, eliminating the cascade of cold starts that used to slow
   // down the page after a refresh.
   useEffect(() => {
+    // Ne jamais réutiliser une ancienne clé unique qui pouvait contenir une session LIVE.
+    window.localStorage.removeItem(LEGACY_PAPER_SESSION_KEY);
+
     let cancelled = false;
     const token = window.localStorage.getItem(SESSION_KEY);
     const headers: Record<string, string> = {};
@@ -629,26 +633,16 @@ export default function CompetitionPlatform() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Acces trading impossible');
       writePaperSessionToken('compete', data.token);
-      // Cache the player snapshot returned by /trade/session so the
-      // ExchangeTerminal can render immediately on mount without waiting
-      // for the /api/paper/me round-trip. The terminal still revalidates
-      // in the background and patches via WebSocket.
       if (data.player) {
-        try {
-          window.localStorage.setItem(
-            PAPER_BOOTSTRAP_KEY,
-            JSON.stringify({
-              token: data.token,
-              player: data.player,
-              competition: data.competition || null,
-              market: data.market || null,
-              canTrade: typeof data.canTrade === 'boolean' ? data.canTrade : null,
-              cachedAt: Date.now(),
-            }),
-          );
-        } catch {
-          // localStorage quota or privacy mode: terminal will fall back to /me.
-        }
+        writePaperBootstrapCache({
+          token: data.token,
+          player: data.player,
+          platform: 'compete',
+          competitionId: competition.id,
+          competition: data.competition || null,
+          market: data.market || null,
+          canTrade: typeof data.canTrade === 'boolean' ? data.canTrade : null,
+        });
       }
       // SPA navigation keeps the React tree alive (no full reload, no JS
       // re-parse). Combined with the bootstrap cache above, the terminal

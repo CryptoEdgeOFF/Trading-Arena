@@ -6,8 +6,8 @@ import {
   clearPaperSessionToken,
   extractPaperCompetitionContext,
   isCompetitionPaperSession,
-  PAPER_BOOTSTRAP_KEY,
   readPaperSessionToken,
+  writePaperBootstrapCache,
   writePaperSessionToken,
 } from '../lib/paperSession';
 
@@ -94,22 +94,14 @@ export default function LiveAccessGate() {
 
       writePaperSessionToken('live', data.token);
 
-      // Cache bootstrap consommé par ExchangeTerminal (TTL 30s côté lecteur).
-      try {
-        window.localStorage.setItem(
-          PAPER_BOOTSTRAP_KEY,
-          JSON.stringify({
-            token: data.token,
-            player: data.player,
-            market: data.market || null,
-            canTrade: typeof data.canTrade === 'boolean' ? data.canTrade : null,
-            competition: null,
-            cachedAt: Date.now(),
-          }),
-        );
-      } catch {
-        // localStorage indispo : le terminal fera /api/paper/me en repli.
-      }
+      writePaperBootstrapCache({
+        token: data.token,
+        player: data.player,
+        platform: 'live',
+        competition: null,
+        market: data.market || null,
+        canTrade: typeof data.canTrade === 'boolean' ? data.canTrade : null,
+      });
 
       navigate(TRADE_URL, { replace: true });
     } catch (err) {

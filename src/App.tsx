@@ -15,6 +15,11 @@ import { LegalPage } from './components/LegalPages';
 const SCROLL_LOCK_PATTERN = /^\/(trade|trader|live-dashboard|btf-live-arena-2026|admin|feed-test)(\/|$)/;
 const HIDE_FOOTER_PATTERN = /^\/(trade|trader|live-dashboard|btf-live-arena-2026|admin|feed-test|compete\/admin)(\/|$)/;
 
+function TradeTerminalRoute() {
+  const location = useLocation();
+  return <ExchangeTerminal key={location.search} />;
+}
+
 function AppRoutes() {
   const location = useLocation();
   const lockScroll = SCROLL_LOCK_PATTERN.test(location.pathname);
@@ -34,7 +39,7 @@ function AppRoutes() {
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />
         <Route path="/live-dashboard" element={<Dashboard />} />
         <Route path="/trader" element={<LiveAccessGate />} />
-        <Route path="/trade" element={<ExchangeTerminal />} />
+        <Route path="/trade" element={<TradeTerminalRoute />} />
         <Route path="/compete" element={<CompetitionPlatform />} />
         <Route path="/compete/settings" element={<CompetitionSettings />} />
         <Route path="/compete/admin" element={<CompetitionAdmin />} />

@@ -1,4 +1,5 @@
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -26,7 +27,9 @@ import {
   extractPaperCompetitionContext,
   getCompetitionIdFromUrl,
   getTerminalPlatformFromUrl,
-  PAPER_BOOTSTRAP_KEY,
+  isPaperBootstrapCacheValid,
+  paperSessionMatchesPlatform,
+  readPaperBootstrapCache,
   readPaperSessionToken,
   type TerminalPlatform,
   writePaperSessionToken,
@@ -2632,9 +2635,15 @@ function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'p
 /* ------------------------------------------------------------------ MAIN */
 
 export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalProps) {
-  const [terminalPlatform] = useState<TerminalPlatform>(() => (
-    demoMode ? 'compete' : getTerminalPlatformFromUrl()
-  ));
+  const location = useLocation();
+  const terminalPlatform = useMemo<TerminalPlatform>(
+    () => (demoMode ? 'compete' : getTerminalPlatformFromUrl(location.search)),
+    [demoMode, location.search],
+  );
+  const urlCompetitionId = useMemo(
+    () => (demoMode ? null : getCompetitionIdFromUrl(location.search)),
+    [demoMode, location.search],
+  );
 
   const players = useGameStore((state) => state.players);
   const recentTrades = useGameStore((state) => state.recentTrades);
@@ -2664,16 +2673,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (demoMode) {
       return { token: 'demo-token', player: { id: 'tradingview-demo', name: 'TradingView Demo', color: '#dc2626', avatar: null } };
     }
-    try {
-      const raw = window.localStorage.getItem(PAPER_BOOTSTRAP_KEY);
-      if (raw) {
-        const cached = JSON.parse(raw);
-        if (cached?.token && cached?.player) {
-          return { token: cached.token, player: cached.player };
-        }
-      }
-    } catch {
-      // ignore
+    const platform = getTerminalPlatformFromUrl();
+    const token = readPaperSessionToken(platform);
+    const cached = readPaperBootstrapCache();
+    const competitionId = getCompetitionIdFromUrl();
+    if (token && cached && isPaperBootstrapCacheValid(cached, platform, token, competitionId)) {
+      return { token: cached.token, player: cached.player as SessionPlayer };
     }
     return null;
   });
@@ -2956,9 +2961,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const player = useMemo(() => {
     if (demoMode) return demoPlayer;
     if (competitionContext?.id) return livePlayer;
-    if (!livePlayer) return wsPlayer;
-    if (!wsPlayer) return livePlayer;
-    return (wsPlayer.lastUpdate || 0) > (livePlayer.lastUpdate || 0) ? wsPlayer : livePlayer;
+    // Le feed paper (/me + WS) fait foi sur le terminal ; le store dashboard
+    // n'est qu'un repli pendant le chargement initial.
+    if (livePlayer) return livePlayer;
+    return wsPlayer;
   }, [competitionContext?.id, demoMode, demoPlayer, livePlayer, wsPlayer]);
 
   const playerTrades = useMemo(() => {
@@ -3134,7 +3140,6 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     token: string,
     payload: { competition?: unknown } | null | undefined,
   ): boolean {
-    const urlCompetitionId = getCompetitionIdFromUrl();
     const competition = extractPaperCompetitionContext(payload);
 
     // Session ONLINE sur une URL LIVE → renvoyer vers le bon terminal Compete.
@@ -3149,21 +3154,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return false;
     }
 
-    // URL ONLINE (`?competitionId=`) : ne jamais basculer vers LIVE.
-    if (terminalPlatform === 'compete' && (competition?.id || urlCompetitionId)) {
-      writePaperSessionToken('compete', token);
-      return true;
-    }
-
-    // Session LIVE confirmée sur URL LIVE.
-    if (terminalPlatform === 'live' && !competition?.id) {
-      writePaperSessionToken('live', token);
-      return true;
-    }
-
-    // Terminal ONLINE sans session compétition valide → demander reconnexion Compete.
-    if (terminalPlatform === 'compete') {
-      clearPaperSessionToken('compete');
+    if (!paperSessionMatchesPlatform(payload, terminalPlatform, urlCompetitionId)) {
+      clearPaperSessionToken(terminalPlatform);
       return false;
     }
 
@@ -3193,28 +3185,22 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (demoMode) return;
     const token = readPaperSessionToken(terminalPlatform);
     if (!token) {
+      setSession(null);
+      setLivePlayer(null);
+      setLiveMarket(null);
+      setLiveCanTrade(null);
       setBootstrapping(false);
       return;
     }
 
-    // Consume the bootstrap cache deposited by CompetitionPlatform when the
-    // user clicked "TRADER" so the terminal renders populated immediately.
-    try {
-      const raw = window.localStorage.getItem(PAPER_BOOTSTRAP_KEY);
-      if (raw) {
-        const cached = JSON.parse(raw);
-        const fresh = cached?.cachedAt && Date.now() - cached.cachedAt < 30_000;
-        if (fresh && cached?.token === token && cached.player) {
-          setLivePlayer(cached.player);
-          if (cached.market) setLiveMarket(cached.market);
-          if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
-          mergeCompetitionFromMe(cached.competition);
-        }
-        // Single-use cache: drop it now so a refresh always re-validates.
-        window.localStorage.removeItem(PAPER_BOOTSTRAP_KEY);
-      }
-    } catch {
-      // ignore
+    setBootstrapping(true);
+
+    const cached = readPaperBootstrapCache();
+    if (cached && isPaperBootstrapCacheValid(cached, terminalPlatform, token, urlCompetitionId)) {
+      setLivePlayer(cached.player as Player);
+      if (cached.market) setLiveMarket(cached.market as Record<string, MarketTicker>);
+      if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
+      mergeCompetitionFromMe(cached.competition);
     }
 
     fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } })
@@ -3226,8 +3212,18 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         return response.json();
       })
       .then((data) => {
-        if (!data?.player) return;
-        if (!reconcileTerminalSession(token, data)) return;
+        if (!data?.player) {
+          setSession(null);
+          setLivePlayer(null);
+          return;
+        }
+        if (!reconcileTerminalSession(token, data)) {
+          setSession(null);
+          setLivePlayer(null);
+          setLiveMarket(null);
+          setLiveCanTrade(null);
+          return;
+        }
         setSession({ token, player: data.player });
         setLivePlayer(reconcilePlayerWithPending(data.player as Player));
         if (data.market) setLiveMarket(data.market);
@@ -3238,7 +3234,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         setBootstrapping(false);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoMode, terminalPlatform]);
+  }, [demoMode, terminalPlatform, urlCompetitionId, location.search]);
 
   useEffect(() => {
     if (demoMode) return;
@@ -3267,7 +3263,13 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         if (!response.ok) return;
         const data = await response.json();
         if (cancelled) return;
-        if (!reconcileTerminalSession(session.token, data)) return;
+        if (!reconcileTerminalSession(session.token, data)) {
+          setSession(null);
+          setLivePlayer(null);
+          setLiveMarket(null);
+          setLiveCanTrade(null);
+          return;
+        }
         if (data?.player) setLivePlayer(reconcilePlayerWithPending(data.player as Player));
         if (data?.market) setLiveMarket(data.market);
         if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
@@ -3337,6 +3339,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   }, [competitionContext?.id, demoMode]);
 
   async function login() {
+    if (!liveMode || terminalPlatform !== 'live') return;
     setBusy(true);
     setError('');
     try {

@@ -5,6 +5,17 @@ export const PAPER_BOOTSTRAP_KEY = 'btf-paper-bootstrap';
 
 export type TerminalPlatform = 'live' | 'compete';
 
+export type PaperBootstrapCache = {
+  token: string;
+  player: unknown;
+  platform: TerminalPlatform;
+  competitionId?: string | null;
+  competition?: unknown;
+  market?: unknown;
+  canTrade?: boolean | null;
+  cachedAt: number;
+};
+
 export type PaperCompetitionContext = {
   id: string;
   title?: string;
@@ -91,11 +102,69 @@ export function getPaperSessionStorageKey(platform: TerminalPlatform): string {
 export function readPaperSessionToken(platform: TerminalPlatform): string | null {
   const scoped = window.localStorage.getItem(getPaperSessionStorageKey(platform));
   if (scoped) return scoped;
-  // Legacy : uniquement pour le terminal ONLINE afin de migrer d'anciennes sessions.
-  if (platform === 'compete') {
-    return window.localStorage.getItem(LEGACY_PAPER_SESSION_KEY);
+  // Legacy : migrer vers LIVE uniquement (ne jamais réutiliser pour Compete).
+  if (platform === 'live') {
+    const legacy = window.localStorage.getItem(LEGACY_PAPER_SESSION_KEY);
+    if (legacy) {
+      window.localStorage.setItem(LIVE_PAPER_SESSION_KEY, legacy);
+      window.localStorage.removeItem(LEGACY_PAPER_SESSION_KEY);
+      return legacy;
+    }
   }
   return null;
+}
+
+/** Vérifie que le payload `/me` correspond à la plateforme attendue par l'URL. */
+export function paperSessionMatchesPlatform(
+  payload: { competition?: unknown } | null | undefined,
+  platform: TerminalPlatform,
+  urlCompetitionId?: string | null,
+): boolean {
+  const isCompete = isCompetitionPaperSession(payload);
+  if (platform === 'live') return !isCompete;
+  if (!isCompete) return false;
+  const competition = extractPaperCompetitionContext(payload);
+  if (!competition?.id) return false;
+  if (urlCompetitionId && competition.id !== urlCompetitionId) return false;
+  return true;
+}
+
+export function readPaperBootstrapCache(): PaperBootstrapCache | null {
+  try {
+    const raw = window.localStorage.getItem(PAPER_BOOTSTRAP_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as PaperBootstrapCache;
+    if (!cached?.token || !cached?.player || !cached?.platform) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+export function isPaperBootstrapCacheValid(
+  cached: PaperBootstrapCache,
+  platform: TerminalPlatform,
+  token: string | null,
+  urlCompetitionId?: string | null,
+): boolean {
+  if (!token || cached.token !== token) return false;
+  if (cached.platform !== platform) return false;
+  if (!cached.cachedAt || Date.now() - cached.cachedAt > 30_000) return false;
+  if (platform === 'compete' && urlCompetitionId && cached.competitionId && cached.competitionId !== urlCompetitionId) {
+    return false;
+  }
+  return true;
+}
+
+export function writePaperBootstrapCache(payload: Omit<PaperBootstrapCache, 'cachedAt'>): void {
+  try {
+    window.localStorage.setItem(
+      PAPER_BOOTSTRAP_KEY,
+      JSON.stringify({ ...payload, cachedAt: Date.now() }),
+    );
+  } catch {
+    // localStorage indispo
+  }
 }
 
 export function writePaperSessionToken(platform: TerminalPlatform, token: string): void {
