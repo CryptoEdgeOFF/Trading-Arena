@@ -19,16 +19,15 @@ const PODIUM_DURATION_MS = 5000;
  */
 export default function EventTransitions() {
   const eventStarted = useGameStore((s) => s.eventStarted);
+  const liveStateSynced = useGameStore((s) => s.liveStateSynced);
   const players = useGameStore((s) => s.players);
   const resetClientLiveState = useGameStore((s) => s.resetClientLiveState);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [countdownValue, setCountdownValue] = useState(COUNTDOWN_FROM);
   const [snapshotPlayers, setSnapshotPlayers] = useState<Player[] | null>(null);
-  // null = avant le tout premier render avec un état WS connu. Permet de
-  // distinguer un vrai démarrage (false → true) d'un simple refresh de la
-  // page pendant un round déjà actif (où on ne doit PAS rejouer le
-  // countdown). Voir #refresh-no-countdown.
+  // null = état serveur pas encore reçu. Après le 1er state:init, on
+  // synchronise sans animer pour ne pas rejouer le countdown au refresh.
   const previousStartedRef = useRef<boolean | null>(null);
   // Dernier snapshot des joueurs PENDANT que l'event tournait, avec stats
   // non vides. Utilisé pour le podium/stats : le serveur purge les PnL
@@ -47,13 +46,16 @@ export default function EventTransitions() {
   }, [eventStarted, players]);
 
   useEffect(() => {
-    const wasStarted = previousStartedRef.current;
-    previousStartedRef.current = eventStarted;
+    if (!liveStateSynced) return;
 
-    // Premier passage du hook après mount : on initialise simplement la
-    // référence sans déclencher d'animation. Si l'événement est déjà en
-    // cours quand le dashboard se charge (refresh), on reste en `idle`.
-    if (wasStarted === null) return;
+    const wasStarted = previousStartedRef.current;
+
+    if (wasStarted === null) {
+      previousStartedRef.current = eventStarted;
+      return;
+    }
+
+    previousStartedRef.current = eventStarted;
 
     if (!wasStarted && eventStarted) {
       // Nouveau round : on vide les files locales pour repartir propre.
@@ -82,7 +84,7 @@ export default function EventTransitions() {
         setPhase('idle');
       }
     }
-  }, [eventStarted, players, resetClientLiveState]);
+  }, [liveStateSynced, eventStarted, players, resetClientLiveState]);
 
   // Tick du countdown
   useEffect(() => {

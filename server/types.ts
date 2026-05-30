@@ -270,6 +270,8 @@ export interface PlayerStatePatch {
   // limites de chaque trader sans avoir à interroger le serveur.
   openPositions?: Position[];
   openOrders?: Order[];
+  /** Snapshot complet des badges — inclus quand la liste change. */
+  badges?: Badge[];
 }
 
 export interface StatePatch {

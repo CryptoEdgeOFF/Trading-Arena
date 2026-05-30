@@ -207,6 +207,7 @@ export interface PlayerStatePatch {
   // à partir du markPrice diffusé via `patch.market`.
   openPositions?: Position[];
   openOrders?: Order[];
+  badges?: Badge[];
 }
 
 export interface ArchivedPlayerSnapshot {
@@ -284,6 +285,8 @@ interface GameState {
   celebrationQueue: { type: 'leader-change' | 'big-trade'; playerId: string }[];
   /** Spotlight trade actuellement à l'écran (null = rien). Pas de file d'attente. */
   spotlightTrade: SpotlightTrade | null;
+  /** True après le premier `state:init` WebSocket (évite un faux démarrage au refresh). */
+  liveStateSynced: boolean;
 
   updateState: (state: Partial<GameState>) => void;
   applyStatePatch: (patch: StatePatch) => void;
@@ -314,10 +317,11 @@ export const useGameStore = create<GameState>((set) => ({
   badgeQueue: [],
   celebrationQueue: [],
   spotlightTrade: null,
+  liveStateSynced: false,
 
   updateState: (incoming) =>
     set((state) => {
-      const next = { ...state, ...incoming };
+      const next = { ...state, ...incoming, liveStateSynced: true };
 
       // Clear teams when not in 4v4 mode
       if (next.eventMode !== '4v4' || !next.teams) {

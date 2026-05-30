@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import type { Player, Position, Trade } from '../stores/useGameStore';
+import type { Badge, Player, Position, Trade } from '../stores/useGameStore';
 import { formatPnl, formatPercent, formatUSD } from '../utils/formatters';
 import { formatEngineSizeDisplay, fmtMarketPrice } from '../utils/positionSizing';
 import { getCryptoIconUrl } from '../utils/cryptoIcons';
@@ -25,6 +25,36 @@ function CryptoIcon({ pair, className }: { pair: string; className?: string }) {
       onError={() => setError(true)}
       className={`rounded-full object-contain ${className || 'w-6 h-6'}`}
     />
+  );
+}
+
+function PlayerBadges({
+  badges,
+  max = 4,
+  size = 'md',
+}: {
+  badges: Badge[];
+  max?: number;
+  size?: 'sm' | 'md';
+}) {
+  if (badges.length === 0) return null;
+
+  const iconClass = size === 'sm' ? 'text-sm' : 'text-xl';
+
+  return (
+    <div className="flex flex-wrap items-center gap-0.5">
+      {badges.slice(0, max).map((badge) => (
+        <motion.span
+          key={badge.type}
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          className={`leading-none ${iconClass}`}
+          title={`${badge.label} — ${badge.description}`}
+        >
+          {badge.icon}
+        </motion.span>
+      ))}
+    </div>
   );
 }
 
@@ -318,11 +348,8 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               >
                 {player.name}
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5">
-                <span className={`live-pill ${player.connected ? 'is-live' : 'is-idle'} !py-0 !px-1 !text-[8px]`}>
-                  <span className={`h-1 w-1 rounded-full ${player.connected ? 'bg-red-500 animate-pulse' : 'bg-zinc-600'}`} />
-                  {player.connected ? 'Live' : 'Off'}
-                </span>
+              <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                <PlayerBadges badges={player.badges} max={4} size="sm" />
                 <span className="num text-[9.5px] text-zinc-500 tabular-nums">
                   {player.tradeCount} tr · ${formatUSD(player.currentBalance)}
                 </span>
@@ -397,26 +424,8 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isFull ? 'text-3xl' : 'text-2xl'}`}>
               {player.name}
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className={`live-pill ${player.connected ? 'is-live' : 'is-idle'} !py-0.5 !text-[9px]`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${player.connected ? 'bg-red-500 animate-pulse' : 'bg-zinc-600'}`} />
-                {player.connected ? 'Live' : 'Off'}
-              </span>
-              {player.badges.length > 0 && (
-                <div className="flex gap-0.5">
-                  {player.badges.slice(0, 4).map((b) => (
-                    <motion.span
-                      key={b.type}
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      className={isFull ? 'text-xl' : 'text-base'}
-                      title={b.label}
-                    >
-                      {b.icon}
-                    </motion.span>
-                  ))}
-                </div>
-              )}
+            <div className="mt-2 min-h-[1.25rem]">
+              <PlayerBadges badges={player.badges} max={6} size="md" />
             </div>
           </div>
 

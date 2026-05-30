@@ -138,6 +138,7 @@ export class PlayerManager {
     // entiers à chaque tick. Voir `fingerprintPositions` / `fingerprintOrders`.
     openPositionsFp: string;
     openOrdersFp: string;
+    badgesFp: string;
   }> = new Map();
   private snapshotMarket: Map<string, {
     markPrice: number;
@@ -1879,6 +1880,7 @@ export class PlayerManager {
         lastUpdate: player.lastUpdate,
         openPositionsFp: this.fingerprintPositions(player.openPositions),
         openOrdersFp: this.fingerprintOrders(player.openOrders),
+        badgesFp: this.fingerprintBadges(player.badges),
       });
       for (const trade of player.trades) this.snapshotTradeIds.add(trade.id);
     }
@@ -1927,6 +1929,14 @@ export class PlayerManager {
       .join(';');
   }
 
+  private fingerprintBadges(badges: Badge[]): string {
+    if (!badges.length) return '';
+    return badges
+      .map((b) => `${b.type}:${b.awardedAt}`)
+      .sort()
+      .join(';');
+  }
+
   private computeStatePatch(): StatePatch | null {
     const patch: StatePatch = {};
     const players = this.getPublicPlayers();
@@ -1939,6 +1949,7 @@ export class PlayerManager {
       const previous = this.snapshotPlayers.get(player.id);
       const positionsFp = this.fingerprintPositions(player.openPositions);
       const ordersFp = this.fingerprintOrders(player.openOrders);
+      const badgesFp = this.fingerprintBadges(player.badges);
       if (!previous) {
         addedPlayers.push(player as Player);
         this.snapshotPlayers.set(player.id, {
@@ -1955,6 +1966,7 @@ export class PlayerManager {
           lastUpdate: player.lastUpdate,
           openPositionsFp: positionsFp,
           openOrdersFp: ordersFp,
+          badgesFp,
         });
         continue;
       }
@@ -1979,6 +1991,10 @@ export class PlayerManager {
         diff.openOrders = player.openOrders;
         changed = true;
       }
+      if (previous.badgesFp !== badgesFp) {
+        diff.badges = player.badges;
+        changed = true;
+      }
       if (changed) {
         playerPatches.push(diff);
         previous.pnl = player.pnl;
@@ -1994,6 +2010,7 @@ export class PlayerManager {
         previous.lastUpdate = player.lastUpdate;
         previous.openPositionsFp = positionsFp;
         previous.openOrdersFp = ordersFp;
+        previous.badgesFp = badgesFp;
       }
     }
 
