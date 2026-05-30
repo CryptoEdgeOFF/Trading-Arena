@@ -27,6 +27,13 @@ let countdownEndDurationMs: number | null = null;
 
 let unlockSucceeded = false;
 let unlockInFlight = false;
+/**
+ * Vrai dès qu'un son a réellement pu démarrer (= autoplay débloqué par un
+ * geste utilisateur). Sert à afficher le bouton « Activer le son » tant que
+ * le navigateur bloque la lecture — notamment en 5v5 où le dashboard n'a aucun
+ * panneau cliquable pour produire ce geste.
+ */
+let arenaAudioReady = false;
 
 let lastSpotlightAt = 0;
 let spotlightActive = false;
@@ -92,6 +99,7 @@ async function playAudioElement(audio: HTMLAudioElement, volume: number): Promis
     audio.currentTime = 0;
     await audio.play();
     unlockSucceeded = true;
+    arenaAudioReady = true;
     return true;
   } catch {
     return false;
@@ -206,6 +214,15 @@ export function resetArenaRoundSounds(): void {
   stopIntroCountdownMusic();
   // Fin 5v5 : Countdown END (~73s) peut encore tourner quand l'admin relance.
   stopLongFormSound(ARENA_SOUND_URLS.countdownEnd);
+}
+
+export function isArenaAudioReady(): boolean {
+  return arenaAudioReady;
+}
+
+/** Marque l'audio comme débloqué après un geste utilisateur explicite. */
+export function markArenaAudioReady(): void {
+  arenaAudioReady = true;
 }
 
 export function isIntroCountdownPlaying(): boolean {
