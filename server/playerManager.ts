@@ -2013,7 +2013,14 @@ export class PlayerManager {
       if (previous.pnlPercent !== player.pnlPercent) { diff.pnlPercent = player.pnlPercent; changed = true; }
       if (previous.rank !== player.rank) { diff.rank = player.rank; changed = true; }
       if (previous.previousRank !== player.previousRank) { diff.previousRank = player.previousRank; changed = true; }
-      if (previous.tradeCount !== player.tradeCount) { diff.tradeCount = player.tradeCount; changed = true; }
+      if (previous.tradeCount !== player.tradeCount) {
+        diff.tradeCount = player.tradeCount;
+        // Le nombre de trades a changé (ouverture/clôture) → on pousse aussi
+        // l'historique complet pour que la carte joueur et le recalcul du PnL
+        // réalisé soient à jour immédiatement (pas seulement au refresh).
+        diff.trades = player.trades;
+        changed = true;
+      }
       if (previous.currentBalance !== player.currentBalance) { diff.currentBalance = player.currentBalance; changed = true; }
       if (previous.availableMargin !== player.availableMargin) { diff.availableMargin = player.availableMargin; changed = true; }
       if (previous.usedMargin !== player.usedMargin) { diff.usedMargin = player.usedMargin; changed = true; }

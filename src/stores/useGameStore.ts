@@ -199,6 +199,9 @@ export interface PlayerStatePatch {
   openPositions?: Position[];
   openOrders?: Order[];
   badges?: Badge[];
+  // Historique complet des trades — inclus quand le nombre de trades change.
+  // Garde la carte joueur et le PnL réalisé synchronisés sans refresh.
+  trades?: Trade[];
 }
 
 export interface ArchivedPlayerSnapshot {

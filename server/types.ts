@@ -279,6 +279,14 @@ export interface PlayerStatePatch {
   openOrders?: Order[];
   /** Snapshot complet des badges — inclus quand la liste change. */
   badges?: Badge[];
+  /**
+   * Snapshot complet de l'historique des trades du joueur — inclus quand le
+   * nombre de trades change (ouverture/clôture). Indispensable pour que la
+   * carte joueur affiche l'historique à jour ET que le recalcul client du PnL
+   * (réalisé) prenne en compte la position qui vient d'être fermée, sans
+   * attendre un refresh complet.
+   */
+  trades?: Trade[];
 }
 
 export interface StatePatch {
