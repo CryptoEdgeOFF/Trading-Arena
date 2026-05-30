@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { EVENT_INTRO_COUNTDOWN_MS, EVENT_INTRO_COUNTDOWN_SEC } from '../utils/liveEvent';
 
@@ -96,7 +96,7 @@ export default function LiveEventTraderOverlay({
         style={{ background: 'linear-gradient(90deg, transparent, #ef4444, transparent)' }}
       />
 
-      <div className="relative w-full max-w-md px-6 text-center">
+      <div className="relative w-full overflow-visible px-4 text-center sm:px-6">
         <motion.div
           initial={{ opacity: 0, y: -16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -268,6 +268,28 @@ function CountdownContent({ value }: { value: number }) {
   );
 }
 
+function FightGoTitle() {
+  const lineStyle: CSSProperties = {
+    display: 'block',
+    width: 'fit-content',
+    marginInline: 'auto',
+    paddingInline: '0.14em',
+    fontSize: 'clamp(36px, 9.5vw, 76px)',
+    fontWeight: 700,
+    letterSpacing: '0.02em',
+    lineHeight: 1.08,
+    color: '#fff5f5',
+    textShadow: '0 0 28px rgba(239,68,68,0.85), 0 0 8px rgba(254,202,202,0.9), 0 2px 0 #fecaca',
+  };
+
+  return (
+    <div className="overflow-visible" aria-label="Le fight commence">
+      <span style={lineStyle}>LE FIGHT</span>
+      <span style={lineStyle}>COMMENCE !</span>
+    </div>
+  );
+}
+
 function GoContent() {
   return (
     <motion.div
@@ -275,27 +297,12 @@ function GoContent() {
       animate={{ scale: 1, opacity: 1 }}
       exit={{ scale: 1.25, opacity: 0 }}
       transition={{ type: 'spring', stiffness: 260, damping: 16 }}
+      className="overflow-visible"
     >
       <div className="font-rajdhani mb-4 text-sm font-semibold uppercase tracking-[0.42em] text-red-300">
         Breakout Trading Fight
       </div>
-      <div
-        className="font-rajdhani inline-block overflow-visible px-[0.08em] font-bold uppercase"
-        style={{
-          fontSize: 'clamp(44px, 12vw, 92px)',
-          letterSpacing: '0.03em',
-          lineHeight: 0.95,
-          background: 'linear-gradient(180deg, #ffffff 0%, #fecaca 50%, #ef4444 100%)',
-          WebkitBackgroundClip: 'text',
-          backgroundClip: 'text',
-          color: 'transparent',
-          filter: 'drop-shadow(0 18px 50px rgba(220,38,38,0.8))',
-          WebkitBoxDecorationBreak: 'clone',
-          boxDecorationBreak: 'clone',
-        }}
-      >
-        Le fight commence&nbsp;!
-      </div>
+      <FightGoTitle />
       <div className="mt-5 text-[11px] uppercase tracking-[0.32em] text-zinc-400">
         Ton terminal est ouvert
       </div>
