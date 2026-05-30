@@ -3,6 +3,9 @@ import { motion } from 'framer-motion';
 import { useGameStore } from '../stores/useGameStore';
 import { formatTime } from '../utils/formatters';
 
+const BTF_LOGO_SRC = '/assets/pictures/btf-dashboard.webp';
+const KRAKEN_LOGO_SRC = '/assets/pictures/kraken-logo-white.webp';
+
 export default function Header() {
   const { eventStarted, eventStartTime, eventEndTime, players, platformMode } = useGameStore();
   const [now, setNow] = useState(Date.now());
@@ -68,14 +71,28 @@ export default function Header() {
         </div>
       </motion.div>
 
-      {/* Timer */}
+      {/* Timer + logos partenaires */}
       <motion.div
-        className={`timer-frame ${isWarn ? 'is-warn' : ''}`}
+        className="flex items-center gap-3 xl:gap-4"
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <div className="timer-label mb-0.5">{timerLabel}</div>
-        <div className="timer-value tabular-nums">{formatTime(timerMs)}</div>
+        <img
+          src={BTF_LOGO_SRC}
+          alt=""
+          aria-hidden
+          className="h-10 w-10 shrink-0 object-contain opacity-90 drop-shadow-[0_0_20px_rgba(220,38,38,0.4)] xl:h-11 xl:w-11"
+        />
+        <div className={`timer-frame ${isWarn ? 'is-warn' : ''}`}>
+          <div className="timer-label mb-0.5">{timerLabel}</div>
+          <div className="timer-value tabular-nums">{formatTime(timerMs)}</div>
+        </div>
+        <img
+          src={KRAKEN_LOGO_SRC}
+          alt=""
+          aria-hidden
+          className="max-h-7 w-[4.5rem] shrink-0 object-contain opacity-85 xl:max-h-8 xl:w-20"
+        />
       </motion.div>
 
       {/* Player count */}

@@ -11,6 +11,39 @@ const COUNTDOWN_FROM = 15;
 const FIGHT_START_DURATION = 1800;
 const WINNER_SCREEN_DURATION_MS = 4500;
 const PODIUM_DURATION_MS = 5000;
+const BTF_LOGO_SRC = '/assets/pictures/btf-dashboard.webp';
+const KRAKEN_LOGO_SRC = '/assets/pictures/kraken-logo-white.webp';
+
+function TransitionBrandAbove({ variant = 'countdown' }: { variant?: 'countdown' | 'fight-start' }) {
+  const btfClass = variant === 'fight-start'
+    ? 'h-16 w-16 xl:h-20 xl:w-20'
+    : 'h-20 w-20 xl:h-24 xl:w-24';
+  const krakenClass = variant === 'fight-start'
+    ? 'max-h-8 w-24 xl:max-h-9 xl:w-28'
+    : 'max-h-10 w-28 xl:max-h-11 xl:w-32';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+      className="mb-6 flex items-center justify-center gap-10 sm:gap-14 xl:gap-20"
+    >
+      <img
+        src={BTF_LOGO_SRC}
+        alt=""
+        aria-hidden
+        className={`object-contain drop-shadow-[0_0_36px_rgba(220,38,38,0.55)] ${btfClass}`}
+      />
+      <img
+        src={KRAKEN_LOGO_SRC}
+        alt=""
+        aria-hidden
+        className={`object-contain opacity-90 drop-shadow-[0_0_24px_rgba(255,255,255,0.14)] ${krakenClass}`}
+      />
+    </motion.div>
+  );
+}
 
 /**
  * Orchestre les transitions cinématiques du dashboard live :
@@ -160,6 +193,8 @@ function CountdownOverlay({ value }: { value: number }) {
       />
 
       <div className="relative text-center">
+        <TransitionBrandAbove variant="countdown" />
+
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -243,6 +278,7 @@ function FightStartOverlay() {
         <div className="micro mb-6 text-lg tracking-[0.42em] text-red-300">
           BREAKOUT TRADING FIGHT
         </div>
+        <TransitionBrandAbove variant="fight-start" />
         <div
           className="display"
           style={{
