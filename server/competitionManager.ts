@@ -68,12 +68,20 @@ export type CompetitionStatus = 'upcoming' | 'live' | 'ended';
 interface CompetitionStore {
   users: CompetitionUser[];
   competitions: Competition[];
+  /**
+   * Balance de départ (paper) des joueurs des arènes online. Indépendante de
+   * la config de l'événement LIVE (`PlayerManager.paperStartingBalance`) pour
+   * que régler l'un ne touche jamais l'autre.
+   */
+  competitionStartingBalance?: number;
   // Legacy fields kept for backwards-compatibility while migrating to dedicated
   // tables. Not written anymore.
   sessions?: Array<{ token: string; userId: string }>;
   pendingOtps?: PendingOtp[];
   traderSessions?: Array<{ token: string; playerId: string; competitionId?: string | null }>;
 }
+
+const DEFAULT_COMPETITION_STARTING_BALANCE = 10_000;
 
 const STORE_FILE = path.join(process.cwd(), 'data', 'competition-platform.json');
 const STORE_DB_KEY = 'competition-platform';
@@ -237,6 +245,7 @@ export class CompetitionManager {
   private sessions = new Map<string, string>();
   private pendingOtps = new Map<string, PendingOtp>();
   private traderSessions = new Map<string, { playerId: string; competitionId: string | null }>();
+  private competitionStartingBalance = DEFAULT_COMPETITION_STARTING_BALANCE;
   private localAdminTokens = new Set<string>();
   private pool: Pool | null = null;
   readonly ready: Promise<void>;
@@ -605,6 +614,9 @@ export class CompetitionManager {
   private applyStore(parsed: CompetitionStore): void {
     this.users.clear();
     this.competitions.clear();
+    if (Number.isFinite(parsed.competitionStartingBalance) && (parsed.competitionStartingBalance as number) > 0) {
+      this.competitionStartingBalance = parsed.competitionStartingBalance as number;
+    }
     for (const user of parsed.users || []) {
       this.users.set(user.id, user);
     }
@@ -643,6 +655,7 @@ export class CompetitionManager {
     const payload: CompetitionStore = {
       users: Array.from(this.users.values()),
       competitions: Array.from(this.competitions.values()),
+      competitionStartingBalance: this.competitionStartingBalance,
     };
     if (!this.pool) {
       const now = Date.now();
@@ -1317,6 +1330,18 @@ export class CompetitionManager {
         .map((entry) => entry.paperPlayerId)
         .filter((playerId): playerId is string => Boolean(playerId))
     ));
+  }
+
+  getCompetitionStartingBalance(): number {
+    return this.competitionStartingBalance;
+  }
+
+  async setCompetitionStartingBalance(balance: number): Promise<void> {
+    if (!Number.isFinite(balance) || balance <= 0) {
+      throw new Error('Balance arène invalide');
+    }
+    this.competitionStartingBalance = Math.floor(balance);
+    await this.persist();
   }
 
   /** Tous les paperPlayerId associés à un user (1 par compétition rejointe). */

@@ -91,6 +91,11 @@ export class PlayerManager {
   private platformMode: PlatformMode = 'kraken';
   private marketDataSource: MarketDataSource = 'kraken';
   private paperStartingBalance = DEFAULT_PAPER_BALANCE;
+  // Balance de départ des joueurs des arènes online — TOTALEMENT découplée de
+  // `paperStartingBalance` (config événement LIVE). La source de vérité est
+  // `CompetitionManager.competitionStartingBalance`, poussée ici au boot et à
+  // chaque réglage admin compete.
+  private competitionStartingBalance = DEFAULT_PAPER_BALANCE;
   private eventDurationMinutes = 60;
   private eventEndTime: number | null = null;
   private eventTimerInterval: ReturnType<typeof setInterval> | null = null;
@@ -400,6 +405,7 @@ export class PlayerManager {
       bestTradePercent: player.bestTradePercent,
       lastUpdate: player.lastUpdate,
       connected: player.connected,
+      isCompetitionPlayer: player.isCompetitionPlayer ?? false,
     }));
   }
 
@@ -787,7 +793,11 @@ export class PlayerManager {
   }
 
   getActivePlayers(): Player[] {
-    return this.getPlayers().filter((player) => player.active && !this.onlineCompetitionPlayerIds.has(player.id));
+    return this.getPlayers().filter((player) => (
+      player.active
+      && !player.isCompetitionPlayer
+      && !this.onlineCompetitionPlayerIds.has(player.id)
+    ));
   }
 
   getPlayerById(id: string): Player | null {
@@ -805,7 +815,7 @@ export class PlayerManager {
 
   getRosterPublic(): Omit<Player, 'apiKey' | 'apiSecret'>[] {
     return this.getPlayers()
-      .filter((player) => !this.onlineCompetitionPlayerIds.has(player.id))
+      .filter((player) => !player.isCompetitionPlayer && !this.onlineCompetitionPlayerIds.has(player.id))
       .map((player) => this.toRosterPlayer(player));
   }
 
@@ -814,6 +824,11 @@ export class PlayerManager {
     for (const playerId of playerIds) {
       if (!this.onlineCompetitionPlayerIds.has(playerId)) {
         this.onlineCompetitionPlayerIds.add(playerId);
+        changed = true;
+      }
+      const player = this.players.get(playerId);
+      if (player && !player.isCompetitionPlayer) {
+        player.isCompetitionPlayer = true;
         changed = true;
       }
       this.playerQueue = this.playerQueue.filter((id) => id !== playerId);
@@ -828,12 +843,19 @@ export class PlayerManager {
     for (const playerId of Array.from(this.onlineCompetitionPlayerIds)) {
       if (!next.has(playerId)) {
         this.onlineCompetitionPlayerIds.delete(playerId);
+        const player = this.players.get(playerId);
+        if (player?.isCompetitionPlayer) player.isCompetitionPlayer = false;
         changed = true;
       }
     }
     for (const playerId of next) {
       if (!this.onlineCompetitionPlayerIds.has(playerId)) {
         this.onlineCompetitionPlayerIds.add(playerId);
+        changed = true;
+      }
+      const player = this.players.get(playerId);
+      if (player && !player.isCompetitionPlayer) {
+        player.isCompetitionPlayer = true;
         changed = true;
       }
       this.playerQueue = this.playerQueue.filter((id) => id !== playerId);
@@ -845,6 +867,11 @@ export class PlayerManager {
     let changed = false;
     for (const playerId of playerIds) {
       if (this.onlineCompetitionPlayerIds.delete(playerId)) {
+        changed = true;
+      }
+      const player = this.players.get(playerId);
+      if (player?.isCompetitionPlayer) {
+        player.isCompetitionPlayer = false;
         changed = true;
       }
     }
@@ -877,6 +904,7 @@ export class PlayerManager {
     if (!player) return null;
 
     this.onlineCompetitionPlayerIds.add(player.id);
+    player.isCompetitionPlayer = true;
     this.playerQueue = this.playerQueue.filter((id) => id !== player.id);
 
     if (!player.active) {
@@ -887,12 +915,7 @@ export class PlayerManager {
     this.ensurePaperPlayerBaseline(player);
     this.saveRoster();
 
-    if (!this.competitionPaperRuntimeStarted) {
-      await this.paperEngine.start([player], { reset: false });
-      this.competitionPaperRuntimeStarted = true;
-    } else {
-      this.paperEngine.trackPlayers([player]);
-    }
+    await this.ensureCompetitionPaperRuntime(player);
 
     this.broadcastState();
     return player;
@@ -942,6 +965,16 @@ export class PlayerManager {
 
   getPaperStartingBalance(): number {
     return this.paperStartingBalance;
+  }
+
+  getCompetitionStartingBalance(): number {
+    return this.competitionStartingBalance;
+  }
+
+  /** Réglée par l'admin compete (indépendante de l'événement LIVE). */
+  setCompetitionStartingBalance(balance: number): void {
+    if (!Number.isFinite(balance) || balance <= 0) return;
+    this.competitionStartingBalance = Math.floor(balance);
   }
 
   getMarketDataSource(): MarketDataSource {
@@ -1432,9 +1465,11 @@ export class PlayerManager {
 
   private ensurePaperPlayerBaseline(player: Player): void {
     if (player.initialBalance != null) return;
-    player.initialBalance = this.paperStartingBalance;
-    player.currentBalance = this.paperStartingBalance;
-    player.availableMargin = this.paperStartingBalance;
+    // Joueurs d'arène online → balance compete dédiée, jamais celle du LIVE.
+    const baseline = this.competitionStartingBalance;
+    player.initialBalance = baseline;
+    player.currentBalance = baseline;
+    player.availableMargin = baseline;
     player.usedMargin = 0;
     player.feesPaid = 0;
     player.pnl = 0;
@@ -1448,12 +1483,14 @@ export class PlayerManager {
 
   private async ensureCompetitionPaperRuntime(player: Player): Promise<void> {
     this.ensurePaperPlayerBaseline(player);
-    if (!this.competitionPaperRuntimeStarted) {
-      await this.paperEngine.start([player], { reset: false });
-      this.competitionPaperRuntimeStarted = true;
-      return;
-    }
+    // CRITIQUE : ne JAMAIS appeler `paperEngine.start()` ici. `start()` fait
+    // `this.playersRef = players` et écrase la liste suivie par le moteur —
+    // ce qui éjectait les joueurs de l'événement LIVE en cours (SL/TP, fills
+    // d'ordres limites et PnL gelés). On se contente d'AJOUTER le joueur
+    // compete et de garantir que le feed marché tourne (idempotent).
     this.paperEngine.trackPlayers([player]);
+    await this.paperEngine.ensureMarketFeed();
+    this.competitionPaperRuntimeStarted = true;
   }
 
   private stopRealtimeLoops(): void {

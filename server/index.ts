@@ -1277,7 +1277,7 @@ app.get('/api/paper/me', async (req, res) => {
     market: manager.getChartMarketSnapshot(),
     fees: manager.getPaperFeeRates(),
     pairs: manager.getSupportedPaperPairs(),
-    startingBalance: manager.getPaperStartingBalance(),
+    startingBalance: isCompetition ? manager.getCompetitionStartingBalance() : manager.getPaperStartingBalance(),
     marketDataSource: manager.getMarketDataSource(),
     eventStarted: manager.isStarted(),
     eventEndTime: manager.getEventEndTime(),
@@ -1905,7 +1905,7 @@ app.post('/api/competition/trade/session', async (req, res) => {
       market: manager.getChartMarketSnapshot(),
       fees: manager.getPaperFeeRates(),
       pairs: manager.getSupportedPaperPairs(),
-      startingBalance: manager.getPaperStartingBalance(),
+      startingBalance: manager.getCompetitionStartingBalance(),
       marketDataSource: manager.getMarketDataSource(),
       eventStarted: manager.isStarted(),
       canTrade: competitionStatus === 'live',
@@ -1927,6 +1927,30 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
 });
 
 // --- Admin APIs for competitions ---
+
+/**
+ * Réglages des arènes online (compete) — STRICTEMENT séparés de la config de
+ * l'événement LIVE (`/api/event/config`). Régler la balance compete ne doit
+ * jamais toucher l'événement LIVE et inversement.
+ */
+app.get('/api/competition/arena-config', requireAdmin, (_req, res) => {
+  res.json({ startingBalance: competitionManager.getCompetitionStartingBalance() });
+});
+
+app.post('/api/competition/arena-config', requireAdmin, async (req, res) => {
+  const startingBalance = Number(req.body?.startingBalance);
+  if (!Number.isFinite(startingBalance) || startingBalance <= 0) {
+    res.status(400).json({ error: 'Balance arène invalide' });
+    return;
+  }
+  try {
+    await competitionManager.setCompetitionStartingBalance(startingBalance);
+    manager.setCompetitionStartingBalance(startingBalance);
+    res.json({ ok: true, startingBalance: competitionManager.getCompetitionStartingBalance() });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Réglage arène impossible' });
+  }
+});
 
 app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
   await syncAllCompetitionResults();
@@ -2012,6 +2036,9 @@ const serverReady = Promise.all([
   itickCandles.initItickCandlesStore(),
 ]).then(async () => {
   resyncCompetitionPlayerIsolation();
+  // Pousse la balance des arènes online (persistée côté compétition) dans le
+  // PlayerManager pour qu'elle soit indépendante de l'événement LIVE.
+  manager.setCompetitionStartingBalance(competitionManager.getCompetitionStartingBalance());
   await manager.ensurePublicMarketFeed();
 });
 

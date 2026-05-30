@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { EventMode } from '../stores/useGameStore';
 import { compressImage } from '../utils/imageUpload';
 import ItickFeedPanel from './ItickFeedPanel';
 
@@ -187,7 +186,6 @@ export default function CompetitionAdmin() {
   const [editDraft, setEditDraft] = useState<CompetitionDraft | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [arenaStartingBalance, setArenaStartingBalance] = useState(10000);
-  const [arenaEventMode, setArenaEventMode] = useState<EventMode>('1v1');
   const [savingArenaSettings, setSavingArenaSettings] = useState(false);
   const [itickStatus, setItickStatus] = useState<ItickFeedStatus | null>(null);
   const [itickInstruments, setItickInstruments] = useState<ItickInstrument[]>([]);
@@ -223,11 +221,12 @@ export default function CompetitionAdmin() {
   const fetchArenaSettings = useCallback(async () => {
     if (!adminToken) return;
     try {
-      const res = await adminFetch('/api/event/config');
+      // Endpoint dédié aux arènes online — JAMAIS la config de l'événement
+      // LIVE (`/api/event/config`), pour éviter tout couplage des deux.
+      const res = await adminFetch('/api/competition/arena-config');
       if (!res.ok) return;
       const data = await res.json();
-      if (data.paperStartingBalance) setArenaStartingBalance(data.paperStartingBalance);
-      if (data.mode) setArenaEventMode(data.mode);
+      if (data.startingBalance) setArenaStartingBalance(data.startingBalance);
     } catch {
       // ignore; the competitions list remains usable.
     }
@@ -285,22 +284,16 @@ export default function CompetitionAdmin() {
     setInfo('');
     const nextBalance = next?.paperStartingBalance ?? arenaStartingBalance;
     try {
-      const res = await adminFetch('/api/event/config', {
+      // Endpoint dédié compete : ne touche QUE la balance des arènes online,
+      // jamais le mode/plateforme de l'événement LIVE.
+      const res = await adminFetch('/api/competition/arena-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: arenaEventMode,
-          platformMode: 'paper',
-          paperStartingBalance: nextBalance,
-          // Les arènes online sont alimentées par iTick (crypto + forex +
-          // indices + matières premières). On verrouille binance côté moteur
-          // paper pour exposer toutes les paires crypto compatibles iTick.
-          marketDataSource: 'binance',
-        }),
+        body: JSON.stringify({ startingBalance: nextBalance }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Réglages arène impossibles');
-      setArenaStartingBalance(nextBalance);
+      setArenaStartingBalance(data.startingBalance ?? nextBalance);
       setInfo('Réglages paper arène sauvegardés');
     } catch (err: any) {
       setError(err.message);

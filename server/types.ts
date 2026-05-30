@@ -28,6 +28,12 @@ export interface Player {
   bestTradePercent: number;
   lastUpdate: number;
   connected: boolean;
+  /**
+   * `true` pour un joueur d'arène online (compete). Exclu du dashboard LIVE et
+   * du roster LIVE. Persisté pour que l'isolation survive aux refreshs / cold
+   * starts, indépendamment du set en mémoire `onlineCompetitionPlayerIds`.
+   */
+  isCompetitionPlayer?: boolean;
 }
 
 export interface StoredPlayer {
@@ -61,6 +67,7 @@ export interface StoredPlayer {
   bestTradePercent?: number;
   lastUpdate?: number;
   connected?: boolean;
+  isCompetitionPlayer?: boolean;
 }
 
 export interface Trade {
