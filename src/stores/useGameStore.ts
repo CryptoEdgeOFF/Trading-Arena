@@ -1,23 +1,14 @@
 import { create } from 'zustand';
-import { refreshOpenPositions } from '../utils/positionPnl';
+import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { tryAcceptSpotlight, resetSpotlightNotifications } from '../utils/arenaSounds';
-
-function withLivePositionPnls<T extends { openPositions: Position[] }>(
-  player: T,
-  market: Record<string, { markPrice?: number }>,
-): T {
-  return {
-    ...player,
-    openPositions: refreshOpenPositions(player.openPositions || [], market),
-  };
-}
 
 function refreshAllPlayersPositions(
   players: Player[],
   market: Record<string, { markPrice?: number }>,
+  startingBalance: number,
 ): Player[] {
   if (!players.length) return players;
-  return players.map((player) => withLivePositionPnls(player, market));
+  return players.map((player) => refreshPlayerPaperMetrics(player, market, startingBalance));
 }
 
 type CelebrationItem = { type: 'leader-change' | 'big-trade'; playerId: string };
@@ -359,10 +350,10 @@ export const useGameStore = create<GameState>((set) => ({
         }
       }
 
-      // Recalcule le PnL flottant de chaque position à partir des mark
-      // prices live (state:patch ne pousse openPositions qu'à l'ouverture).
+      // Recalcule le PnL flottant (positions + equity globale) à partir
+      // des mark prices live — le patch ne pousse pas le PnL à chaque tick.
       if (next.players.length > 0) {
-        next.players = refreshAllPlayersPositions(next.players, next.market);
+        next.players = refreshAllPlayersPositions(next.players, next.market, next.paperStartingBalance);
       }
 
       return next;
@@ -459,9 +450,9 @@ export const useGameStore = create<GameState>((set) => ({
       }
 
       // À chaque tick marché (ou patch positions), recalcule le PnL
-      // position par position pour aligner dashboard ↔ terminal.
+      // position par position et l'equity globale pour aligner dashboard ↔ terminal.
       if (next.players.length > 0 && (patch.market || patch.players || patch.addedPlayers)) {
-        next.players = refreshAllPlayersPositions(next.players, next.market);
+        next.players = refreshAllPlayersPositions(next.players, next.market, next.paperStartingBalance);
       }
 
       return next;

@@ -19,6 +19,7 @@ import {
   priceToInputString,
   sizeUnitLabel,
 } from '../utils/positionSizing';
+import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import logoBtf from '../assets/pictures/logoBTF.webp';
 import { AvatarImage } from './OptimizedImage';
 import { withDisplayWidth } from '../utils/imageUrl';
@@ -2846,14 +2847,21 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   }, []);
 
   const applyPaperUpdate = useCallback((data: any) => {
+    const marketSnapshot = data?.market as Record<string, MarketTicker> | undefined;
+    if (marketSnapshot) setLiveMarket(marketSnapshot);
     if (data?.player) {
       const reconciled = reconcilePlayerWithPending(data.player as Player);
-      setLivePlayer(reconciled);
+      if (reconciled) {
+        setLivePlayer(
+          marketSnapshot
+            ? refreshPlayerPaperMetrics(reconciled, marketSnapshot, meta.startingBalance)
+            : reconciled,
+        );
+      }
     }
-    if (data?.market) setLiveMarket(data.market);
     if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
     mergeCompetitionFromMe(data?.competition);
-  }, [reconcilePlayerWithPending]);
+  }, [meta.startingBalance, reconcilePlayerWithPending]);
 
   const applyMarketTick = useCallback((data: {
     ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number }>;
@@ -2884,9 +2892,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         };
         changed = true;
       }
+      if (changed) {
+        setLivePlayer((player) => (
+          player ? refreshPlayerPaperMetrics(player, base, meta.startingBalance) : player
+        ));
+      }
       return changed ? base : prev;
     });
-  }, []);
+  }, [meta.startingBalance]);
 
   const applyArenaInit = useCallback((payload: any) => {
     if (!payload?.competition || !Array.isArray(payload?.leaderboard)) return;

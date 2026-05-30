@@ -1,4 +1,4 @@
-import type { Position } from '../stores/useGameStore';
+import type { Player, Position } from '../stores/useGameStore';
 
 const ACCOUNT_CURRENCY = 'USD';
 
@@ -41,4 +41,37 @@ export function refreshOpenPositions(
       pnl: computePositionPnl(position, markPrice),
     };
   });
+}
+
+/** Miroir client de `updatePlayerEquity` (exchangePaperEngine.ts). */
+export function refreshPlayerPaperMetrics(
+  player: Player,
+  market: Record<string, { markPrice?: number }>,
+  startingBalance = 10_000,
+): Player {
+  const openPositions = refreshOpenPositions(player.openPositions || [], market);
+  const realizedPnl = (player.trades || [])
+    .filter((trade) => trade.action === 'close')
+    .reduce((total, trade) => total + trade.pnl, 0);
+  const unrealizedPnl = openPositions.reduce((total, position) => total + position.pnl, 0);
+  const initialBalance = player.initialBalance ?? startingBalance;
+  const usedMargin = openPositions.reduce((total, position) => total + position.margin, 0);
+  const reservedCapital = (player.openOrders || []).reduce(
+    (total, order) => total + (order.marginReserved || 0) + (order.feeEstimate || 0),
+    0,
+  );
+  const currentBalance = initialBalance + realizedPnl + unrealizedPnl - (player.feesPaid || 0);
+  const availableMargin = Math.max(0, currentBalance - usedMargin - reservedCapital);
+  const pnl = currentBalance - initialBalance;
+  const pnlPercent = initialBalance > 0 ? (pnl / initialBalance) * 100 : 0;
+
+  return {
+    ...player,
+    openPositions,
+    usedMargin,
+    currentBalance,
+    availableMargin,
+    pnl,
+    pnlPercent,
+  };
 }
