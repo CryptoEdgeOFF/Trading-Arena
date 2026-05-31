@@ -77,8 +77,10 @@ export function scheduleForPair(
   // (dim 22h UTC → ven 22h UTC) plutôt que la session cash NYSE 9h30–16h ET.
   if (cat === 'indices' || cat === 'index') return 'forex_week';
   if (cat === 'commodities' || cat === 'commodity') {
-    const code = (instrumentCode || pair.split('/')[0] || '').toUpperCase();
-    if (code === 'USOIL' || code === 'WTI') return 'us_index';
+    // Métaux + énergie : flux CFD iTick (XAUUSD, XAGUSD, USOIL) ouverts
+    // ~24h en semaine. WTI inclus → on aligne tout sur l'horaire
+    // « semaine entière, fermé le week-end » (plus de session cash NYSE).
+    void instrumentCode;
     return 'forex_week';
   }
   return 'always';
