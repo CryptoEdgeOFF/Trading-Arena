@@ -515,8 +515,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
 
         {/* Valeur du compte + PNL grand */}
         <div className={`${isFull ? 'mb-5' : 'mb-4'}`}>
-          <div className="mb-2 flex items-baseline justify-between gap-2 border-b border-white/[0.06] pb-2">
-            <span className="micro text-[9px] text-zinc-500">Valeur du compte</span>
+          <div className="mb-2 border-b border-white/[0.06] pb-2">
             <span className="num text-lg font-bold tabular-nums text-white">${formatUSD(player.currentBalance)}</span>
           </div>
           <div className="micro text-[9px] mb-1 text-zinc-500">P&amp;L Réalisé + Latent</div>
