@@ -1300,10 +1300,16 @@ function MyCompetitionCard({
           <button
             type="button"
             onClick={onTrade}
-            disabled={busy || isEnded}
+            disabled={busy || isEnded || !isLive}
             className="blood-cta px-6 py-4 text-base sm:text-lg"
           >
-            {busy ? '...' : isEnded ? 'Arène fermée' : 'TRADER'}
+            {busy
+              ? '...'
+              : isEnded
+                ? 'Arène fermée'
+                : !isLive
+                  ? `🔒 Ouvre dans ${countdown}`
+                  : 'TRADER'}
           </button>
           <Link
             to={`/compete/leaderboard/${competition.id}`}
