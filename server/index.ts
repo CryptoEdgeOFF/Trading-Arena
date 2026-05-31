@@ -893,6 +893,21 @@ app.get('/api/roster', (_req, res) => {
   res.json(manager.getRosterPublic());
 });
 
+app.patch('/api/roster/:id/color', requireAdmin, (req, res) => {
+  const color = typeof req.body?.color === 'string' ? req.body.color : '';
+  if (!color) {
+    res.status(400).json({ error: 'color required' });
+    return;
+  }
+  const player = manager.setPlayerColor(req.params.id, color);
+  if (!player) {
+    res.status(400).json({ error: 'Joueur introuvable ou couleur invalide (#RRGGBB attendu)' });
+    return;
+  }
+  const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
+  res.json(publicPlayer);
+});
+
 app.delete('/api/roster/:id', requireAdmin, (req, res) => {
   manager.removePlayer(req.params.id);
   res.json({ ok: true });

@@ -26,6 +26,31 @@ function sortArenaSlots(players: Player[]): Player[] {
   return [...players].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
 }
 
+// Fenêtre (en ms avant la fin de partie) pendant laquelle on coupe les
+// notifications (spotlight trade, leader, achievements) pour que le
+// compteur et les PnL restent visibles dans le sprint final.
+const FINAL_NOTIF_BLACKOUT_MS = 10_000;
+
+/** true sur les ~10 dernières secondes d'une partie LIVE en cours. */
+function useFinalNotifBlackout(): boolean {
+  const eventStarted = useGameStore((s) => s.eventStarted);
+  const eventEndTime = useGameStore((s) => s.eventEndTime);
+  const [blocked, setBlocked] = useState(false);
+
+  useEffect(() => {
+    if (!eventStarted || !eventEndTime) {
+      setBlocked(false);
+      return;
+    }
+    const evaluate = () => setBlocked(eventEndTime - Date.now() <= FINAL_NOTIF_BLACKOUT_MS);
+    evaluate();
+    const id = window.setInterval(evaluate, 500);
+    return () => window.clearInterval(id);
+  }, [eventStarted, eventEndTime]);
+
+  return blocked;
+}
+
 function orderArenaPlayers(players: Player[], slotIds: string[]): Player[] {
   if (slotIds.length === 0) return sortArenaSlots(players);
   const byId = new Map(players.map((player) => [player.id, player]));
@@ -60,6 +85,7 @@ export default function Dashboard() {
     [players, arenaSlotIds],
   );
   const showFeed = eventMode !== '4v4';
+  const notifsBlocked = useFinalNotifBlackout();
 
   return (
     <div className="live-arena relative h-screen flex flex-col overflow-hidden">
@@ -194,9 +220,11 @@ export default function Dashboard() {
 
       {/* Overlays */}
       <ArenaSoundController />
-      <TradeSpotlight />
-      <Achievements />
-      <CelebrationOverlay />
+      {/* Notifications coupées sur les 10 dernières secondes : on laisse voir
+          le compteur et les PnL pendant le sprint final. */}
+      {!notifsBlocked && <TradeSpotlight />}
+      {!notifsBlocked && <Achievements />}
+      {!notifsBlocked && <CelebrationOverlay />}
       <EventTransitions />
       <MalusWheelOverlay />
     </div>

@@ -762,6 +762,23 @@ export class PlayerManager {
     return player;
   }
 
+  /** Définit la couleur d'un participant (hex #RRGGBB ou #RGB). */
+  setPlayerColor(id: string, color: string): Player | null {
+    const player = this.players.get(id);
+    if (!player) return null;
+    const match = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.exec((color || '').trim());
+    if (!match) return null;
+    let hex = match[0].toLowerCase();
+    if (hex.length === 4) {
+      // #abc → #aabbcc
+      hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`;
+    }
+    player.color = hex;
+    this.saveRoster();
+    this.broadcastState();
+    return player;
+  }
+
   removePlayer(id: string): void {
     this.players.delete(id);
     this.playerQueue = this.playerQueue.filter((playerId) => playerId !== id);

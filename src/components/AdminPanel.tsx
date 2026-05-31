@@ -134,6 +134,43 @@ function TraderCodePill({ code }: { code: string }) {
   );
 }
 
+function PlayerColorControl({
+  player,
+  onChange,
+}: {
+  player: RosterPlayer;
+  onChange: (id: string, color: string) => void;
+}) {
+  const initial = /^#[0-9a-fA-F]{6}$/.test(player.color || '') ? player.color : '#6366f1';
+  const [value, setValue] = useState(initial);
+
+  useEffect(() => {
+    setValue(/^#[0-9a-fA-F]{6}$/.test(player.color || '') ? player.color : '#6366f1');
+  }, [player.color]);
+
+  const commit = () => {
+    if (value.toLowerCase() !== (player.color || '').toLowerCase()) {
+      onChange(player.id, value);
+    }
+  };
+
+  return (
+    <label
+      className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1.5"
+      title="Couleur du participant (notifications, cartes…)"
+    >
+      <input
+        type="color"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+      />
+      <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">{value}</span>
+    </label>
+  );
+}
+
 function PlayerPill({
   player,
   onRemove,
@@ -450,6 +487,15 @@ export default function AdminPanel() {
 
   async function togglePlayer(id: string) {
     await adminFetch(`/api/roster/${id}/toggle`, { method: 'PATCH' });
+    fetchRoster();
+  }
+
+  async function updatePlayerColor(id: string, color: string) {
+    await adminFetch(`/api/roster/${id}/color`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color }),
+    });
     fetchRoster();
   }
 
@@ -1075,9 +1121,12 @@ export default function AdminPanel() {
                         </p>
                       </div>
                     </div>
-                    <button type="button" onClick={() => togglePlayer(player.id)} className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/20">
-                      Retirer
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <PlayerColorControl player={player} onChange={updatePlayerColor} />
+                      <button type="button" onClick={() => togglePlayer(player.id)} className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/20">
+                        Retirer
+                      </button>
+                    </div>
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -1103,6 +1152,7 @@ export default function AdminPanel() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <PlayerColorControl player={player} onChange={updatePlayerColor} />
                       <button type="button" onClick={() => togglePlayer(player.id)} disabled={activePlayers.length >= expectedPlayers} className="rounded-lg border border-green-500/20 bg-green-500/10 px-3 py-1.5 text-sm text-green-400 transition-colors hover:bg-green-500/20 disabled:opacity-30">
                         Ajouter
                       </button>
