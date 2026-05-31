@@ -45,11 +45,13 @@ export const ITICK_INSTRUMENTS: ItickInstrument[] = [
   // Energy
   { pair: 'WTI/USD',      asset: 'forex',   code: 'USOIL',  category: 'commodity', pricescale: 1_000,   label: 'WTI Crude' },
 
-  // Indices US — flux CFD iTick ouverts ~24h en semaine (fermés le week-end),
-  // au lieu des indices cash (SPX/NDX/DJI) limités à la session NYSE 9h30–16h ET.
-  { pair: 'SP500/USD',    asset: 'indices', code: 'SPX500USD', category: 'index',  pricescale: 100,     label: 'S&P 500',   hyperliquidCoin: 'xyz:SP500' },
-  { pair: 'NAS100/USD',   asset: 'indices', code: 'NAS100',    category: 'index',  pricescale: 100,     label: 'Nasdaq 100' },
-  { pair: 'US30/USD',     asset: 'indices', code: 'US30USD',   category: 'index',  pricescale: 100,     label: 'Dow Jones' },
+  // Indices US — flux iTick ouverts ~24h en semaine (fermés le week-end).
+  // Symboles SPX500 / NAS100 / US30 : seuls flux indices US bien alimentés
+  // en 24h chez iTick (frais + historique profond). Les variantes
+  // SPX500USD / US30USD sont des doublons parasites figés (~22 mai), à éviter.
+  { pair: 'SP500/USD',    asset: 'indices', code: 'SPX500', category: 'index',  pricescale: 100,     label: 'S&P 500',   hyperliquidCoin: 'xyz:SP500' },
+  { pair: 'NAS100/USD',   asset: 'indices', code: 'NAS100', category: 'index',  pricescale: 100,     label: 'Nasdaq 100' },
+  { pair: 'US30/USD',     asset: 'indices', code: 'US30',   category: 'index',  pricescale: 100,     label: 'Dow Jones' },
 ];
 
 const BY_PAIR = new Map<string, ItickInstrument>();
