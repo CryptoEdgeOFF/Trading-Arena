@@ -173,8 +173,12 @@ export default function CompetitionPublicLeaderboard() {
       .catch(() => undefined);
   }, []);
 
-  const top3 = useMemo(() => (data ? data.leaderboard.slice(0, 3) : []), [data]);
-  const rest = useMemo(() => (data ? data.leaderboard.slice(3) : []), [data]);
+  // Seuls les traders ayant tradé (tradesCount > 0) sont classés/podiumés.
+  // Les autres sont relégués en bas, sans rang, avec « Aucun trade ».
+  const ranked = useMemo(() => (data ? data.leaderboard.filter((row) => row.tradesCount > 0) : []), [data]);
+  const notTraded = useMemo(() => (data ? data.leaderboard.filter((row) => row.tradesCount === 0) : []), [data]);
+  const top3 = useMemo(() => ranked.slice(0, 3), [ranked]);
+  const rest = useMemo(() => ranked.slice(3), [ranked]);
   const myRow = useMemo(() => (
     data && currentUserId ? data.leaderboard.find((row) => row.userId === currentUserId) || null : null
   ), [currentUserId, data]);
@@ -345,13 +349,17 @@ export default function CompetitionPublicLeaderboard() {
                       <div className="hidden text-right md:block">Dernière maj</div>
                     </div>
                     <div className="divide-y divide-[#1a1a20]">
-                      {rest.length > 0 ? (
-                        rest.map((row, idx) => <RankRow key={row.userId} row={row} index={idx} isMe={row.userId === currentUserId} />)
-                      ) : (
+                      {rest.length === 0 && notTraded.length === 0 && (
                         <div className="px-5 py-6 text-center text-xs text-[#71717a]">
                           Podium uniquement — pas encore de challenger en dehors du top 3.
                         </div>
                       )}
+                      {rest.map((row, idx) => (
+                        <RankRow key={row.userId} row={row} index={idx} isMe={row.userId === currentUserId} />
+                      ))}
+                      {notTraded.map((row, idx) => (
+                        <RankRow key={row.userId} row={row} index={rest.length + idx} isMe={row.userId === currentUserId} />
+                      ))}
                     </div>
                   </div>
                 )}
@@ -525,6 +533,7 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
 }
 
 function RankRow({ row, index, isMe = false, compact = false }: { row: LeaderboardRow; index: number; isMe?: boolean; compact?: boolean }) {
+  const noTrade = row.tradesCount === 0;
   const pos = row.pnlPercent >= 0;
   const tier = row.rank === 1 ? 'gold' : row.rank === 2 ? 'silver' : row.rank === 3 ? 'bronze' : '';
   return (
@@ -532,10 +541,14 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.4, delay: Math.min(index, 12) * 0.025, ease: [0.22, 1, 0.36, 1] }}
-      className={`row-hover grid grid-cols-[44px_1.4fr_1fr_0.9fr_0.6fr] items-center gap-2 border-l px-3 text-sm sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr] ${compact ? 'py-2 sm:py-2' : 'py-3 sm:py-3.5'} ${isMe ? 'border-[#dc2626] bg-[#dc2626]/10' : 'border-transparent'}`}
+      className={`row-hover grid grid-cols-[44px_1.4fr_1fr_0.9fr_0.6fr] items-center gap-2 border-l px-3 text-sm sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr] ${compact ? 'py-2 sm:py-2' : 'py-3 sm:py-3.5'} ${isMe ? 'border-[#dc2626] bg-[#dc2626]/10' : 'border-transparent'} ${noTrade ? 'opacity-60' : ''}`}
     >
       <div>
-        <span className={`rank-circle ${tier}`}>{row.rank}</span>
+        {noTrade ? (
+          <span className="flex h-8 w-8 items-center justify-center text-base font-bold text-[#52525b]">—</span>
+        ) : (
+          <span className={`rank-circle ${tier}`}>{row.rank}</span>
+        )}
       </div>
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white sm:h-8 sm:w-8 sm:text-[11px]">
@@ -562,14 +575,22 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
           )}
         </span>
       </div>
-      <div className={`num truncate text-right font-bold ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
-        <AnimatedNumber value={row.pnlPercent} format={(v) => formatPercent(v)} />
-        <span className="ml-0.5 text-[0.7em] text-[#52525b]">%</span>
-      </div>
-      <div className={`num truncate text-right ${pos ? 'text-[#34d399]' : 'text-[#fca5a5]'}`}>
-        <AnimatedNumber value={row.pnlUsd} format={(v) => formatCompactSigned(v)} />
-      </div>
-      <div className="num truncate text-right text-[#b8b8c2]">{row.tradesCount}</div>
+      {noTrade ? (
+        <div className="col-span-3 text-right text-xs font-medium uppercase tracking-[0.12em] text-[#71717a] sm:col-span-4 md:col-span-3">
+          Aucun trade
+        </div>
+      ) : (
+        <>
+          <div className={`num truncate text-right font-bold ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+            <AnimatedNumber value={row.pnlPercent} format={(v) => formatPercent(v)} />
+            <span className="ml-0.5 text-[0.7em] text-[#52525b]">%</span>
+          </div>
+          <div className={`num truncate text-right ${pos ? 'text-[#34d399]' : 'text-[#fca5a5]'}`}>
+            <AnimatedNumber value={row.pnlUsd} format={(v) => formatCompactSigned(v)} />
+          </div>
+          <div className="num truncate text-right text-[#b8b8c2]">{row.tradesCount}</div>
+        </>
+      )}
       <div className="hidden truncate text-right text-[11px] text-[#71717a] md:block">{fmtTime(row.updatedAt)}</div>
     </motion.div>
   );

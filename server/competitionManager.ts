@@ -142,6 +142,28 @@ function inferCompetitionStatus(startAt: number, endAt: number, now = Date.now()
   return 'live';
 }
 
+/**
+ * Trie et classe un leaderboard. Les participants qui n'ont pas encore tradé
+ * (tradesCount === 0) ne sont jamais classés : ils reçoivent `rank = 0` et sont
+ * relégués en bas (sous les traders classés). Évite qu'un compte à 0 % (pas de
+ * trade) se retrouve sur le podium devant un trader en perte.
+ */
+function sortAndRankLeaderboard<T extends { pnlPercent: number; pnlUsd: number; tradesCount: number }>(
+  rows: T[],
+): Array<T & { rank: number }> {
+  const sorted = rows.slice().sort((a, b) => {
+    const aTraded = a.tradesCount > 0 ? 1 : 0;
+    const bTraded = b.tradesCount > 0 ? 1 : 0;
+    if (aTraded !== bTraded) return bTraded - aTraded; // traders classés d'abord
+    return b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd;
+  });
+  let rank = 0;
+  return sorted.map((row) => ({
+    ...row,
+    rank: row.tradesCount > 0 ? (rank += 1) : 0,
+  }));
+}
+
 function normalizeCashPrize(input: unknown): CashPrize | null {
   if (input === null || input === undefined) return null;
   if (typeof input !== 'object') return null;
@@ -1567,12 +1589,8 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
 
-    const sorted = competition.entries
-      .slice()
-      .sort((a, b) => b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd);
-
-    const idx = sorted.findIndex((entry) => entry.paperPlayerId === paperPlayerId);
-    const myEntry = idx >= 0 ? sorted[idx] : null;
+    const ranked = sortAndRankLeaderboard(competition.entries.slice());
+    const myEntry = ranked.find((entry) => entry.paperPlayerId === paperPlayerId) ?? null;
 
     return {
       competition: {
@@ -1586,7 +1604,8 @@ export class CompetitionManager {
         participants: competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
       },
-      rank: idx >= 0 ? idx + 1 : null,
+      // rank null = pas (encore) classé (aucun trade).
+      rank: myEntry && myEntry.rank > 0 ? myEntry.rank : null,
       userId: myEntry?.userId ?? null,
       pnlPercent: myEntry?.pnlPercent ?? 0,
       pnlUsd: myEntry?.pnlUsd ?? 0,
@@ -1618,8 +1637,8 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition || !competition.isPublic) throw new Error('Leaderboard introuvable');
 
-    const leaderboard = competition.entries
-      .map((entry) => {
+    const leaderboard = sortAndRankLeaderboard(
+      competition.entries.map((entry) => {
         const user = this.users.get(entry.userId);
         return {
           userId: entry.userId,
@@ -1630,9 +1649,8 @@ export class CompetitionManager {
           tradesCount: entry.tradesCount,
           updatedAt: entry.updatedAt,
         };
-      })
-      .sort((a, b) => b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd)
-      .map((entry, index) => ({ rank: index + 1, ...entry }));
+      }),
+    );
 
     return {
       competition: {
@@ -1678,8 +1696,8 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
 
-    const leaderboard = competition.entries
-      .map((entry) => {
+    const leaderboard = sortAndRankLeaderboard(
+      competition.entries.map((entry) => {
         const user = this.users.get(entry.userId);
         return {
           userId: entry.userId,
@@ -1690,9 +1708,8 @@ export class CompetitionManager {
           tradesCount: entry.tradesCount,
           updatedAt: entry.updatedAt,
         };
-      })
-      .sort((a, b) => b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd)
-      .map((entry, index) => ({ rank: index + 1, ...entry }));
+      }),
+    );
 
     return {
       competition: {
