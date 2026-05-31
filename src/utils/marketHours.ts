@@ -72,7 +72,10 @@ export function scheduleForPair(
   const cat = (category || 'crypto').toLowerCase();
   if (cat === 'crypto') return 'always';
   if (cat === 'forex') return 'forex_week';
-  if (cat === 'indices' || cat === 'index') return 'us_index';
+  // Indices : flux iTick CFD (NAS100, SPX500USD, US30USD) ouverts ~24h en
+  // semaine. On utilise donc l'horaire « semaine entière, fermé le week-end »
+  // (dim 22h UTC → ven 22h UTC) plutôt que la session cash NYSE 9h30–16h ET.
+  if (cat === 'indices' || cat === 'index') return 'forex_week';
   if (cat === 'commodities' || cat === 'commodity') {
     const code = (instrumentCode || pair.split('/')[0] || '').toUpperCase();
     if (code === 'USOIL' || code === 'WTI') return 'us_index';

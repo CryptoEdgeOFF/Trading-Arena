@@ -80,9 +80,9 @@ export const STATIC_MARKET_METADATA: MarketMetadata[] = [
   { pair: 'WTI/USD', base: 'WTI', quote: 'USD', name: 'WTI Crude Oil', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'commodities', source: 'itick', sourceSymbol: 'USOIL', tradingViewSymbol: 'TVC:USOIL', sortOrder: 112, enabled: true },
 
   // Indices US (iTick) — sortOrder 120-122
-  { pair: 'SP500/USD', base: 'SP500', quote: 'USD', name: 'S&P 500', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'SPX', tradingViewSymbol: 'SP:SPX', sortOrder: 120, enabled: true },
-  { pair: 'NAS100/USD', base: 'NAS100', quote: 'USD', name: 'Nasdaq 100', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'NDX', tradingViewSymbol: 'NASDAQ:NDX', sortOrder: 121, enabled: true },
-  { pair: 'US30/USD', base: 'US30', quote: 'USD', name: 'Dow Jones 30', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'DJI', tradingViewSymbol: 'DJ:DJI', sortOrder: 122, enabled: true },
+  { pair: 'SP500/USD', base: 'SP500', quote: 'USD', name: 'S&P 500', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'SPX500USD', tradingViewSymbol: 'OANDA:SPX500USD', sortOrder: 120, enabled: true },
+  { pair: 'NAS100/USD', base: 'NAS100', quote: 'USD', name: 'Nasdaq 100', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'NAS100', tradingViewSymbol: 'OANDA:NAS100USD', sortOrder: 121, enabled: true },
+  { pair: 'US30/USD', base: 'US30', quote: 'USD', name: 'Dow Jones 30', coingeckoId: '', imageUrl: null, krakenSymbol: '', category: 'indices', source: 'itick', sourceSymbol: 'US30USD', tradingViewSymbol: 'OANDA:US30USD', sortOrder: 122, enabled: true },
 ];
 
 let pool: Pool | null = null;

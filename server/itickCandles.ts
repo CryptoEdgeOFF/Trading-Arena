@@ -153,7 +153,31 @@ async function ensureSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_itick_candles_pair_tf_time
     ON itick_candles (pair, timeframe, bar_time DESC)
   `);
+  // Suivi du code source iTick utilisé pour chaque paire. Permet de
+  // détecter un changement de flux (ex. indice cash → CFD) et de purger
+  // l'historique obsolète pour forcer un re-backfill propre.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS itick_candle_source (
+      pair TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      asset TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 }
+
+/**
+ * Codes iTick "legacy" connus avant le passage aux flux CFD 24h
+ * (indices cash → CFD). Sert uniquement à amorcer `itick_candle_source`
+ * la toute première fois : la réconciliation détecte alors le diff et
+ * purge l'historique cash obsolète. Les changements futurs sont gérés
+ * automatiquement par la table (inutile d'y retoucher).
+ */
+const LEGACY_SOURCE_CODES: Record<string, string> = {
+  'SP500/USD': 'SPX',
+  'NAS100/USD': 'NDX',
+  'US30/USD': 'DJI',
+};
 
 export function initItickCandlesStore(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -509,6 +533,78 @@ async function countPersistedBars(pair: string, intervalMin: number): Promise<nu
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                     Réconciliation source (code iTick)                      */
+/* -------------------------------------------------------------------------- */
+
+/** Purge toutes les bougies d'une paire (DB + RAM). */
+async function purgePairCandles(pair: string): Promise<void> {
+  if (pool) {
+    await schemaReady;
+    try {
+      await pool.query('DELETE FROM itick_candles WHERE pair = $1', [pair]);
+    } catch (err) {
+      console.warn(`[itickCandles] purge DB ${pair} KO:`, (err as Error).message);
+    }
+  }
+  for (const key of [...memorySeries.keys()]) {
+    if (key.startsWith(`${pair}:`)) memorySeries.delete(key);
+  }
+}
+
+async function getStoredSourceCode(pair: string): Promise<string | null> {
+  if (!pool) return null;
+  await schemaReady;
+  try {
+    const result = await pool.query(
+      'SELECT code FROM itick_candle_source WHERE pair = $1',
+      [pair],
+    );
+    const code = result.rows?.[0]?.code;
+    return code != null ? String(code) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function upsertSourceCode(pair: string, code: string, asset: string): Promise<void> {
+  if (!pool) return;
+  await schemaReady;
+  try {
+    await pool.query(
+      `INSERT INTO itick_candle_source (pair, code, asset, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (pair) DO UPDATE SET code = EXCLUDED.code, asset = EXCLUDED.asset, updated_at = NOW()`,
+      [pair, code, asset],
+    );
+  } catch (err) {
+    console.warn(`[itickCandles] upsert source ${pair} KO:`, (err as Error).message);
+  }
+}
+
+/**
+ * Détecte les paires dont le code source iTick a changé (ex. indice cash
+ * → CFD 24h) et purge leur historique obsolète pour forcer un re-backfill
+ * propre. À appeler avant `backfillAll` (la profondeur tombe alors à 0,
+ * donc le backfill ré-récupère la donnée du nouveau flux).
+ */
+async function reconcileSourceCodes(): Promise<void> {
+  if (!pool) return;
+  for (const inst of ITICK_INSTRUMENTS) {
+    const stored = await getStoredSourceCode(inst.pair);
+    // Premier passage (table neuve) : on retombe sur le code legacy connu
+    // pour détecter le switch cash → CFD. Sinon on compare au code stocké.
+    const previousCode = stored ?? LEGACY_SOURCE_CODES[inst.pair] ?? inst.code;
+    if (previousCode !== inst.code) {
+      await purgePairCandles(inst.pair);
+      console.log(
+        `[itickCandles] source ${inst.pair} changée ${previousCode} → ${inst.code}, historique purgé (re-backfill)`,
+      );
+    }
+    await upsertSourceCode(inst.pair, inst.code, inst.asset);
+  }
+}
+
 /**
  * Backfill historique de toutes les paires iTick. Stratégie :
  *   - Skip si la DB a déjà ≥ HISTORY_DEPTH[TF] bougies — la profondeur
@@ -526,6 +622,13 @@ async function countPersistedBars(pair: string, intervalMin: number): Promise<nu
  */
 export async function backfillAll(force = false): Promise<void> {
   const restIntervals = [1, 5, 15, 30, 60, 1440];
+
+  // Purge l'historique des paires dont le flux source a changé (cash →
+  // CFD) avant de (re)backfiller, pour ne pas mélanger ancienne et
+  // nouvelle donnée.
+  await reconcileSourceCodes().catch((err) =>
+    console.warn('[itickCandles] reconcileSourceCodes KO:', (err as Error).message),
+  );
 
   for (const inst of ITICK_INSTRUMENTS) {
     for (const intervalMin of restIntervals) {
