@@ -32,7 +32,7 @@ const MAX_HISTORY_BARS = 100_000;
  * en live : limit=2000 ou 5000 renvoie quand même 500 bars max), donc
  * on pagine via `et` pour atteindre ces volumes.
  *
- *   1m   → 5000 bars   (~3.5 j)   — 10 pages
+ *   1m   → 20000 bars  (~14 j)    — 40 pages
  *   5m   → 5000 bars   (~17 j)    — 10 pages
  *   15m  → 5000 bars   (~52 j)    — 10 pages
  *   30m  → 3000 bars   (~62 j)    — 6 pages
@@ -40,12 +40,14 @@ const MAX_HISTORY_BARS = 100_000;
  *   240m → 750 bars    (~125 j)   — dérivé du 60m
  *   1d   → 2000 bars   (~5.5 ans) — 4 pages
  *
- * Coût total au boot par paire : ~46 appels iTick. Avec 11 paires =
- * ~506 appels (≈ 3 min de backfill background). Effectué une seule
- * fois grâce au skip `existing >= target` au prochain redémarrage.
+ * Coût total au boot par paire : ~76 appels iTick. Avec 11 paires =
+ * ~836 appels (backfill background, espacé de 250 ms/page + cooldown
+ * quota). Effectué une seule fois grâce au skip `existing >= target`
+ * au prochain redémarrage. iTick s'arrête tout seul si l'historique 1m
+ * est moins profond (page < pageLimit → fin de pagination).
  */
 const HISTORY_DEPTH: Record<number, number> = {
-  1: 5000,
+  1: 20000,
   5: 5000,
   15: 5000,
   30: 3000,
