@@ -248,14 +248,14 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
           <div className="flex items-center gap-2">
             <div className="relative shrink-0">
               <div
-                className="overflow-hidden rounded-md border bg-zinc-900 h-10 w-10"
+                className="overflow-hidden rounded-md border-2 bg-zinc-900 h-16 w-16"
                 style={{ borderColor: `${player.color}55` }}
               >
                 {player.avatar ? (
                   <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
                 ) : (
                   <div
-                    className="flex h-full w-full items-center justify-center font-bold text-white display text-sm"
+                    className="flex h-full w-full items-center justify-center font-bold text-white display text-xl"
                     style={{ background: player.color }}
                   >
                     {player.name.charAt(0).toUpperCase()}
@@ -263,7 +263,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
                 )}
               </div>
               <span
-                className="absolute -top-1 -left-1 z-10 display flex h-5 min-w-[22px] items-center justify-center rounded border px-1 text-[9px] font-bold leading-none tabular-nums"
+                className="absolute -top-1.5 -left-1.5 z-10 display flex h-6 min-w-[26px] items-center justify-center rounded border px-1 text-[10px] font-bold leading-none tabular-nums"
                 style={{
                   background: rankTheme.bg,
                   color: rankTheme.text,
@@ -275,7 +275,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="display font-bold text-white leading-tight truncate text-[15px]" title={player.name}>
+              <div className="display font-bold text-white leading-tight truncate text-[20px]" title={player.name}>
                 {player.name}
               </div>
             </div>
@@ -331,10 +331,10 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
 
         <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden p-3 gap-2.5">
           {/* Header compact : portrait + nom + rank + PNL */}
-          <div className="flex items-start gap-2.5">
+          <div className="flex items-start gap-3">
             <div className="relative shrink-0">
               <div
-                className="overflow-hidden rounded-lg border-2 bg-zinc-900 h-14 w-14"
+                className="overflow-hidden rounded-xl border-2 bg-zinc-900 h-20 w-20"
                 style={{ borderColor: `${player.color}55` }}
               >
                 {player.avatar ? (
@@ -342,14 +342,14 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
                 ) : (
                   <div
                     className="flex h-full w-full items-center justify-center font-bold text-white display"
-                    style={{ background: player.color, fontSize: '1.5rem' }}
+                    style={{ background: player.color, fontSize: '2rem' }}
                   >
                     {player.name.charAt(0).toUpperCase()}
                   </div>
                 )}
               </div>
               <span
-                className="absolute -top-1.5 -left-1.5 z-10 display flex h-6 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-[10px] font-bold leading-none tabular-nums"
+                className="absolute -top-2 -left-2 z-10 display flex h-7 min-w-[32px] items-center justify-center rounded-md border px-1.5 text-[11px] font-bold leading-none tabular-nums"
                 style={{
                   background: rankTheme.bg,
                   color: rankTheme.text,
@@ -362,19 +362,18 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               </span>
             </div>
 
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 pt-1">
               <div
-                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[20px]"
+                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[28px]"
                 title={player.name}
               >
                 {player.name}
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
-                <PlayerBadges badges={player.badges} max={4} size="sm" />
-                <span className="num text-[9.5px] text-zinc-500 tabular-nums">
-                  {player.tradeCount} tr · ${formatUSD(player.currentBalance)}
-                </span>
-              </div>
+              {player.badges.length > 0 && (
+                <div className="mt-1">
+                  <PlayerBadges badges={player.badges} max={4} size="sm" />
+                </div>
+              )}
             </div>
           </div>
 
@@ -462,7 +461,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             <div className="micro mb-1.5 text-[8.5px] tracking-[0.26em] text-zinc-500">
               Trader
             </div>
-            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isFull ? 'text-5xl' : 'text-4xl'}`}>
+            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isFull ? 'text-6xl xl:text-7xl' : 'text-5xl'}`}>
               {player.name}
             </div>
             <div className="mt-2 min-h-[1.25rem]">
@@ -474,7 +473,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
           <div className="relative shrink-0">
             <div
               className={`overflow-hidden rounded-xl border-2 bg-zinc-900 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.85)] ${
-                isFull ? 'h-32 w-32' : 'h-24 w-24'
+                isFull ? 'h-44 w-44 xl:h-48 xl:w-48' : 'h-36 w-36'
               }`}
               style={{ borderColor: `${player.color}55` }}
             >
@@ -487,7 +486,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               ) : (
                 <div
                   className="flex h-full w-full items-center justify-center font-bold text-white display tracking-wider"
-                  style={{ background: player.color, fontSize: isFull ? '3rem' : '2.25rem' }}
+                  style={{ background: player.color, fontSize: isFull ? '4rem' : '3rem' }}
                 >
                   {player.name.charAt(0).toUpperCase()}
                 </div>
@@ -495,7 +494,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             </div>
             {/* Badge rang qui chevauche le portrait. */}
             <span
-              className="absolute -top-2 -left-2 z-10 display flex h-9 min-w-[44px] items-center justify-center rounded-lg border px-2 text-base font-bold leading-none tabular-nums"
+              className="absolute -top-2.5 -left-2.5 z-10 display flex h-10 min-w-[48px] items-center justify-center rounded-lg border px-2 text-lg font-bold leading-none tabular-nums"
               style={{
                 background: rankTheme.bg,
                 color: rankTheme.text,
