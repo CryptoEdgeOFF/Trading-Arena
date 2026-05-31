@@ -3,22 +3,26 @@ import { getCachedBlob, setCachedBlob } from './blobCache.js';
 import { buildImageThumbnail } from './imageOptimize.js';
 
 /**
- * Cache navigateur (Cache-Control) ET cache edge du CDN
- * (CDN-Cache-Control / Netlify-CDN-Cache-Control).
+ * Cache navigateur (Cache-Control) ET cache CDN.
  *
- * Sans les headers CDN, les réponses des fonctions serverless Netlify ne
- * sont PAS mises en cache à l'edge : chaque hit « frais » re-invoque la
- * Lambda (cold start) + SELECT bytea Postgres + resize Sharp. Avec eux, après
- * le premier hit l'image est servie depuis le CDN mondial sans toucher la
- * fonction ni la base. Les URLs portent un `?v=<upload-ts>` stable, donc
- * `immutable` est sûr (un nouvel upload change l'URL).
+ * IMPORTANT Netlify : pour qu'une réponse de FONCTION soit stockée dans le
+ * cache *durable* (global, persistant entre invocations et déploiements), il
+ * faut explicitement la directive `durable` dans `Netlify-CDN-Cache-Control`.
+ * Sans elle, Netlify bypass le cache (`cache-status: fwd=bypass`) et chaque
+ * hit re-invoque la Lambda (cold start) + SELECT bytea Postgres + resize Sharp.
+ *
+ * Avec `durable`, l'image est servie depuis le CDN mondial après le 1er hit,
+ * sans toucher la fonction ni la base. Les URLs portent un `?v=<upload-ts>`
+ * stable, donc `immutable` est sûr (un nouvel upload change l'URL).
  */
 function setImageCacheHeaders(res: Response, mime: string, length: number): void {
-  const cacheValue = 'public, max-age=31536000, immutable';
   res.setHeader('Content-Type', mime);
-  res.setHeader('Cache-Control', cacheValue);
-  res.setHeader('CDN-Cache-Control', cacheValue);
-  res.setHeader('Netlify-CDN-Cache-Control', cacheValue);
+  // Navigateur : cache local long.
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  // CDN générique (standard).
+  res.setHeader('CDN-Cache-Control', 'public, max-age=31536000, immutable');
+  // CDN Netlify : `durable` = stockage global persistant (prioritaire).
+  res.setHeader('Netlify-CDN-Cache-Control', 'public, durable, max-age=31536000, immutable');
   res.setHeader('Content-Length', String(length));
 }
 
