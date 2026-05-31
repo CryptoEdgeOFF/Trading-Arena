@@ -32,7 +32,7 @@ const MAX_HISTORY_BARS = 100_000;
  * en live : limit=2000 ou 5000 renvoie quand même 500 bars max), donc
  * on pagine via `et` pour atteindre ces volumes.
  *
- *   1m   → 20000 bars  (~14 j)    — 40 pages
+ *   1m   → MAX (100000) — « tout ce qu'iTick a » (≤ 200 pages)
  *   5m   → 5000 bars   (~17 j)    — 10 pages
  *   15m  → 5000 bars   (~52 j)    — 10 pages
  *   30m  → 3000 bars   (~62 j)    — 6 pages
@@ -40,14 +40,15 @@ const MAX_HISTORY_BARS = 100_000;
  *   240m → 750 bars    (~125 j)   — dérivé du 60m
  *   1d   → 2000 bars   (~5.5 ans) — 4 pages
  *
- * Coût total au boot par paire : ~76 appels iTick. Avec 11 paires =
- * ~836 appels (backfill background, espacé de 250 ms/page + cooldown
- * quota). Effectué une seule fois grâce au skip `existing >= target`
- * au prochain redémarrage. iTick s'arrête tout seul si l'historique 1m
- * est moins profond (page < pageLimit → fin de pagination).
+ * Pour le 1m on demande le maximum : la pagination iTick s'arrête
+ * d'elle-même dès qu'une page renvoie < 500 bars (fin de l'historique
+ * intraday dispo). Le coût réel est donc borné par ce qu'iTick possède,
+ * pas par les 200 pages théoriques. Backfill background espacé de
+ * 250 ms/page + cooldown quota, effectué une seule fois grâce au skip
+ * `existing >= target` au redémarrage.
  */
 const HISTORY_DEPTH: Record<number, number> = {
-  1: 20000,
+  1: MAX_HISTORY_BARS,
   5: 5000,
   15: 5000,
   30: 3000,
@@ -623,7 +624,11 @@ async function reconcileSourceCodes(): Promise<void> {
  * (utilisé par l'endpoint admin `/api/admin/itick/backfill`).
  */
 export async function backfillAll(force = false): Promise<void> {
-  const restIntervals = [1, 5, 15, 30, 60, 1440];
+  // 1m en dernier : il vise le maximum (pagination profonde, jusqu'à
+  // l'épuisement de l'historique iTick), donc on remplit d'abord les
+  // timeframes hauts (peu coûteux) pour qu'un éventuel cooldown quota
+  // pendant le 1m profond ne les prive pas de données.
+  const restIntervals = [1440, 60, 30, 15, 5, 1];
 
   // Purge l'historique des paires dont le flux source a changé (cash →
   // CFD) avant de (re)backfiller, pour ne pas mélanger ancienne et
