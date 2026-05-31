@@ -275,7 +275,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="display font-bold text-white leading-tight truncate text-[13px]" title={player.name}>
+              <div className="display font-bold text-white leading-tight truncate text-[15px]" title={player.name}>
                 {player.name}
               </div>
               <div className={`num text-[10px] font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
@@ -364,7 +364,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
 
             <div className="min-w-0 flex-1">
               <div
-                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[15px]"
+                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[20px]"
                 title={player.name}
               >
                 {player.name}
@@ -461,7 +461,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             <div className="micro mb-1.5 text-[8.5px] tracking-[0.26em] text-zinc-500">
               Trader
             </div>
-            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isFull ? 'text-3xl' : 'text-2xl'}`}>
+            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isFull ? 'text-5xl' : 'text-4xl'}`}>
               {player.name}
             </div>
             <div className="mt-2 min-h-[1.25rem]">
