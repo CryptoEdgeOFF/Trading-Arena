@@ -25,19 +25,19 @@ function StatTile({
           : 'text-white';
 
   return (
-    <div className="blood-panel relative px-5 py-4 overflow-hidden">
+    <div className="blood-panel relative flex h-full flex-col justify-center px-4 py-2.5 overflow-hidden">
       {glyph && (
         <div className="absolute -right-2 -top-2 h-16 w-16 rounded-full bg-red-500/15 blur-2xl" />
       )}
-      <div className="micro mb-2 flex items-center gap-2">
+      <div className="micro mb-1 flex items-center gap-2">
         <span className="h-1.5 w-1.5 rounded-full bg-red-500/70" />
         {label}
       </div>
-      <div className={`display text-2xl font-bold leading-none tabular-nums ${accentClass}`}>
+      <div className={`display text-xl font-bold leading-none tabular-nums truncate ${accentClass}`}>
         {value}
       </div>
       {detail ? (
-        <div className="mt-2 text-xs leading-snug text-zinc-400 truncate">{detail}</div>
+        <div className="mt-1 text-[11px] leading-snug text-zinc-400 truncate">{detail}</div>
       ) : null}
     </div>
   );

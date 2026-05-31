@@ -165,13 +165,13 @@ export default function Dashboard() {
           )}
 
           {/* Center: Arena stage */}
-          <div className="flex-1 min-w-0 overflow-hidden px-6 py-4 xl:px-8 xl:py-5">
+          <div className="flex-1 min-w-0 overflow-hidden px-2 py-2 xl:px-4 xl:py-3">
             <div className="relative h-full w-full">
               {/* Liseré rouge décoratif autour de la scène. */}
-              <div className="pointer-events-none absolute -inset-px rounded-[28px] bg-[linear-gradient(135deg,rgba(220,38,38,0.45),transparent_30%,transparent_70%,rgba(220,38,38,0.45))] opacity-50" />
-              <div className="relative h-full w-full rounded-[28px] border border-white/[0.06] bg-black/30 px-6 py-5 xl:px-8 xl:py-6 backdrop-blur-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]">
-                <div className="h-full w-full max-w-[1500px] mx-auto flex flex-col">
-                  <div className="min-h-0 flex-1 pt-2 xl:pt-4">
+              <div className="pointer-events-none absolute -inset-px rounded-[24px] bg-[linear-gradient(135deg,rgba(220,38,38,0.45),transparent_30%,transparent_70%,rgba(220,38,38,0.45))] opacity-50" />
+              <div className="relative h-full w-full rounded-[24px] border border-white/[0.06] bg-black/30 px-3 py-3 xl:px-5 xl:py-4 backdrop-blur-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]">
+                <div className="h-full w-full max-w-[1720px] mx-auto flex flex-col">
+                  <div className="min-h-0 flex-1 pt-1 xl:pt-2">
                     {eventMode === '4v4' && teams ? (
                       <Layout4v4 players={arenaPlayers} teams={teams} />
                     ) : eventMode === '1v1v1v1' || (eventMode !== '4v4' && arenaPlayers.length >= 4) ? (
@@ -183,7 +183,7 @@ export default function Dashboard() {
                     )}
                   </div>
 
-                  <div className="mt-5 h-28 shrink-0">
+                  <div className="mt-3 h-20 shrink-0">
                     <ArenaInsights />
                   </div>
                 </div>

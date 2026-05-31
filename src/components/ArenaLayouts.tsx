@@ -79,7 +79,7 @@ export function Layout1v1({ players }: { players: Player[] }) {
   if (!p1) return null;
 
   return (
-    <div className="relative h-full w-full flex items-stretch justify-center gap-5 xl:gap-6 px-2 py-2 xl:px-4 xl:py-3">
+    <div className="relative h-full w-full flex items-stretch justify-center gap-3 xl:gap-4 px-0 py-1">
       <div className={`flex-1 min-w-0 ${TALL_CARD_HEIGHT}`}>
         <ArenaCard player={p1} side="left" size="full" />
       </div>
@@ -99,7 +99,7 @@ export function Layout1v1({ players }: { players: Player[] }) {
 // --- 1v1v1 Layout ---
 export function Layout1v1v1({ players }: { players: Player[] }) {
   return (
-    <div className="h-full w-full flex items-stretch justify-center gap-4 xl:gap-5 px-2 py-2 xl:px-4 xl:py-3">
+    <div className="h-full w-full flex items-stretch justify-center gap-3 xl:gap-4 px-0 py-1">
       {players.map((p) => (
         <div key={p.id} className={`flex-1 min-w-0 ${TALL_CARD_HEIGHT}`}>
           <ArenaCard player={p} side="center" size="third" />
@@ -115,7 +115,7 @@ export function Layout1v1v1v1({ players }: { players: Player[] }) {
   const bottom = players.slice(2, 4);
 
   return (
-    <div className="h-full w-full flex flex-col gap-3 xl:gap-4 px-2 py-2 xl:px-4 xl:py-3">
+    <div className="h-full w-full flex flex-col gap-3 xl:gap-4 px-0 py-1">
       <div className="flex flex-1 min-h-0 justify-center gap-3 xl:gap-4">
         {top.map((p) => (
           <div key={p.id} className={`flex-1 min-w-0 ${QUARTER_CARD_HEIGHT}`}>
@@ -141,7 +141,7 @@ export function Layout4v4({ players, teams }: { players: Player[]; teams: [TeamI
   const teamGridClass = TEAM_PLAYERS_PER_SIDE <= 5 ? 'grid-cols-5' : 'grid-cols-4';
 
   return (
-    <div className="h-full w-full flex flex-col gap-3 px-2 py-2 xl:px-4 xl:py-3">
+    <div className="h-full w-full flex flex-col gap-3 px-0 py-1">
       <div className="flex flex-1 flex-col gap-2 min-h-0">
         <div className="shrink-0">
           <TeamScoreCard team={teams[0]} players={teamAPlayers} />

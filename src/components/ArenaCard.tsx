@@ -457,15 +457,18 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
 
       <div className={`relative flex-1 flex flex-col overflow-hidden ${isFull ? 'p-6' : 'p-5'}`}>
         {/* Header : nom à gauche, gros portrait en haut à droite avec badge rang qui chevauche. */}
-        <div className={`flex items-start justify-between gap-4 ${isFull ? 'mb-5' : 'mb-4'}`}>
-          <div className="min-w-0 flex-1 pt-1">
+        <div className={`flex items-start justify-between gap-4 ${isFull ? 'mb-4' : 'mb-3'} ${isSolo ? 'h-32 xl:h-36' : 'h-28'}`}>
+          <div className="min-w-0 flex-1 flex h-full flex-col pt-1">
             <div className="micro mb-1.5 text-[8.5px] tracking-[0.26em] text-zinc-500">
               Trader
             </div>
-            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isSolo ? 'text-4xl xl:text-5xl' : 'text-3xl xl:text-4xl'}`}>
+            <div
+              className={`display font-bold tracking-[0.02em] text-white leading-[1.05] break-words line-clamp-2 ${isSolo ? 'text-4xl xl:text-5xl' : 'text-3xl xl:text-4xl'}`}
+              title={player.name}
+            >
               {player.name}
             </div>
-            <div className="mt-2 min-h-[1.25rem]">
+            <div className="mt-auto min-h-[1.25rem]">
               <PlayerBadges badges={player.badges} max={6} size="md" />
             </div>
           </div>
@@ -510,8 +513,12 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
           </div>
         </div>
 
-        {/* PNL grand */}
+        {/* Valeur du compte + PNL grand */}
         <div className={`${isFull ? 'mb-5' : 'mb-4'}`}>
+          <div className="mb-2 flex items-baseline justify-between gap-2 border-b border-white/[0.06] pb-2">
+            <span className="micro text-[9px] text-zinc-500">Valeur du compte</span>
+            <span className="num text-lg font-bold tabular-nums text-white">${formatUSD(player.currentBalance)}</span>
+          </div>
           <div className="micro text-[9px] mb-1 text-zinc-500">P&amp;L Réalisé + Latent</div>
           <div className="flex items-end gap-3 flex-wrap">
             <motion.div
@@ -546,11 +553,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
         </div>
 
         {/* Stats */}
-        <div className={`grid grid-cols-3 gap-2 ${isFull ? 'mb-5' : 'mb-4'}`}>
-          <div className="stat-tile">
-            <div className="stat-tile-label">Balance</div>
-            <div className="stat-tile-value">${formatUSD(player.currentBalance)}</div>
-          </div>
+        <div className={`grid grid-cols-2 gap-2 ${isFull ? 'mb-5' : 'mb-4'}`}>
           <div className="stat-tile">
             <div className="stat-tile-label">Trades</div>
             <div className="stat-tile-value">{player.tradeCount}</div>
