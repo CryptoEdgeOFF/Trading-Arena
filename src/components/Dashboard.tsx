@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useGameStore, type Player } from '../stores/useGameStore';
+import { useGameStore, FINAL_NOTIF_BLACKOUT_MS, type Player } from '../stores/useGameStore';
 import Header from './Header';
 import TradesFeed from './TradesFeed';
 import LivePositionsBoard from './LivePositionsBoard';
@@ -26,15 +26,11 @@ function sortArenaSlots(players: Player[]): Player[] {
   return [...players].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
 }
 
-// Fenêtre (en ms avant la fin de partie) pendant laquelle on coupe les
-// notifications (spotlight trade, leader, achievements) pour que le
-// compteur et les PnL restent visibles dans le sprint final.
-const FINAL_NOTIF_BLACKOUT_MS = 10_000;
-
 /** true sur les ~10 dernières secondes d'une partie LIVE en cours. */
 function useFinalNotifBlackout(): boolean {
   const eventStarted = useGameStore((s) => s.eventStarted);
   const eventEndTime = useGameStore((s) => s.eventEndTime);
+  const dismissSpotlight = useGameStore((s) => s.dismissSpotlight);
   const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
@@ -42,11 +38,18 @@ function useFinalNotifBlackout(): boolean {
       setBlocked(false);
       return;
     }
-    const evaluate = () => setBlocked(eventEndTime - Date.now() <= FINAL_NOTIF_BLACKOUT_MS);
+    const evaluate = () => {
+      const isBlocked = eventEndTime - Date.now() <= FINAL_NOTIF_BLACKOUT_MS;
+      setBlocked((prev) => {
+        // À l'entrée du blackout, on efface aussi toute notif déjà affichée.
+        if (isBlocked && !prev) dismissSpotlight();
+        return isBlocked;
+      });
+    };
     evaluate();
-    const id = window.setInterval(evaluate, 500);
+    const id = window.setInterval(evaluate, 250);
     return () => window.clearInterval(id);
-  }, [eventStarted, eventEndTime]);
+  }, [eventStarted, eventEndTime, dismissSpotlight]);
 
   return blocked;
 }

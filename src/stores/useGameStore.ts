@@ -12,6 +12,21 @@ function refreshAllPlayersPositions(
   return players.map((player) => refreshPlayerPaperMetrics(player, market, startingBalance));
 }
 
+/**
+ * Fenêtre de fin de partie pendant laquelle on coupe TOUTES les notifications
+ * (spotlight trade, badges, leader change) : on veut laisser voir le compteur
+ * et les PnL sur le sprint final sans rien qui recouvre l'écran.
+ */
+export const FINAL_NOTIF_BLACKOUT_MS = 10_000;
+
+function inFinalBlackout(eventStarted: boolean, eventEndTime: number | null | undefined): boolean {
+  return (
+    !!eventStarted &&
+    typeof eventEndTime === 'number' &&
+    eventEndTime - Date.now() <= FINAL_NOTIF_BLACKOUT_MS
+  );
+}
+
 type CelebrationItem = { type: 'leader-change' | 'big-trade'; playerId: string };
 
 function enqueueLeaderCelebration(
@@ -326,7 +341,9 @@ export const useGameStore = create<GameState>((set) => ({
         next.teams = undefined;
       }
 
-      if (incoming.newBadges && incoming.newBadges.length > 0) {
+      const blackout = inFinalBlackout(next.eventStarted, next.eventEndTime);
+
+      if (!blackout && incoming.newBadges && incoming.newBadges.length > 0) {
         const players = incoming.players || state.players;
         const items = incoming.newBadges.map((nb) => {
           const p = players.find((pl) => pl.id === nb.playerId);
@@ -335,7 +352,7 @@ export const useGameStore = create<GameState>((set) => ({
         next.badgeQueue = [...state.badgeQueue, ...items];
       }
 
-      if (incoming.leaderChanges && incoming.leaderChanges.length > 0) {
+      if (!blackout && incoming.leaderChanges && incoming.leaderChanges.length > 0) {
         const topChange = incoming.leaderChanges.find((lc) => lc.to === 1);
         const players = incoming.players || state.players;
         if (topChange && shouldCelebrateLeaderChange(topChange, players, state.celebrationQueue)) {
@@ -346,7 +363,7 @@ export const useGameStore = create<GameState>((set) => ({
         }
       }
 
-      if (incoming.spotlightTrades && incoming.spotlightTrades.length > 0) {
+      if (!blackout && incoming.spotlightTrades && incoming.spotlightTrades.length > 0) {
         if (!state.spotlightTrade) {
           for (const trade of incoming.spotlightTrades) {
             if (tryAcceptSpotlight(trade)) {
@@ -432,14 +449,16 @@ export const useGameStore = create<GameState>((set) => ({
       }
 
       // One-shot signals reuse the same queue logic as updateState().
-      if (patch.newBadges && patch.newBadges.length > 0) {
+      const blackout = inFinalBlackout(next.eventStarted, next.eventEndTime);
+
+      if (!blackout && patch.newBadges && patch.newBadges.length > 0) {
         const items = patch.newBadges.map((nb) => {
           const p = next.players.find((pl) => pl.id === nb.playerId);
           return { ...nb, playerName: p?.name || '???' };
         });
         next.badgeQueue = [...state.badgeQueue, ...items];
       }
-      if (patch.leaderChanges && patch.leaderChanges.length > 0) {
+      if (!blackout && patch.leaderChanges && patch.leaderChanges.length > 0) {
         const topChange = patch.leaderChanges.find((lc) => lc.to === 1);
         if (topChange && shouldCelebrateLeaderChange(topChange, next.players, state.celebrationQueue)) {
           next.celebrationQueue = enqueueLeaderCelebration(
@@ -448,7 +467,7 @@ export const useGameStore = create<GameState>((set) => ({
           );
         }
       }
-      if (patch.spotlightTrades && patch.spotlightTrades.length > 0) {
+      if (!blackout && patch.spotlightTrades && patch.spotlightTrades.length > 0) {
         if (!state.spotlightTrade) {
           for (const trade of patch.spotlightTrades) {
             if (tryAcceptSpotlight(trade)) {
