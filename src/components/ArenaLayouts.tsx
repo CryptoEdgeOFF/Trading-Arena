@@ -54,7 +54,7 @@ function TeamScoreCard({ team, players }: { team: TeamInfo; players: Player[] })
           key={totalPnl}
           initial={{ scale: 1.05 }}
           animate={{ scale: 1 }}
-          className={`display text-4xl font-bold tabular-nums leading-none ${
+          className={`display text-5xl font-bold tabular-nums leading-none ${
             isPositive ? 'text-emerald-400' : 'text-red-400'
           }`}
           style={{

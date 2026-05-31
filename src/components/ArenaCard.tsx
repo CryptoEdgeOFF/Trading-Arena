@@ -278,20 +278,20 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               <div className="display font-bold text-white leading-tight truncate text-[15px]" title={player.name}>
                 {player.name}
               </div>
-              <div className={`num text-[10px] font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
-                {formatPercent(player.pnlPercent)}
-              </div>
             </div>
+          </div>
 
-            <div className="text-right shrink-0">
-              <motion.div
-                key={player.pnl}
-                initial={{ scale: 1.05 }}
-                animate={{ scale: 1 }}
-                className={`pnl-mega ${isPositive ? 'is-pos' : 'is-neg'} text-[18px] leading-none`}
-              >
-                {formatPnl(player.pnl)}
-              </motion.div>
+          <div className="shrink-0 flex items-baseline justify-between gap-1">
+            <motion.div
+              key={player.pnl}
+              initial={{ scale: 1.05 }}
+              animate={{ scale: 1 }}
+              className={`pnl-mega min-w-0 truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[36px] leading-[0.88]`}
+            >
+              {formatPnl(player.pnl)}
+            </motion.div>
+            <div className={`num shrink-0 text-[11px] font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+              {formatPercent(player.pnlPercent)}
             </div>
           </div>
 
@@ -376,19 +376,20 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
                 </span>
               </div>
             </div>
+          </div>
 
-            <div className="text-right shrink-0">
-              <motion.div
-                key={player.pnl}
-                initial={{ scale: 1.05 }}
-                animate={{ scale: 1 }}
-                className={`pnl-mega ${isPositive ? 'is-pos' : 'is-neg'} text-[22px] leading-none`}
-              >
-                {formatPnl(player.pnl)}
-              </motion.div>
-              <div className={`num text-[10px] font-semibold mt-0.5 ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
-                {formatPercent(player.pnlPercent)}
-              </div>
+          {/* PNL pleine largeur — hero du sprint final */}
+          <div className="shrink-0 flex items-baseline justify-between gap-2">
+            <motion.div
+              key={player.pnl}
+              initial={{ scale: 1.05 }}
+              animate={{ scale: 1 }}
+              className={`pnl-mega min-w-0 truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[44px] leading-[0.9]`}
+            >
+              {formatPnl(player.pnl)}
+            </motion.div>
+            <div className={`num shrink-0 text-sm font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+              {formatPercent(player.pnlPercent)}
             </div>
           </div>
 
@@ -512,17 +513,19 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
         {/* PNL grand */}
         <div className={`${isFull ? 'mb-5' : 'mb-4'}`}>
           <div className="micro text-[9px] mb-1 text-zinc-500">P&amp;L Réalisé + Latent</div>
-          <div className="flex items-baseline gap-3 flex-wrap">
+          <div className="flex items-end gap-3 flex-wrap">
             <motion.div
               key={player.pnl}
               initial={{ scale: 1.05 }}
               animate={{ scale: 1 }}
-              className={`pnl-mega ${isPositive ? 'is-pos' : 'is-neg'} ${isFull ? 'text-[58px]' : 'text-[40px]'} leading-[0.85]`}
+              className={`pnl-mega min-w-0 ${isPositive ? 'is-pos' : 'is-neg'} ${
+                isFull ? 'text-[clamp(3.25rem,7vw,5.75rem)]' : 'text-[clamp(2.5rem,5vw,3.75rem)]'
+              } leading-[0.82]`}
             >
               {formatPnl(player.pnl)}
             </motion.div>
             <div
-              className={`num text-base font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}
+              className={`num pb-1 text-xl font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}
             >
               {formatPercent(player.pnlPercent)}
             </div>
