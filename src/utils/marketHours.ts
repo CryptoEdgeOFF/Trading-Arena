@@ -1,8 +1,37 @@
 /**
- * Horaires d'ouverture des marchés (UTC). Crypto = 24/7.
+ * Horaires d'ouverture des marchés. Crypto = 24/7.
  * Forex / métaux : semaine FX (dim 22h → ven 22h UTC).
- * Indices US + WTI : lun–ven 14h30–21h UTC (session cash NY).
+ * Indices US + WTI : session cash NY (lun–ven 9h30–16h heure de New York),
+ * calculée sur le fuseau America/New_York pour suivre automatiquement
+ * l'heure d'été/hiver américaine.
  */
+
+const ET_TIME_ZONE = 'America/New_York';
+const ET_WEEKDAYS: Record<string, number> = {
+  Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+};
+
+/** Jour de la semaine (0=dim) et minutes depuis minuit, exprimés en heure de New York. */
+function getEtParts(now: Date): { day: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ET_TIME_ZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+
+  let weekday = 'Mon';
+  let hour = 0;
+  let minute = 0;
+  for (const part of parts) {
+    if (part.type === 'weekday') weekday = part.value;
+    else if (part.type === 'hour') hour = parseInt(part.value, 10);
+    else if (part.type === 'minute') minute = parseInt(part.value, 10);
+  }
+  if (hour === 24) hour = 0; // certains environnements rendent minuit en "24"
+  return { day: ET_WEEKDAYS[weekday] ?? 1, minutes: hour * 60 + minute };
+}
 
 export type MarketScheduleKind = 'always' | 'forex_week' | 'us_index';
 
@@ -27,12 +56,12 @@ function isForexWeekOpen(now: Date): boolean {
 }
 
 function isUsIndexOpen(now: Date): boolean {
-  const day = now.getUTCDay();
+  // Session cash NYSE : 9h30–16h00 heure de New York, lun–ven.
+  const { day, minutes } = getEtParts(now);
   if (day === 0 || day === 6) return false;
-  const mins = utcDayMinutes(now);
-  const start = 14 * 60 + 30;
-  const end = 21 * 60;
-  return mins >= start && mins < end;
+  const start = 9 * 60 + 30; // 9h30 ET
+  const end = 16 * 60;        // 16h00 ET
+  return minutes >= start && minutes < end;
 }
 
 export function scheduleForPair(
