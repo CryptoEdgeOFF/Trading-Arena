@@ -331,65 +331,72 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
         />
 
         <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden p-3 gap-2.5">
-          {/* Header compact : portrait + nom + rank + PNL */}
+          {/* Header compact : portrait + valeur compte à gauche, nom + PNL haut-droite */}
           <div className="flex items-start gap-3">
-            <div className="relative shrink-0">
-              <div
-                className="overflow-hidden rounded-xl border-2 bg-zinc-900 h-[72px] w-[72px]"
-                style={{ borderColor: `${player.color}55` }}
-              >
-                {player.avatar ? (
-                  <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
-                ) : (
-                  <div
-                    className="flex h-full w-full items-center justify-center font-bold text-white display"
-                    style={{ background: player.color, fontSize: '1.85rem' }}
-                  >
-                    {player.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
+            <div className="flex shrink-0 flex-col items-center gap-1">
+              <div className="relative">
+                <div
+                  className="overflow-hidden rounded-xl border-2 bg-zinc-900 h-[72px] w-[72px]"
+                  style={{ borderColor: `${player.color}55` }}
+                >
+                  {player.avatar ? (
+                    <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <div
+                      className="flex h-full w-full items-center justify-center font-bold text-white display"
+                      style={{ background: player.color, fontSize: '1.85rem' }}
+                    >
+                      {player.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <span
+                  className="absolute -top-2 -left-2 z-10 display flex h-7 min-w-[32px] items-center justify-center rounded-md border px-1.5 text-[11px] font-bold leading-none tabular-nums"
+                  style={{
+                    background: rankTheme.bg,
+                    color: rankTheme.text,
+                    borderColor: rankTheme.border,
+                    boxShadow: `${rankTheme.glow}, 0 4px 12px rgba(0,0,0,0.5)`,
+                  }}
+                  aria-label={`Rang ${player.rank}`}
+                >
+                  #{player.rank}
+                </span>
               </div>
-              <span
-                className="absolute -top-2 -left-2 z-10 display flex h-7 min-w-[32px] items-center justify-center rounded-md border px-1.5 text-[11px] font-bold leading-none tabular-nums"
-                style={{
-                  background: rankTheme.bg,
-                  color: rankTheme.text,
-                  borderColor: rankTheme.border,
-                  boxShadow: `${rankTheme.glow}, 0 4px 12px rgba(0,0,0,0.5)`,
-                }}
-                aria-label={`Rang ${player.rank}`}
-              >
-                #{player.rank}
+              <span className="num text-[13px] font-bold tabular-nums text-white">
+                ${formatUSD(player.currentBalance)}
               </span>
             </div>
 
-            <div className="min-w-0 flex-1 pt-1">
-              <div
-                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[24px]"
-                title={player.name}
-              >
-                {player.name}
-              </div>
-              {player.badges.length > 0 && (
-                <div className="mt-1">
-                  <PlayerBadges badges={player.badges} max={4} size="sm" />
+            <div className="min-w-0 flex-1 flex items-start justify-between gap-2 pt-1">
+              <div className="min-w-0 flex-1">
+                <div
+                  className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[24px]"
+                  title={player.name}
+                >
+                  {player.name}
                 </div>
-              )}
-            </div>
-          </div>
+                {player.badges.length > 0 && (
+                  <div className="mt-1">
+                    <PlayerBadges badges={player.badges} max={4} size="sm" />
+                  </div>
+                )}
+              </div>
 
-          {/* PNL pleine largeur — hero du sprint final */}
-          <div className="shrink-0 flex items-baseline justify-between gap-2">
-            <motion.div
-              key={player.pnl}
-              initial={{ scale: 1.05 }}
-              animate={{ scale: 1 }}
-              className={`pnl-mega min-w-0 truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[38px] leading-[0.9]`}
-            >
-              {formatPnl(player.pnl)}
-            </motion.div>
-            <div className={`num shrink-0 text-sm font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
-              {formatPercent(player.pnlPercent)}
+              {/* PNL en haut à droite */}
+              <div className="shrink-0 text-right">
+                <motion.div
+                  key={player.pnl}
+                  initial={{ scale: 1.05 }}
+                  animate={{ scale: 1 }}
+                  className={`pnl-mega ${isPositive ? 'is-pos' : 'is-neg'} text-[32px] leading-[0.9]`}
+                >
+                  {formatPnl(player.pnl)}
+                </motion.div>
+                <div className={`num text-sm font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+                  {formatPercent(player.pnlPercent)}
+                </div>
+              </div>
             </div>
           </div>
 
