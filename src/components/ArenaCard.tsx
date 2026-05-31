@@ -215,6 +215,7 @@ function getLatestPositionSnapshot(player: Player): { type: 'open'; position: Po
 export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCardProps) {
   const isPositive = player.pnl >= 0;
   const isFull = size === 'full' || size === 'half';
+  const isSolo = size === 'full'; // 1v1 : 2 cartes, le plus d'espace
   const isTeam = size === 'team';
   // Mode compact : 1v1v1v1 (quarter). Mode team : 5v5 (dernière position seulement).
   const isCompact = size === 'quarter';
@@ -334,7 +335,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
           <div className="flex items-start gap-3">
             <div className="relative shrink-0">
               <div
-                className="overflow-hidden rounded-xl border-2 bg-zinc-900 h-20 w-20"
+                className="overflow-hidden rounded-xl border-2 bg-zinc-900 h-[72px] w-[72px]"
                 style={{ borderColor: `${player.color}55` }}
               >
                 {player.avatar ? (
@@ -342,7 +343,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
                 ) : (
                   <div
                     className="flex h-full w-full items-center justify-center font-bold text-white display"
-                    style={{ background: player.color, fontSize: '2rem' }}
+                    style={{ background: player.color, fontSize: '1.85rem' }}
                   >
                     {player.name.charAt(0).toUpperCase()}
                   </div>
@@ -364,7 +365,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
 
             <div className="min-w-0 flex-1 pt-1">
               <div
-                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[28px]"
+                className="display font-bold tracking-[0.02em] text-white leading-tight truncate text-[24px]"
                 title={player.name}
               >
                 {player.name}
@@ -383,7 +384,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               key={player.pnl}
               initial={{ scale: 1.05 }}
               animate={{ scale: 1 }}
-              className={`pnl-mega min-w-0 truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[44px] leading-[0.9]`}
+              className={`pnl-mega min-w-0 truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[38px] leading-[0.9]`}
             >
               {formatPnl(player.pnl)}
             </motion.div>
@@ -461,7 +462,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             <div className="micro mb-1.5 text-[8.5px] tracking-[0.26em] text-zinc-500">
               Trader
             </div>
-            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isFull ? 'text-6xl xl:text-7xl' : 'text-5xl'}`}>
+            <div className={`display font-bold tracking-[0.02em] text-white leading-tight break-words ${isSolo ? 'text-4xl xl:text-5xl' : 'text-3xl xl:text-4xl'}`}>
               {player.name}
             </div>
             <div className="mt-2 min-h-[1.25rem]">
@@ -473,7 +474,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
           <div className="relative shrink-0">
             <div
               className={`overflow-hidden rounded-xl border-2 bg-zinc-900 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.85)] ${
-                isFull ? 'h-44 w-44 xl:h-48 xl:w-48' : 'h-36 w-36'
+                isSolo ? 'h-32 w-32 xl:h-36 xl:w-36' : 'h-28 w-28'
               }`}
               style={{ borderColor: `${player.color}55` }}
             >
@@ -486,7 +487,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               ) : (
                 <div
                   className="flex h-full w-full items-center justify-center font-bold text-white display tracking-wider"
-                  style={{ background: player.color, fontSize: isFull ? '4rem' : '3rem' }}
+                  style={{ background: player.color, fontSize: isSolo ? '3rem' : '2.5rem' }}
                 >
                   {player.name.charAt(0).toUpperCase()}
                 </div>
@@ -494,7 +495,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             </div>
             {/* Badge rang qui chevauche le portrait. */}
             <span
-              className="absolute -top-2.5 -left-2.5 z-10 display flex h-10 min-w-[48px] items-center justify-center rounded-lg border px-2 text-lg font-bold leading-none tabular-nums"
+              className="absolute -top-2 -left-2 z-10 display flex h-9 min-w-[44px] items-center justify-center rounded-lg border px-2 text-base font-bold leading-none tabular-nums"
               style={{
                 background: rankTheme.bg,
                 color: rankTheme.text,
@@ -518,7 +519,7 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
               initial={{ scale: 1.05 }}
               animate={{ scale: 1 }}
               className={`pnl-mega min-w-0 ${isPositive ? 'is-pos' : 'is-neg'} ${
-                isFull ? 'text-[clamp(3.25rem,7vw,5.75rem)]' : 'text-[clamp(2.5rem,5vw,3.75rem)]'
+                isSolo ? 'text-[clamp(2.75rem,5.5vw,4.5rem)]' : 'text-[clamp(2.25rem,4vw,3.5rem)]'
               } leading-[0.82]`}
             >
               {formatPnl(player.pnl)}
