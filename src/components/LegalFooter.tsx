@@ -2,6 +2,38 @@ import { Link, useLocation } from 'react-router-dom';
 
 const CONTACT_EMAIL = 'breakout.pro.tv@gmail.com';
 
+const BUG_REPORT_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
+  '[BTF Arena] Rapport de bug',
+)}&body=${encodeURIComponent(
+  "Décris le bug rencontré :\n\n- Page :\n- Ce qui s'est passé :\n- Ce qui était attendu :\n- Étapes pour reproduire :\n",
+)}`;
+
+function BugIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M8 2l1.5 2.5" />
+      <path d="M16 2l-1.5 2.5" />
+      <rect x="8" y="6" width="8" height="12" rx="4" />
+      <path d="M12 18v3" />
+      <path d="M3 9h3" />
+      <path d="M3 14h3" />
+      <path d="M3 19l3-2" />
+      <path d="M21 9h-3" />
+      <path d="M21 14h-3" />
+      <path d="M21 19l-3-2" />
+    </svg>
+  );
+}
+
 export default function LegalFooter() {
   const location = useLocation();
   const fromCompete = location.pathname.startsWith('/compete');
@@ -28,8 +60,14 @@ export default function LegalFooter() {
             <Link className="transition-colors hover:text-white" to={`/confidentialite${suffix}`}>Confidentialité</Link>
             <Link className="hidden transition-colors hover:text-white sm:inline" to={`/mentions-legales${suffix}`}>Mentions légales</Link>
             <Link className="transition-colors hover:text-white" to={`/risques${suffix}`}>Risques</Link>
-            <Link className="hidden transition-colors hover:text-white sm:inline" to="/compete/admin">Admin</Link>
           </nav>
+          <a
+            href={BUG_REPORT_HREF}
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-600/90 px-2.5 py-1 font-semibold uppercase tracking-[0.1em] text-white transition-colors hover:bg-red-500 sm:tracking-[0.14em]"
+          >
+            <BugIcon className="h-3.5 w-3.5" />
+            Reporter un bug
+          </a>
         </div>
       </div>
     </footer>
