@@ -1833,7 +1833,10 @@ export class PaperTradingEngine {
     const now = Date.now();
     player.openPositions = player.openPositions.map((position) => {
       const id = position.id || `${player.id}-${position.pair}-${position.openedAt || now}-${Math.random().toString(36).slice(2, 8)}`;
-      const markPrice = this.market[position.pair]?.markPrice || position.markPrice;
+      const liveMark = this.market[position.pair]?.markPrice;
+      // Ne jamais remplacer le mark par 0 ou NaN (tick stale post-boot) :
+      // on garde le dernier mark connu sur la position pour l'affichage PnL.
+      const markPrice = isValidQuotePrice(liveMark) ? liveMark : position.markPrice;
       const updated = { ...position, id, markPrice };
       updated.pnl = computePositionPnl(updated);
       if (updated.openedAt) {

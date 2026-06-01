@@ -492,13 +492,43 @@ app.post('/api/itick/subscribe', (req, res) => {
   }
 });
 
+/** Coalesce les syncs leaderboard : 1 recalc / compétition / 2s max (aligné poll front). */
+const LEADERBOARD_SYNC_MS = 2000;
+const leaderboardSyncState = new Map<string, { lastAt: number; inflight: Promise<void> | null }>();
+
 async function syncCompetitionResultsForCompetition(competitionId: string): Promise<void> {
   await maybeFinalizeEndedCompetitions();
-  const playerIds = competitionManager.getPaperPlayerIdsForCompetition(competitionId);
-  await manager.syncCompetitionLeaderboardEquity(playerIds);
-  for (const playerId of playerIds) {
-    await syncCompetitionResultForPlayer(playerId);
+
+  let state = leaderboardSyncState.get(competitionId);
+  if (!state) {
+    state = { lastAt: 0, inflight: null };
+    leaderboardSyncState.set(competitionId, state);
   }
+
+  if (state.inflight) {
+    await state.inflight;
+    return;
+  }
+
+  const now = Date.now();
+  if (now - state.lastAt < LEADERBOARD_SYNC_MS) {
+    return;
+  }
+
+  const playerIds = competitionManager.getPaperPlayerIdsForCompetition(competitionId);
+  state.inflight = (async () => {
+    try {
+      await manager.syncCompetitionLeaderboardEquity(playerIds);
+      for (const playerId of playerIds) {
+        await syncCompetitionResultForPlayer(playerId);
+      }
+      state.lastAt = Date.now();
+    } finally {
+      state.inflight = null;
+    }
+  })();
+
+  await state.inflight;
 }
 
 async function refreshCompetitionStoreIfServerless(): Promise<void> {

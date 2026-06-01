@@ -1659,31 +1659,30 @@ export class PlayerManager {
   }
 
   /**
-   * Marque au prix live toutes les paper positions d'une compétition pour le
-   * leaderboard public (poll HTTP toutes les 2s). Un seul refresh marché puis
-   * recalcule chaque joueur ; les joueurs avec positions ouvertes restent
-   * suivis par le moteur pour SL/TP et PnL flottant entre deux polls.
+   * Marque au prix live les joueurs compétition avec positions ouvertes pour le
+   * leaderboard public. Utilise uniquement le cache marché en mémoire (iTick WS
+   * / flux déjà actifs) — pas d'appel REST Kraken/Binance à chaque poll.
+   * Les joueurs sans position ouverte ne sont pas recalculés (PnL = realized).
    */
   async syncCompetitionLeaderboardEquity(playerIds: string[]): Promise<void> {
     if (playerIds.length === 0) return;
 
-    const players: Player[] = [];
+    // Idempotent : ne bootstrap le feed qu'une fois au premier besoin.
+    await this.paperEngine.ensureMarketFeed();
+
     for (const id of playerIds) {
       const player = this.players.get(id);
       if (!player) continue;
-      await this.ensureCompetitionPaperRuntime(player);
-      players.push(player);
-    }
-    if (players.length === 0) return;
 
-    await this.paperEngine.refreshMarketSnapshot();
-    for (const player of players) {
-      this.paperEngine.recalculateEquity(player);
-      if ((player.openPositions?.length ?? 0) > 0) {
-        this.liveEquityCompetitionPlayerIds.add(player.id);
-      } else {
+      const hasOpen = (player.openPositions?.length ?? 0) > 0;
+      if (!hasOpen) {
         this.liveEquityCompetitionPlayerIds.delete(player.id);
+        continue;
       }
+
+      await this.ensureCompetitionPaperRuntime(player);
+      this.liveEquityCompetitionPlayerIds.add(player.id);
+      this.paperEngine.recalculateEquity(player);
     }
   }
 
