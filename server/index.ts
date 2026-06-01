@@ -2083,16 +2083,11 @@ const serverReady = Promise.all([
   // PlayerManager pour qu'elle soit indépendante de l'événement LIVE.
   manager.setCompetitionStartingBalance(competitionManager.getCompetitionStartingBalance());
   await manager.ensurePublicMarketFeed();
-  if (!IS_SERVERLESS) {
-    const competitionPaperIds = competitionManager.getPaperPlayerIds();
-    // Répare les PnL gonflés si le moteur paper avait appliqué la balance LIVE.
-    await manager.repairCompetitionPaperResults(competitionPaperIds);
-    for (const playerId of competitionPaperIds) {
-      await syncCompetitionResultForPlayer(playerId);
-    }
-    await competitionManager.persist();
-    await manager.warmCompetitionPaperPlayers(competitionPaperIds);
-  }
+  // NB : on ne "warm-up" PAS les joueurs compétition au boot. Les marquer au
+  // marché en masse au démarrage gonflait le PnL des positions à fort levier
+  // sur le leaderboard public (positions hors-ligne soudain re-marquées). Le
+  // PnL d'un joueur est recalculé à sa reconnexion (/api/paper/me, ordre),
+  // comportement historique attendu.
 });
 
 if (!process.env.NETLIFY) {

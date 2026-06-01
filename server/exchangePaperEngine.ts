@@ -395,11 +395,6 @@ export class PaperTradingEngine {
     this.competitionStartingBalance = Math.floor(balance);
   }
 
-  /** Recalcule equity / PnL à partir des positions et du bon baseline. */
-  recalculateEquity(player: Player): void {
-    this.updatePlayerEquity(player);
-  }
-
   private resolveInitialBalance(player: Player): number {
     if (player.initialBalance != null) return player.initialBalance;
     if (player.isCompetitionPlayer) return this.competitionStartingBalance;
