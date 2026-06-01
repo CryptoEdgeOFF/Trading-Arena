@@ -613,11 +613,29 @@ export class PlayerManager {
       if (!player) continue;
       this.onlineCompetitionPlayerIds.add(playerId);
       player.isCompetitionPlayer = true;
+      this.hydrateCompetitionPlayerBaseline(player);
       players.push(player);
     }
     if (players.length === 0) return;
     this.paperEngine.trackPlayers(players);
     await this.paperEngine.ensureMarketFeed();
+  }
+
+  /**
+   * Recalcule le PnL des joueurs compétition avec le bon baseline puis persiste.
+   * Répare les valeurs gonflées si le moteur paper avait utilisé la balance LIVE.
+   */
+  async repairCompetitionPaperResults(playerIds: string[]): Promise<void> {
+    if (playerIds.length === 0) return;
+    for (const playerId of playerIds) {
+      const player = this.players.get(playerId);
+      if (!player) continue;
+      player.isCompetitionPlayer = true;
+      this.hydrateCompetitionPlayerBaseline(player);
+      this.paperEngine.recalculateEquity(player);
+      player.lastUpdate = Date.now();
+      await this.persistPlayer(playerId);
+    }
   }
 
   /** Flush best-effort avant arrêt Railway (SIGTERM) — ne touche pas au moteur de trading. */
@@ -1075,6 +1093,7 @@ export class PlayerManager {
   setCompetitionStartingBalance(balance: number): void {
     if (!Number.isFinite(balance) || balance <= 0) return;
     this.competitionStartingBalance = Math.floor(balance);
+    this.paperEngine.setCompetitionStartingBalance(this.competitionStartingBalance);
   }
 
   getMarketDataSource(): MarketDataSource {
@@ -1657,13 +1676,31 @@ export class PlayerManager {
     return player;
   }
 
-  private ensurePaperPlayerBaseline(player: Player): void {
-    if (player.initialBalance != null) return;
-    // Joueurs d'arène online → balance compete dédiée, jamais celle du LIVE.
-    const baseline = this.competitionStartingBalance;
-    player.initialBalance = baseline;
-    player.currentBalance = baseline;
-    player.availableMargin = baseline;
+  /** Fixe le baseline compete sans effacer positions/trades existants. */
+  private hydrateCompetitionPlayerBaseline(player: Player): void {
+    const hasActivity =
+      player.tradeCount > 0
+      || player.openPositions.length > 0
+      || player.openOrders.length > 0
+      || player.trades.length > 0;
+
+    if (player.initialBalance == null) {
+      player.initialBalance = this.competitionStartingBalance;
+    } else if (
+      hasActivity
+      && player.initialBalance === this.paperStartingBalance
+      && this.paperStartingBalance !== this.competitionStartingBalance
+    ) {
+      // Baseline LIVE (événement) appliqué par erreur sur un joueur compete actif.
+      player.initialBalance = this.competitionStartingBalance;
+    } else if (player.initialBalance != null) {
+      return;
+    }
+
+    if (hasActivity) return;
+
+    player.currentBalance = this.competitionStartingBalance;
+    player.availableMargin = this.competitionStartingBalance;
     player.usedMargin = 0;
     player.feesPaid = 0;
     player.pnl = 0;
@@ -1673,6 +1710,15 @@ export class PlayerManager {
     player.trades = [];
     player.connected = true;
     player.lastUpdate = Date.now();
+  }
+
+  private ensurePaperPlayerBaseline(player: Player): void {
+    if (player.initialBalance != null) return;
+    this.hydrateCompetitionPlayerBaseline(player);
+    if (player.tradeCount > 0 || player.openPositions.length > 0 || player.openOrders.length > 0 || player.trades.length > 0) {
+      return;
+    }
+    // Nouveau joueur compete vierge (hydrate a déjà tout initialisé).
   }
 
   private async ensureCompetitionPaperRuntime(player: Player): Promise<void> {

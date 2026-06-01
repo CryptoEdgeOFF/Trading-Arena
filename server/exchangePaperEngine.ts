@@ -314,6 +314,8 @@ export class PaperTradingEngine {
   /** Résout l'objet Player courant (Map) à partir d'un id — évite les refs périmées. */
   private resolvePlayer: ((id: string) => Player | undefined) | null = null;
   private startingBalance = 10_000;
+  /** Balance de départ arènes online — fallback si `player.initialBalance` est null. */
+  private competitionStartingBalance = 10_000;
   private marketDataSource: MarketDataSource = 'kraken';
   private onTick: () => void;
   private onMarketPairsUpdated: ((pairs: string[]) => void) | null = null;
@@ -386,6 +388,22 @@ export class PaperTradingEngine {
 
   setStartingBalance(balance: number): void {
     this.startingBalance = balance;
+  }
+
+  setCompetitionStartingBalance(balance: number): void {
+    if (!Number.isFinite(balance) || balance <= 0) return;
+    this.competitionStartingBalance = Math.floor(balance);
+  }
+
+  /** Recalcule equity / PnL à partir des positions et du bon baseline. */
+  recalculateEquity(player: Player): void {
+    this.updatePlayerEquity(player);
+  }
+
+  private resolveInitialBalance(player: Player): number {
+    if (player.initialBalance != null) return player.initialBalance;
+    if (player.isCompetitionPlayer) return this.competitionStartingBalance;
+    return this.startingBalance;
   }
 
   /** Branche le PlayerManager pour réaligner playersRef avant SL/TP / ordres. */
@@ -1795,7 +1813,7 @@ export class PaperTradingEngine {
 
     const realizedPnl = getRealizedPnl(player);
     const unrealizedPnl = player.openPositions.reduce((total, position) => total + position.pnl, 0);
-    const initialBalance = player.initialBalance ?? this.startingBalance;
+    const initialBalance = this.resolveInitialBalance(player);
     player.usedMargin = player.openPositions.reduce((total, position) => total + position.margin, 0);
     const reservedCapital = getReservedCapital(player);
 

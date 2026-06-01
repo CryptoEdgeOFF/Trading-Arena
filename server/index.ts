@@ -2084,7 +2084,14 @@ const serverReady = Promise.all([
   manager.setCompetitionStartingBalance(competitionManager.getCompetitionStartingBalance());
   await manager.ensurePublicMarketFeed();
   if (!IS_SERVERLESS) {
-    await manager.warmCompetitionPaperPlayers(competitionManager.getPaperPlayerIds());
+    const competitionPaperIds = competitionManager.getPaperPlayerIds();
+    // Répare les PnL gonflés si le moteur paper avait appliqué la balance LIVE.
+    await manager.repairCompetitionPaperResults(competitionPaperIds);
+    for (const playerId of competitionPaperIds) {
+      await syncCompetitionResultForPlayer(playerId);
+    }
+    await competitionManager.persist();
+    await manager.warmCompetitionPaperPlayers(competitionPaperIds);
   }
 });
 
