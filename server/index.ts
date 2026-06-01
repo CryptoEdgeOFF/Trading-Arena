@@ -494,7 +494,9 @@ app.post('/api/itick/subscribe', (req, res) => {
 
 async function syncCompetitionResultsForCompetition(competitionId: string): Promise<void> {
   await maybeFinalizeEndedCompetitions();
-  for (const playerId of competitionManager.getPaperPlayerIdsForCompetition(competitionId)) {
+  const playerIds = competitionManager.getPaperPlayerIdsForCompetition(competitionId);
+  await manager.syncCompetitionLeaderboardEquity(playerIds);
+  for (const playerId of playerIds) {
     await syncCompetitionResultForPlayer(playerId);
   }
 }
@@ -885,6 +887,41 @@ app.post('/api/admin/competition/repair-glitch', requireAdmin, async (req, res) 
   } catch (err: any) {
     console.error('[repair-glitch] error', err);
     res.status(500).json({ error: err?.message || 'repair failed' });
+  }
+});
+
+app.post('/api/admin/competition/normalize-restored-positions', requireAdmin, async (req, res) => {
+  const playerIds: string[] = Array.isArray(req.body?.playerIds)
+    ? req.body.playerIds.map((v: unknown) => String(v))
+    : [];
+  if (playerIds.length === 0) {
+    res.status(400).json({ error: 'playerIds (array) requis' });
+    return;
+  }
+  try {
+    const report = await manager.normalizeRestoredCompetitionPositionIds(playerIds);
+    res.json({ ok: true, report });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'normalize failed' });
+  }
+});
+
+app.post('/api/admin/competition/restore-position-risk', requireAdmin, async (req, res) => {
+  const overrides = Array.isArray(req.body?.overrides) ? req.body.overrides : [];
+  if (overrides.length === 0) {
+    res.status(400).json({ error: 'overrides (array) requis' });
+    return;
+  }
+  try {
+    const report = await manager.applyCompetitionPositionRiskOverrides(overrides);
+    for (const entry of report) {
+      if (entry.status === 'updated') {
+        await syncCompetitionResultForPlayer(String(entry.playerId));
+      }
+    }
+    res.json({ ok: true, report });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'restore risk failed' });
   }
 });
 
@@ -2112,11 +2149,10 @@ const serverReady = Promise.all([
   // PlayerManager pour qu'elle soit indépendante de l'événement LIVE.
   manager.setCompetitionStartingBalance(competitionManager.getCompetitionStartingBalance());
   await manager.ensurePublicMarketFeed();
-  // NB : on ne "warm-up" PAS les joueurs compétition au boot. Les marquer au
-  // marché en masse au démarrage gonflait le PnL des positions à fort levier
-  // sur le leaderboard public (positions hors-ligne soudain re-marquées). Le
-  // PnL d'un joueur est recalculé à sa reconnexion (/api/paper/me, ordre),
-  // comportement historique attendu.
+  // PnL compétition live : recalcul à chaque GET /api/competition/leaderboard/:id
+  // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes
+  // dans le moteur paper pour SL/TP et ticks — sans mark-to-market de masse.
+  manager.hydrateLiveEquityCompetitionPlayersAtBoot();
 });
 
 if (!process.env.NETLIFY) {

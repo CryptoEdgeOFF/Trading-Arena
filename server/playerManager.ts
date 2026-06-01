@@ -120,6 +120,8 @@ export class PlayerManager {
   private paperEngine: PaperTradingEngine;
   private competitionPaperRuntimeStarted = false;
   private onlineCompetitionPlayerIds = new Set<string>();
+  /** Joueurs compétition avec positions ouvertes — PnL live leaderboard + SL/TP hors session. */
+  private liveEquityCompetitionPlayerIds = new Set<string>();
   private pool: Pool | null = null;
   private isServerless = Boolean(process.env.NETLIFY);
   private dbWriteQueue: Promise<void> = Promise.resolve();
@@ -1637,7 +1639,7 @@ export class PlayerManager {
 
   async refreshCompetitionPaperPlayer(
     playerId: string,
-    options: { forceMarketRefresh?: boolean; persist?: boolean } = {},
+    options: { forceMarketRefresh?: boolean; persist?: boolean; markToMarket?: boolean } = {},
   ): Promise<Player | null> {
     const player = this.players.get(playerId);
     if (!player) return null;
@@ -1646,11 +1648,161 @@ export class PlayerManager {
     if (options.forceMarketRefresh) {
       await this.paperEngine.refreshMarketSnapshot();
     }
+    if (options.markToMarket !== false) {
+      this.paperEngine.recalculateEquity(player);
+    }
     if (options.persist) {
       await this.persistPlayer(player.id);
     }
     this.broadcastState();
     return player;
+  }
+
+  /**
+   * Marque au prix live toutes les paper positions d'une compétition pour le
+   * leaderboard public (poll HTTP toutes les 2s). Un seul refresh marché puis
+   * recalcule chaque joueur ; les joueurs avec positions ouvertes restent
+   * suivis par le moteur pour SL/TP et PnL flottant entre deux polls.
+   */
+  async syncCompetitionLeaderboardEquity(playerIds: string[]): Promise<void> {
+    if (playerIds.length === 0) return;
+
+    const players: Player[] = [];
+    for (const id of playerIds) {
+      const player = this.players.get(id);
+      if (!player) continue;
+      await this.ensureCompetitionPaperRuntime(player);
+      players.push(player);
+    }
+    if (players.length === 0) return;
+
+    await this.paperEngine.refreshMarketSnapshot();
+    for (const player of players) {
+      this.paperEngine.recalculateEquity(player);
+      if ((player.openPositions?.length ?? 0) > 0) {
+        this.liveEquityCompetitionPlayerIds.add(player.id);
+      } else {
+        this.liveEquityCompetitionPlayerIds.delete(player.id);
+      }
+    }
+  }
+
+  /**
+   * Ré-applique SL/TP sur des positions ouvertes (ex. positions restaurées
+   * après le glitch 2026-06-01 sans niveaux de risque). Clé de position :
+   * positionId OU `${pair}|${side}|${size}`.
+   */
+  async applyCompetitionPositionRiskOverrides(
+    overrides: Array<{
+      playerId: string;
+      positionId?: string;
+      pair?: string;
+      side?: 'long' | 'short';
+      size?: number;
+      stopLoss?: number | null;
+      takeProfit?: number | null;
+      stopLossSize?: number | null;
+      takeProfitSize?: number | null;
+    }>,
+  ): Promise<Array<Record<string, unknown>>> {
+    const report: Array<Record<string, unknown>> = [];
+    for (const item of overrides) {
+      const player = this.players.get(item.playerId);
+      if (!player) {
+        report.push({ playerId: item.playerId, status: 'not_found' });
+        continue;
+      }
+      await this.ensureCompetitionPaperRuntime(player);
+      let position = item.positionId
+        ? player.openPositions.find((p) => p.id === item.positionId)
+        : undefined;
+      if (!position && item.pair && item.side) {
+        position = player.openPositions.find((p) => (
+          p.pair === item.pair
+          && p.side === item.side
+          && (item.size == null || Math.abs(p.size - item.size) < 1e-6)
+        ));
+      }
+      if (!position) {
+        report.push({ playerId: item.playerId, status: 'position_not_found', ...item });
+        continue;
+      }
+      this.paperEngine.updatePositionRisk(
+        player,
+        position.id,
+        item.stopLoss ?? null,
+        item.takeProfit ?? null,
+        {
+          stopLossSize: item.stopLossSize ?? null,
+          takeProfitSize: item.takeProfitSize ?? null,
+        },
+      );
+      this.paperEngine.recalculateEquity(player);
+      await this.persistPlayer(player.id);
+      this.liveEquityCompetitionPlayerIds.add(player.id);
+      report.push({
+        playerId: item.playerId,
+        status: 'updated',
+        pair: position.pair,
+        side: position.side,
+        size: position.size,
+        stopLoss: position.stopLoss,
+        takeProfit: position.takeProfit,
+      });
+    }
+    this.broadcastState();
+    return report;
+  }
+
+  /**
+   * Réaligne les ids « -restored » sur l'id d'ordre d'origine (trade open)
+   * pour que le terminal retrouve la position après reconnexion.
+   */
+  async normalizeRestoredCompetitionPositionIds(playerIds: string[]): Promise<Array<Record<string, unknown>>> {
+    const report: Array<Record<string, unknown>> = [];
+    for (const id of playerIds) {
+      const player = this.players.get(id);
+      if (!player) {
+        report.push({ id, status: 'not_found' });
+        continue;
+      }
+      let fixed = 0;
+      for (const pos of player.openPositions) {
+        if (!String(pos.id).endsWith('-restored')) continue;
+        const openTrade = [...(player.trades || [])]
+          .reverse()
+          .find((t) => (
+            t.action === 'open'
+            && t.pair === pos.pair
+            && t.side === pos.side
+            && Math.abs(t.size - pos.size) < 1e-6
+            && t.time <= (pos.openedAt || Date.now())
+          ));
+        if (!openTrade?.id) continue;
+        pos.id = openTrade.id;
+        fixed += 1;
+      }
+      if (fixed > 0) {
+        player.lastUpdate = Date.now();
+        await this.persistPlayer(player.id);
+      }
+      report.push({ id, name: player.name, status: fixed > 0 ? 'fixed' : 'noop', fixed });
+    }
+    return report;
+  }
+
+  /** Au boot : suit les joueurs compétition avec positions ouvertes (SL/TP + PnL live). */
+  hydrateLiveEquityCompetitionPlayersAtBoot(): void {
+    const toTrack: Player[] = [];
+    for (const player of this.players.values()) {
+      if (!player.isCompetitionPlayer) continue;
+      if ((player.openPositions?.length ?? 0) === 0) continue;
+      this.liveEquityCompetitionPlayerIds.add(player.id);
+      toTrack.push(player);
+    }
+    if (toTrack.length > 0) {
+      this.paperEngine.trackPlayers(toTrack);
+    }
   }
 
   /**
@@ -1720,7 +1872,7 @@ export class PlayerManager {
         const entry = o.price;
         const mark = market[o.pair]?.markPrice || entry;
         restored.push({
-          id: `${o.id || `${player.id}-${o.pair}-${o.time}`}-restored`,
+          id: o.id || `${player.id}-${o.pair}-${o.time}`,
           pair: o.pair,
           side: o.side,
           size: o.size,
@@ -2514,7 +2666,11 @@ export class PlayerManager {
    */
   drainDirtyPaperPlayers(): Player[] {
     const dirty: Player[] = [];
-    for (const playerId of this.onlineCompetitionPlayerIds) {
+    const tracked = new Set<string>([
+      ...this.onlineCompetitionPlayerIds,
+      ...this.liveEquityCompetitionPlayerIds,
+    ]);
+    for (const playerId of tracked) {
       const player = this.players.get(playerId);
       if (!player) continue;
       const previous = this.snapshotPaperPlayers.get(playerId);
@@ -2536,7 +2692,7 @@ export class PlayerManager {
     }
     // Drop snapshots for players that left the competition.
     for (const id of Array.from(this.snapshotPaperPlayers.keys())) {
-      if (!this.onlineCompetitionPlayerIds.has(id)) {
+      if (!tracked.has(id)) {
         this.snapshotPaperPlayers.delete(id);
       }
     }
