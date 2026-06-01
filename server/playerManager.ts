@@ -601,6 +601,33 @@ export class PlayerManager {
     this.saveRoster();
   }
 
+  /**
+   * Attache les joueurs compétition au moteur paper au boot (SL/TP, PnL live).
+   * Ne modifie pas les données persistées — réaligne uniquement la RAM runtime.
+   */
+  async warmCompetitionPaperPlayers(playerIds: string[]): Promise<void> {
+    if (playerIds.length === 0) return;
+    const players: Player[] = [];
+    for (const playerId of playerIds) {
+      const player = this.players.get(playerId);
+      if (!player) continue;
+      this.onlineCompetitionPlayerIds.add(playerId);
+      player.isCompetitionPlayer = true;
+      players.push(player);
+    }
+    if (players.length === 0) return;
+    this.paperEngine.trackPlayers(players);
+    await this.paperEngine.ensureMarketFeed();
+  }
+
+  /** Flush best-effort avant arrêt Railway (SIGTERM) — ne touche pas au moteur de trading. */
+  async flushPendingPersistence(): Promise<void> {
+    if (!this.pool) return;
+    this.markRosterDirty();
+    await this.flushDirtyPlayers();
+    await this.dbWriteQueue;
+  }
+
   private persistTradingMutation(playerId: string): Promise<void> {
     if (this.isServerless) {
       return this.persistPlayer(playerId);

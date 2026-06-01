@@ -492,6 +492,17 @@ app.post('/api/itick/subscribe', (req, res) => {
   }
 });
 
+async function syncCompetitionResultsForCompetition(competitionId: string): Promise<void> {
+  await maybeFinalizeEndedCompetitions();
+  for (const playerId of competitionManager.getPaperPlayerIdsForCompetition(competitionId)) {
+    await syncCompetitionResultForPlayer(playerId);
+  }
+}
+
+async function refreshCompetitionStoreIfServerless(): Promise<void> {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+}
+
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
   const player = manager.getPlayerById(playerId);
   if (!player) return;
@@ -1141,6 +1152,11 @@ app.delete('/api/event/malus', requireAdmin, (_req, res) => {
 
 app.get('/api/paper/meta', async (_req, res) => {
   const pairs = manager.getSupportedPaperPairs();
+  // Sur Railway le feed iTick/Binance tient le snapshot à jour en RAM ;
+  // refreshTickers() sur chaque hit ajoutait des appels upstream inutiles.
+  const market = IS_SERVERLESS
+    ? await manager.refreshPaperMarketSnapshot()
+    : manager.getChartMarketSnapshot();
   res.json({
     enabled: manager.getPlatformMode() === 'paper',
     eventStarted: manager.isStarted(),
@@ -1148,7 +1164,7 @@ app.get('/api/paper/meta', async (_req, res) => {
     eventDurationMinutes: manager.getEventDurationMinutes(),
     startingBalance: manager.getPaperStartingBalance(),
     pairs,
-    market: await manager.refreshPaperMarketSnapshot(),
+    market,
     marketMetadata: await getMarketMetadata(pairs),
     fees: manager.getPaperFeeRates(),
     marketDataSource: manager.getMarketDataSource(),
@@ -1531,7 +1547,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
   }
   const { username } = req.body || {};
   try {
-    await competitionManager.refresh();
+    await refreshCompetitionStoreIfServerless();
     const result = await competitionManager.loginTestAccount(String(username || ''));
     res.json(result);
   } catch (error: any) {
@@ -1547,9 +1563,8 @@ app.post('/api/competition/auth/request', rateLimit({ windowMs: 10 * 60 * 1000, 
     return;
   }
   try {
-    // Ensure we have the latest user list (signups from other Lambdas) so the
-    // duplicate email/phone checks are accurate.
-    await competitionManager.refresh();
+    // Serverless only: merge signups from sibling Lambdas before duplicate checks.
+    await refreshCompetitionStoreIfServerless();
     const { code, expiresAt } = await competitionManager.requestOtp({
       email: String(email || ''),
       name: name == null ? undefined : String(name),
@@ -1578,7 +1593,7 @@ app.post('/api/competition/auth/request', rateLimit({ windowMs: 10 * 60 * 1000, 
 app.post('/api/competition/auth/verify', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: 'auth-verify' }), async (req, res) => {
   const { email, code } = req.body || {};
   try {
-    await competitionManager.refresh();
+    await refreshCompetitionStoreIfServerless();
     const result = await competitionManager.verifyOtp({
       email: String(email || ''),
       code: String(code || ''),
@@ -1618,7 +1633,7 @@ app.post('/api/competition/auth/verify-phone', rateLimit({ windowMs: 10 * 60 * 1
   const emailStr = String(email || '').trim();
   const codeStr = String(code || '').trim();
   try {
-    await competitionManager.refresh();
+    await refreshCompetitionStoreIfServerless();
     const phoneInfo = await competitionManager.getPendingPhoneInfo(emailStr);
     if (!phoneInfo) {
       res.status(400).json({ error: 'Aucune verification SMS en cours' });
@@ -1843,7 +1858,7 @@ app.post('/api/competition/join', async (req, res) => {
     // Refresh first so we don't miss a competition that was just created on
     // another Lambda, then persist the join atomically before responding so
     // the next click ("Trader") sees the entry on any Lambda.
-    await competitionManager.refresh();
+    await refreshCompetitionStoreIfServerless();
     const competition = competitionManager.joinCompetition(user.id, String(req.body?.code || ''));
     await competitionManager.persist();
     res.json({ ok: true, competitionId: competition.id });
@@ -1935,12 +1950,6 @@ app.post('/api/competition/trade/session', async (req, res) => {
     res.json({
       token,
       player: publicPlayer,
-      market: manager.getChartMarketSnapshot(),
-      fees: manager.getPaperFeeRates(),
-      pairs: manager.getSupportedPaperPairs(),
-      startingBalance: manager.getCompetitionStartingBalance(),
-      marketDataSource: manager.getMarketDataSource(),
-      eventStarted: manager.isStarted(),
       canTrade: competitionStatus === 'live',
       competition: competitionContext,
     });
@@ -1951,8 +1960,9 @@ app.post('/api/competition/trade/session', async (req, res) => {
 
 app.get('/api/competition/leaderboard/:id', async (req, res) => {
   try {
-    await syncAllCompetitionResults();
-    const data = competitionManager.getPublicLeaderboard(String(req.params.id || ''));
+    const competitionId = String(req.params.id || '');
+    await syncCompetitionResultsForCompetition(competitionId);
+    const data = competitionManager.getPublicLeaderboard(competitionId);
     res.json(data);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
@@ -2073,6 +2083,9 @@ const serverReady = Promise.all([
   // PlayerManager pour qu'elle soit indépendante de l'événement LIVE.
   manager.setCompetitionStartingBalance(competitionManager.getCompetitionStartingBalance());
   await manager.ensurePublicMarketFeed();
+  if (!IS_SERVERLESS) {
+    await manager.warmCompetitionPaperPlayers(competitionManager.getPaperPlayerIds());
+  }
 });
 
 if (!process.env.NETLIFY) {
@@ -2127,10 +2140,26 @@ if (!process.env.NETLIFY) {
     // reload, Ctrl-C, etc.) pour que iTick libère immédiatement la
     // session — sinon la nouvelle instance est refusée pendant ~30s.
     const gracefulShutdown = (signal: string) => {
-      console.log(`[shutdown] ${signal} reçu, fermeture iTick…`);
+      console.log(`[shutdown] ${signal} reçu, flush DB + fermeture iTick…`);
       try { itick.itickFeed.disconnect(); } catch { /* noop */ }
       try { manager.shutdownMarketFeed(); } catch { /* noop */ }
-      setTimeout(() => process.exit(0), 250);
+      void (async () => {
+        try {
+          await Promise.race([
+            Promise.all([
+              manager.flushPendingPersistence(),
+              competitionManager.persist(),
+            ]),
+            new Promise<void>((_, reject) => {
+              setTimeout(() => reject(new Error('flush timeout')), 5000);
+            }),
+          ]);
+        } catch (err) {
+          console.warn('[shutdown] flush DB:', err);
+        } finally {
+          process.exit(0);
+        }
+      })();
     };
     process.once('SIGINT', () => gracefulShutdown('SIGINT'));
     process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));

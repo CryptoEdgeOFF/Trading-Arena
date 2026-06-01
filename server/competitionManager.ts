@@ -1354,6 +1354,14 @@ export class CompetitionManager {
     ));
   }
 
+  getPaperPlayerIdsForCompetition(competitionId: string): string[] {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return [];
+    return competition.entries
+      .map((entry) => entry.paperPlayerId)
+      .filter((playerId): playerId is string => Boolean(playerId));
+  }
+
   getCompetitionStartingBalance(): number {
     return this.competitionStartingBalance;
   }
