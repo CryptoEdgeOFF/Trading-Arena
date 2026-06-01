@@ -1639,6 +1639,122 @@ export class PlayerManager {
     return player;
   }
 
+  /**
+   * Réparation ONE-SHOT de l'incident du 2026-06-01 ~22:19 UTC : un feed marché
+   * vide/glitché a fermé de force des positions à un prix aberrant (0 ou prix de
+   * liquidation sur tick fantôme), gonflant/cassant le PnL de certains joueurs.
+   * Pour chaque joueur ciblé, on supprime les fermetures « close » tombant dans
+   * la fenêtre [fromMs, toMs], on restaure les positions correspondantes à leur
+   * prix d'entrée d'origine (matchées par paire/sens/taille sur les trades
+   * « open »), puis on recalcule l'équité au prix marché courant. Idempotent :
+   * sans fermeture dans la fenêtre, le joueur est laissé intact.
+   */
+  async repairGlitchCloses(
+    playerIds: string[],
+    fromMs: number,
+    toMs: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    const report: Array<Record<string, unknown>> = [];
+    const market = this.paperEngine.getMarketSnapshot();
+
+    for (const id of playerIds) {
+      const player = this.players.get(id);
+      if (!player) {
+        report.push({ id, status: 'not_found' });
+        continue;
+      }
+
+      const trades = player.trades || [];
+      const bogus = trades.filter(
+        (t) => t.action === 'close' && t.time >= fromMs && t.time <= toMs,
+      );
+      if (bogus.length === 0) {
+        report.push({ id, name: player.name, status: 'no_bogus', pnl: player.pnl });
+        continue;
+      }
+
+      const before = { pnl: player.pnl, pnlPercent: player.pnlPercent };
+      const bogusSet = new Set(bogus);
+      const remaining = trades.filter((t) => !bogusSet.has(t));
+      const openTrades = remaining.filter((t) => t.action === 'open');
+      const consumed = new Set<number>();
+      const restored: Position[] = [];
+      const warnings: string[] = [];
+
+      for (const bc of bogus) {
+        let matchIdx = -1;
+        for (let i = openTrades.length - 1; i >= 0; i--) {
+          if (consumed.has(i)) continue;
+          const o = openTrades[i];
+          if (
+            o.pair === bc.pair &&
+            o.side === bc.side &&
+            Math.abs(o.size - bc.size) < 1e-6 &&
+            o.time <= bc.time
+          ) {
+            matchIdx = i;
+            break;
+          }
+        }
+        if (matchIdx < 0) {
+          warnings.push(`no open match for close ${bc.pair} ${bc.side} size=${bc.size}`);
+          continue;
+        }
+        consumed.add(matchIdx);
+        const o = openTrades[matchIdx];
+        const lev = o.leverage && o.leverage > 0 ? o.leverage : 10;
+        const entry = o.price;
+        const mark = market[o.pair]?.markPrice || entry;
+        restored.push({
+          id: `${o.id || `${player.id}-${o.pair}-${o.time}`}-restored`,
+          pair: o.pair,
+          side: o.side,
+          size: o.size,
+          entryPrice: entry,
+          markPrice: mark,
+          pnl: 0,
+          unrealizedFunding: 0,
+          leverage: lev,
+          margin: (entry * o.size) / lev,
+          feesPaid: o.fee || 0,
+          liquidationPrice:
+            o.side === 'long' ? entry * (1 - 1 / lev) : entry * (1 + 1 / lev),
+          stopLoss: null,
+          takeProfit: null,
+          openedAt: o.time,
+        });
+      }
+
+      const bogusFees = bogus.reduce((s, t) => s + (t.fee || 0), 0);
+      player.feesPaid = Math.max(0, (player.feesPaid || 0) - bogusFees);
+      player.trades = remaining;
+      player.openPositions = [...(player.openPositions || []), ...restored];
+      player.tradeCount = Math.max(0, (player.tradeCount || 0) - bogus.length);
+      player.lastUpdate = Date.now();
+
+      this.paperEngine.recalculateEquity(player);
+      await this.persistPlayer(player.id);
+
+      report.push({
+        id,
+        name: player.name,
+        status: 'repaired',
+        removedCloses: bogus.length,
+        restoredPositions: restored.length,
+        warnings,
+        before,
+        after: {
+          pnl: player.pnl,
+          pnlPercent: player.pnlPercent,
+          currentBalance: player.currentBalance,
+        },
+      });
+    }
+
+    this.broadcastState();
+    return report;
+  }
+
   private ensurePaperPlayerBaseline(player: Player): void {
     if (player.initialBalance != null) return;
     // Joueurs d'arène online → balance compete dédiée, jamais celle du LIVE.

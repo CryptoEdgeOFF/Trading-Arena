@@ -401,6 +401,15 @@ export class PaperTradingEngine {
     return this.startingBalance;
   }
 
+  /**
+   * Recalcule l'équité d'un joueur (balance, PnL, marges) à partir de ses
+   * trades et positions courants, au prix marché du snapshot. Utilisé par les
+   * réparations ponctuelles côté PlayerManager.
+   */
+  recalculateEquity(player: Player): void {
+    this.updatePlayerEquity(player);
+  }
+
   /** Branche le PlayerManager pour réaligner playersRef avant SL/TP / ordres. */
   setPlayerResolver(resolver: (id: string) => Player | undefined): void {
     this.resolvePlayer = resolver;

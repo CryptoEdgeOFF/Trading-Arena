@@ -859,6 +859,35 @@ app.post('/api/admin/logout', async (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Réparation ONE-SHOT : fermetures fantômes du 2026-06-01 ~22:19 UTC ---
+// Un feed marché vide/glitché a fermé de force des positions à prix aberrant,
+// gonflant/cassant le PnL de quelques joueurs. Cet endpoint supprime ces
+// fermetures et restaure les positions concernées, en mémoire + en base, pour
+// les seuls playerIds fournis. Idempotent.
+app.post('/api/admin/competition/repair-glitch', requireAdmin, async (req, res) => {
+  const playerIds: string[] = Array.isArray(req.body?.playerIds)
+    ? req.body.playerIds.map((v: unknown) => String(v))
+    : [];
+  if (playerIds.length === 0) {
+    res.status(400).json({ error: 'playerIds (array) requis' });
+    return;
+  }
+  const fromMs = Number(req.body?.fromMs) || Date.parse('2026-06-01T22:19:00Z');
+  const toMs = Number(req.body?.toMs) || Date.parse('2026-06-01T22:23:00Z');
+  try {
+    const report = await manager.repairGlitchCloses(playerIds, fromMs, toMs);
+    for (const entry of report) {
+      if (entry.status === 'repaired') {
+        await syncCompetitionResultForPlayer(String(entry.id));
+      }
+    }
+    res.json({ ok: true, fromMs, toMs, report });
+  } catch (err: any) {
+    console.error('[repair-glitch] error', err);
+    res.status(500).json({ error: err?.message || 'repair failed' });
+  }
+});
+
 // --- Roster: register players (persistent) ---
 
 app.post('/api/roster', requireAdmin, async (req, res) => {
