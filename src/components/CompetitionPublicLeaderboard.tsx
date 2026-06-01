@@ -11,7 +11,6 @@ import {
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
 
 const REFRESH_MS = 2000;
-const CONTACT_EMAIL = 'breakout.pro.tv@gmail.com';
 const SESSION_KEY = 'btf-comp-session';
 
 interface LeaderboardRow {
@@ -368,27 +367,6 @@ export default function CompetitionPublicLeaderboard() {
           )}
         </div>
       </main>
-
-      <footer className="border-t border-[#1a1a20] bg-[#050507]">
-        <div className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-7 md:flex-row md:items-end md:justify-between md:px-10">
-          <div>
-            <div className="display text-sm font-bold tracking-wide text-white">BTF Arena</div>
-            <div className="text-[11px] text-[#71717a]">Trading arena platform</div>
-            <div className="mt-2 text-[11px] text-[#71717a]">© {new Date().getFullYear()} BTF · All rights reserved.</div>
-          </div>
-          <div className="flex flex-col gap-2 text-[11px] text-[#71717a] md:items-end">
-            <a className="transition-colors hover:text-white" href={`mailto:${CONTACT_EMAIL}`}>
-              {CONTACT_EMAIL}
-            </a>
-            <nav className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
-              <Link className="transition-colors hover:text-white" to="/cgu?from=compete">CGU</Link>
-              <Link className="transition-colors hover:text-white" to="/confidentialite?from=compete">Confidentialité</Link>
-              <Link className="transition-colors hover:text-white" to="/mentions-legales?from=compete">Mentions légales</Link>
-              <Link className="transition-colors hover:text-white" to="/risques?from=compete">Risques</Link>
-            </nav>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
