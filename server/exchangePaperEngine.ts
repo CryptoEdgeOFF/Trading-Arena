@@ -271,12 +271,24 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
 
+function isValidQuotePrice(price: number): boolean {
+  return Number.isFinite(price) && price > 0;
+}
+
+/** Ticker exploitable pour une fermeture (mark + bid/ask strictement > 0). */
+function isUsableTicker(ticker: MarketTicker | undefined): ticker is MarketTicker {
+  return !!ticker
+    && isValidQuotePrice(ticker.markPrice)
+    && isValidQuotePrice(ticker.bidPrice)
+    && isValidQuotePrice(ticker.askPrice);
+}
+
 /**
  * Pendant les `LIMIT_WARMUP_MS` premières millisecondes après un boot,
- * `processOpenOrders` ignore les ordres limites pour éviter qu'un tick
- * iTick stale (premier batch reçu après reconnect WS) ne déclenche une
- * exécution sur un mark price erroné. Une fois le warmup terminé, le
- * matching reprend normalement à chaque applyTicker / applyItickQuotes.
+ * `processOpenOrders` et `processRiskTriggers` sont ignorés pour éviter
+ * qu'un tick iTick stale (premier batch reçu après reconnect WS) ne
+ * déclenche une exécution ou une liquidation sur un mark price erroné.
+ * Une fois le warmup terminé, le matching reprend normalement.
  */
 const LIMIT_WARMUP_MS = 10_000;
 
@@ -705,7 +717,9 @@ export class PaperTradingEngine {
       await this.refreshTickers([player]);
     }
     const ticker = this.market[pair];
-    if (!ticker) throw new Error('Prix de marché indisponible');
+    if (!isUsableTicker(ticker)) {
+      throw new Error('Prix de marché indisponible — réessayez dans quelques secondes');
+    }
 
     const inputStopLoss = input.stopLoss == null ? null : Number(input.stopLoss);
     const inputTakeProfit = input.takeProfit == null ? null : Number(input.takeProfit);
@@ -822,7 +836,9 @@ export class PaperTradingEngine {
       await this.refreshTickers([player]);
     }
     const ticker = this.market[pair];
-    if (!ticker) throw new Error('Prix de marché indisponible');
+    if (!isUsableTicker(ticker)) {
+      throw new Error('Prix de marché indisponible — réessayez dans quelques secondes');
+    }
 
     let sizeToClose = existing.size;
     let isPartial = false;
@@ -1563,12 +1579,16 @@ export class PaperTradingEngine {
   }
 
   private processRiskTriggers(players: Player[]): void {
+    // Même garde-fou que processOpenOrders : pas de SL/TP/liquidation pendant
+    // le warmup post-boot (ticks iTick parfois vides ou décorrélés au redeploy).
+    if (Date.now() - this.bootedAt < LIMIT_WARMUP_MS) return;
+
     for (const player of players) {
       const positions = [...player.openPositions];
       for (const position of positions) {
         if (!player.openPositions.includes(position)) continue;
         const ticker = this.market[position.pair];
-        if (!ticker) continue;
+        if (!isUsableTicker(ticker)) continue;
         // Cohérence avec le blocage manuel : aucun déclenchement automatique
         // (liquidation / SL / TP) tant que le marché de la pair est fermé.
         if (!getMarketSessionForPair(position.pair).open) continue;
@@ -1628,6 +1648,14 @@ export class PaperTradingEngine {
     partialSize?: number,
     reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'manual',
   ): void {
+    if (!isValidQuotePrice(exitPrice)) {
+      console.warn(
+        `[paper] skip close ${player.name} ${existing.pair} ${existing.side}: `
+        + `invalid exit price ${exitPrice} (${reason})`,
+      );
+      return;
+    }
+
     let sizeToClose = existing.size;
     let isPartial = false;
     if (partialSize != null) {

@@ -1244,7 +1244,14 @@ export class PlayerManager {
         }
         for (const position of [...player.openPositions]) {
           if (player.openPositions.some((entry) => entry.id === position.id)) {
-            await this.paperEngine.closePosition(player, position.id);
+            try {
+              await this.paperEngine.closePosition(player, position.id);
+            } catch (err) {
+              console.warn(
+                `[paper] finalize live skip close ${player.name} ${position.pair}: `
+                + `${(err as Error).message}`,
+              );
+            }
           }
         }
       }
@@ -1503,7 +1510,14 @@ export class PlayerManager {
 
     for (const position of [...player.openPositions]) {
       if (player.openPositions.some((entry) => entry.id === position.id)) {
-        await this.paperEngine.closePosition(player, position.id);
+        try {
+          await this.paperEngine.closePosition(player, position.id);
+        } catch (err) {
+          console.warn(
+            `[paper] finalize compete skip close ${player.name} ${position.pair}: `
+            + `${(err as Error).message}`,
+          );
+        }
       }
     }
 
