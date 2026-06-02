@@ -960,16 +960,17 @@ app.post('/api/admin/competition/pnl-compensation', requireAdmin, async (req, re
   const playerId = String(req.body?.playerId || '').trim();
   const amountUsd = Number(req.body?.amountUsd);
   const note = req.body?.note ? String(req.body.note) : undefined;
+  const mode = req.body?.mode === 'set' ? 'set' : 'increment';
   if (!playerId) {
     res.status(400).json({ error: 'playerId requis' });
     return;
   }
-  if (!Number.isFinite(amountUsd) || amountUsd === 0) {
+  if (!Number.isFinite(amountUsd)) {
     res.status(400).json({ error: 'amountUsd invalide' });
     return;
   }
   try {
-    const report = await manager.applyCompetitionPnlCompensation(playerId, amountUsd, note);
+    const report = await manager.applyCompetitionPnlCompensation(playerId, amountUsd, note, mode);
     if (report.status === 'credited') {
       await syncCompetitionResultForPlayer(playerId);
     }

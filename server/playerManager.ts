@@ -681,6 +681,7 @@ export class PlayerManager {
       bestTradePercent: stored.bestTradePercent ?? 0,
       lastUpdate: stored.lastUpdate ?? 0,
       connected: stored.connected ?? false,
+      pnlAdjustment: stored.pnlAdjustment ?? 0,
     };
   }
 
@@ -1852,15 +1853,18 @@ export class PlayerManager {
   }
 
   /**
-   * Crédit PnL admin (compensation) sans toucher aux positions/ordres ouverts.
-   * Persiste un trade `adjustment` compté dans le realized PnL.
+   * Crédit/débit PnL admin (compensation) sans toucher aux positions/ordres
+   * ouverts. Utilise le champ `pnlAdjustment` (hors journal de trades, donc
+   * insensible au plafond de 50 entrées). `mode` : 'increment' (défaut) ajoute
+   * au cumul existant, 'set' remplace la valeur.
    */
   async applyCompetitionPnlCompensation(
     playerId: string,
     amountUsd: number,
     note = 'admin compensation',
+    mode: 'increment' | 'set' = 'increment',
   ): Promise<Record<string, unknown>> {
-    if (!Number.isFinite(amountUsd) || amountUsd === 0) {
+    if (!Number.isFinite(amountUsd)) {
       throw new Error('amountUsd invalide');
     }
 
@@ -1873,29 +1877,14 @@ export class PlayerManager {
       pnl: player.pnl,
       pnlPercent: player.pnlPercent,
       currentBalance: player.currentBalance,
+      pnlAdjustment: player.pnlAdjustment || 0,
       openCount: player.openPositions?.length ?? 0,
     };
 
     await this.ensureCompetitionPaperRuntime(player);
 
-    const trade: Trade = {
-      id: `admin-pnl-comp-${playerId}-${Date.now()}`,
-      playerName: player.name,
-      playerColor: player.color,
-      pair: 'NAS100/USD',
-      side: 'short',
-      size: 0,
-      price: 0,
-      fee: 0,
-      leverage: 1,
-      orderType: 'market',
-      pnl: amountUsd,
-      time: Date.now(),
-      action: 'adjustment',
-    };
-    player.trades.push(trade);
-    player.trades = player.trades.slice(-50);
-    player.tradeCount = (player.tradeCount || 0) + 1;
+    const previousAdjustment = player.pnlAdjustment || 0;
+    player.pnlAdjustment = mode === 'set' ? amountUsd : previousAdjustment + amountUsd;
     player.lastUpdate = Date.now();
 
     this.paperEngine.recalculateEquity(player);
@@ -1910,13 +1899,15 @@ export class PlayerManager {
       name: player.name,
       status: 'credited',
       note,
+      mode,
       amountUsd,
-      tradeId: trade.id,
+      pnlAdjustment: player.pnlAdjustment,
       before,
       after: {
         pnl: player.pnl,
         pnlPercent: player.pnlPercent,
         currentBalance: player.currentBalance,
+        pnlAdjustment: player.pnlAdjustment,
         openCount: player.openPositions?.length ?? 0,
       },
       openPositions: (player.openPositions ?? []).map((p) => ({

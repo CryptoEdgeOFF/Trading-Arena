@@ -29,6 +29,11 @@ export interface Player {
   lastUpdate: number;
   connected: boolean;
   /**
+   * Crédit/débit PnL administratif (compensation), en USD. Ajouté à l'équité
+   * indépendamment du journal de trades (qui est plafonné à 50 entrées).
+   */
+  pnlAdjustment?: number;
+  /**
    * `true` pour un joueur d'arène online (compete). Exclu du dashboard LIVE et
    * du roster LIVE. Persisté pour que l'isolation survive aux refreshs / cold
    * starts, indépendamment du set en mémoire `onlineCompetitionPlayerIds`.
@@ -67,6 +72,7 @@ export interface StoredPlayer {
   bestTradePercent?: number;
   lastUpdate?: number;
   connected?: boolean;
+  pnlAdjustment?: number;
   isCompetitionPlayer?: boolean;
 }
 
@@ -83,7 +89,7 @@ export interface Trade {
   orderType: OrderType;
   pnl: number;
   time: number;
-  action: 'open' | 'close' | 'update' | 'adjustment';
+  action: 'open' | 'close' | 'update';
 }
 
 export interface Position {

@@ -76,7 +76,7 @@ function computePositionPnl(position: Position): number {
 
 function getRealizedPnl(player: Player): number {
   return player.trades
-    .filter((trade) => trade.action === 'close' || trade.action === 'adjustment')
+    .filter((trade) => trade.action === 'close')
     .reduce((total, trade) => total + trade.pnl, 0);
 }
 
@@ -319,7 +319,8 @@ export class PaperTradingEngine {
     const unrealizedPnl = player.openPositions.reduce((total, position) => total + position.pnl, 0);
     const initialBalance = player.initialBalance ?? this.startingBalance;
 
-    player.currentBalance = initialBalance + realizedPnl + unrealizedPnl;
+    const pnlAdjustment = player.pnlAdjustment || 0;
+    player.currentBalance = initialBalance + realizedPnl + unrealizedPnl + pnlAdjustment;
     player.pnl = player.currentBalance - initialBalance;
     player.pnlPercent = initialBalance > 0 ? (player.pnl / initialBalance) * 100 : 0;
   }

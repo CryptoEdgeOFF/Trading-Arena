@@ -253,7 +253,7 @@ function isRestingLimitTriggered(
 
 function getRealizedPnl(player: Player): number {
   return player.trades
-    .filter((trade) => trade.action === 'close' || trade.action === 'adjustment')
+    .filter((trade) => trade.action === 'close')
     .reduce((total, trade) => total + trade.pnl, 0);
 }
 
@@ -1881,7 +1881,8 @@ export class PaperTradingEngine {
     player.usedMargin = player.openPositions.reduce((total, position) => total + position.margin, 0);
     const reservedCapital = getReservedCapital(player);
 
-    player.currentBalance = initialBalance + realizedPnl + unrealizedPnl - player.feesPaid;
+    const pnlAdjustment = player.pnlAdjustment || 0;
+    player.currentBalance = initialBalance + realizedPnl + unrealizedPnl - player.feesPaid + pnlAdjustment;
     player.availableMargin = Math.max(0, player.currentBalance - player.usedMargin - reservedCapital);
     player.pnl = player.currentBalance - initialBalance;
     player.pnlPercent = initialBalance > 0 ? (player.pnl / initialBalance) * 100 : 0;
