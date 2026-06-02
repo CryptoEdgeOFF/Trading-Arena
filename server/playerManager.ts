@@ -432,6 +432,7 @@ export class PlayerManager {
       bestTradePercent: player.bestTradePercent,
       lastUpdate: player.lastUpdate,
       connected: player.connected,
+      pnlAdjustment: player.pnlAdjustment ?? 0,
       isCompetitionPlayer: player.isCompetitionPlayer ?? false,
     }));
   }
