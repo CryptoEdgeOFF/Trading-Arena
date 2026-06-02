@@ -1852,6 +1852,85 @@ export class PlayerManager {
   }
 
   /**
+   * Crédit PnL admin (compensation) sans toucher aux positions/ordres ouverts.
+   * Persiste un trade `adjustment` compté dans le realized PnL.
+   */
+  async applyCompetitionPnlCompensation(
+    playerId: string,
+    amountUsd: number,
+    note = 'admin compensation',
+  ): Promise<Record<string, unknown>> {
+    if (!Number.isFinite(amountUsd) || amountUsd === 0) {
+      throw new Error('amountUsd invalide');
+    }
+
+    const player = this.players.get(playerId);
+    if (!player) {
+      return { playerId, status: 'not_found' };
+    }
+
+    const before = {
+      pnl: player.pnl,
+      pnlPercent: player.pnlPercent,
+      currentBalance: player.currentBalance,
+      openCount: player.openPositions?.length ?? 0,
+    };
+
+    await this.ensureCompetitionPaperRuntime(player);
+
+    const trade: Trade = {
+      id: `admin-pnl-comp-${playerId}-${Date.now()}`,
+      playerName: player.name,
+      playerColor: player.color,
+      pair: 'NAS100/USD',
+      side: 'short',
+      size: 0,
+      price: 0,
+      fee: 0,
+      leverage: 1,
+      orderType: 'market',
+      pnl: amountUsd,
+      time: Date.now(),
+      action: 'adjustment',
+    };
+    player.trades.push(trade);
+    player.trades = player.trades.slice(-50);
+    player.tradeCount = (player.tradeCount || 0) + 1;
+    player.lastUpdate = Date.now();
+
+    this.paperEngine.recalculateEquity(player);
+    await this.persistPlayer(playerId);
+    if ((player.openPositions?.length ?? 0) > 0) {
+      this.liveEquityCompetitionPlayerIds.add(playerId);
+    }
+    this.broadcastState();
+
+    return {
+      playerId,
+      name: player.name,
+      status: 'credited',
+      note,
+      amountUsd,
+      tradeId: trade.id,
+      before,
+      after: {
+        pnl: player.pnl,
+        pnlPercent: player.pnlPercent,
+        currentBalance: player.currentBalance,
+        openCount: player.openPositions?.length ?? 0,
+      },
+      openPositions: (player.openPositions ?? []).map((p) => ({
+        id: p.id,
+        pair: p.pair,
+        side: p.side,
+        size: p.size,
+        stopLoss: p.stopLoss,
+        takeProfit: p.takeProfit,
+      })),
+    };
+  }
+
+  /**
    * Restauration admin d'un snapshot joueur (ex. annuler une fermeture erronée).
    * Écrase l'état mémoire + Postgres — un seul playerId.
    */

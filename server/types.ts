@@ -83,7 +83,7 @@ export interface Trade {
   orderType: OrderType;
   pnl: number;
   time: number;
-  action: 'open' | 'close' | 'update';
+  action: 'open' | 'close' | 'update' | 'adjustment';
 }
 
 export interface Position {

@@ -956,6 +956,30 @@ app.post('/api/admin/competition/restore-position-risk', requireAdmin, async (re
 });
 
 // Fermeture admin à prix fixe — un seul joueur par appel (ex. compensation TP chakal).
+app.post('/api/admin/competition/pnl-compensation', requireAdmin, async (req, res) => {
+  const playerId = String(req.body?.playerId || '').trim();
+  const amountUsd = Number(req.body?.amountUsd);
+  const note = req.body?.note ? String(req.body.note) : undefined;
+  if (!playerId) {
+    res.status(400).json({ error: 'playerId requis' });
+    return;
+  }
+  if (!Number.isFinite(amountUsd) || amountUsd === 0) {
+    res.status(400).json({ error: 'amountUsd invalide' });
+    return;
+  }
+  try {
+    const report = await manager.applyCompetitionPnlCompensation(playerId, amountUsd, note);
+    if (report.status === 'credited') {
+      await syncCompetitionResultForPlayer(playerId);
+    }
+    res.json({ ok: true, report });
+  } catch (err: any) {
+    console.error('[pnl-compensation] error', err);
+    res.status(500).json({ error: err?.message || 'compensation failed' });
+  }
+});
+
 app.post('/api/admin/competition/restore-player-snapshot', requireAdmin, async (req, res) => {
   const playerId = String(req.body?.playerId || '').trim();
   const snapshot = req.body?.snapshot;

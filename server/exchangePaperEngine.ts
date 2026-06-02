@@ -253,7 +253,7 @@ function isRestingLimitTriggered(
 
 function getRealizedPnl(player: Player): number {
   return player.trades
-    .filter((trade) => trade.action === 'close')
+    .filter((trade) => trade.action === 'close' || trade.action === 'adjustment')
     .reduce((total, trade) => total + trade.pnl, 0);
 }
 
