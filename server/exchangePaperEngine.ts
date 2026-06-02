@@ -842,15 +842,10 @@ export class PaperTradingEngine {
       if (!isValidQuotePrice(exitPrice)) {
         throw new Error(`Prix de sortie invalide: ${exitPrice}`);
       }
-      const tradeCountBefore = player.trades.length;
-      this.closePositionAtPrice(player, existing, exitPrice, undefined, reason);
+      const trade = this.closePositionAtPrice(player, existing, exitPrice, undefined, reason);
       const stillOpen = player.openPositions.some((p) => p.id === existing.id);
-      if (stillOpen) {
+      if (stillOpen || !trade) {
         throw new Error(`Fermeture refusée pour ${existing.pair} ${existing.side} @ ${exitPrice}`);
-      }
-      const trade = player.trades[player.trades.length - 1];
-      if (!trade || trade.action !== 'close' || player.trades.length <= tradeCountBefore) {
-        throw new Error('Trade de fermeture introuvable après close admin');
       }
       return trade;
     });
@@ -1680,13 +1675,13 @@ export class PaperTradingEngine {
     exitPrice: number,
     partialSize?: number,
     reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'manual',
-  ): void {
+  ): Trade | null {
     if (!isValidQuotePrice(exitPrice)) {
       console.warn(
         `[paper] skip close ${player.name} ${existing.pair} ${existing.side}: `
         + `invalid exit price ${exitPrice} (${reason})`,
       );
-      return;
+      return null;
     }
 
     let sizeToClose = existing.size;
@@ -1775,6 +1770,7 @@ export class PaperTradingEngine {
         reason,
       });
     }
+    return trade;
   }
 
   private executeOrder(player: Player, order: Order, executionPrice: number, feeRate: number): PaperOrderResult {
