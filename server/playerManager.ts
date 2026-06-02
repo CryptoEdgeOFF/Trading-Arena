@@ -1852,6 +1852,69 @@ export class PlayerManager {
   }
 
   /**
+   * Restauration admin d'un snapshot joueur (ex. annuler une fermeture erronée).
+   * Écrase l'état mémoire + Postgres — un seul playerId.
+   */
+  async forceRestoreCompetitionPlayerSnapshot(
+    playerId: string,
+    stored: StoredPlayer,
+  ): Promise<Record<string, unknown>> {
+    if (stored.id && stored.id !== playerId) {
+      throw new Error('playerId et snapshot.id incohérents');
+    }
+    const existing = this.players.get(playerId);
+    if (!existing) {
+      return { playerId, status: 'not_found' };
+    }
+
+    const before = {
+      pnl: existing.pnl,
+      pnlPercent: existing.pnlPercent,
+      openCount: existing.openPositions?.length ?? 0,
+      tradeCount: existing.tradeCount,
+    };
+
+    const restored = this.createPlayerFromStored({ ...stored, id: playerId });
+    restored.lastUpdate = Date.now();
+    this.players.set(playerId, restored);
+
+    await this.ensureCompetitionPaperRuntime(restored);
+    this.paperEngine.trackPlayers([restored]);
+    this.paperEngine.recalculateEquity(restored);
+
+    if ((restored.openPositions?.length ?? 0) > 0) {
+      this.liveEquityCompetitionPlayerIds.add(playerId);
+    } else {
+      this.liveEquityCompetitionPlayerIds.delete(playerId);
+    }
+
+    await this.persistPlayer(playerId);
+    this.broadcastState();
+
+    return {
+      playerId,
+      name: restored.name,
+      status: 'restored',
+      before,
+      after: {
+        pnl: restored.pnl,
+        pnlPercent: restored.pnlPercent,
+        openCount: restored.openPositions?.length ?? 0,
+        tradeCount: restored.tradeCount,
+      },
+      openPositions: (restored.openPositions ?? []).map((p) => ({
+        id: p.id,
+        pair: p.pair,
+        side: p.side,
+        size: p.size,
+        entryPrice: p.entryPrice,
+        stopLoss: p.stopLoss,
+        takeProfit: p.takeProfit,
+      })),
+    };
+  }
+
+  /**
    * Réaligne les ids « -restored » sur l'id d'ordre d'origine (trade open)
    * pour que le terminal retrouve la position après reconnexion.
    */

@@ -956,6 +956,25 @@ app.post('/api/admin/competition/restore-position-risk', requireAdmin, async (re
 });
 
 // Fermeture admin à prix fixe — un seul joueur par appel (ex. compensation TP chakal).
+app.post('/api/admin/competition/restore-player-snapshot', requireAdmin, async (req, res) => {
+  const playerId = String(req.body?.playerId || '').trim();
+  const snapshot = req.body?.snapshot;
+  if (!playerId || !snapshot || typeof snapshot !== 'object') {
+    res.status(400).json({ error: 'playerId et snapshot (objet StoredPlayer) requis' });
+    return;
+  }
+  try {
+    const report = await manager.forceRestoreCompetitionPlayerSnapshot(playerId, snapshot);
+    if (report.status === 'restored') {
+      await syncCompetitionResultForPlayer(playerId);
+    }
+    res.json({ ok: true, report });
+  } catch (err: any) {
+    console.error('[restore-player-snapshot] error', err);
+    res.status(500).json({ error: err?.message || 'restore failed' });
+  }
+});
+
 app.post('/api/admin/competition/close-positions-at-price', requireAdmin, async (req, res) => {
   const playerId = String(req.body?.playerId || '').trim();
   const exitPrice = Number(req.body?.exitPrice);
