@@ -2751,6 +2751,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     mql.addEventListener('change', handler);
     return () => mql.removeEventListener('change', handler);
   }, []);
+  // Le chart mobile reste monté en arrière-plan (display:none hors onglet).
+  // Au retour sur l'onglet "chart", on pousse un resize pour que le widget
+  // TradingView se remesure (le conteneur passe de 0×0 à sa taille réelle).
+  useEffect(() => {
+    if (typeof window === 'undefined' || mobileTab !== 'chart') return;
+    const t = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
+    return () => window.clearTimeout(t);
+  }, [mobileTab]);
   const [competitionContext, setCompetitionContext] = useState<CompetitionContext | null>(null);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardResponse | null>(null);
   const [leaderboardError, setLeaderboardError] = useState('');
@@ -4148,43 +4156,46 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             onLogout={logout}
           />
 
+          {isMobileViewport && (
           <div className="flex min-h-0 flex-1 flex-col lg:hidden">
-            {mobileTab === 'orders' && (
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pb-2">
-                {orderPanel}
-                {/* Positions / Ordres en attente / Historique : visibles en
-                    scrollant sous le formulaire d'ordre, comme sur desktop. */}
-                <BottomTabs
-                  tab={tab}
-                  setTab={setTab}
-                  height={bottomTabsHeight}
-                  expanded={false}
-                  mobileMode
-                  onResizeStart={startBottomResize}
-                  onResizeMove={moveBottomResize}
-                  onResizeEnd={endBottomResize}
-                  onToggleExpanded={() => setBottomTabsExpanded((value) => !value)}
-                  player={player}
-                  recentTrades={playerTrades}
-                  ticker={ticker}
-                  onClosePosition={closePosition}
-                  onUpdateRisk={updateRisk}
-                  onCancelOrder={cancelOrder}
-                  onSelectPair={setSelectedPair}
-                  busy={busy}
-                  marketMetadata={meta.marketMetadata}
-                />
-              </div>
-            )}
-            {mobileTab === 'chart' && (
-              <div className="flex min-h-[calc(100dvh-196px)] flex-1">
-                {chartPanel}
-              </div>
-            )}
+            {/* Onglets mobile : on NE démonte PAS les panneaux en changeant
+                d'onglet, on bascule juste la visibilité (display:none). Le chart
+                est un widget TradingView lourd (iframe) : le démonter le forçait
+                à tout recharger depuis zéro à chaque switch. On le garde monté
+                en arrière-plan. Idem pour le formulaire d'ordre (état préservé). */}
+            <div className={`min-h-0 flex-1 flex-col gap-2 overflow-y-auto pb-2 ${mobileTab === 'orders' ? 'flex' : 'hidden'}`}>
+              {orderPanel}
+              {/* Positions / Ordres en attente / Historique : visibles en
+                  scrollant sous le formulaire d'ordre, comme sur desktop. */}
+              <BottomTabs
+                tab={tab}
+                setTab={setTab}
+                height={bottomTabsHeight}
+                expanded={false}
+                mobileMode
+                onResizeStart={startBottomResize}
+                onResizeMove={moveBottomResize}
+                onResizeEnd={endBottomResize}
+                onToggleExpanded={() => setBottomTabsExpanded((value) => !value)}
+                player={player}
+                recentTrades={playerTrades}
+                ticker={ticker}
+                onClosePosition={closePosition}
+                onUpdateRisk={updateRisk}
+                onCancelOrder={cancelOrder}
+                onSelectPair={setSelectedPair}
+                busy={busy}
+                marketMetadata={meta.marketMetadata}
+              />
+            </div>
+            <div className={`min-h-[calc(100dvh-196px)] flex-1 ${mobileTab === 'chart' ? 'flex' : 'hidden'}`}>
+              {chartPanel}
+            </div>
             {mobileTab === 'leaderboard' && (
               competitionLeaderboardPanel
             )}
           </div>
+          )}
 
           <div className="grid shrink-0 grid-cols-3 gap-1 rounded-2xl border border-[#241e30] bg-[#0d0914] p-1 lg:hidden">
             {[
@@ -4207,6 +4218,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             ))}
           </div>
 
+          {!isMobileViewport && (
           <div className="hidden min-h-0 flex-1 flex-col gap-2 lg:flex">
             {!bottomTabsExpanded && (
               <div className="flex min-h-0 flex-1 gap-3">
@@ -4217,6 +4229,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
             {leaderboardPanel}
           </div>
+          )}
         </div>
       )}
     </div>
