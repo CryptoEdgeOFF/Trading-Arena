@@ -955,6 +955,47 @@ app.post('/api/admin/competition/restore-position-risk', requireAdmin, async (re
   }
 });
 
+// Fermeture admin à prix fixe — un seul joueur par appel (ex. compensation TP chakal).
+app.post('/api/admin/competition/close-positions-at-price', requireAdmin, async (req, res) => {
+  const playerId = String(req.body?.playerId || '').trim();
+  const exitPrice = Number(req.body?.exitPrice);
+  if (!playerId) {
+    res.status(400).json({ error: 'playerId requis' });
+    return;
+  }
+  if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+    res.status(400).json({ error: 'exitPrice invalide' });
+    return;
+  }
+  const reason = req.body?.reason;
+  const allowedReasons = new Set(['manual', 'stop-loss', 'take-profit', 'liquidation']);
+  const closeReason = allowedReasons.has(reason) ? reason : 'take-profit';
+  const positionIds = Array.isArray(req.body?.positionIds)
+    ? req.body.positionIds.map((v: unknown) => String(v))
+    : undefined;
+  const pair = req.body?.pair ? String(req.body.pair) : undefined;
+  const side = req.body?.side === 'long' || req.body?.side === 'short' ? req.body.side : undefined;
+
+  try {
+    const report = await manager.closeCompetitionPositionsAtPrice({
+      playerId,
+      exitPrice,
+      reason: closeReason,
+      positionIds,
+      pair,
+      side,
+    });
+    const entry = report[0];
+    if (entry && (entry.status === 'closed' || entry.status === 'partial')) {
+      await syncCompetitionResultForPlayer(playerId);
+    }
+    res.json({ ok: true, report });
+  } catch (err: any) {
+    console.error('[close-positions-at-price] error', err);
+    res.status(500).json({ error: err?.message || 'close failed' });
+  }
+});
+
 // --- Roster: register players (persistent) ---
 
 app.post('/api/roster', requireAdmin, async (req, res) => {

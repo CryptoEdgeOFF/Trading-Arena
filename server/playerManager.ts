@@ -1754,6 +1754,104 @@ export class PlayerManager {
   }
 
   /**
+   * Ferme des positions compétition à un prix fixe (compensation admin).
+   * Un seul playerId par appel — n'affecte pas les autres comptes.
+   */
+  async closeCompetitionPositionsAtPrice(input: {
+    playerId: string;
+    exitPrice: number;
+    reason?: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation';
+    positionIds?: string[];
+    pair?: string;
+    side?: 'long' | 'short';
+  }): Promise<Array<Record<string, unknown>>> {
+    const {
+      playerId,
+      exitPrice,
+      reason = 'take-profit',
+      positionIds,
+      pair,
+      side,
+    } = input;
+
+    const player = this.players.get(playerId);
+    if (!player) {
+      return [{ playerId, status: 'not_found' }];
+    }
+
+    await this.ensureCompetitionPaperRuntime(player);
+
+    let targets = [...player.openPositions];
+    if (positionIds?.length) {
+      const idSet = new Set(positionIds.map(String));
+      targets = targets.filter((p) => idSet.has(p.id));
+    }
+    if (pair) {
+      targets = targets.filter((p) => p.pair === pair);
+    }
+    if (side) {
+      targets = targets.filter((p) => p.side === side);
+    }
+
+    if (targets.length === 0) {
+      return [{ playerId, name: player.name, status: 'no_positions', exitPrice }];
+    }
+
+    const before = { pnl: player.pnl, pnlPercent: player.pnlPercent, openCount: player.openPositions.length };
+    const closed: Array<Record<string, unknown>> = [];
+    const errors: Array<Record<string, unknown>> = [];
+
+    for (const pos of targets) {
+      try {
+        const trade = await this.paperEngine.closePositionAtPriceAdmin(
+          player,
+          pos.id,
+          exitPrice,
+          reason,
+        );
+        closed.push({
+          positionId: pos.id,
+          pair: pos.pair,
+          side: pos.side,
+          size: pos.size,
+          entryPrice: pos.entryPrice,
+          exitPrice: trade.price,
+          pnl: trade.pnl,
+          tradeId: trade.id,
+        });
+      } catch (err) {
+        errors.push({
+          positionId: pos.id,
+          pair: pos.pair,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    player.lastUpdate = Date.now();
+    this.paperEngine.recalculateEquity(player);
+    await this.persistPlayer(player.id);
+    this.liveEquityCompetitionPlayerIds.delete(player.id);
+    this.broadcastState();
+
+    return [{
+      playerId,
+      name: player.name,
+      status: errors.length === 0 ? 'closed' : (closed.length > 0 ? 'partial' : 'failed'),
+      exitPrice,
+      reason,
+      before,
+      after: {
+        pnl: player.pnl,
+        pnlPercent: player.pnlPercent,
+        openCount: player.openPositions.length,
+      },
+      closed,
+      errors,
+    }];
+  }
+
+  /**
    * Réaligne les ids « -restored » sur l'id d'ordre d'origine (trade open)
    * pour que le terminal retrouve la position après reconnexion.
    */

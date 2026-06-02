@@ -823,6 +823,39 @@ export class PaperTradingEngine {
     return this.withPlayerLock(player.id, () => this.closePositionLocked(player, positionRef, partialSize));
   }
 
+  /**
+   * Fermeture admin à un prix fixe (ex. compensation TP) — ne dépend pas du
+   * ticker live. N'appelle pas assertMarketOpen.
+   */
+  async closePositionAtPriceAdmin(
+    player: Player,
+    positionRef: string,
+    exitPrice: number,
+    reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'take-profit',
+  ): Promise<Trade> {
+    return this.withPlayerLock(player.id, () => {
+      const existing = player.openPositions.find((position) => position.id === positionRef)
+        ?? player.openPositions.find((position) => position.pair === positionRef);
+      if (!existing) {
+        throw new Error('Position introuvable');
+      }
+      if (!isValidQuotePrice(exitPrice)) {
+        throw new Error(`Prix de sortie invalide: ${exitPrice}`);
+      }
+      const tradeCountBefore = player.trades.length;
+      this.closePositionAtPrice(player, existing, exitPrice, undefined, reason);
+      const stillOpen = player.openPositions.some((p) => p.id === existing.id);
+      if (stillOpen) {
+        throw new Error(`Fermeture refusée pour ${existing.pair} ${existing.side} @ ${exitPrice}`);
+      }
+      const trade = player.trades[player.trades.length - 1];
+      if (!trade || trade.action !== 'close' || player.trades.length <= tradeCountBefore) {
+        throw new Error('Trade de fermeture introuvable après close admin');
+      }
+      return trade;
+    });
+  }
+
   private async closePositionLocked(player: Player, positionRef: string, partialSize?: number): Promise<PaperOrderResult> {
     const existing = player.openPositions.find((position) => position.id === positionRef)
       ?? player.openPositions.find((position) => position.pair === positionRef);
