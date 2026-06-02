@@ -36,15 +36,13 @@ const server = http.createServer(app);
 // of 500+ clients does not blow up RAM.
 const wss = new WebSocketServer({
   noServer: true,
-  perMessageDeflate: {
-    zlibDeflateOptions: { chunkSize: 1024, memLevel: 7, level: 3 },
-    zlibInflateOptions: { chunkSize: 10 * 1024 },
-    clientNoContextTakeover: true,
-    serverNoContextTakeover: true,
-    serverMaxWindowBits: 10,
-    concurrencyLimit: 10,
-    threshold: 1024,
-  },
+  // perMessageDeflate DÉSACTIVÉ volontairement : la compression zlib alloue de
+  // la mémoire native (hors heap V8) qui se fragmente et s'accumule sous fort
+  // débit de messages. Avec nos broadcasts continus (~100 ms) de petits diffs,
+  // le gain de compression est négligeable mais la RAM native grimpe jusqu'à
+  // l'OOM (observé : ~12 Go/jour, chute au redeploy). Voir doc `ws` :
+  // « The extension adds a significant overhead in terms of memory consumption ».
+  perMessageDeflate: false,
 });
 
 // Canal WS isolé pour /feed-test : forward des ticks iTick live aux
