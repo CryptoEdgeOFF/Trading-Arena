@@ -433,6 +433,7 @@ export class PlayerManager {
       lastUpdate: player.lastUpdate,
       connected: player.connected,
       pnlAdjustment: player.pnlAdjustment ?? 0,
+      realizedPnlArchived: player.realizedPnlArchived ?? 0,
       isCompetitionPlayer: player.isCompetitionPlayer ?? false,
     }));
   }
@@ -683,6 +684,7 @@ export class PlayerManager {
       lastUpdate: stored.lastUpdate ?? 0,
       connected: stored.connected ?? false,
       pnlAdjustment: stored.pnlAdjustment ?? 0,
+      realizedPnlArchived: stored.realizedPnlArchived ?? 0,
     };
   }
 

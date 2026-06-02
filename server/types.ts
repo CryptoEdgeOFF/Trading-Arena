@@ -34,6 +34,12 @@ export interface Player {
    */
   pnlAdjustment?: number;
   /**
+   * PnL réalisé cumulé des clôtures déjà évincées du journal `trades` (plafonné
+   * à 50 entrées). Sans ce compteur, le réalisé des anciens trades disparaîtrait
+   * du calcul d'équité dès qu'un joueur dépasse 50 trades.
+   */
+  realizedPnlArchived?: number;
+  /**
    * `true` pour un joueur d'arène online (compete). Exclu du dashboard LIVE et
    * du roster LIVE. Persisté pour que l'isolation survive aux refreshs / cold
    * starts, indépendamment du set en mémoire `onlineCompetitionPlayerIds`.
@@ -73,6 +79,7 @@ export interface StoredPlayer {
   lastUpdate?: number;
   connected?: boolean;
   pnlAdjustment?: number;
+  realizedPnlArchived?: number;
   isCompetitionPlayer?: boolean;
 }
 

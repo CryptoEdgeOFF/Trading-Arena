@@ -251,10 +251,15 @@ function isRestingLimitTriggered(
   return markPrice <= limitPrice;
 }
 
+/** Nombre max d'entrées conservées dans `player.trades` (journal d'affichage). */
+const MAX_TRADE_HISTORY = 50;
+
 function getRealizedPnl(player: Player): number {
-  return player.trades
+  const archived = player.realizedPnlArchived || 0;
+  const inJournal = player.trades
     .filter((trade) => trade.action === 'close')
     .reduce((total, trade) => total + trade.pnl, 0);
+  return archived + inJournal;
 }
 
 function getReservedCapital(player: Player): number {
@@ -929,8 +934,7 @@ export class PaperTradingEngine {
     if (!isPartial) {
       player.winStreak = trade.pnl > 0 ? player.winStreak + 1 : 0;
     }
-    player.trades.push(trade);
-    player.trades = player.trades.slice(-50);
+    this.appendTradeCapped(player, trade);
 
     if (isPartial) {
       existing.size = existing.size - sizeToClose;
@@ -1088,6 +1092,7 @@ export class PaperTradingEngine {
       player.pnlPercent = 0;
       player.tradeCount = 0;
       player.trades = [];
+      player.realizedPnlArchived = 0;
       player.openPositions = [];
       player.openOrders = [];
       player.rank = 0;
@@ -1738,8 +1743,7 @@ export class PaperTradingEngine {
     if (!isPartial) {
       player.winStreak = trade.pnl > 0 ? player.winStreak + 1 : 0;
     }
-    player.trades.push(trade);
-    player.trades = player.trades.slice(-50);
+    this.appendTradeCapped(player, trade);
 
     if (isPartial) {
       existing.size = existing.size - sizeToClose;
@@ -1830,8 +1834,7 @@ export class PaperTradingEngine {
       time: openedAt,
       action: 'open',
     };
-    player.trades.push(trade);
-    player.trades = player.trades.slice(-50);
+    this.appendTradeCapped(player, trade);
     this.updatePlayerEquity(player);
 
     return {
@@ -1856,6 +1859,27 @@ export class PaperTradingEngine {
     return side === 'long'
       ? entryPrice * (1 - maintenance)
       : entryPrice * (1 + maintenance);
+  }
+
+  /**
+   * Ajoute un trade au journal en respectant le plafond de 50 entrées. Le PnL
+   * réalisé des clôtures évincées est cumulé dans `realizedPnlArchived` pour ne
+   * jamais être perdu du calcul d'équité (le journal sert uniquement à
+   * l'affichage). Tout passage de trade par le journal DOIT utiliser ce helper.
+   */
+  private appendTradeCapped(player: Player, trade: Trade): void {
+    player.trades.push(trade);
+    const overflow = player.trades.length - MAX_TRADE_HISTORY;
+    if (overflow > 0) {
+      const dropped = player.trades.splice(0, overflow);
+      let archived = 0;
+      for (const old of dropped) {
+        if (old.action === 'close') archived += old.pnl || 0;
+      }
+      if (archived !== 0) {
+        player.realizedPnlArchived = (player.realizedPnlArchived || 0) + archived;
+      }
+    }
   }
 
   private updatePlayerEquity(player: Player): void {
