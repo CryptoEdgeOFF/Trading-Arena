@@ -1759,7 +1759,9 @@ export class PaperTradingEngine {
     // Spotlight automatique uniquement pour les déclenchements SL/TP. Les
     // fermetures manuelles passent par closePosition() qui retourne déjà
     // un spotlight au PlayerManager.
-    if (reason !== 'manual') {
+    // On n'émet PAS de spotlight pour les joueurs d'arène online (compete) :
+    // leurs SL/TP ne doivent pas remonter dans le feed du dashboard LIVE.
+    if (reason !== 'manual' && !player.isCompetitionPlayer) {
       this.engineSpotlights.push({
         id: trade.id,
         playerName: player.name,
