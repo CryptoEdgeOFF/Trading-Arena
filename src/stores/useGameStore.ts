@@ -76,6 +76,8 @@ export interface Player {
   feesPaid: number;
   pnl: number;
   pnlPercent: number;
+  pnlAdjustment?: number;
+  realizedPnlArchived?: number;
   tradeCount: number;
   trades: Trade[];
   openPositions: Position[];

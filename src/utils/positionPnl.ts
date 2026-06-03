@@ -50,9 +50,12 @@ export function refreshPlayerPaperMetrics(
   startingBalance = 10_000,
 ): Player {
   const openPositions = refreshOpenPositions(player.openPositions || [], market);
-  const realizedPnl = (player.trades || [])
-    .filter((trade) => trade.action === 'close')
-    .reduce((total, trade) => total + trade.pnl, 0);
+  // Miroir de getRealizedPnl côté serveur : PnL archivé (trades évincés de
+  // l'historique) + PnL des trades de fermeture encore présents.
+  const realizedPnl = (player.realizedPnlArchived || 0)
+    + (player.trades || [])
+      .filter((trade) => trade.action === 'close')
+      .reduce((total, trade) => total + trade.pnl, 0);
   const unrealizedPnl = openPositions.reduce((total, position) => total + position.pnl, 0);
   const initialBalance = player.initialBalance ?? startingBalance;
   const usedMargin = openPositions.reduce((total, position) => total + position.margin, 0);
@@ -60,7 +63,9 @@ export function refreshPlayerPaperMetrics(
     (total, order) => total + (order.marginReserved || 0) + (order.feeEstimate || 0),
     0,
   );
-  const currentBalance = initialBalance + realizedPnl + unrealizedPnl - (player.feesPaid || 0);
+  // Inclut pnlAdjustment (ajustements admin / restauration) comme le serveur.
+  const currentBalance = initialBalance + realizedPnl + unrealizedPnl
+    - (player.feesPaid || 0) + (player.pnlAdjustment || 0);
   const availableMargin = Math.max(0, currentBalance - usedMargin - reservedCapital);
   const pnl = currentBalance - initialBalance;
   const pnlPercent = initialBalance > 0 ? (pnl / initialBalance) * 100 : 0;
