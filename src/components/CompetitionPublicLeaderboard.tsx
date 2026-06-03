@@ -12,6 +12,9 @@ import OptimizedImage, { AvatarImage } from './OptimizedImage';
 
 const REFRESH_MS = 2000;
 const SESSION_KEY = 'btf-comp-session';
+const INCIDENT_COMPETITION_ID = '1cbc184a-5bed-4fe0-9630-d0a5b1d310f6';
+const INCIDENT_MESSAGE =
+  'Trading momentanement indisponible. Les PnL et le classement de chacun vont etre restaures. Les positions en cours ne seront pas restaurees. Desoles pour le bug.';
 
 interface LeaderboardRow {
   rank: number;
@@ -235,6 +238,13 @@ export default function CompetitionPublicLeaderboard() {
 
           {data && (
             <>
+              {(data.competition.id === INCIDENT_COMPETITION_ID || data.competition.title === 'BTF QUALIFICATIONS') && (
+                <div className="mb-6 rounded-2xl border border-amber-500/35 bg-amber-500/12 px-4 py-3 text-[12px] leading-relaxed text-amber-100 sm:text-[13px]">
+                  <div className="micro text-[10px] uppercase tracking-[0.16em] text-amber-300">Information importante</div>
+                  <p className="mt-1 font-medium">{INCIDENT_MESSAGE}</p>
+                </div>
+              )}
+
               {/* HERO */}
               <section className="grid gap-6 lg:grid-cols-[1.4fr_1fr] lg:items-end">
                 <div>
