@@ -25,6 +25,8 @@ import {
 } from '../lib/competeSession';
 
 const SESSION_KEY = COMPETE_SESSION_KEY;
+const COMPETE_INCIDENT_MESSAGE =
+  'Trading momentanement indisponible. Les PnL et le classement de chacun vont etre restaures. Les positions en cours ne seront pas restaurees. Desoles pour le bug.';
 
 function readCachedUser(): CompeteSessionUser | null {
   return readCachedCompeteUser();
@@ -666,6 +668,13 @@ export default function CompetitionPlatform() {
       <CompeteHeader user={session?.user || null} onLogout={logout} />
 
       <main className="compete-bg pb-8">
+        <section className="mx-auto max-w-7xl px-5 pt-4 sm:px-6 md:px-10">
+          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/12 px-4 py-3 text-[12px] leading-relaxed text-amber-100 sm:text-[13px]">
+            <div className="micro text-[10px] uppercase tracking-[0.16em] text-amber-300">Information importante</div>
+            <p className="mt-1 font-medium">{COMPETE_INCIDENT_MESSAGE}</p>
+          </div>
+        </section>
+
         {/* HERO — pas de marge négative sur mobile : évite que le contenu passe sous le header / la barre d'URL Safari */}
         <section id="signup" className="relative overflow-hidden pt-2 sm:-mt-[76px] sm:pt-[76px]">
           {/* Background trader silhouette */}

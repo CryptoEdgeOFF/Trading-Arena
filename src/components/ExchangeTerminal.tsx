@@ -47,6 +47,8 @@ const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
 const DEMO_TAKER_FEE = 0.00005 / 3;
 const DEMO_MAKER_FEE = 0.00002 / 3;
+const COMPETE_INCIDENT_MESSAGE =
+  'Trading momentanement indisponible. Les PnL et le classement de chacun vont etre restaures. Les positions en cours ne seront pas restaurees. Desoles pour le bug.';
 
 /** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
 function isRestingLimitTriggered(
@@ -4155,6 +4157,13 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             liveMode={liveMode}
             onLogout={logout}
           />
+
+          {competitionContext?.id && (
+            <div className="rounded-2xl border border-amber-500/35 bg-amber-500/12 px-4 py-3 text-[12px] leading-relaxed text-amber-100 sm:text-[13px]">
+              <div className="font-rajdhani text-[10px] uppercase tracking-[0.16em] text-amber-300">Information importante</div>
+              <p className="mt-1 font-medium">{COMPETE_INCIDENT_MESSAGE}</p>
+            </div>
+          )}
 
           {isMobileViewport && (
           <div className="flex min-h-0 flex-1 flex-col lg:hidden">
