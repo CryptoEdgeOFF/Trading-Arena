@@ -4197,7 +4197,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
                 marketMetadata={meta.marketMetadata}
               />
             </div>
-            <div className={`min-h-[calc(100dvh-196px)] flex-1 ${mobileTab === 'chart' ? 'flex' : 'hidden'}`}>
+            {/* flex-1 remplit l'espace restant après TopBar + bandeau + barre
+                d'onglets (plus de hauteur 100dvh codée en dur qui poussait la
+                barre d'onglets hors écran quand le bandeau est présent). Le
+                plancher min-h-[300px] évite que le widget TradingView (sans
+                hauteur intrinsèque) ne s'effondre à 0. */}
+            <div className={`min-h-[300px] flex-1 ${mobileTab === 'chart' ? 'flex' : 'hidden'}`}>
               {chartPanel}
             </div>
             {mobileTab === 'leaderboard' && (
