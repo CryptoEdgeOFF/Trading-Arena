@@ -48,7 +48,7 @@ const DEMO_STARTING_BALANCE = 100_000;
 const DEMO_TAKER_FEE = 0.00005 / 3;
 const DEMO_MAKER_FEE = 0.00002 / 3;
 const COMPETE_INCIDENT_MESSAGE =
-  'Trading momentanement indisponible. Les PnL et le classement de chacun vont etre restaures. Les positions en cours ne seront pas restaurees. Desoles pour le bug.';
+  'La competition est de nouveau LIVE. Les PnL et les classements ont ete restaures a leur etat d\'avant l\'incident (positions en cours non restaurees). Bon trading !';
 
 /** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
 function isRestingLimitTriggered(
@@ -4159,8 +4159,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
           />
 
           {competitionContext?.id && (
-            <div className="rounded-2xl border border-amber-500/35 bg-amber-500/12 px-4 py-3 text-[12px] leading-relaxed text-amber-100 sm:text-[13px]">
-              <div className="font-rajdhani text-[10px] uppercase tracking-[0.16em] text-amber-300">Information importante</div>
+            <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/12 px-4 py-3 text-[12px] leading-relaxed text-emerald-100 sm:text-[13px]">
+              <div className="font-rajdhani text-[10px] uppercase tracking-[0.16em] text-emerald-300">Competition LIVE</div>
               <p className="mt-1 font-medium">{COMPETE_INCIDENT_MESSAGE}</p>
             </div>
           )}

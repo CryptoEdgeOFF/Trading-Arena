@@ -26,7 +26,7 @@ import {
 
 const SESSION_KEY = COMPETE_SESSION_KEY;
 const COMPETE_INCIDENT_MESSAGE =
-  'Trading momentanement indisponible. Les PnL et le classement de chacun vont etre restaures. Les positions en cours ne seront pas restaurees. Desoles pour le bug.';
+  'La competition est de nouveau LIVE. Les PnL et les classements ont ete restaures a leur etat d\'avant l\'incident (positions en cours non restaurees). Bon trading !';
 
 function readCachedUser(): CompeteSessionUser | null {
   return readCachedCompeteUser();
@@ -669,8 +669,8 @@ export default function CompetitionPlatform() {
 
       <main className="compete-bg pb-8">
         <section className="mx-auto max-w-7xl px-5 pt-4 sm:px-6 md:px-10">
-          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/12 px-4 py-3 text-[12px] leading-relaxed text-amber-100 sm:text-[13px]">
-            <div className="micro text-[10px] uppercase tracking-[0.16em] text-amber-300">Information importante</div>
+          <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/12 px-4 py-3 text-[12px] leading-relaxed text-emerald-100 sm:text-[13px]">
+            <div className="micro text-[10px] uppercase tracking-[0.16em] text-emerald-300">Competition LIVE</div>
             <p className="mt-1 font-medium">{COMPETE_INCIDENT_MESSAGE}</p>
           </div>
         </section>
