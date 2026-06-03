@@ -175,10 +175,11 @@ export default function CompetitionPublicLeaderboard() {
       .catch(() => undefined);
   }, []);
 
-  // Seuls les traders ayant tradé (tradesCount > 0) sont classés/podiumés.
-  // Les autres sont relégués en bas, sans rang, avec « Aucun trade ».
-  const ranked = useMemo(() => (data ? data.leaderboard.filter((row) => row.tradesCount > 0) : []), [data]);
-  const notTraded = useMemo(() => (data ? data.leaderboard.filter((row) => row.tradesCount === 0) : []), [data]);
+  // Classement basé sur le rang renvoyé par le serveur (rank > 0). Les joueurs
+  // sans rang (rank === 0) sont relégués en bas. Le rang ne dépend plus du
+  // nombre de trades : le PnL restauré reste visible même à 0 trade.
+  const ranked = useMemo(() => (data ? data.leaderboard.filter((row) => row.rank > 0) : []), [data]);
+  const notTraded = useMemo(() => (data ? data.leaderboard.filter((row) => row.rank === 0) : []), [data]);
   const top3 = useMemo(() => ranked.slice(0, 3), [ranked]);
   const rest = useMemo(() => ranked.slice(3), [ranked]);
   const myRow = useMemo(() => (
@@ -521,7 +522,7 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
 }
 
 function RankRow({ row, index, isMe = false, compact = false }: { row: LeaderboardRow; index: number; isMe?: boolean; compact?: boolean }) {
-  const noTrade = row.tradesCount === 0;
+  const noTrade = row.rank === 0;
   const pos = row.pnlPercent >= 0;
   const tier = row.rank === 1 ? 'gold' : row.rank === 2 ? 'silver' : row.rank === 3 ? 'bronze' : '';
   return (

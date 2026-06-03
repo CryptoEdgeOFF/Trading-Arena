@@ -160,7 +160,7 @@ function sortAndRankLeaderboard<T extends { pnlPercent: number; pnlUsd: number; 
   let rank = 0;
   return sorted.map((row) => ({
     ...row,
-    rank: row.tradesCount > 0 ? (rank += 1) : 0,
+    rank: (rank += 1),
   }));
 }
 
