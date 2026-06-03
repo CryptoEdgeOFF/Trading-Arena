@@ -697,6 +697,12 @@ export class PlayerManager {
     this.resetLeaderAnnouncementState();
 
     for (const player of players) {
+      // Safety net: ne jamais réinitialiser les joueurs d'arène online.
+      // Même si un appelant passe un scope trop large (ex: reset global),
+      // l'état live compete (trades/positions/balances) reste isolé.
+      if (player.isCompetitionPlayer || this.onlineCompetitionPlayerIds.has(player.id)) {
+        continue;
+      }
       player.initialBalance = null;
       player.currentBalance = 0;
       player.availableMargin = 0;
@@ -1205,7 +1211,7 @@ export class PlayerManager {
    * snapshot final, donc on peut purger sans perte.
    */
   private resetActivePlayersForNextRound(): void {
-    const players = Array.from(this.players.values());
+    const players = this.getActivePlayers();
     if (players.length === 0) return;
     this.resetCompetitionState(players);
     this.saveRoster();
