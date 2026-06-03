@@ -151,12 +151,13 @@ function inferCompetitionStatus(startAt: number, endAt: number, now = Date.now()
 function sortAndRankLeaderboard<T extends { pnlPercent: number; pnlUsd: number; tradesCount: number }>(
   rows: T[],
 ): Array<T & { rank: number }> {
-  const sorted = rows.slice().sort((a, b) => {
-    const aTraded = a.tradesCount > 0 ? 1 : 0;
-    const bTraded = b.tradesCount > 0 ? 1 : 0;
-    if (aTraded !== bTraded) return bTraded - aTraded; // traders classés d'abord
-    return b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd;
-  });
+  // Classement strictement par PnL (% puis $). On ne privilégie plus les
+  // joueurs ayant tradé : sinon, après la restauration (trades remis à 0),
+  // un joueur ayant passé 1 trade depuis la réouverture passerait devant des
+  // PnL bien supérieurs restés à 0 trade.
+  const sorted = rows.slice().sort((a, b) => (
+    b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd
+  ));
   let rank = 0;
   return sorted.map((row) => ({
     ...row,
