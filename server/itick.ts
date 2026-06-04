@@ -73,7 +73,28 @@ function getToken(): string {
   return token;
 }
 
-async function fetchItick<T = any>(path: string, params: Record<string, string | number>): Promise<T> {
+/**
+ * iTick applique un quota de requêtes REST (réponse `code=1 msg="your request
+ * is too much"`). Quand plusieurs terminaux chargent leur historique de candles
+ * en même temps (+ le poll quotes), on dépasse ce quota et les graphes restent
+ * vides. On sérialise donc TOUS les appels REST iTick derrière une chaîne, avec
+ * un espacement minimal, et on réessaie avec backoff sur erreur de rate-limit.
+ */
+const MIN_ITICK_REQUEST_SPACING_MS = Number(process.env.ITICK_MIN_REQUEST_SPACING_MS) || 250;
+const ITICK_MAX_RETRIES = 4;
+let itickRequestChain: Promise<unknown> = Promise.resolve();
+let lastItickRequestAt = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isItickRateLimitError(err: unknown): boolean {
+  const msg = (err as Error)?.message || '';
+  return /too much|code=1\b|HTTP 429/i.test(msg);
+}
+
+async function fetchItickRaw<T = any>(path: string, params: Record<string, string | number>): Promise<T> {
   const url = new URL(path, BASE_URL);
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v));
@@ -92,6 +113,34 @@ async function fetchItick<T = any>(path: string, params: Record<string, string |
     throw new Error(`iTick ${path} code=${payload.code} msg=${payload.msg ?? ''}`);
   }
   return payload?.data as T;
+}
+
+async function fetchItick<T = any>(path: string, params: Record<string, string | number>): Promise<T> {
+  const run = itickRequestChain.then(async () => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < ITICK_MAX_RETRIES; attempt += 1) {
+      const since = Date.now() - lastItickRequestAt;
+      if (since < MIN_ITICK_REQUEST_SPACING_MS) {
+        await sleep(MIN_ITICK_REQUEST_SPACING_MS - since);
+      }
+      try {
+        const result = await fetchItickRaw<T>(path, params);
+        lastItickRequestAt = Date.now();
+        return result;
+      } catch (err) {
+        lastItickRequestAt = Date.now();
+        lastErr = err;
+        if (!isItickRateLimitError(err) || attempt === ITICK_MAX_RETRIES - 1) throw err;
+        // Backoff exponentiel : 600ms, 1.2s, 2.4s
+        await sleep(600 * Math.pow(2, attempt));
+      }
+    }
+    throw lastErr;
+  });
+  // La chaîne ne doit jamais se rompre sur une erreur, sinon tous les appels
+  // suivants seraient rejetés. On avale l'erreur pour la chaîne uniquement.
+  itickRequestChain = run.catch(() => undefined);
+  return run as Promise<T>;
 }
 
 const tickCache = new Map<string, { value: ItickTick; expiresAt: number }>();
