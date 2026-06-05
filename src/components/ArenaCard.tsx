@@ -245,11 +245,11 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
           style={teamColor ? { background: `linear-gradient(90deg, ${teamColor}, transparent 70%)` } : undefined}
         />
 
-        <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden p-2.5 gap-2">
-          <div className="flex items-center gap-2">
+        <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden p-2.5 gap-1.5">
+          <div className="flex items-center gap-2 min-h-0">
             <div className="relative shrink-0">
               <div
-                className="overflow-hidden rounded-md border-2 bg-zinc-900 h-16 w-16"
+                className="overflow-hidden rounded-md border-2 bg-zinc-900 h-12 w-12 xl:h-14 xl:w-14"
                 style={{ borderColor: `${player.color}55` }}
               >
                 {player.avatar ? (
@@ -276,33 +276,40 @@ export default function ArenaCard({ player, size = 'half', teamColor }: ArenaCar
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="display font-bold text-white leading-tight truncate text-[20px]" title={player.name}>
+              <div className="display font-bold text-white leading-tight truncate text-[18px] xl:text-[20px]" title={player.name}>
                 {player.name}
               </div>
             </div>
+
+            {player.badges.length > 0 && (
+              <div className="shrink-0 self-start">
+                <PlayerBadges badges={player.badges} max={3} size="sm" />
+              </div>
+            )}
           </div>
 
-          <div className="shrink-0 flex items-baseline justify-between gap-1">
+          <div className="shrink-0 min-w-0">
             <motion.div
               key={player.pnl}
               initial={{ scale: 1.05 }}
               animate={{ scale: 1 }}
-              className={`pnl-mega min-w-0 truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[36px] leading-[0.88]`}
+              className={`pnl-mega block max-w-full truncate ${isPositive ? 'is-pos' : 'is-neg'} text-[25px] xl:text-[30px] 2xl:text-[32px] leading-[0.9]`}
+              title={formatPnl(player.pnl)}
             >
               {formatPnl(player.pnl)}
             </motion.div>
-            <div className={`num shrink-0 text-[11px] font-semibold ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
+            <div className={`num mt-0.5 text-right text-[9.5px] xl:text-[10px] font-semibold leading-none ${isPositive ? 'text-emerald-500/80' : 'text-red-500/80'}`}>
               {formatPercent(player.pnlPercent)}
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 flex flex-col justify-end">
+          <div className="min-h-[30px] shrink-0">
             {latestPosition?.type === 'open' ? (
               <PositionRow position={latestPosition.position} compact />
             ) : latestPosition?.type === 'closed' ? (
-              <ClosedTradeRow trade={latestPosition.trade} />
+              <ClosedTradeRow trade={latestPosition.trade} compact />
             ) : (
-              <div className="rounded-lg border border-dashed border-white/[0.06] bg-white/[0.01] px-2 py-2 text-center text-[10px] text-zinc-600">
+              <div className="rounded-lg border border-dashed border-white/[0.06] bg-white/[0.01] px-2 py-1.5 text-center text-[9.5px] text-zinc-600">
                 Aucune position
               </div>
             )}
