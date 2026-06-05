@@ -7,11 +7,9 @@ import * as itick from './itick.js';
  * Source unique d'historique OHLC pour les pairs crypto, avec une chaîne
  * de fallback explicite et ordonnée :
  *
- *   1. iTick (region BA) — spot Binance, EXACTEMENT ce que TradingView et
- *                          notre flux live affichent. Source de référence
- *                          pour que historique = live = TradingView, et non
- *                          géo-bloquée (couvre le 451 sur IP datacenter).
- *   2. Binance Futures   — fallback profond/rapide si iTick est indispo.
+ *   1. Binance Futures   — source rapide et stable pour les graphes crypto.
+ *   2. iTick (region BA) — fallback aligné sur notre flux live, mais soumis
+ *                          au quota REST iTick (`code=1 your request is too much`).
  *   3. Bybit V5          — venue indépendante, dernier recours toujours up.
  *
  * On passe au maillon suivant dès qu'un fournisseur échoue OU renvoie zéro
@@ -47,16 +45,16 @@ export async function getCryptoOhlc(
 ): Promise<CryptoCandleResult> {
   const providers: Provider[] = [
     {
-      name: 'itick',
-      enabled: itick.isConfigured(),
-      fetch: async () => itickRowsToOhlc(
-        await itick.getCryptoKline(pair, interval, { countBack: opts.countBack, to: opts.to }),
-      ),
-    },
-    {
       name: 'binance',
       enabled: true,
       fetch: () => binance.getOhlcCandles(pair, interval, opts),
+    },
+    {
+      name: 'itick',
+      enabled: itick.isConfigured() && !itick.isRestInCooldown(),
+      fetch: async () => itickRowsToOhlc(
+        await itick.getCryptoKline(pair, interval, { countBack: opts.countBack, to: opts.to }),
+      ),
     },
     {
       name: 'bybit',
@@ -72,7 +70,7 @@ export async function getCryptoOhlc(
     try {
       const candles = await provider.fetch();
       if (candles.length > 0) {
-        if (provider.name !== 'itick') {
+        if (provider.name !== 'binance') {
           console.warn(`[cryptoCandles] ${pair} ${interval}m servi par ${provider.name} (fallback)`);
         }
         return { candles, source: provider.name };

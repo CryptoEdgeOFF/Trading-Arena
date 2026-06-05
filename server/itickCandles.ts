@@ -89,6 +89,8 @@ function isQuotaError(message: string): boolean {
     m.includes('compute time') ||
     m.includes('rate limit') ||
     m.includes('too many requests') ||
+    m.includes('too much') ||
+    m.includes('code=1') ||
     m.includes('429')
   );
 }
@@ -351,7 +353,7 @@ async function fetchOnePage(
 ): Promise<OhlcCandle[]> {
   let bars: OhlcCandle[] = [];
 
-  if (itick.isConfigured() && !isItickInCooldown()) {
+  if (itick.isConfigured() && !isItickInCooldown() && !itick.isRestInCooldown()) {
     try {
       const rows = await itick.getKline(inst.code, intervalMin, limit, endTs, inst.asset);
       bars = rows.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }));

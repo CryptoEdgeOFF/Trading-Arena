@@ -77,13 +77,17 @@ function getToken(): string {
  * iTick applique un quota de requêtes REST (réponse `code=1 msg="your request
  * is too much"`). Quand plusieurs terminaux chargent leur historique de candles
  * en même temps (+ le poll quotes), on dépasse ce quota et les graphes restent
- * vides. On sérialise donc TOUS les appels REST iTick derrière une chaîne, avec
- * un espacement minimal, et on réessaie avec backoff sur erreur de rate-limit.
+ * vides. On sérialise donc TOUS les appels REST iTick derrière une chaîne.
+ * Dès qu'iTick annonce un rate-limit, on ouvre un cooldown global court :
+ * les appels suivants échouent vite et les call-sites peuvent servir leur cache
+ * ou fallback, au lieu d'empiler des retries qui ralentissent la compétition.
  */
-const MIN_ITICK_REQUEST_SPACING_MS = Number(process.env.ITICK_MIN_REQUEST_SPACING_MS) || 250;
-const ITICK_MAX_RETRIES = 4;
+const MIN_ITICK_REQUEST_SPACING_MS = Number(process.env.ITICK_MIN_REQUEST_SPACING_MS) || 500;
+const ITICK_REST_COOLDOWN_MS = Number(process.env.ITICK_REST_COOLDOWN_MS) || 90_000;
 let itickRequestChain: Promise<unknown> = Promise.resolve();
 let lastItickRequestAt = 0;
+let itickRestCooldownUntil = 0;
+let lastItickRestCooldownLogAt = 0;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,6 +96,22 @@ function sleep(ms: number): Promise<void> {
 function isItickRateLimitError(err: unknown): boolean {
   const msg = (err as Error)?.message || '';
   return /too much|code=1\b|HTTP 429/i.test(msg);
+}
+
+export function isRestInCooldown(): boolean {
+  return Date.now() < itickRestCooldownUntil;
+}
+
+function triggerRestCooldown(reason: string, durationMs = ITICK_REST_COOLDOWN_MS): void {
+  const now = Date.now();
+  const until = now + durationMs;
+  if (until > itickRestCooldownUntil) {
+    itickRestCooldownUntil = until;
+  }
+  if (now - lastItickRestCooldownLogAt > 30_000) {
+    lastItickRestCooldownLogAt = now;
+    console.warn(`[itickREST] cooldown ${Math.round(durationMs / 1000)}s — ${reason}`);
+  }
 }
 
 async function fetchItickRaw<T = any>(path: string, params: Record<string, string | number>): Promise<T> {
@@ -116,26 +136,30 @@ async function fetchItickRaw<T = any>(path: string, params: Record<string, strin
 }
 
 async function fetchItick<T = any>(path: string, params: Record<string, string | number>): Promise<T> {
+  if (isRestInCooldown()) {
+    throw new Error(`iTick REST cooldown ${Math.ceil((itickRestCooldownUntil - Date.now()) / 1000)}s`);
+  }
+
   const run = itickRequestChain.then(async () => {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < ITICK_MAX_RETRIES; attempt += 1) {
-      const since = Date.now() - lastItickRequestAt;
-      if (since < MIN_ITICK_REQUEST_SPACING_MS) {
-        await sleep(MIN_ITICK_REQUEST_SPACING_MS - since);
-      }
-      try {
-        const result = await fetchItickRaw<T>(path, params);
-        lastItickRequestAt = Date.now();
-        return result;
-      } catch (err) {
-        lastItickRequestAt = Date.now();
-        lastErr = err;
-        if (!isItickRateLimitError(err) || attempt === ITICK_MAX_RETRIES - 1) throw err;
-        // Backoff exponentiel : 600ms, 1.2s, 2.4s
-        await sleep(600 * Math.pow(2, attempt));
-      }
+    if (isRestInCooldown()) {
+      throw new Error(`iTick REST cooldown ${Math.ceil((itickRestCooldownUntil - Date.now()) / 1000)}s`);
     }
-    throw lastErr;
+
+    const since = Date.now() - lastItickRequestAt;
+    if (since < MIN_ITICK_REQUEST_SPACING_MS) {
+      await sleep(MIN_ITICK_REQUEST_SPACING_MS - since);
+    }
+    try {
+      const result = await fetchItickRaw<T>(path, params);
+      lastItickRequestAt = Date.now();
+      return result;
+    } catch (err) {
+      lastItickRequestAt = Date.now();
+      if (isItickRateLimitError(err)) {
+        triggerRestCooldown((err as Error).message);
+      }
+      throw err;
+    }
   });
   // La chaîne ne doit jamais se rompre sur une erreur, sinon tous les appels
   // suivants seraient rejetés. On avale l'erreur pour la chaîne uniquement.
@@ -716,10 +740,12 @@ class ItickFeedRegistry extends EventEmitter {
       for (const [asset, manager] of this.managers.entries()) {
         const codes = manager.getStatus().symbols;
         if (codes.length === 0) continue;
+        if (isRestInCooldown()) continue;
         try {
           const quotes = await getBatchQuotes(codes, asset);
           this.quotesByAsset.set(asset, quotes);
         } catch (err) {
+          if (isRestInCooldown()) continue;
           console.warn(`[itickQuotes:${asset}] poll KO:`, (err as Error).message);
         }
       }
