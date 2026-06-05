@@ -2,6 +2,7 @@ import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 import * as binance from './binance.js';
 import * as bybit from './bybit.js';
 import * as itick from './itick.js';
+import * as kraken from './kraken.js';
 
 /**
  * Source unique d'historique OHLC pour les pairs crypto, avec une chaîne
@@ -11,12 +12,14 @@ import * as itick from './itick.js';
  *   2. iTick (region BA) — fallback aligné sur notre flux live, mais soumis
  *                          au quota REST iTick (`code=1 your request is too much`).
  *   3. Bybit V5          — venue indépendante, dernier recours toujours up.
+ *   4. Kraken Spot       — fallback anti-écran vide quand Railway est bloqué
+ *                          par Binance 451 + Bybit 403 + cooldown iTick.
  *
  * On passe au maillon suivant dès qu'un fournisseur échoue OU renvoie zéro
  * bougie. Le premier qui répond avec des données gagne.
  */
 
-export type CryptoCandleSource = 'binance' | 'itick' | 'bybit';
+export type CryptoCandleSource = 'binance' | 'itick' | 'bybit' | 'kraken';
 
 export interface CryptoCandleResult {
   candles: OhlcCandle[];
@@ -60,6 +63,17 @@ export async function getCryptoOhlc(
       name: 'bybit',
       enabled: true,
       fetch: () => bybit.getOhlcCandles(pair, interval, opts),
+    },
+    {
+      name: 'kraken',
+      enabled: true,
+      fetch: async () => {
+        const rows = await kraken.getOhlcCandles(pair, interval);
+        if (opts.countBack && opts.countBack > 0 && rows.length > opts.countBack) {
+          return rows.slice(rows.length - Math.floor(opts.countBack));
+        }
+        return rows;
+      },
     },
   ];
 

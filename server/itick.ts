@@ -738,6 +738,12 @@ class ItickFeedRegistry extends EventEmitter {
     if (this.quotesPollTimer) return;
     const tick = async () => {
       for (const [asset, manager] of this.managers.entries()) {
+        // Le live crypto arrive déjà par WebSocket iTick + Binance/Bybit.
+        // Le polling REST /crypto/quotes consomme le même quota que /crypto/kline
+        // et déclenche `code=1 your request is too much`, ce qui peut ensuite
+        // casser le fallback d'historique des charts. On ne poll donc pas les
+        // quotes crypto en REST.
+        if (asset === 'crypto') continue;
         const codes = manager.getStatus().symbols;
         if (codes.length === 0) continue;
         if (isRestInCooldown()) continue;
