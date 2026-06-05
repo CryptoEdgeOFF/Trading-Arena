@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '../stores/useGameStore';
 import {
-  getCountdownEndLeadMs,
+  getSafeCountdownEndLeadMs,
   isArenaAudioReady,
   markArenaAudioReady,
   playCountdownEndSound,
@@ -18,6 +18,7 @@ import {
  */
 export default function ArenaSoundController() {
   const eventStarted = useGameStore((s) => s.eventStarted);
+  const eventStartTime = useGameStore((s) => s.eventStartTime);
   const eventEndTime = useGameStore((s) => s.eventEndTime);
   const spotlightTrade = useGameStore((s) => s.spotlightTrade);
 
@@ -55,7 +56,10 @@ export default function ArenaSoundController() {
 
     const tick = () => {
       const remaining = eventEndTime - Date.now();
-      if (remaining > getCountdownEndLeadMs()) return;
+      const elapsed = typeof eventStartTime === 'number' ? Date.now() - eventStartTime : 0;
+      // Ne jamais lancer la musique de fin pendant l'intro ou juste après le GO.
+      if (elapsed < 20_000) return;
+      if (remaining > getSafeCountdownEndLeadMs(eventStartTime, eventEndTime)) return;
       if (playedEndForRef.current === eventEndTime) return;
 
       const started = playCountdownEndSound(eventEndTime);
@@ -67,7 +71,7 @@ export default function ArenaSoundController() {
     tick();
     const id = window.setInterval(tick, 400);
     return () => window.clearInterval(id);
-  }, [eventStarted, eventEndTime]);
+  }, [eventStarted, eventStartTime, eventEndTime]);
 
   useEffect(() => {
     if (!spotlightTrade) {

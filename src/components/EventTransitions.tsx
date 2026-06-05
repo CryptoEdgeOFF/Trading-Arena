@@ -7,6 +7,7 @@ import {
   isIntroCountdownPlaying,
   resetArenaRoundSounds,
   startIntroCountdownMusic,
+  stopIntroCountdownMusic,
   unlockArenaSounds,
 } from '../utils/arenaSounds';
 import EventEndOverlay from './EventEndOverlay';
@@ -168,6 +169,7 @@ export default function EventTransitions() {
       setCountdownValue((value) => {
         if (value <= 1) {
           clearInterval(id);
+          stopIntroCountdownMusic();
           setPhase('fight-start');
           return 0;
         }
@@ -181,7 +183,10 @@ export default function EventTransitions() {
   useEffect(() => {
     if (phase !== 'fight-start') return;
     const id = setTimeout(() => setPhase('idle'), FIGHT_START_DURATION);
-    return () => clearTimeout(id);
+    return () => {
+      clearTimeout(id);
+      stopIntroCountdownMusic();
+    };
   }, [phase]);
 
   return (

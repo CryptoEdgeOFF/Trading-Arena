@@ -13,6 +13,7 @@ export const ARENA_SOUND_URLS = {
 
 const SPOTLIGHT_COOLDOWN_MS = 5000;
 const COUNTDOWN_END_DURATION_FALLBACK_MS = 73_837;
+const COUNTDOWN_END_MIN_LEAD_MS = 8_000;
 const MAX_PLAYED_KEYS = 500;
 const COUNTDOWN_END_STORAGE_PREFIX = 'btf-countdown-end:';
 
@@ -27,6 +28,7 @@ let countdownEndDurationMs: number | null = null;
 
 let unlockSucceeded = false;
 let unlockInFlight = false;
+let introStartInFlight = false;
 /**
  * Vrai dès qu'un son a réellement pu démarrer (= autoplay débloqué par un
  * geste utilisateur). Sert à afficher le bouton « Activer le son » tant que
@@ -157,6 +159,29 @@ export function getCountdownEndLeadMs(): number {
   return countdownEndDurationMs ?? COUNTDOWN_END_DURATION_FALLBACK_MS;
 }
 
+export function getSafeCountdownEndLeadMs(eventStartTime?: number | null, eventEndTime?: number | null): number {
+  const audioLeadMs = getCountdownEndLeadMs();
+  if (
+    typeof eventStartTime !== 'number' ||
+    typeof eventEndTime !== 'number' ||
+    !Number.isFinite(eventStartTime) ||
+    !Number.isFinite(eventEndTime) ||
+    eventEndTime <= eventStartTime
+  ) {
+    return Math.min(audioLeadMs, 15_000);
+  }
+
+  const durationMs = eventEndTime - eventStartTime;
+  // Empêche un fichier de fin long (~73s) de démarrer au lancement d'un round
+  // court. Sur un live normal, on conserve un lead large, mais jamais > 25 %
+  // de la durée totale.
+  const durationAwareLead = Math.max(
+    COUNTDOWN_END_MIN_LEAD_MS,
+    Math.floor(durationMs * 0.25),
+  );
+  return Math.min(audioLeadMs, durationAwareLead);
+}
+
 export function preloadArenaSounds(): void {
   for (const src of Object.values(ARENA_SOUND_URLS)) {
     getLongFormAudio(src);
@@ -240,12 +265,19 @@ export async function startIntroCountdownMusic(): Promise<boolean> {
   const audio = getLongFormAudio(ARENA_SOUND_URLS.countdownStart);
   if (!audio) return false;
   if (!audio.paused && audio.currentTime > 0.05) return true;
+  if (introStartInFlight) return true;
 
   audio.loop = false;
-  return playAudioElement(audio, 0.92);
+  introStartInFlight = true;
+  try {
+    return await playAudioElement(audio, 0.92);
+  } finally {
+    introStartInFlight = false;
+  }
 }
 
 export function stopIntroCountdownMusic(): void {
+  introStartInFlight = false;
   stopLongFormSound(ARENA_SOUND_URLS.countdownStart);
 }
 
