@@ -140,9 +140,9 @@ export class PlayerManager {
   // very large competitions slow down to keep the pipe healthy.
   private lastBroadcastAt = 0;
   private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly BROADCAST_INTERVAL_LOW = 100;
-  private static readonly BROADCAST_INTERVAL_MID = 200;
-  private static readonly BROADCAST_INTERVAL_HIGH = 500;
+  private static readonly BROADCAST_INTERVAL_LOW = Number(process.env.STATE_BROADCAST_LOW_MS) || 250;
+  private static readonly BROADCAST_INTERVAL_MID = Number(process.env.STATE_BROADCAST_MID_MS) || 500;
+  private static readonly BROADCAST_INTERVAL_HIGH = Number(process.env.STATE_BROADCAST_HIGH_MS) || 1000;
   // Diff snapshots: tracking what we last broadcasted so we can compute
   // a small patch instead of resending the full state on every tick.
   private snapshotPlayers: Map<string, {

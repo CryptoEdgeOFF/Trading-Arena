@@ -20,14 +20,15 @@ interface CachedSeries {
 }
 
 const SUPPORTED_INTERVALS = [1, 5, 15, 30, 60, 240, 1440] as const;
-const MAX_CACHE_BARS = 40_000;
+const MAX_CACHE_BARS = Number(process.env.CANDLE_CACHE_MAX_BARS) || 10_000;
+const ENABLE_BACKGROUND_FILL = process.env.CANDLE_BACKGROUND_FILL === 'true';
 /**
  * Fast path : nombre de bars retourné immédiatement au premier hit
  * (avant que le background fetch ne complète jusqu'à `MAX_CACHE_BARS`).
  * 1500 = 1 seul call Binance/Hyperliquid (~300 ms) — couvre largement le
  * premier rendu TradingView (typiquement 300-500 bars demandés).
  */
-const FAST_PATH_BARS = 1500;
+const FAST_PATH_BARS = Number(process.env.CANDLE_FAST_PATH_BARS) || 1500;
 /** After this delay a background refresh is fired on the next read. */
 const STALE_REFRESH_MS = 10 * 60 * 1000;
 
@@ -83,7 +84,7 @@ function startFetch(
       // Si on est sur le fast path, on lance un background fill pour
       // étendre la série jusqu'à MAX_CACHE_BARS (les futurs scrolls
       // historiques seront servis depuis le cache). Best effort.
-      if (fastPath && candles.length >= FAST_PATH_BARS - 50) {
+      if (ENABLE_BACKGROUND_FILL && fastPath && candles.length >= FAST_PATH_BARS - 50) {
         scheduleBackgroundFill(pair, interval, source);
       }
       return series;
@@ -99,6 +100,7 @@ function startFetch(
 }
 
 function scheduleBackgroundFill(pair: string, interval: number, source: Source): Promise<void> {
+  if (!ENABLE_BACKGROUND_FILL) return Promise.resolve();
   const k = key(pair, interval);
   const existing = inflightBackfills.get(k);
   if (existing) return existing;
@@ -192,7 +194,7 @@ export async function getCachedCandles(
     if (fill) {
       await fill;
       series = cache.get(k) ?? series;
-    } else if (series.candles.length < MAX_CACHE_BARS) {
+    } else if (ENABLE_BACKGROUND_FILL && series.candles.length < MAX_CACHE_BARS) {
       // Fast path déjà servi mais background fill jamais lancé (ex: cache
       // hydraté par un autre code path) → on déclenche maintenant.
       await scheduleBackgroundFill(pair, interval, source);

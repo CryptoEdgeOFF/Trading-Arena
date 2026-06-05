@@ -45,12 +45,12 @@ const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as Resol
 /**
  * Netlify Functions coupe les réponses > ~6 Mo (≈ 60k bougies M1) → 502.
  * Sans VITE_API_URL (proxy Netlify), on reste sous ce seuil.
- * Avec Railway direct : ~40k barres (~3 Mo) pour que TradingView affiche vite ;
- * le scroll charge le reste par tranches de SCROLL_LOAD_BARS.
+ * En live, un premier chargement énorme (25k/40k barres) surcharge le serveur
+ * et peut bloquer plusieurs viewers sur un backfill. On charge vite le viewport
+ * récent, puis le scroll demande l'historique par tranches.
  */
-const USES_REMOTE_API = Boolean(API_BASE_URL);
-const FIRST_LOAD_BARS = USES_REMOTE_API ? 40_000 : 25_000;
-const SCROLL_LOAD_BARS = 5000;
+const FIRST_LOAD_BARS = 1500;
+const SCROLL_LOAD_BARS = 2000;
 
 interface Subscription {
   pair: string;

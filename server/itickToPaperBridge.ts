@@ -5,9 +5,9 @@
  * `source: 'itick'` dans PAPER_PAIRS — ce qui couvre les 11 instruments
  * définis dans `itickInstruments.ts` (forex / commodities / indices).
  *
- * On collecte les ticks iTick dans un buffer en mémoire et on flush
- * toutes les ~80ms vers le paper engine. Cela évite d'appeler le moteur
- * à 12 Hz (~84 ticks/s sur 11 pairs) tout en gardant la latence < 100ms.
+ * On collecte les ticks iTick dans un buffer en mémoire et on flush par lots
+ * vers le paper engine. En live public, 200 ms garde le terminal réactif tout
+ * en évitant de recalculer/broadcaster le roster à chaque micro-tick.
  */
 
 import * as itick from './itick.js';
@@ -15,7 +15,7 @@ import { findByCode, findCryptoPairByCode } from './itickInstruments.js';
 import type { ItickLiveTick } from './itick.js';
 import type { ExternalQuote } from './exchangePaperEngine.js';
 
-const FLUSH_INTERVAL_MS = 80;
+const FLUSH_INTERVAL_MS = Number(process.env.ITICK_BRIDGE_FLUSH_MS) || 200;
 
 type ApplyFn = (quotes: Record<string, ExternalQuote>) => string[];
 type BroadcastFn = (pairs: string[]) => void;
