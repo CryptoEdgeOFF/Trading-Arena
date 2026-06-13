@@ -62,8 +62,10 @@ function orderArenaPlayers(players: Player[], slotIds: string[]): Player[] {
   return [...ordered, ...sortArenaSlots(extras)];
 }
 
-export default function Dashboard() {
-  useWebSocket();
+export default function Dashboard({ replay = false }: { replay?: boolean }) {
+  // En mode replay, l'état est piloté par le ReplayViewer (pas de WS live,
+  // sinon les patches temps réel écraseraient la simulation).
+  useWebSocket(!replay);
 
   const players = useGameStore((s) => s.players);
   const eventStarted = useGameStore((s) => s.eventStarted);
@@ -148,10 +150,8 @@ export default function Dashboard() {
               En attente du <span className="text-red-300 font-semibold">lancement du combat</span>...
             </p>
             <p className="text-xs text-zinc-600 tracking-wider uppercase">
-              Configurez via{' '}
-              <a href="/admin" className="text-red-400 hover:text-red-300 transition-colors">/admin</a>
-              {' · '}
-              traders <a href="/trader" className="text-red-400 hover:text-red-300 transition-colors">/trader</a>
+              Connexion traders via{' '}
+              <a href="/trader" className="text-red-400 hover:text-red-300 transition-colors">/trader</a>
             </p>
           </motion.div>
         </div>

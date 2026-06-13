@@ -98,6 +98,9 @@ function getPool(): Pool | null {
   pool = new Pool({
     connectionString: databaseUrl,
     ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+    max: Number(process.env.PG_POOL_MAX_MISC) || 3,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
   });
   pool.on('error', (err) => {
     console.error('[market metadata pool] idle client error:', err.message || err);

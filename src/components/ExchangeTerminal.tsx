@@ -1,6 +1,7 @@
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
@@ -17,6 +18,7 @@ import {
   isLotBased,
   isValidStopLoss,
   isValidTakeProfit,
+  isValidTakeProfitVsEntry,
   priceToInputString,
   sizeUnitLabel,
 } from '../utils/positionSizing';
@@ -26,6 +28,7 @@ import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
 import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
 import { AvatarImage } from './OptimizedImage';
+import { NameBadges, type UserBadge } from './playerBadges';
 import { withDisplayWidth } from '../utils/imageUrl';
 import {
   clearAllPaperSessions,
@@ -47,8 +50,6 @@ const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
 const DEMO_TAKER_FEE = 0.00005 / 3;
 const DEMO_MAKER_FEE = 0.00002 / 3;
-const COMPETE_INCIDENT_MESSAGE =
-  'La competition est de nouveau LIVE. Les PnL et les classements ont ete restaures a leur etat d\'avant l\'incident (positions en cours non restaurees). Bon trading !';
 
 /** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
 function isRestingLimitTriggered(
@@ -101,12 +102,12 @@ interface MarketMetadata {
 type MarketCategory = NonNullable<MarketMetadata['category']>;
 type MobileTerminalTab = 'orders' | 'chart' | 'leaderboard';
 
-const MARKET_CATEGORIES: { id: MarketCategory; label: string }[] = [
-  { id: 'crypto', label: 'Crypto' },
-  { id: 'actions', label: 'Actions' },
-  { id: 'indices', label: 'Indices' },
-  { id: 'commodities', label: 'Matières' },
-  { id: 'forex', label: 'Forex' },
+const MARKET_CATEGORIES: { id: MarketCategory; labelKey: string }[] = [
+  { id: 'crypto', labelKey: 'terminal.catCrypto' },
+  { id: 'actions', labelKey: 'terminal.catStocks' },
+  { id: 'indices', labelKey: 'terminal.catIndices' },
+  { id: 'commodities', labelKey: 'terminal.catCommodities' },
+  { id: 'forex', labelKey: 'terminal.catForex' },
 ];
 
 interface SessionPlayer {
@@ -123,7 +124,7 @@ interface CompetitionContext {
   userId?: string | null;
   startAt?: number;
   endAt?: number;
-  status?: 'upcoming' | 'live' | 'ended';
+  status?: 'registration' | 'starting_soon' | 'live' | 'ended';
   rank?: number | null;
   participants?: number;
   pnlPercent?: number;
@@ -134,6 +135,7 @@ interface LeaderboardRow {
   userId: string;
   name: string;
   avatarUrl?: string | null;
+  badges?: UserBadge[];
   pnlPercent: number;
   pnlUsd: number;
   tradesCount: number;
@@ -147,7 +149,7 @@ interface LeaderboardResponse {
     code: string;
     startAt: number;
     endAt: number;
-    status: 'upcoming' | 'live' | 'ended';
+    status: 'registration' | 'starting_soon' | 'live' | 'ended';
     participants: number;
   };
   leaderboard: LeaderboardRow[];
@@ -393,6 +395,7 @@ function TopBar({
   liveMode?: boolean;
   onLogout?: () => void;
 }) {
+  const { t } = useTranslation();
   const eventEndTime = useGameStore((s) => s.eventEndTime);
   const eventStarted = useGameStore((s) => s.eventStarted);
   const [now, setNow] = useState(Date.now());
@@ -427,18 +430,22 @@ function TopBar({
 
       <div className="hidden min-w-0 md:block">
         <div className="truncate text-[13px] font-semibold text-white">
-          {liveMode ? 'BTF Live event' : (competition?.title || 'Trading terminal')}
+          {liveMode ? 'BTF Live event' : (competition?.title || t('terminal.tradingTerminal'))}
         </div>
         <div className="text-[10px] uppercase tracking-[0.16em] text-[#7a8090]">
           {liveMode
-            ? 'Trader access'
-            : (competition?.status === 'live' ? 'Competition live' : competition?.status === 'upcoming' ? 'Competition a venir' : 'Paper trading')}
+            ? t('terminal.traderAccess')
+            : (competition?.status === 'live'
+              ? t('terminal.competitionLive')
+              : competition?.status === 'registration' || competition?.status === 'starting_soon'
+                ? t('terminal.competitionUpcoming')
+                : t('terminal.paperTrading'))}
         </div>
       </div>
 
       <div className="order-3 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-none md:ml-auto md:w-auto md:min-w-[360px]">
         <div className="border-r border-[#241e30] px-2 py-1.5 md:px-3">
-          <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">Solde</div>
+          <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.balance')}</div>
           <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">{fmt(balance, 2)} <span className="text-[9px] text-[#7a8090] md:text-[10px]">USD</span></div>
         </div>
         <div className="border-r border-[#241e30] px-2 py-1.5 md:px-3">
@@ -458,7 +465,7 @@ function TopBar({
       <div className="ml-auto flex items-center gap-1.5 md:ml-0">
         {liveMode && remainingMs != null && (
           <div className={`rounded-xl border px-3 py-1.5 text-center ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
-            <div className="text-[8px] uppercase tracking-[0.16em] text-[#7a8090]">Restant</div>
+            <div className="text-[8px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.remaining')}</div>
             <div className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</div>
           </div>
         )}
@@ -468,15 +475,15 @@ function TopBar({
             onClick={onLogout}
             className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-red-500/50 hover:text-white"
           >
-            Déconnexion
+            {t('terminal.logout')}
           </button>
         ) : (
           <>
             <a href={homeHref} className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
-              Accueil
+              {t('terminal.home')}
             </a>
             <a href={leaderboardHref} className="cursor-pointer rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
-              Leaderboard
+              {t('terminal.leaderboard')}
             </a>
           </>
         )}
@@ -552,6 +559,7 @@ function PairSelectorMenu({
   onChange: (pair: string) => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<MarketCategory>(
@@ -648,7 +656,7 @@ function PairSelectorMenu({
                       : 'border-[#332b43] bg-[#211b2b] text-[#c8c0d8] hover:border-[#4a405d]'
                   }`}
                 >
-                  {category.label}
+                  {t(category.labelKey)}
                 </button>
               ))}
             </div>
@@ -662,15 +670,15 @@ function PairSelectorMenu({
                   type="text"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Rechercher BTC, Bitcoin, ETH..."
+                  placeholder={t('terminal.searchPlaceholder')}
                   className="h-full w-full bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-[#5f586d]"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
-              <span>{MARKET_CATEGORIES.find((entry) => entry.id === activeCategory)?.label || 'Marchés'}</span>
-              <span className="text-right">Dernier prix</span>
+              <span>{(() => { const c = MARKET_CATEGORIES.find((entry) => entry.id === activeCategory); return c ? t(c.labelKey) : t('terminal.markets'); })()}</span>
+              <span className="text-right">{t('terminal.lastPrice')}</span>
             </div>
 
             <div className="max-h-[calc(100dvh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
@@ -704,7 +712,7 @@ function PairSelectorMenu({
                           <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
                           {!marketOpen ? (
                             <span className="shrink-0 rounded-md bg-[#3d2a14] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#fbbf24]">
-                              Marché fermé
+                              {t('terminal.marketClosed')}
                             </span>
                           ) : change24h != null && (
                             <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
@@ -727,7 +735,7 @@ function PairSelectorMenu({
               })}
               {filteredPairs.length === 0 && (
                 <div className="px-4 py-8 text-center text-[12px] text-[#746d82]">
-                  Aucune paire trouvée.
+                  {t('terminal.noPairFound')}
                 </div>
               )}
             </div>
@@ -830,6 +838,7 @@ function AccountSizeSlider({
 }
 
 function OrderForm(props: OrderFormProps) {
+  const { t } = useTranslation();
   const {
     meta, pairs, selectedPair, setSelectedPair,
     side, setSide, orderType, setOrderType,
@@ -848,6 +857,14 @@ function OrderForm(props: OrderFormProps) {
   const [accountPercent, setAccountPercent] = useState(0);
   const [usdAmount, setUsdAmount] = useState('');
   const [lastEditedAmount, setLastEditedAmount] = useState<'qty' | 'usd'>('qty');
+  // TP/SL : on permet d'entrer soit le prix, soit un montant projeté en $.
+  // Le champ $ ne pilote le prix QUE pendant qu'on le saisit (focus). Le reste
+  // du temps c'est le prix qui pilote le $ — ainsi le slider / le drag sur le
+  // graphe (qui mettent à jour le prix) restent maîtres.
+  const [tpProfitDraft, setTpProfitDraft] = useState('');
+  const [slLossDraft, setSlLossDraft] = useState('');
+  const [tpUsdFocused, setTpUsdFocused] = useState(false);
+  const [slUsdFocused, setSlUsdFocused] = useState(false);
 
   const category = meta.marketMetadata[selectedPair]?.category || 'crypto';
   const lotBased = isLotBased(selectedPair);
@@ -875,7 +892,7 @@ function OrderForm(props: OrderFormProps) {
     : `${maxEngineQty.toFixed(5)} ${pairBase(selectedPair)}`;
   const usedRatio = available > 0 ? Math.min(1, margin / available) : 0;
   const base = pairBase(selectedPair);
-  const sizeLabel = lotBased ? 'Lots' : 'Quantité';
+  const sizeLabel = lotBased ? t('terminal.sizeLots') : t('terminal.sizeQty');
   const sizeUnit = sizeUnitLabel(selectedPair, base);
   const sizeStep = inputSizeStep(selectedPair);
   const canSubmit = eventStarted && marketOpen && Number.isFinite(qty) && qty > 0;
@@ -956,6 +973,50 @@ function OrderForm(props: OrderFormProps) {
     tpSlEnabled,
   ]);
 
+  // Synchronisation TP : prix <-> gain projeté en $ (basé sur la taille et l'entrée actuelle).
+  useEffect(() => {
+    if (!tpSlEnabled) return;
+    if (!Number.isFinite(engineQty) || engineQty <= 0 || !Number.isFinite(refPrice) || refPrice <= 0) return;
+    if (tpUsdFocused) {
+      const target = Number(tpProfitDraft);
+      if (!Number.isFinite(target) || target <= 0) return;
+      const price = isSell ? refPrice - target / engineQty : refPrice + target / engineQty;
+      const next = priceToInputString(price, category);
+      if (next !== takeProfitInput) setTakeProfitInput(next);
+    } else {
+      const tp = Number(takeProfitInput);
+      const next = Number.isFinite(tp) && tp > 0
+        ? (() => {
+            const profit = engineQty * (isSell ? refPrice - tp : tp - refPrice);
+            return profit > 0 ? profit.toFixed(2) : '';
+          })()
+        : '';
+      if (next !== tpProfitDraft) setTpProfitDraft(next);
+    }
+  }, [tpSlEnabled, tpUsdFocused, tpProfitDraft, takeProfitInput, refPrice, engineQty, isSell, category, setTakeProfitInput]);
+
+  // Synchronisation SL : prix <-> perte projetée en $.
+  useEffect(() => {
+    if (!tpSlEnabled) return;
+    if (!Number.isFinite(engineQty) || engineQty <= 0 || !Number.isFinite(refPrice) || refPrice <= 0) return;
+    if (slUsdFocused) {
+      const target = Number(slLossDraft);
+      if (!Number.isFinite(target) || target <= 0) return;
+      const price = isSell ? refPrice + target / engineQty : refPrice - target / engineQty;
+      const next = priceToInputString(price, category);
+      if (next !== stopLossInput) setStopLossInput(next);
+    } else {
+      const sl = Number(stopLossInput);
+      const next = Number.isFinite(sl) && sl > 0
+        ? (() => {
+            const loss = engineQty * (isSell ? sl - refPrice : refPrice - sl);
+            return loss > 0 ? loss.toFixed(2) : '';
+          })()
+        : '';
+      if (next !== slLossDraft) setSlLossDraft(next);
+    }
+  }, [tpSlEnabled, slUsdFocused, slLossDraft, stopLossInput, refPrice, engineQty, isSell, category, setStopLossInput]);
+
   function applyAccountPercent(percent: number) {
     const clamped = Math.max(0, Math.min(100, percent));
     setAccountPercent(clamped);
@@ -996,14 +1057,6 @@ function OrderForm(props: OrderFormProps) {
             market={meta.market}
             onChange={setSelectedPair}
           />
-          <div className="ml-auto flex items-center gap-1 rounded-lg border border-[#241e30] bg-[#171320] px-1.5 py-0.5 sm:gap-1.5 sm:rounded-xl sm:px-2.5 sm:py-1">
-            <span className="hidden text-[9px] font-medium uppercase tracking-[0.12em] text-[#7a8090] sm:inline">Powered by</span>
-            <img
-              src="/assets/pictures/Kraken%20Logo_White.png"
-              alt="Kraken"
-              className="h-2.5 object-contain opacity-90 sm:h-4"
-            />
-          </div>
         </div>
 
         {/* Buy / Sell */}
@@ -1048,15 +1101,15 @@ function OrderForm(props: OrderFormProps) {
         {/* Solde + marge */}
         <div className="mt-2.5 rounded-xl border border-[#241e30] bg-[#15121f] px-2.5 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
-            <span className="text-[#9498a4]">Marge <span className="num text-white">{fmt(available, 0)} USD</span></span>
-            <span className="text-[#9498a4]">Levier <span className="num text-white">{leverage}x</span></span>
-            <span className="text-[#9498a4]">Pouvoir max <span className="num font-semibold text-[#67dd88]">{fmt(maxNotional, 0)} USD</span></span>
+            <span className="text-[#9498a4]">{t('terminal.margin')} <span className="num text-white">{fmt(available, 0)} USD</span></span>
+            <span className="text-[#9498a4]">{t('terminal.leverage')} <span className="num text-white">{leverage}x</span></span>
+            <span className="text-[#9498a4]">{t('terminal.maxBuyingPower')} <span className="num font-semibold text-[#67dd88]">{fmt(maxNotional, 0)} USD</span></span>
           </div>
           <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-[#282333]">
             <div className="h-full" style={{ width: `${(1 - usedRatio) * 100}%`, background: BUY }} />
           </div>
           <div className="mt-1 flex justify-between text-[9.5px] text-[#6f687f]">
-            <span>Utilisé par l’ordre: {fmt(margin, 2)} USD</span>
+            <span>{t('terminal.usedByOrder', { amount: fmt(margin, 2) })}</span>
             <span>≈ {approxSizeLabel}</span>
           </div>
         </div>
@@ -1064,11 +1117,11 @@ function OrderForm(props: OrderFormProps) {
         {/* Prix du marché */}
         {!marketOpen && (
           <div className="mt-3 rounded-xl border border-[#fbbf24]/25 bg-[#fbbf24]/10 px-3 py-2 text-center text-[12px] font-semibold text-[#fbbf24]">
-            Marché fermé — trading indisponible hors heures d&apos;ouverture
+            {t('terminal.marketClosedBanner')}
           </div>
         )}
         <div className="mt-3 px-1">
-          <div className="text-[12px] text-[#7a8090]">{orderType === 'market' ? 'Prix du marché' : 'Prix limite'}</div>
+          <div className="text-[12px] text-[#7a8090]">{orderType === 'market' ? t('terminal.marketPrice') : t('terminal.limitPrice')}</div>
           {orderType === 'market' ? (
             <div className="mt-1 flex h-9 items-center gap-1 rounded-md border border-[#1f1a2b] bg-[#15121f] px-3">
               <span className="text-[12px] text-[#7a8090]">≈</span>
@@ -1108,7 +1161,7 @@ function OrderForm(props: OrderFormProps) {
             </div>
           </div>
           <div>
-            <div className="text-[12px] text-[#7a8090]">Montant USD</div>
+            <div className="text-[12px] text-[#7a8090]">{t('terminal.usdAmount')}</div>
             <div className="mt-1 flex h-9 items-center gap-1 rounded-md border border-[#1f1a2b] bg-[#15121f] px-3 focus-within:border-[#f43f6e]/60">
               <span className="text-[12px] text-[#7a8090]">=</span>
               <input
@@ -1161,8 +1214,8 @@ function OrderForm(props: OrderFormProps) {
           const slPct = (slEntered && refPrice > 0)
             ? ((isSell ? (sl - refPrice) : (refPrice - sl)) / refPrice) * 100
             : null;
-          const tpHint = isSell ? 'TP doit être < prix de ref pour un short' : 'TP doit être > prix de ref pour un long';
-          const slHint = isSell ? 'SL doit être > prix de ref pour un short' : 'SL doit être < prix de ref pour un long';
+          const tpHint = isSell ? t('terminal.tpHintShort') : t('terminal.tpHintLong');
+          const slHint = isSell ? t('terminal.slHintShort') : t('terminal.slHintLong');
           return (
             <div className="mt-2 grid grid-cols-2 gap-1.5 px-1">
               <div className={`rounded-lg border bg-[#151221] px-2 py-1.5 ${tpValid ? 'border-[#241e30]' : 'border-[#f43f6e]/60'}`}>
@@ -1180,12 +1233,21 @@ function OrderForm(props: OrderFormProps) {
                 {!tpValid && <div className="mt-0.5 text-[9px] leading-tight text-[#ff8ab9]">{tpHint}</div>}
               </div>
               <div className="rounded-lg border border-[#241e30] bg-[#151221] px-2 py-1.5">
-                <div className="text-[10px] text-[#8f899e]">Distance entry</div>
+                <div className="text-[10px] text-[#8f899e]">{t('terminal.projectedProfit')}</div>
                 <div className="mt-0.5 flex items-center justify-between">
-                  <span className={`num text-[13px] font-semibold ${tpPct == null ? 'text-[#7a8090]' : tpPct >= 0 ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
-                    {tpPct == null ? '0.0' : (tpPct >= 0 ? '+' : '') + tpPct.toFixed(2)}
-                  </span>
-                  <span className="text-[10px] font-semibold text-[#8f899e]">%</span>
+                  <input
+                    type="number"
+                    value={tpProfitDraft}
+                    onChange={(event) => setTpProfitDraft(event.target.value)}
+                    onFocus={() => setTpUsdFocused(true)}
+                    onBlur={() => setTpUsdFocused(false)}
+                    placeholder="0.00"
+                    className="num w-full bg-transparent text-[13px] font-semibold text-[#15c990] outline-none placeholder:text-[#7a8090]"
+                  />
+                  <span className="text-[10px] font-semibold text-[#8f899e]">USD</span>
+                </div>
+                <div className="mt-0.5 text-[9px] leading-tight text-[#6f6a7d]">
+                  {tpPct == null ? '—' : `${tpPct >= 0 ? '+' : ''}${tpPct.toFixed(2)}%`}
                 </div>
               </div>
               <div className={`rounded-lg border bg-[#151221] px-2 py-1.5 ${slValid ? 'border-[#241e30]' : 'border-[#f43f6e]/60'}`}>
@@ -1203,12 +1265,21 @@ function OrderForm(props: OrderFormProps) {
                 {!slValid && <div className="mt-0.5 text-[9px] leading-tight text-[#ff8ab9]">{slHint}</div>}
               </div>
               <div className="rounded-lg border border-[#241e30] bg-[#151221] px-2 py-1.5">
-                <div className="text-[10px] text-[#8f899e]">Distance entry</div>
+                <div className="text-[10px] text-[#8f899e]">{t('terminal.projectedLoss')}</div>
                 <div className="mt-0.5 flex items-center justify-between">
-                  <span className={`num text-[13px] font-semibold ${slPct == null ? 'text-[#7a8090]' : 'text-[#f43f6e]'}`}>
-                    {slPct == null ? '0.0' : '-' + Math.abs(slPct).toFixed(2)}
-                  </span>
-                  <span className="text-[10px] font-semibold text-[#8f899e]">%</span>
+                  <input
+                    type="number"
+                    value={slLossDraft}
+                    onChange={(event) => setSlLossDraft(event.target.value)}
+                    onFocus={() => setSlUsdFocused(true)}
+                    onBlur={() => setSlUsdFocused(false)}
+                    placeholder="0.00"
+                    className="num w-full bg-transparent text-[13px] font-semibold text-[#f43f6e] outline-none placeholder:text-[#7a8090]"
+                  />
+                  <span className="text-[10px] font-semibold text-[#8f899e]">USD</span>
+                </div>
+                <div className="mt-0.5 text-[9px] leading-tight text-[#6f6a7d]">
+                  {slPct == null ? '—' : `-${Math.abs(slPct).toFixed(2)}%`}
                 </div>
               </div>
             </div>
@@ -1237,13 +1308,13 @@ function OrderForm(props: OrderFormProps) {
           style={{ background: isSell ? SELL : '#67dd88' }}
         >
           {!eventStarted
-            ? 'Waiting event'
+            ? t('terminal.btnWaitingEvent')
             : !marketOpen
-              ? 'Marché fermé'
+              ? t('terminal.btnMarketClosed')
             : qty <= 0
-              ? 'Enter quantity'
+              ? t('terminal.btnEnterQty')
             : busy
-              ? 'Sending...'
+              ? t('terminal.btnSending')
               : `${isSell ? 'Short (sell)' : 'Long (buy)'} ${pairBase(selectedPair)}`}
         </button>
 
@@ -1252,7 +1323,7 @@ function OrderForm(props: OrderFormProps) {
           <div className="flex items-center justify-between gap-2">
             <span className="flex items-center gap-1 text-[#9498a4]">
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: accent }} />
-              Side total
+              {t('terminal.sideTotal')}
             </span>
             <div className="flex items-baseline gap-2">
               <span className="text-[#e0e2ea]">
@@ -1265,11 +1336,11 @@ function OrderForm(props: OrderFormProps) {
             <span className="text-[10px] text-[#15c990]">{fmt(available, 2)} USD</span>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[#9498a4]">Frais de trading estimés</span>
+            <span className="text-[#9498a4]">{t('terminal.estimatedFees')}</span>
             <span className="text-[#e0e2ea]">{(fee / (ticker?.markPrice || 1)).toFixed(9)} {base}</span>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[#9498a4]">Marge utilisée pour cet ordre</span>
+            <span className="text-[#9498a4]">{t('terminal.marginUsed')}</span>
             <span className="text-[#e0e2ea]">{fmt(margin, 2)} USD</span>
           </div>
         </div>
@@ -1280,6 +1351,175 @@ function OrderForm(props: OrderFormProps) {
 }
 
 /* ------------------------------------------------------------------ CHART AREA */
+
+/** Timeframes proposés dans le dropdown compact (mobile : le toolbar TradingView est masqué). */
+const TIMEFRAME_OPTIONS: { label: string; minutes: number }[] = [
+  { label: '1m', minutes: 1 },
+  { label: '5m', minutes: 5 },
+  { label: '15m', minutes: 15 },
+  { label: '30m', minutes: 30 },
+  { label: '1H', minutes: 60 },
+  { label: '4H', minutes: 240 },
+  { label: '1D', minutes: 1440 },
+];
+
+/** Sélecteur d'intervalle compact (dropdown) pour la barre mobile du graphique. */
+function TimeframeSelect({
+  interval,
+  onChange,
+  className = '',
+}: {
+  interval: number;
+  onChange: (minutes: number) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = TIMEFRAME_OPTIONS.find((tf) => tf.minutes === interval) ?? TIMEFRAME_OPTIONS[0];
+  return (
+    // z-30 < z-40 du sélecteur d'actifs : son panneau (z-50, piégé dans son
+    // contexte z-40) doit toujours recouvrir ce dropdown. Reste au-dessus du
+    // graphique et n'entre pas en conflit (pas de chevauchement horizontal).
+    <div className={`relative z-30 ${className}`}>
+      {open && (
+        <button
+          type="button"
+          aria-label="Fermer"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 cursor-default bg-transparent"
+          tabIndex={-1}
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-xl border border-[#241e30] bg-[#171320] px-3 py-1.5 text-left text-[12px] font-semibold text-white transition-colors hover:border-[#3a3148]"
+      >
+        <span className="tabular-nums">{current.label}</span>
+        <span className="ml-auto text-[#7a8090]"><Icon d={ICONS.chevron} size={12} /></span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-[88px] overflow-hidden rounded-xl border border-[#30283d] bg-[#171320] p-1 shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)]">
+          {TIMEFRAME_OPTIONS.map((tf) => (
+            <button
+              key={tf.minutes}
+              type="button"
+              onClick={() => {
+                onChange(tf.minutes);
+                setOpen(false);
+              }}
+              className={`flex w-full cursor-pointer items-center rounded-lg px-3 py-2 text-[12px] font-semibold tabular-nums transition-colors ${
+                tf.minutes === interval
+                  ? 'bg-[#dc2626] text-white'
+                  : 'text-[#c8c0d8] hover:bg-[#211b2b] hover:text-white'
+              }`}
+            >
+              {tf.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Panneau de trade rapide pour la vue graphique mobile : un slider de taille
+ * (% du capital, même logique que le formulaire d'ordre) et deux boutons
+ * Buy / Sell qui envoient un ordre market dans le bon sens sans avoir à
+ * basculer sur l'onglet « Ordres ».
+ */
+function MobileQuickTrade({
+  selectedPair,
+  leverage,
+  ticker,
+  player,
+  busy,
+  canTrade,
+  size,
+  setSize,
+  setSide,
+  onSubmit,
+}: {
+  selectedPair: string;
+  leverage: number;
+  ticker: MarketTicker | undefined;
+  player: Player | null;
+  busy: boolean;
+  canTrade: boolean;
+  size: string;
+  setSize: (size: string) => void;
+  setSide: (side: 'long' | 'short') => void;
+  onSubmit: (
+    extras?: { stopLoss: number | null; takeProfit: number | null },
+    opts?: { side?: 'long' | 'short'; orderType?: OrderType },
+  ) => void;
+}) {
+  const { t } = useTranslation();
+  const [percent, setPercent] = useState(0);
+
+  const refPrice = ticker?.markPrice ?? 0;
+  const available = player?.availableMargin ?? 0;
+  const qty = Number(size) || 0;
+  const engineQty = engineSizeFromInput(selectedPair, qty);
+  const notional = refPrice * engineQty;
+  const marketOpen = ticker?.marketOpen ?? true;
+  const disabled = busy || !canTrade || !marketOpen || qty <= 0;
+
+  function applyPercent(p: number) {
+    const clamped = Math.max(0, Math.min(100, p));
+    setPercent(clamped);
+    if (refPrice <= 0 || available <= 0) {
+      setSize('0');
+      return;
+    }
+    const targetMargin = available * (clamped / 100);
+    const targetNotional = targetMargin * leverage;
+    const nextEngineQty = targetNotional / refPrice;
+    setSize(formatInputSize(selectedPair, inputSizeFromEngine(selectedPair, nextEngineQty)));
+  }
+
+  function place(side: 'long' | 'short') {
+    if (disabled) return;
+    setSide(side);
+    onSubmit(undefined, { side, orderType: 'market' });
+  }
+
+  return (
+    <div className="shrink-0 border-t border-[#2a2236] bg-[#0e0817] px-2.5 pb-2.5 pt-2">
+      <AccountSizeSlider value={percent} onChange={applyPercent} />
+      <div className="mt-1 flex items-center justify-between px-0.5 text-[10px]">
+        <span className="text-[#7a8090]">
+          {notional > 0 ? `≈ ${fmt(notional, 0)} USD` : t('terminal.btnEnterQty')}
+        </span>
+        <span className="num font-semibold tabular-nums text-[#c8c2d4]">
+          {size} {pairBase(selectedPair)}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => place('long')}
+          disabled={disabled}
+          className="flex h-11 items-center justify-center rounded-xl text-[15px] font-bold text-[#06231a] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ background: '#18c98e' }}
+        >
+          {t('terminal.buy')}
+        </button>
+        <button
+          type="button"
+          onClick={() => place('short')}
+          disabled={disabled}
+          className="flex h-11 items-center justify-center rounded-xl text-[15px] font-bold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ background: '#f43f6e' }}
+        >
+          {t('terminal.sell')}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ChartArea({
   pair,
@@ -1364,11 +1604,12 @@ function ChartArea({
             marketMetadata={marketMetadata}
             market={market || {}}
             onChange={onPairChange}
-            className="flex-1"
+            className="w-[140px] shrink-0"
           />
+          <TimeframeSelect interval={interval} onChange={setInterval} className="w-[74px] shrink-0" />
           {ticker?.markPrice != null && (
             <span
-              className="num shrink-0 text-[12px] font-semibold tabular-nums text-white"
+              className="num ml-auto shrink-0 text-[12px] font-semibold tabular-nums text-white"
               style={{
                 color: (ticker.change24h ?? 0) >= 0 ? '#15c990' : '#f43f6e',
               }}
@@ -1431,6 +1672,7 @@ function PositionRow({
   ) => Promise<void> | void;
   onSelectPair?: (pair: string) => void;
 }) {
+  const { t } = useTranslation();
   const isLong = position.side === 'long';
   const accent = isLong ? '#15c990' : '#c026d3';
   const pnlPos = position.pnl >= 0;
@@ -1497,15 +1739,15 @@ function PositionRow({
               <span className="text-[#7a8090]">TP</span>
               <span className={`${position.takeProfit != null ? 'text-[#15c990]' : 'text-[#7a8090]'}`}>{tpDisplay}</span>
               {tpPct != null && <span className="text-[9px] text-[#7a8090]">({tpPct >= 0 ? '+' : ''}{tpPct.toFixed(1)}%)</span>}
-              {tpIsPartial && <span className="rounded bg-[#18a7df]/20 px-1 text-[9px] font-semibold uppercase text-[#64d7ff]">partiel</span>}
+              {tpIsPartial && <span className="rounded bg-[#18a7df]/20 px-1 text-[9px] font-semibold uppercase text-[#64d7ff]">{t('terminal.partial')}</span>}
             </span>
             <span className="flex items-center gap-1">
               <span className="text-[#7a8090]">SL</span>
               <span className={`${position.stopLoss != null ? 'text-[#f43f6e]' : 'text-[#7a8090]'}`}>{slDisplay}</span>
               {slPct != null && <span className="text-[9px] text-[#7a8090]">({slPct.toFixed(1)}%)</span>}
-              {slIsPartial && <span className="rounded bg-[#18a7df]/20 px-1 text-[9px] font-semibold uppercase text-[#64d7ff]">partiel</span>}
+              {slIsPartial && <span className="rounded bg-[#18a7df]/20 px-1 text-[9px] font-semibold uppercase text-[#64d7ff]">{t('terminal.partial')}</span>}
             </span>
-            <span className="mt-px text-[9px] text-[#7a8090]">Cliquer pour modifier</span>
+            <span className="mt-px text-[9px] text-[#7a8090]">{t('terminal.clickToEdit')}</span>
           </button>
         </Td>
         <Td className="text-right">
@@ -1515,9 +1757,9 @@ function PositionRow({
               disabled={busy || !marketOpen}
               onClick={() => onClosePosition(position.id)}
               className="cursor-pointer px-2 py-1 text-[10px] text-[#e0e2ea] hover:bg-[#1a1820] disabled:cursor-not-allowed disabled:opacity-40"
-              title={!marketOpen ? 'Marché fermé' : undefined}
+              title={!marketOpen ? t('terminal.marketClosed') : undefined}
             >
-              Fermer
+              {t('terminal.close')}
             </button>
             <span className="w-px bg-[#2a262a]" />
             <button
@@ -1525,7 +1767,7 @@ function PositionRow({
               disabled={busy}
               onClick={() => setPanel(panel === 'close' ? 'none' : 'close')}
               className={`cursor-pointer px-1.5 py-1 text-[10px] transition-colors ${panel === 'close' ? 'bg-[#1a1820] text-white' : 'text-[#9498a4] hover:bg-[#1a1820] hover:text-white'}`}
-              title="Fermeture partielle"
+              title={t('terminal.partialClose')}
             >
               ▾
             </button>
@@ -1538,7 +1780,7 @@ function PositionRow({
           <td colSpan={11} className="px-4 py-3">
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">Fermer maintenant</label>
+                <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">{t('terminal.closeNow')}</label>
                 <div className="flex items-center gap-1.5">
                   {PRESETS.map((p) => (
                     <button
@@ -1553,7 +1795,7 @@ function PositionRow({
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">% personnalise</label>
+                <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">{t('terminal.customPct')}</label>
                 <input
                   type="number"
                   min={1}
@@ -1568,7 +1810,7 @@ function PositionRow({
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">Quantite</label>
+                <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">{t('terminal.quantity')}</label>
                 <div className="flex h-9 items-center gap-1 rounded-md border border-[#2a262a] bg-[#15121f] px-3 text-[12px] text-white">
                   <span className="num font-semibold">{partialSize.toFixed(5)}</span>
                   <span className="text-[10px] text-[#7a8090]">{pairBase(position.pair)}</span>
@@ -1582,7 +1824,7 @@ function PositionRow({
                   disabled={busy}
                   className="cursor-pointer rounded-md border border-[#2a262a] px-3 py-2 text-[11px] text-[#9498a4] hover:text-white"
                 >
-                  Annuler
+                  {t('terminal.cancel')}
                 </button>
                 <button
                   type="button"
@@ -1594,7 +1836,7 @@ function PositionRow({
                   }}
                   className="cursor-pointer rounded-md bg-[#f43f6e] px-4 py-2 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {closePercent >= 100 ? 'Fermer 100%' : `Fermer ${closePercent}%`}
+                  {closePercent >= 100 ? t('terminal.closeFull') : t('terminal.closePct', { pct: closePercent })}
                 </button>
               </div>
             </div>
@@ -1643,8 +1885,9 @@ function RiskModal({
   onClose: () => void;
   onSubmit: (payload: RiskPayload) => Promise<void> | void;
 }) {
+  const { t } = useTranslation();
   const isLong = position.side === 'long';
-  const sideLabel = isLong ? 'Acheter' : 'Vendre';
+  const sideLabel = isLong ? t('terminal.buy') : t('terminal.sell');
   const sideColor = isLong ? '#15c990' : '#f43f6e';
   const sizeSigned = isLong ? position.size : -position.size;
   const isInitiallyPartial =
@@ -1700,7 +1943,7 @@ function RiskModal({
   function setTpFromPct(value: string) {
     setTpPctDraft(value);
     const num = Number(value);
-    if (value === '' || !Number.isFinite(num)) {
+    if (value === '' || !Number.isFinite(num) || num <= 0) {
       setTpPriceDraft('');
     } else {
       setTpPriceDraft(priceToInputString(pctToPrice(num, 'tp'), category));
@@ -1740,31 +1983,44 @@ function RiskModal({
     return dirty * qty;
   })();
 
+  const tpPriceNum = Number(tpPriceDraft);
+  const tpEntered = tpPriceDraft.trim() !== '' && Number.isFinite(tpPriceNum) && tpPriceNum > 0;
+  const tpValidEntry = !tpEntered || isValidTakeProfitVsEntry(position.side, position.entryPrice, tpPriceNum);
+  const tpValidMark = !tpEntered || isValidTakeProfit(position.side, markPrice, tpPriceNum);
+  const tpValid = tpValidEntry && tpValidMark;
+  const slPriceNum = Number(slPriceDraft);
+  const slEntered = slPriceDraft.trim() !== '' && Number.isFinite(slPriceNum) && slPriceNum > 0;
+  const slValid = !slEntered || isValidStopLoss(position.side, markPrice, slPriceNum);
+
   async function confirm() {
     setBusy(true);
     setError('');
     try {
       const tpPrice = tpPriceDraft.trim() === '' ? null : Number(tpPriceDraft);
       const slPrice = slPriceDraft.trim() === '' ? null : Number(slPriceDraft);
-      if (tpPrice != null && (!Number.isFinite(tpPrice) || tpPrice <= 0)) throw new Error('Take profit invalide');
-      if (slPrice != null && (!Number.isFinite(slPrice) || slPrice <= 0)) throw new Error('Stop loss invalide');
+      if (tpPrice != null && (!Number.isFinite(tpPrice) || tpPrice <= 0)) throw new Error(t('terminal.invalidTp'));
+      if (slPrice != null && (!Number.isFinite(slPrice) || slPrice <= 0)) throw new Error(t('terminal.invalidSl'));
 
-      // Validate against the LIVE mark price (not the entry price): a SL/TP
-      // can be placed anywhere as long as it would not trigger immediately.
-      // This lets the user move the SL into profit on a winning trade.
-      const ref = Number.isFinite(markPrice) && markPrice > 0 ? markPrice : position.entryPrice;
-      if (slPrice != null && !isValidStopLoss(position.side, ref, slPrice)) {
+      const markRef = Number.isFinite(markPrice) && markPrice > 0 ? markPrice : position.entryPrice;
+      if (slPrice != null && !isValidStopLoss(position.side, markRef, slPrice)) {
         throw new Error(
           position.side === 'long'
-            ? 'Le stop loss doit etre sous le prix actuel'
-            : 'Le stop loss doit etre au-dessus du prix actuel',
+            ? t('terminal.slBelowCurrent')
+            : t('terminal.slAboveCurrent'),
         );
       }
-      if (tpPrice != null && !isValidTakeProfit(position.side, ref, tpPrice)) {
+      if (tpPrice != null && !isValidTakeProfitVsEntry(position.side, position.entryPrice, tpPrice)) {
         throw new Error(
           position.side === 'long'
-            ? 'Le take profit doit etre au-dessus du prix actuel'
-            : 'Le take profit doit etre sous le prix actuel',
+            ? t('terminal.tpAboveEntry')
+            : t('terminal.tpBelowEntry'),
+        );
+      }
+      if (tpPrice != null && !isValidTakeProfit(position.side, markRef, tpPrice)) {
+        throw new Error(
+          position.side === 'long'
+            ? t('terminal.tpAboveCurrent')
+            : t('terminal.tpBelowCurrent'),
         );
       }
 
@@ -1773,10 +2029,10 @@ function RiskModal({
       if (tab === 'partial') {
         const tpQ = tpQtyDraft.trim() === '' ? null : Number(tpQtyDraft);
         const slQ = slQtyDraft.trim() === '' ? null : Number(slQtyDraft);
-        if (tpPrice != null && (tpQ == null || !Number.isFinite(tpQ) || tpQ <= 0)) throw new Error('Quantite TP invalide');
-        if (slPrice != null && (slQ == null || !Number.isFinite(slQ) || slQ <= 0)) throw new Error('Quantite SL invalide');
-        if (tpQ != null && tpQ >= position.size - 1e-9) throw new Error('Pour un TP partiel, la quantite doit etre inferieure a la taille totale');
-        if (slQ != null && slQ >= position.size - 1e-9) throw new Error('Pour un SL partiel, la quantite doit etre inferieure a la taille totale');
+        if (tpPrice != null && (tpQ == null || !Number.isFinite(tpQ) || tpQ <= 0)) throw new Error(t('terminal.invalidTpQty'));
+        if (slPrice != null && (slQ == null || !Number.isFinite(slQ) || slQ <= 0)) throw new Error(t('terminal.invalidSlQty'));
+        if (tpQ != null && tpQ >= position.size - 1e-9) throw new Error(t('terminal.partialTpTooBig'));
+        if (slQ != null && slQ >= position.size - 1e-9) throw new Error(t('terminal.partialSlTooBig'));
         tpSize = tpQ ?? null;
         slSize = slQ ?? null;
       }
@@ -1788,7 +2044,7 @@ function RiskModal({
         takeProfitSize: tpSize,
       });
     } catch (err: any) {
-      setError(err?.message || 'Erreur SL/TP');
+      setError(err?.message || t('terminal.slTpError'));
     } finally {
       setBusy(false);
     }
@@ -1821,7 +2077,7 @@ function RiskModal({
         >
           <div className="w-full max-w-[640px] overflow-hidden rounded-2xl border border-[#1c1928] bg-[#100d1a] shadow-2xl shadow-black/60">
             <div className="flex items-center justify-between border-b border-[#1c1928] px-6 py-4">
-              <h3 className="text-[18px] font-semibold text-white">Take profit / Stop loss</h3>
+              <h3 className="text-[18px] font-semibold text-white">{t('terminal.tpSlTitle')}</h3>
               <button
                 type="button"
                 onClick={onClose}
@@ -1840,13 +2096,13 @@ function RiskModal({
                       <span style={{ color: sideColor }} className="font-semibold">{sideLabel}</span>
                       <span className="ml-2 num text-white">{sizeSigned > 0 ? '+' : ''}{sizeSigned.toFixed(4)} {pairBase(position.pair)} Perp</span>
                     </div>
-                    <div className="mt-1 text-[12px] text-[#9498a4]">Levier <span className="num text-white">x{position.leverage}</span></div>
+                    <div className="mt-1 text-[12px] text-[#9498a4]">{t('terminal.leverage')} <span className="num text-white">x{position.leverage}</span></div>
                   </div>
-                  <span className="rounded-md bg-[#1c1928] px-2 py-1 text-[10px] uppercase tracking-wide text-[#9498a4]">Position</span>
+                  <span className="rounded-md bg-[#1c1928] px-2 py-1 text-[10px] uppercase tracking-wide text-[#9498a4]">{t('terminal.position')}</span>
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
                   <div className="min-w-0 rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">Entree</div>
+                    <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">{t('terminal.entry')}</div>
                     <div
                       className="num mt-0.5 truncate text-[12px] font-semibold tabular-nums text-white"
                       title={fmtMarketPrice(position.entryPrice, category)}
@@ -1855,7 +2111,7 @@ function RiskModal({
                     </div>
                   </div>
                   <div className="min-w-0 rounded-lg border border-[#1c1928] bg-[#0f0c19] px-2.5 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">Marche</div>
+                    <div className="text-[10px] uppercase tracking-wide text-[#7a8090]">{t('terminal.market')}</div>
                     <div
                       className="num mt-0.5 truncate text-[12px] font-semibold tabular-nums text-white"
                       title={fmtMarketPrice(markPrice, category)}
@@ -1864,7 +2120,7 @@ function RiskModal({
                     </div>
                   </div>
                   <div className="min-w-0 rounded-lg border border-[#f43f6e]/30 bg-[#f43f6e]/5 px-2.5 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-[#f43f6e]">Liquidation</div>
+                    <div className="text-[10px] uppercase tracking-wide text-[#f43f6e]">{t('terminal.liquidation')}</div>
                     <div
                       className="num mt-0.5 truncate text-[12px] font-semibold tabular-nums text-white"
                       title={liquidationLabel !== '—' ? liquidationLabel : undefined}
@@ -1883,14 +2139,14 @@ function RiskModal({
                   onClick={() => setTab('full')}
                   className={`h-10 cursor-pointer rounded-lg text-[12px] font-semibold transition-colors ${tab === 'full' ? 'bg-[#1f1a2b] text-white' : 'text-[#9498a4] hover:text-white'}`}
                 >
-                  Integralite de la position
+                  {t('terminal.entirePosition')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setTab('partial')}
                   className={`h-10 cursor-pointer rounded-lg text-[12px] font-semibold transition-colors ${tab === 'partial' ? 'bg-[#1f1a2b] text-white' : 'text-[#9498a4] hover:text-white'}`}
                 >
-                  Sortie partielle
+                  {t('terminal.partialExit')}
                 </button>
               </div>
             </div>
@@ -1907,8 +2163,8 @@ function RiskModal({
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <label className="block">
-                    <span className="text-[11px] text-[#7a8090]">Declencheur</span>
-                    <div className="mt-1 flex h-11 items-center gap-1 rounded-lg border border-[#2a262a] bg-[#15121f] px-3 focus-within:border-[#15c990]">
+                    <span className="text-[11px] text-[#7a8090]">{t('terminal.trigger')}</span>
+                    <div className={`mt-1 flex h-11 items-center gap-1 rounded-lg border bg-[#15121f] px-3 ${tpValid ? 'border-[#2a262a] focus-within:border-[#15c990]' : 'border-[#f43f6e]/60'}`}>
                       <input
                         type="number"
                         step="0.01"
@@ -1921,11 +2177,12 @@ function RiskModal({
                     </div>
                   </label>
                   <label className="block">
-                    <span className="text-[11px] text-[#7a8090]">Distance d'entree</span>
-                    <div className="mt-1 flex h-11 items-center gap-1 rounded-lg border border-[#2a262a] bg-[#15121f] px-3 focus-within:border-[#15c990]">
+                    <span className="text-[11px] text-[#7a8090]">{t('terminal.entryDistance')}</span>
+                    <div className={`mt-1 flex h-11 items-center gap-1 rounded-lg border bg-[#15121f] px-3 ${tpValid ? 'border-[#2a262a] focus-within:border-[#15c990]' : 'border-[#f43f6e]/60'}`}>
                       <input
                         type="number"
                         step="0.01"
+                        min="0.01"
                         value={tpPctDraft}
                         onChange={(event) => setTpFromPct(event.target.value)}
                         placeholder="-"
@@ -1935,9 +2192,16 @@ function RiskModal({
                     </div>
                   </label>
                 </div>
+                {tpEntered && !tpValid && (
+                  <p className="mt-2 text-[11px] text-[#f43f6e]">
+                    {!tpValidEntry
+                      ? (isLong ? t('terminal.tpAboveEntry') : t('terminal.tpBelowEntry'))
+                      : (isLong ? t('terminal.tpAboveCurrent') : t('terminal.tpBelowCurrent'))}
+                  </p>
+                )}
                 {tab === 'partial' && (
                   <label className="mt-3 block">
-                    <span className="text-[11px] text-[#7a8090]">Quantite a fermer au TP</span>
+                    <span className="text-[11px] text-[#7a8090]">{t('terminal.qtyToCloseTp')}</span>
                     <div className="mt-1 flex h-11 items-center gap-2 rounded-lg border border-[#2a262a] bg-[#15121f] px-3 focus-within:border-[#15c990]">
                       <input
                         type="number"
@@ -1978,8 +2242,8 @@ function RiskModal({
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <label className="block">
-                    <span className="text-[11px] text-[#7a8090]">Declencheur</span>
-                    <div className="mt-1 flex h-11 items-center gap-1 rounded-lg border border-[#2a262a] bg-[#15121f] px-3 focus-within:border-[#f43f6e]">
+                    <span className="text-[11px] text-[#7a8090]">{t('terminal.trigger')}</span>
+                    <div className={`mt-1 flex h-11 items-center gap-1 rounded-lg border bg-[#15121f] px-3 ${slValid ? 'border-[#2a262a] focus-within:border-[#f43f6e]' : 'border-[#f43f6e]/60'}`}>
                       <input
                         type="number"
                         step="0.01"
@@ -1992,8 +2256,8 @@ function RiskModal({
                     </div>
                   </label>
                   <label className="block">
-                    <span className="text-[11px] text-[#7a8090]">Distance d'entree</span>
-                    <div className="mt-1 flex h-11 items-center gap-1 rounded-lg border border-[#2a262a] bg-[#15121f] px-3 focus-within:border-[#f43f6e]">
+                    <span className="text-[11px] text-[#7a8090]">{t('terminal.entryDistance')}</span>
+                    <div className={`mt-1 flex h-11 items-center gap-1 rounded-lg border bg-[#15121f] px-3 ${slValid ? 'border-[#2a262a] focus-within:border-[#f43f6e]' : 'border-[#f43f6e]/60'}`}>
                       <input
                         type="number"
                         step="0.01"
@@ -2006,9 +2270,14 @@ function RiskModal({
                     </div>
                   </label>
                 </div>
+                {slEntered && !slValid && (
+                  <p className="mt-2 text-[11px] text-[#f43f6e]">
+                    {isLong ? t('terminal.slBelowCurrent') : t('terminal.slAboveCurrent')}
+                  </p>
+                )}
                 {tab === 'partial' && (
                   <label className="mt-3 block">
-                    <span className="text-[11px] text-[#7a8090]">Quantite a fermer au SL</span>
+                    <span className="text-[11px] text-[#7a8090]">{t('terminal.qtyToCloseSl')}</span>
                     <div className="mt-1 flex h-11 items-center gap-2 rounded-lg border border-[#2a262a] bg-[#15121f] px-3 focus-within:border-[#f43f6e]">
                       <input
                         type="number"
@@ -2048,7 +2317,7 @@ function RiskModal({
                 disabled={busy}
                 className="cursor-pointer text-[11px] uppercase tracking-wide text-[#7a8090] hover:text-white"
               >
-                Tout effacer
+                {t('terminal.clearAll')}
               </button>
               <div className="ml-auto flex items-center gap-2">
                 <button
@@ -2057,15 +2326,15 @@ function RiskModal({
                   disabled={busy}
                   className="h-11 cursor-pointer rounded-lg border border-[#2a262a] bg-transparent px-5 text-[13px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#3a3848] hover:text-white"
                 >
-                  Annuler
+                  {t('terminal.cancel')}
                 </button>
                 <button
                   type="button"
                   onClick={confirm}
-                  disabled={busy}
+                  disabled={busy || (tpEntered && !tpValid) || (slEntered && !slValid)}
                   className="h-11 cursor-pointer rounded-lg bg-[#15c990] px-6 text-[13px] font-semibold text-[#0e0c0d] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {busy ? '...' : 'Confirmer'}
+                  {busy ? '...' : t('terminal.confirm')}
                 </button>
               </div>
             </div>
@@ -2122,14 +2391,15 @@ function BottomTabs({
   busy: boolean;
   marketMetadata: Record<string, MarketMetadata>;
 }) {
+  const { t } = useTranslation();
   const positions = player?.openPositions ?? [];
   const orders = player?.openOrders ?? [];
   const allTrades = recentTrades;
 
   const tabs = [
-    { id: 'positions' as const, label: 'Positions', count: positions.length || undefined },
-    { id: 'ordres' as const, label: 'Ordres', count: orders.length || undefined },
-    { id: 'historique' as const, label: 'Historique', count: allTrades.length || undefined },
+    { id: 'positions' as const, label: t('terminal.tabPositions'), count: positions.length || undefined },
+    { id: 'ordres' as const, label: t('terminal.tabOrders'), count: orders.length || undefined },
+    { id: 'historique' as const, label: t('terminal.tabHistory'), count: allTrades.length || undefined },
   ];
 
   return (
@@ -2145,7 +2415,7 @@ function BottomTabs({
         <div
           role="separator"
           aria-orientation="horizontal"
-          title="Tirer pour agrandir ou réduire"
+          title={t('terminal.dragResize')}
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
@@ -2173,7 +2443,7 @@ function BottomTabs({
           <button
             type="button"
             onClick={onToggleExpanded}
-            title={expanded ? 'Réduire la section' : 'Agrandir la section'}
+            title={expanded ? t('terminal.collapseSection') : t('terminal.expandSection')}
             className="cursor-pointer rounded-md p-1 hover:bg-[#201a2b] hover:text-[#e0e2ea]"
           >
             <Icon d={expanded ? ICONS.close : ICONS.expand} size={13} />
@@ -2184,21 +2454,21 @@ function BottomTabs({
       <div className={mobileMode ? 'overflow-x-auto' : 'flex-1 overflow-auto'}>
         {tab === 'positions' && (
           positions.length === 0 ? (
-            <EmptyState lines={['Aucune position. Commencez à trader avec un effet de levier ↗']} />
+            <EmptyState lines={[t('terminal.emptyPositions')]} />
           ) : (
             <table className="w-full text-left text-[11.5px]">
               <thead className="text-[10px] uppercase tracking-[0.05em] text-[#7a8090]">
                 <tr className="border-b border-[#231f22]">
-                  <Th>Marché</Th>
-                  <Th>Prix</Th>
-                  <Th>Quantité ouverte</Th>
-                  <Th>Prix de l'ouverture</Th>
-                  <Th>Prix actuel</Th>
-                  <Th>Valeur</Th>
-                  <Th>Estimation du prix de liquidation</Th>
-                  <Th>Marge initiale</Th>
-                  <Th>Gains et pertes non réalisés</Th>
-                  <Th>TP / SL</Th>
+                  <Th>{t('terminal.thMarket')}</Th>
+                  <Th>{t('terminal.thPrice')}</Th>
+                  <Th>{t('terminal.thOpenQty')}</Th>
+                  <Th>{t('terminal.thEntryPrice')}</Th>
+                  <Th>{t('terminal.thCurrentPrice')}</Th>
+                  <Th>{t('terminal.thValue')}</Th>
+                  <Th>{t('terminal.thLiqEstimate')}</Th>
+                  <Th>{t('terminal.thInitialMargin')}</Th>
+                  <Th>{t('terminal.thUnrealizedPnl')}</Th>
+                  <Th>{t('terminal.thTpSl')}</Th>
                   <Th />
                 </tr>
               </thead>
@@ -2222,13 +2492,13 @@ function BottomTabs({
 
         {tab === 'ordres' && (
           orders.length === 0 ? (
-            <EmptyState lines={['Aucun ordre ouvert.']} />
+            <EmptyState lines={[t('terminal.emptyOrders')]} />
           ) : (
             <table className="w-full text-left text-[11.5px]">
               <thead className="text-[10px] uppercase tracking-[0.05em] text-[#7a8090]">
                 <tr className="border-b border-[#231f22]">
-                  <Th>Marché</Th><Th>Side</Th><Th>Type</Th><Th>Prix limite</Th>
-                  <Th>Quantité</Th><Th>Levier</Th><Th>Réservé</Th><Th />
+                  <Th>{t('terminal.thMarket')}</Th><Th>{t('terminal.thSide')}</Th><Th>{t('terminal.thType')}</Th><Th>{t('terminal.thLimitPrice')}</Th>
+                  <Th>{t('terminal.thQty')}</Th><Th>{t('terminal.thLeverage')}</Th><Th>{t('terminal.thReserved')}</Th><Th />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1c181a] text-[#e0e2ea]">
@@ -2246,15 +2516,15 @@ function BottomTabs({
                         {order.pair}
                       </button>
                     </Td>
-                    <Td><span style={{ color: order.side === 'long' ? '#15c990' : '#c026d3' }}>{order.side === 'long' ? 'Long' : 'Short'}</span></Td>
-                    <Td className="capitalize">{order.orderType === 'market' ? 'Marché' : 'Limite'}</Td>
+                    <Td><span style={{ color: order.side === 'long' ? '#15c990' : '#c026d3' }}>{order.side === 'long' ? t('terminal.long') : t('terminal.short')}</span></Td>
+                    <Td className="capitalize">{order.orderType === 'market' ? t('terminal.typeMarket') : t('terminal.typeLimit')}</Td>
                     <Td>{order.limitPrice ? fmtMarketPrice(order.limitPrice, marketMetadata[order.pair]?.category) : '–'}</Td>
                     <Td>{orderSizeDisplay.text} <span className="text-[10px] text-[#7a8090]">{orderSizeDisplay.unit}</span></Td>
                     <Td>{order.leverage}x</Td>
                     <Td>{fmt(order.marginReserved + order.feeEstimate, 2)} USD</Td>
                     <Td className="text-right">
                       <button type="button" disabled={busy} onClick={() => onCancelOrder(order.id)} className="cursor-pointer rounded border border-[#2a262a] px-2 py-1 text-[10px] text-[#e0e2ea] hover:border-[#2a2a38]">
-                        Annuler
+                        {t('terminal.cancel')}
                       </button>
                     </Td>
                   </tr>
@@ -2267,13 +2537,13 @@ function BottomTabs({
 
         {tab === 'historique' && (
           allTrades.length === 0 ? (
-            <EmptyState lines={['Aucun trade pour l\u2019instant.']} />
+            <EmptyState lines={[t('terminal.emptyTrades')]} />
           ) : (
             <table className="w-full text-left text-[11.5px]">
               <thead className="text-[10px] uppercase tracking-[0.05em] text-[#7a8090]">
                 <tr className="border-b border-[#231f22]">
-                  <Th>Heure</Th><Th>Marché</Th><Th>Side</Th><Th>Action</Th>
-                  <Th>Prix</Th><Th>Quantité</Th><Th>Frais</Th><Th>PnL</Th>
+                  <Th>{t('terminal.thTime')}</Th><Th>{t('terminal.thMarket')}</Th><Th>{t('terminal.thSide')}</Th><Th>{t('terminal.thAction')}</Th>
+                  <Th>{t('terminal.thPrice')}</Th><Th>{t('terminal.thQty')}</Th><Th>{t('terminal.thFees')}</Th><Th>PnL</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1c181a] text-[#e0e2ea]">
@@ -2290,7 +2560,7 @@ function BottomTabs({
                         {trade.pair}
                       </button>
                     </Td>
-                    <Td><span style={{ color: trade.side === 'long' ? '#15c990' : '#c026d3' }}>{trade.side === 'long' ? 'Long' : 'Short'}</span></Td>
+                    <Td><span style={{ color: trade.side === 'long' ? '#15c990' : '#c026d3' }}>{trade.side === 'long' ? t('terminal.long') : t('terminal.short')}</span></Td>
                     <Td className="capitalize">{trade.action}</Td>
                     <Td>{fmt(trade.price, 1)}</Td>
                     <Td>{trade.size.toFixed(5)}</Td>
@@ -2328,6 +2598,7 @@ function CompetitionLeaderboardPanel({
   currentName?: string;
   error?: string;
 }) {
+  const { t } = useTranslation();
   const rows = data?.leaderboard ?? [];
   const myRow = rows.find((row) => (
     currentUserId ? row.userId === currentUserId : currentName ? row.name === currentName : false
@@ -2351,7 +2622,7 @@ function CompetitionLeaderboardPanel({
   if (!data) {
     return (
       <section className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-[#2a2236] bg-[#10091c] p-5 text-center text-[12px] text-[#7a8090]">
-        Chargement du leaderboard...
+        {t('leaderboard.loading')}
       </section>
     );
   }
@@ -2370,12 +2641,12 @@ function CompetitionLeaderboardPanel({
             rel="noreferrer"
             className="shrink-0 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-white"
           >
-            Ouvrir
+            {t('terminal.open')}
           </a>
         </div>
         {myRow && (
           <div className="mt-3 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/12 px-3 py-2">
-            <div className="text-[9px] uppercase tracking-[0.16em] text-[#fca5a5]">Ta position</div>
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#fca5a5]">{t('terminal.yourPosition')}</div>
             <LeaderboardMiniRow row={myRow} isMe compact />
           </div>
         )}
@@ -2383,7 +2654,7 @@ function CompetitionLeaderboardPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {visibleRows.length === 0 ? (
-          <EmptyState lines={['Aucun participant dans le classement.']} />
+          <EmptyState lines={[t('terminal.noParticipant')]} />
         ) : (
           <div className="divide-y divide-[#171321]">
             {visibleRows.map((row) => (
@@ -2411,6 +2682,7 @@ function LiveRosterLeaderboardPanel({
   players: Player[];
   currentPlayerId: string | null;
 }) {
+  const { t } = useTranslation();
   const ranked = useMemo(() => {
     return [...players]
       .filter((p) => p.active !== false)
@@ -2436,7 +2708,7 @@ function LiveRosterLeaderboardPanel({
         </div>
         {myPlayer && (
           <div className="mt-3 rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/12 px-3 py-2">
-            <div className="text-[9px] uppercase tracking-[0.16em] text-[#fca5a5]">Ta position</div>
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#fca5a5]">{t('terminal.yourPosition')}</div>
             <LiveRosterRow player={myPlayer} rank={myIndex + 1} isMe compact />
           </div>
         )}
@@ -2444,7 +2716,7 @@ function LiveRosterLeaderboardPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {visible.length === 0 ? (
-          <EmptyState lines={['Aucun trader actif dans le roster.']} />
+          <EmptyState lines={[t('terminal.noActiveTrader')]} />
         ) : (
           <div className="divide-y divide-[#171321]">
             {visible.map((player) => {
@@ -2476,6 +2748,7 @@ function LiveRosterRow({
   isMe?: boolean;
   compact?: boolean;
 }) {
+  const { t } = useTranslation();
   const positive = (player.pnlPercent ?? 0) >= 0;
   return (
     <div className={`grid grid-cols-[42px_minmax(0,1fr)_74px_62px] items-center gap-2 px-3 ${compact ? 'py-1.5' : 'py-3'} text-[12px] ${isMe ? 'bg-[#dc2626]/10' : ''}`}>
@@ -2495,7 +2768,7 @@ function LiveRosterRow({
           <span className="truncate font-bold text-white">{player.name}</span>
         </div>
         {!compact && (
-          <div className="text-[10px] text-[#6f687f]">{player.tradeCount ?? 0} trades</div>
+          <div className="text-[10px] text-[#6f687f]">{player.tradeCount ?? 0} {t('terminal.trades')}</div>
         )}
       </div>
       <div className={`num text-right font-bold ${positive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
@@ -2509,6 +2782,7 @@ function LiveRosterRow({
 }
 
 function LeaderboardMiniRow({ row, isMe, compact = false }: { row: LeaderboardRow; isMe?: boolean; compact?: boolean }) {
+  const { t } = useTranslation();
   const positive = row.pnlPercent >= 0;
   return (
     <div className={`grid grid-cols-[42px_minmax(0,1fr)_74px_62px] items-center gap-2 px-3 ${compact ? 'py-1.5' : 'py-3'} text-[12px] ${isMe ? 'bg-[#dc2626]/10' : ''}`}>
@@ -2523,8 +2797,9 @@ function LeaderboardMiniRow({ row, isMe, compact = false }: { row: LeaderboardRo
             </span>
           )}
           <span className="truncate font-bold text-white">{row.name}</span>
+          <NameBadges badges={row.badges} compact />
           {isMe && (
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#dc2626]/45 bg-[#dc2626]/18 text-[#fca5a5]" title="Ton classement" aria-label="Ton classement">
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#dc2626]/45 bg-[#dc2626]/18 text-[#fca5a5]" title={t('terminal.yourRanking')} aria-label={t('terminal.yourRanking')}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20 21a8 8 0 0 0-16 0" />
                 <circle cx="12" cy="7" r="4" />
@@ -2532,7 +2807,7 @@ function LeaderboardMiniRow({ row, isMe, compact = false }: { row: LeaderboardRo
             </span>
           )}
         </div>
-        {!compact && <div className="text-[10px] text-[#6f687f]">{row.tradesCount} trades</div>}
+        {!compact && <div className="text-[10px] text-[#6f687f]">{row.tradesCount} {t('terminal.trades')}</div>}
       </div>
       <div className={`num text-right font-bold ${positive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
         {fmtSigned(row.pnlPercent, 2)}%
@@ -2564,7 +2839,7 @@ function formatCountdown(target: number): string {
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
-function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'paper' | 'real'; startAt?: number; endAt?: number; status?: 'upcoming' | 'live' | 'ended'; rank?: number | null; participants?: number; pnlPercent?: number } }) {
+function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'paper' | 'real'; startAt?: number; endAt?: number; status?: 'registration' | 'starting_soon' | 'live' | 'ended'; rank?: number | null; participants?: number; pnlPercent?: number } }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((value) => value + 1), 1000);
@@ -2572,11 +2847,11 @@ function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'p
   }, []);
 
   const isLive = ctx.status === 'live';
-  const isUpcoming = ctx.status === 'upcoming';
+  const isPreLive = ctx.status === 'registration' || ctx.status === 'starting_soon';
   const isEnded = ctx.status === 'ended';
   const target = isLive ? ctx.endAt : ctx.startAt;
   const countdown = target ? formatCountdown(target) : null;
-  const countdownLabel = isLive ? 'FIN DANS' : isUpcoming ? 'DEMARRE DANS' : 'STATUS';
+  const countdownLabel = isLive ? 'FIN DANS' : isPreLive ? 'DEMARRE DANS' : 'STATUS';
   const hasLeaderboard = ctx.id && ctx.id !== 'unknown';
   const rankLabel = ctx.rank ? `#${ctx.rank}` : '–';
   const participants = ctx.participants ?? null;
@@ -2587,7 +2862,7 @@ function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'p
     <div className="mx-3 mt-3 flex flex-wrap items-center gap-2.5 rounded-lg border border-[#dc2626]/30 bg-gradient-to-r from-[#1a0a0a] to-[#120608] px-3 py-2 text-[12px] text-[#fca5a5]">
       <span className="flex items-center gap-1.5 rounded-full border border-[#dc2626]/35 bg-[#dc2626]/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#fca5a5]">
         {isLive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ef4444] shadow-[0_0_6px_rgba(239,68,68,0.9)]" />}
-        {isLive ? 'Live' : isUpcoming ? 'A venir' : isEnded ? 'Terminee' : 'Compete'}
+        {isLive ? 'Live' : ctx.status === 'registration' ? 'Inscription' : isPreLive ? 'Bientot' : isEnded ? 'Terminee' : 'Compete'}
       </span>
 
       <div className="min-w-0 flex-shrink">
@@ -2643,6 +2918,7 @@ function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'p
 /* ------------------------------------------------------------------ MAIN */
 
 export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalProps) {
+  const { t } = useTranslation();
   const location = useLocation();
   const terminalPlatform = useMemo<TerminalPlatform>(
     () => (demoMode ? 'compete' : getTerminalPlatformFromUrl(location.search)),
@@ -3397,7 +3673,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         body: JSON.stringify({ accessCode }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Connexion impossible');
+      if (!response.ok) throw new Error(data.error || t('terminal.connectionFailed'));
       writePaperSessionToken('live', data.token);
       setSession({ token: data.token, player: data.player });
       setAccessCode('');
@@ -3453,20 +3729,25 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }));
   }
 
-  function submitDemoOrder(extras?: { stopLoss: number | null; takeProfit: number | null }) {
+  function submitDemoOrder(
+    extras?: { stopLoss: number | null; takeProfit: number | null },
+    opts?: { side?: 'long' | 'short'; orderType?: OrderType },
+  ) {
+    const effSide = opts?.side ?? side;
+    const effType = opts?.orderType ?? orderType;
     const currentTicker = demoMarket[selectedPair];
     if (!currentTicker) return;
 
     const qty = engineSizeFromInput(selectedPair, Number(size));
     if (!Number.isFinite(qty) || qty <= 0) {
-      setError('Quantité invalide pour la démo.');
+      setError(t('terminal.demoInvalidQty'));
       return;
     }
 
-    if (orderType === 'limit') {
+    if (effType === 'limit') {
       const limit = Number(limitPrice);
       if (!Number.isFinite(limit) || limit <= 0) {
-        setError('Prix limite invalide.');
+        setError(t('terminal.invalidLimitPrice'));
         return;
       }
       const notional = limit * qty;
@@ -3480,7 +3761,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       const order = {
         id: crypto.randomUUID(),
         pair: selectedPair,
-        side,
+        side: effSide,
         size: qty,
         orderType: 'limit' as const,
         status: 'open' as const,
@@ -3503,7 +3784,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return;
     }
 
-    const price = side === 'long' ? currentTicker.askPrice : currentTicker.bidPrice;
+    const price = effSide === 'long' ? currentTicker.askPrice : currentTicker.bidPrice;
     const notional = price * qty;
     const margin = leverage > 0 ? notional / leverage : 0;
     const fee = notional * DEMO_TAKER_FEE;
@@ -3518,7 +3799,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     const position: Position = {
       id: positionId,
       pair: selectedPair,
-      side,
+      side: effSide,
       size: qty,
       entryPrice: price,
       markPrice: currentTicker.markPrice,
@@ -3527,7 +3808,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       leverage,
       margin,
       feesPaid: fee,
-      liquidationPrice: side === 'long'
+      liquidationPrice: effSide === 'long'
         ? price * (1 - 0.9 / leverage)
         : price * (1 + 0.9 / leverage),
       stopLoss: extras?.stopLoss ?? null,
@@ -3539,12 +3820,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       playerName: demoPlayer.name,
       playerColor: demoPlayer.color,
       pair: selectedPair,
-      side,
+      side: effSide,
       size: qty,
       price,
       fee,
       leverage,
-      orderType,
+      orderType: effType,
       pnl: 0,
       time: openedAt,
       action: 'open',
@@ -3639,14 +3920,19 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }));
   }
 
-  async function submitOrder(extras?: { stopLoss: number | null; takeProfit: number | null }) {
+  async function submitOrder(
+    extras?: { stopLoss: number | null; takeProfit: number | null },
+    opts?: { side?: 'long' | 'short'; orderType?: OrderType },
+  ) {
+    const effSide = opts?.side ?? side;
+    const effType = opts?.orderType ?? orderType;
     const qty = engineSizeFromInput(selectedPair, Number(size));
     if (!Number.isFinite(qty) || qty <= 0) {
-      setError('Quantité invalide. Entre une quantité supérieure à 0.');
+      setError(t('terminal.invalidQtyGt0'));
       return;
     }
     if (demoMode) {
-      submitDemoOrder(extras);
+      submitDemoOrder(extras, opts);
       return;
     }
     if (!session) return;
@@ -3661,17 +3947,17 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         },
         body: JSON.stringify({
           pair: selectedPair,
-          side,
+          side: effSide,
           size: qty,
-          orderType,
-          limitPrice: orderType === 'limit' ? Number(limitPrice) : null,
+          orderType: effType,
+          limitPrice: effType === 'limit' ? Number(limitPrice) : null,
           leverage,
           stopLoss: extras?.stopLoss ?? null,
           takeProfit: extras?.takeProfit ?? null,
         }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Ordre refusé');
+      if (!response.ok) throw new Error(data.error || t('terminal.orderRejected'));
       if (orderType === 'limit') {
         resetLimitOrderDraft();
       } else {
@@ -3707,7 +3993,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const msg = String(data?.error || 'Annulation refusée');
+        const msg = String(data?.error || t('terminal.cancelRejected'));
         // Race with auto-execution: treat as success if the order is gone.
         if (!msg.includes('Ordre introuvable')) throw new Error(msg);
       }
@@ -3768,7 +4054,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const msg = String(data?.error || 'Clôture refusée');
+        const msg = String(data?.error || t('terminal.closeRejected'));
         // Race with SL/TP trigger: position is already closed, that's fine.
         if (!msg.includes('Position introuvable')) throw new Error(msg);
       }
@@ -3808,10 +4094,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         body: JSON.stringify({ orderId, limitPrice }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Modification du prix limite refusée');
+      if (!response.ok) throw new Error(data.error || t('terminal.limitUpdateRejected'));
       void refreshLive();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Modification du prix limite refusée');
+      setError(err instanceof Error ? err.message : t('terminal.limitUpdateRejected'));
       void refreshLive();
     }
   }
@@ -3836,7 +4122,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       body: JSON.stringify({ orderId, stopLoss, takeProfit }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Modification SL/TP refusée');
+    if (!response.ok) throw new Error(data.error || t('terminal.slTpUpdateRejected'));
     void refreshLive();
   }
 
@@ -3867,7 +4153,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Modification SL/TP refusée');
+    if (!response.ok) throw new Error(data.error || t('terminal.slTpUpdateRejected'));
     void refreshLive();
   }
 
@@ -4083,16 +4369,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       {!livePaperMode && (
         <div className="m-3 rounded-md border border-[#3a2c08] bg-[#241a05] p-3 text-[12px] text-[#f4b400]">
           {liveMode ? (
-            <>Mode paper non actif. Demande à l’admin d’activer le paper trading dans <a className="underline" href="/admin">/admin</a>.</>
+            <>{t('terminal.paperNotActive')}</>
           ) : (
-            <>Aucune competition active pour ce terminal. Retourne sur <a className="underline" href="/compete">BTF Arena</a> pour rejoindre une arene.</>
+            <>{t('terminal.noActiveCompetition')} <a className="underline" href="/compete">BTF Arena</a> {t('terminal.noActiveCompetitionSuffix')}</>
           )}
         </div>
       )}
 
       {competitionContext?.mode === 'real' && (
         <div className="mx-3 mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
-          Cette competition est en mode reel. Le terminal reel n est pas encore disponible dans cette version.
+          {t('terminal.realModeNotice')}
         </div>
       )}
 
@@ -4100,7 +4386,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="flex flex-col items-center gap-3 text-[#9498a4]">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-[#dc2626] border-t-transparent" />
-            <div className="text-[12px] uppercase tracking-[0.25em]">Chargement du terminal</div>
+            <div className="text-[12px] uppercase tracking-[0.25em]">{t('terminal.loadingTerminal')}</div>
           </div>
         </div>
       )}
@@ -4108,21 +4394,19 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       {livePaperMode && !session && !bootstrapping && (
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="w-full max-w-md rounded-2xl border border-[#231f22] bg-[#0e0c0d] p-7 shadow-2xl shadow-black/40">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#dc2626]">Acces requis</div>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-[#dc2626]">{t('terminal.accessRequired')}</div>
             <h2 className="font-rajdhani text-3xl font-bold text-white">
-              {liveMode ? 'Terminal BTF Live' : 'Terminal de competition'}
+              {liveMode ? t('terminal.liveTerminalTitle') : t('terminal.competitionTerminalTitle')}
             </h2>
             <p className="mt-3 text-[13px] text-[#9498a4]">
-              {liveMode
-                ? 'Le terminal Live est reserve aux traders inscrits au roster de l\'evenement. Saisis ton code admin pour entrer.'
-                : 'Le terminal de trading est reserve aux joueurs inscrits a une competition. Connecte-toi sur la BTF Arena pour rejoindre une arene.'}
+              {liveMode ? t('terminal.liveAccessDesc') : t('terminal.competitionAccessDesc')}
             </p>
             {error && <div className="mt-4 text-[12px] text-[#fda4af]">{error}</div>}
             <a
               href={liveMode ? '/trader' : '/compete'}
               className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-[#dc2626] py-3 text-[13px] font-bold uppercase tracking-[0.18em] text-white transition-transform hover:scale-[1.01]"
             >
-              {liveMode ? 'Saisir mon code' : 'Aller sur BTF Arena'}
+              {liveMode ? t('terminal.enterCode') : t('terminal.goToArena')}
             </a>
           </div>
         </div>
@@ -4157,13 +4441,6 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             liveMode={liveMode}
             onLogout={logout}
           />
-
-          {competitionContext?.id && (
-            <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/12 px-4 py-3 text-[12px] leading-relaxed text-emerald-100 sm:text-[13px]">
-              <div className="font-rajdhani text-[10px] uppercase tracking-[0.16em] text-emerald-300">Competition LIVE</div>
-              <p className="mt-1 font-medium">{COMPETE_INCIDENT_MESSAGE}</p>
-            </div>
-          )}
 
           {isMobileViewport && (
           <div className="flex min-h-0 flex-1 flex-col lg:hidden">
@@ -4202,8 +4479,24 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
                 barre d'onglets hors écran quand le bandeau est présent). Le
                 plancher min-h-[300px] évite que le widget TradingView (sans
                 hauteur intrinsèque) ne s'effondre à 0. */}
-            <div className={`min-h-[300px] flex-1 ${mobileTab === 'chart' ? 'flex' : 'hidden'}`}>
-              {chartPanel}
+            <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'chart' ? 'flex' : 'hidden'}`}>
+              {/* Graphique : réduit en hauteur pour laisser la place au panneau
+                  de trade rapide juste en dessous (avant la barre d'onglets). */}
+              <div className="flex min-h-[200px] flex-1 flex-col">
+                {chartPanel}
+              </div>
+              <MobileQuickTrade
+                selectedPair={selectedPair}
+                leverage={leverage}
+                ticker={ticker}
+                player={player}
+                busy={busy}
+                canTrade={canTradeNow}
+                size={size}
+                setSize={setSize}
+                setSide={setSide}
+                onSubmit={submitOrder}
+              />
             </div>
             {mobileTab === 'leaderboard' && (
               competitionLeaderboardPanel
@@ -4213,9 +4506,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
           <div className="grid shrink-0 grid-cols-3 gap-1 rounded-2xl border border-[#241e30] bg-[#0d0914] p-1 lg:hidden">
             {[
-              { id: 'orders' as const, label: 'Ordres' },
-              { id: 'chart' as const, label: 'Graphique' },
-              { id: 'leaderboard' as const, label: 'Leaderboard' },
+              { id: 'orders' as const, label: t('terminal.mobileOrders') },
+              { id: 'chart' as const, label: t('terminal.mobileChart') },
+              { id: 'leaderboard' as const, label: t('terminal.mobileLeaderboard') },
             ].map((item) => (
               <button
                 key={item.id}

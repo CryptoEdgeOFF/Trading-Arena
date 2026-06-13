@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import PlayerAvatar from './PlayerAvatar';
 import EventArchivesAdmin from './EventArchivesAdmin';
+import ReplayAdmin from './ReplayAdmin';
 import ItickFeedPanel, { type ItickFeedStatus, type ItickInstrument } from './ItickFeedPanel';
 import type { EventMode, MarketDataSource, PlatformMode, TeamInfo } from '../stores/useGameStore';
 import { TEAM_MODE_LABEL, TEAM_MODE_TOTAL_PLAYERS, TEAM_PLAYERS_PER_SIDE } from '../utils/teamMode';
+import { ARENA_ADMIN_PATH, PROMOTIONS_ADMIN_PATH } from '../lib/adminPath';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -47,7 +49,7 @@ interface AdminCompetition {
   endAt: number;
   isPublic: boolean;
   createdAt: number;
-  status: 'upcoming' | 'live' | 'ended';
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
   participants: number;
   entriesDetailed: AdminCompetitionEntry[];
   cashPrize?: AdminCashPrize | null;
@@ -203,6 +205,7 @@ export default function AdminPanel() {
   const [adminCodeInput, setAdminCodeInput] = useState('');
   const [adminLoginBusy, setAdminLoginBusy] = useState(false);
   const [adminLoginError, setAdminLoginError] = useState('');
+  const [activeTab, setActiveTab] = useState<'live' | 'replay'>('live');
 
   const adminFetch = useCallback(async (url: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers || {});
@@ -839,6 +842,30 @@ export default function AdminPanel() {
           </div>
         </div>
 
+        {/* Onglets Room live / Replay */}
+        <div className="mb-8 flex gap-2 rounded-2xl border border-slate-800 bg-slate-900/60 p-1.5">
+          {([
+            { id: 'live', label: '🎮 Room live' },
+            { id: 'replay', label: '⏪ Replay' },
+          ] as const).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-red-600/20 text-red-300 border border-red-500/40'
+                  : 'border border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'replay' && <ReplayAdmin adminToken={adminToken || ''} adminFetch={adminFetch} />}
+
+        {activeTab === 'live' && (<>
         <div className="mb-8 grid gap-6 lg:grid-cols-[1.3fr_1fr]">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6">
             <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Source d’exécution live</p>
@@ -901,7 +928,8 @@ export default function AdminPanel() {
             <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Séparation des admins</p>
             <p className="text-sm text-slate-400">
               Cette page pilote uniquement la room live reliée au dashboard : paper trading événementiel ou lecture de comptes Kraken.
-              Les arènes online, les règles d’inscription publiques et les lots se gèrent dans <a href="/compete/admin" className="font-semibold text-amber-300 hover:text-amber-200">/compete/admin</a>.
+              Les arènes online, les règles d’inscription publiques et les lots se gèrent dans <a href={ARENA_ADMIN_PATH} className="font-semibold text-amber-300 hover:text-amber-200">{ARENA_ADMIN_PATH}</a>.
+              Les promotions partenaires (Trade Live Bonus) se gèrent dans <a href={PROMOTIONS_ADMIN_PATH} className="font-semibold text-amber-300 hover:text-amber-200">{PROMOTIONS_ADMIN_PATH}</a>.
             </p>
           </div>
         </div>
@@ -1225,6 +1253,7 @@ export default function AdminPanel() {
             </p>
           </div>
         )}
+        </>)}
       </div>
     </div>
   );

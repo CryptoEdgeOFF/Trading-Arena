@@ -5,6 +5,7 @@ import * as kraken from './kraken.js';
 import * as binance from './binance.js';
 import * as hyperliquid from './hyperliquid.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
+import * as cryptoCandlesStore from './cryptoCandlesStore.js';
 import { ITICK_INSTRUMENTS } from './itickInstruments.js';
 import { itickFeed } from './itick.js';
 import { pnlToAccountCcy } from './pairFx.js';
@@ -206,32 +207,51 @@ function withMarketSession(ticker: MarketTicker): MarketTicker {
   };
 }
 
+/**
+ * Valide SL/TP :
+ * - TP toujours côté gain par rapport au prix d'entrée (jamais un stop déguisé).
+ * - SL/TP ne doivent pas être déjà atteints au prix marché actuel.
+ * - SL peut être au-dessus de l'entrée (trailing / breakeven) tant qu'il est sous le mark pour un long.
+ */
 function validateRiskLevels(
   side: 'long' | 'short',
-  referencePrice: number,
+  entryPrice: number,
+  markPrice: number,
   stopLoss: number | null,
   takeProfit: number | null,
 ): void {
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    throw new Error('Prix de reference invalide');
+  }
+  const mark = Number.isFinite(markPrice) && markPrice > 0 ? markPrice : entryPrice;
+
   if (stopLoss != null) {
     if (!Number.isFinite(stopLoss) || stopLoss <= 0) {
       throw new Error('Stop loss invalide');
     }
-    if (side === 'long' && stopLoss >= referencePrice) {
-      throw new Error('Le stop loss doit etre sous le prix d\'entree pour un long');
+    if (side === 'long' && stopLoss >= mark) {
+      throw new Error('Le stop loss doit etre sous le prix actuel pour un long');
     }
-    if (side === 'short' && stopLoss <= referencePrice) {
-      throw new Error('Le stop loss doit etre au-dessus du prix d\'entree pour un short');
+    if (side === 'short' && stopLoss <= mark) {
+      throw new Error('Le stop loss doit etre au-dessus du prix actuel pour un short');
     }
   }
+
   if (takeProfit != null) {
     if (!Number.isFinite(takeProfit) || takeProfit <= 0) {
       throw new Error('Take profit invalide');
     }
-    if (side === 'long' && takeProfit <= referencePrice) {
+    if (side === 'long' && takeProfit <= entryPrice) {
       throw new Error('Le take profit doit etre au-dessus du prix d\'entree pour un long');
     }
-    if (side === 'short' && takeProfit >= referencePrice) {
+    if (side === 'short' && takeProfit >= entryPrice) {
       throw new Error('Le take profit doit etre sous le prix d\'entree pour un short');
+    }
+    if (side === 'long' && takeProfit <= mark) {
+      throw new Error('Le take profit doit etre au-dessus du prix actuel pour un long');
+    }
+    if (side === 'short' && takeProfit >= mark) {
+      throw new Error('Le take profit doit etre sous le prix actuel pour un short');
     }
   }
 }
@@ -328,6 +348,24 @@ export class PaperTradingEngine {
   /** Timestamp du dernier tick iTick crypto par pair (source primaire). */
   private lastItickCryptoAt = new Map<string, number>();
   private playersRef: Player[] = [];
+  /**
+   * IDs des joueurs de l'événement LIVE en cours. Ils restent suivis en
+   * permanence (pulse « connecté », classement) même sans position ouverte,
+   * contrairement aux traders d'arène qui sont élagués quand ils sont inactifs.
+   */
+  private liveEventIds = new Set<string>();
+  /**
+   * Index inversé paire → IDs des joueurs exposés (position ouverte ou ordre
+   * resting sur cette paire). Permet, à chaque tick d'une paire, de ne traiter
+   * que les joueurs concernés au lieu de balayer tout playersRef.
+   *
+   * Reconstruit paresseusement (flag `pairIndexDirty`) UNIQUEMENT quand
+   * l'exposition change : ajout/retrait de joueur suivi, ou mutation d'ordre/
+   * position. Comme toute mutation API passe par syncPlayerRefs() (qui marque
+   * l'index sale), aucune position ne peut échapper au suivi SL/TP.
+   */
+  private pairIndex = new Map<string, Set<string>>();
+  private pairIndexDirty = true;
   /** Résout l'objet Player courant (Map) à partir d'un id — évite les refs périmées. */
   private resolvePlayer: ((id: string) => Player | undefined) | null = null;
   private startingBalance = 10_000;
@@ -444,10 +482,32 @@ export class PaperTradingEngine {
     for (const ref of this.playersRef) {
       const fresh = this.resolvePlayer(ref.id);
       if (!fresh || seen.has(fresh.id)) continue;
+      // Élagage des traders d'arène inactifs : un joueur sans position ouverte
+      // ni ordre resting n'a rien à recalculer (son équité = sa balance, aucun
+      // SL/TP/limite à surveiller). On le retire du suivi moteur pour ne pas
+      // payer un sweep O(n) inutile à chaque tick. Il sera ré-ajouté
+      // automatiquement dès sa prochaine action via ensureCompetitionPaperRuntime.
+      // Les joueurs de l'événement LIVE sont toujours conservés (pulse connecté,
+      // classement temps réel).
+      if (!this.liveEventIds.has(fresh.id) && this.isPlayerIdle(fresh)) {
+        continue;
+      }
       next.push(fresh);
       seen.add(fresh.id);
     }
+    // L'index stocke des IDs (résolus en Player frais au lookup), donc le simple
+    // remplacement de refs ne l'invalide pas. On ne le marque sale que si la
+    // composition a changé (un joueur élagué/disparu).
+    if (next.length !== this.playersRef.length) {
+      this.pairIndexDirty = true;
+    }
     this.playersRef = next;
+  }
+
+  /** Un joueur est inactif s'il n'a aucune position ouverte ni ordre resting. */
+  private isPlayerIdle(player: Player): boolean {
+    if (player.openPositions.length > 0) return false;
+    return !player.openOrders.some((order) => order.status === 'open');
   }
 
   /** Ajoute ou remplace les joueurs suivis (upsert par id). */
@@ -460,11 +520,71 @@ export class PaperTradingEngine {
         this.playersRef.push(player);
       }
     }
+    // Toute mutation d'ordre/position côté API appelle syncPlayerRefs juste
+    // après : c'est le point de marquage qui garantit que l'index d'exposition
+    // sera reconstruit avant le prochain tick (donc aucune position oubliée).
+    this.pairIndexDirty = true;
+  }
+
+  /** Reconstruit l'index paire → joueurs exposés depuis l'état courant. */
+  private rebuildPairIndex(): void {
+    this.pairIndex.clear();
+    for (const player of this.playersRef) {
+      for (const position of player.openPositions) {
+        let set = this.pairIndex.get(position.pair);
+        if (!set) {
+          set = new Set();
+          this.pairIndex.set(position.pair, set);
+        }
+        set.add(player.id);
+      }
+      for (const order of player.openOrders) {
+        if (order.status !== 'open') continue;
+        let set = this.pairIndex.get(order.pair);
+        if (!set) {
+          set = new Set();
+          this.pairIndex.set(order.pair, set);
+        }
+        set.add(player.id);
+      }
+    }
+    this.pairIndexDirty = false;
+  }
+
+  /**
+   * Joueurs exposés à au moins une des paires données (union dédupliquée).
+   * Reconstruit l'index si nécessaire, puis résout les IDs en Player frais.
+   */
+  private getExposedPlayers(pairs: string[]): Player[] {
+    if (this.pairIndexDirty) this.rebuildPairIndex();
+    if (this.pairIndex.size === 0) return [];
+    const ids = new Set<string>();
+    for (const pair of pairs) {
+      const set = this.pairIndex.get(pair);
+      if (!set) continue;
+      for (const id of set) ids.add(id);
+    }
+    if (ids.size === 0) return [];
+    const result: Player[] = [];
+    for (const id of ids) {
+      const player = this.resolvePlayer ? this.resolvePlayer(id) : undefined;
+      if (player) result.push(player);
+    }
+    return result;
   }
 
   private getEnginePlayers(): Player[] {
     this.refreshPlayerRefs();
     return this.playersRef;
+  }
+
+  /**
+   * IDs des joueurs actuellement suivis par le moteur (positions/ordres live).
+   * Permet au PlayerManager de ne persister que ce sous-ensemble actif au lieu
+   * de marquer dirty toute la Map de comptes paper.
+   */
+  getTrackedPlayerIds(): string[] {
+    return this.playersRef.map((p) => p.id);
   }
 
   getStartingBalance(): number {
@@ -518,6 +638,7 @@ export class PaperTradingEngine {
         this.lastItickCryptoAt.set(pair, now);
         this.lastTickAt.set(pair, now);
         engineCandlesCache.updateLastCandleFromTick(pair, markPrice, updatedAt);
+        cryptoCandlesStore.updateLiveCandle(pair, markPrice, updatedAt);
       }
 
       if (
@@ -546,11 +667,16 @@ export class PaperTradingEngine {
     if (changed.length === 0) return changed;
 
     const enginePlayers = this.getEnginePlayers();
-    this.processOpenOrders(enginePlayers);
-    this.processRiskTriggers(enginePlayers);
-
-    for (const player of enginePlayers) {
+    // Ne traiter que les joueurs exposés aux paires qui ont bougé.
+    const exposed = this.getExposedPlayers(changed);
+    this.processOpenOrders(exposed);
+    this.processRiskTriggers(exposed);
+    for (const player of exposed) {
       this.updatePlayerEquity(player);
+    }
+    // Pulse de présence léger (2 écritures/joueur) sur tout le roster suivi,
+    // pour préserver l'indicateur « connecté » même sans exposition au tick.
+    for (const player of enginePlayers) {
       player.connected = true;
       player.lastUpdate = now;
     }
@@ -601,8 +727,10 @@ export class PaperTradingEngine {
     // d'événement. On (re)pose la session LIVE sans écraser d'éventuels joueurs
     // compete ajoutés entre-temps via trackPlayers.
     const liveIds = new Set(players.map((player) => player.id));
+    this.liveEventIds = liveIds;
     const kept = this.playersRef.filter((player) => !liveIds.has(player.id));
     this.playersRef = [...kept, ...players];
+    this.pairIndexDirty = true;
     if (options.reset !== false) {
       this.resetPlayers(players);
     }
@@ -621,6 +749,8 @@ export class PaperTradingEngine {
   /** Arrête la session de trading sans couper le feed marché public. */
   stopSession(): void {
     this.playersRef = [];
+    this.liveEventIds.clear();
+    this.pairIndexDirty = true;
   }
 
   /** Arrête tout, y compris le feed marché (shutdown serveur). */
@@ -734,7 +864,8 @@ export class PaperTradingEngine {
       if (executionPrice * size < MIN_ORDER_NOTIONAL) {
         throw new Error('Taille de position trop faible');
       }
-      validateRiskLevels(side, executionPrice, inputStopLoss, inputTakeProfit);
+      const markRef = ticker.markPrice > 0 ? ticker.markPrice : executionPrice;
+      validateRiskLevels(side, executionPrice, markRef, inputStopLoss, inputTakeProfit);
       return this.executeOrder(player, {
         id: crypto.randomUUID(),
         pair,
@@ -761,7 +892,8 @@ export class PaperTradingEngine {
       throw new Error('Taille de position trop faible');
     }
 
-    validateRiskLevels(side, limitPrice, inputStopLoss, inputTakeProfit);
+    const markRef = ticker.markPrice > 0 ? ticker.markPrice : limitPrice;
+    validateRiskLevels(side, limitPrice, markRef, inputStopLoss, inputTakeProfit);
 
     const notional = limitPrice * size;
     const marginRequired = notional / leverage;
@@ -916,6 +1048,7 @@ export class PaperTradingEngine {
       side: existing.side,
       size: sizeToClose,
       price: exitPrice,
+      entryPrice: existing.entryPrice,
       fee: closeFee,
       leverage: existing.leverage,
       orderType: 'market',
@@ -991,7 +1124,9 @@ export class PaperTradingEngine {
     }
     const normalizedStopLoss = stopLoss == null ? null : Number(stopLoss);
     const normalizedTakeProfit = takeProfit == null ? null : Number(takeProfit);
-    validateRiskLevels(order.side, limitPrice, normalizedStopLoss, normalizedTakeProfit);
+    const ticker = this.market[order.pair];
+    const markRef = ticker?.markPrice && ticker.markPrice > 0 ? ticker.markPrice : limitPrice;
+    validateRiskLevels(order.side, limitPrice, markRef, normalizedStopLoss, normalizedTakeProfit);
     order.stopLoss = normalizedStopLoss;
     order.takeProfit = normalizedTakeProfit;
     order.updatedAt = Date.now();
@@ -1016,9 +1151,12 @@ export class PaperTradingEngine {
       throw new Error('Taille de position trop faible');
     }
 
+    const ticker = this.market[order.pair];
+    const markRef = ticker?.markPrice && ticker.markPrice > 0 ? ticker.markPrice : newLimit;
     validateRiskLevels(
       order.side,
       newLimit,
+      markRef,
       order.stopLoss ?? null,
       order.takeProfit ?? null,
     );
@@ -1059,8 +1197,14 @@ export class PaperTradingEngine {
     const normalizedTakeProfit = takeProfit == null ? null : Number(takeProfit);
 
     const ticker = this.market[pair];
-    const reference = ticker?.markPrice && ticker.markPrice > 0 ? ticker.markPrice : position.entryPrice;
-    validateRiskLevels(position.side, reference, normalizedStopLoss, normalizedTakeProfit);
+    const markRef = ticker?.markPrice && ticker.markPrice > 0 ? ticker.markPrice : position.entryPrice;
+    validateRiskLevels(
+      position.side,
+      position.entryPrice,
+      markRef,
+      normalizedStopLoss,
+      normalizedTakeProfit,
+    );
 
     const normalizeSize = (raw: number | null | undefined): number | null => {
       if (raw == null) return null;
@@ -1493,6 +1637,7 @@ export class PaperTradingEngine {
       };
       this.lastTickAt.set(pair, now);
       engineCandlesCache.updateLastCandleFromTick(pair, buf.price, now);
+      cryptoCandlesStore.updateLiveCandle(pair, buf.price, now);
       pairsTakenOver.push(pair);
     }
 
@@ -1500,10 +1645,13 @@ export class PaperTradingEngine {
 
     const enginePlayers = this.getEnginePlayers();
     if (enginePlayers.length > 0) {
-      this.processOpenOrders(enginePlayers);
-      this.processRiskTriggers(enginePlayers);
-      for (const player of enginePlayers) {
+      const exposed = this.getExposedPlayers(pairsTakenOver);
+      this.processOpenOrders(exposed);
+      this.processRiskTriggers(exposed);
+      for (const player of exposed) {
         this.updatePlayerEquity(player);
+      }
+      for (const player of enginePlayers) {
         player.connected = true;
         player.lastUpdate = now;
       }
@@ -1560,12 +1708,20 @@ export class PaperTradingEngine {
     // Tenir la bougie courante du cache à jour pour que la prochaine
     // requête historique reflète immédiatement le dernier tick.
     engineCandlesCache.updateLastCandleFromTick(pair, markPrice, now);
+    cryptoCandlesStore.updateLiveCandle(pair, markPrice, now);
 
-    this.processOpenOrders(this.getEnginePlayers());
-    this.processRiskTriggers(this.getEnginePlayers());
-
-    for (const player of this.getEnginePlayers()) {
+    // Un seul appel à getEnginePlayers() (qui déclenche refreshPlayerRefs())
+    // par tick au lieu de trois.
+    const enginePlayers = this.getEnginePlayers();
+    // Ne traiter que les joueurs exposés à cette paire.
+    const exposed = this.getExposedPlayers([pair]);
+    this.processOpenOrders(exposed);
+    this.processRiskTriggers(exposed);
+    for (const player of exposed) {
       this.updatePlayerEquity(player);
+    }
+    // Pulse de présence léger sur tout le roster suivi.
+    for (const player of enginePlayers) {
       player.connected = true;
       player.lastUpdate = now;
     }
@@ -1725,6 +1881,7 @@ export class PaperTradingEngine {
       side: existing.side,
       size: sizeToClose,
       price: exitPrice,
+      entryPrice: existing.entryPrice,
       fee: closeFee,
       leverage: existing.leverage,
       orderType: 'market',
@@ -1796,7 +1953,9 @@ export class PaperTradingEngine {
 
     const orderStopLoss = order.stopLoss ?? null;
     const orderTakeProfit = order.takeProfit ?? null;
-    validateRiskLevels(order.side, executionPrice, orderStopLoss, orderTakeProfit);
+    const ticker = this.market[order.pair];
+    const markRef = ticker?.markPrice && ticker.markPrice > 0 ? ticker.markPrice : executionPrice;
+    validateRiskLevels(order.side, executionPrice, markRef, orderStopLoss, orderTakeProfit);
 
     const openedAt = Date.now();
     const position: Position = {

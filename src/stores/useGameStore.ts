@@ -273,6 +273,7 @@ export interface StatePatch {
   platformMode?: PlatformMode;
   paperStartingBalance?: number;
   marketDataSource?: MarketDataSource;
+  replayMode?: boolean;
   showcase?: ShowcasePayload | null;
   malus?: EventMalus | null;
 }
@@ -287,6 +288,8 @@ interface GameState {
   platformMode: PlatformMode;
   paperStartingBalance: number;
   marketDataSource: MarketDataSource;
+  /** True quand le ReplayViewer pilote déjà players + PnL frame par frame. */
+  replayMode: boolean;
   newBadges: { playerId: string; badge: Badge }[];
   leaderChanges: { playerId: string; from: number; to: number }[];
   spotlightTrades: SpotlightTrade[];
@@ -322,6 +325,7 @@ export const useGameStore = create<GameState>((set) => ({
   platformMode: 'kraken',
   paperStartingBalance: 10000,
   marketDataSource: 'kraken',
+  replayMode: false,
   newBadges: [],
   leaderChanges: [],
   spotlightTrades: [],
@@ -378,7 +382,7 @@ export const useGameStore = create<GameState>((set) => ({
 
       // Recalcule le PnL flottant (positions + equity globale) à partir
       // des mark prices live — le patch ne pousse pas le PnL à chaque tick.
-      if (next.players.length > 0) {
+      if (!next.replayMode && next.players.length > 0) {
         next.players = refreshAllPlayersPositions(next.players, next.market, next.paperStartingBalance);
       }
 
@@ -440,6 +444,7 @@ export const useGameStore = create<GameState>((set) => ({
       if (patch.platformMode !== undefined) next.platformMode = patch.platformMode;
       if (patch.paperStartingBalance !== undefined) next.paperStartingBalance = patch.paperStartingBalance;
       if (patch.marketDataSource !== undefined) next.marketDataSource = patch.marketDataSource;
+      if (patch.replayMode !== undefined) next.replayMode = patch.replayMode;
       if (patch.teams !== undefined) {
         next.teams = patch.teams === null ? undefined : patch.teams;
       }
@@ -482,7 +487,7 @@ export const useGameStore = create<GameState>((set) => ({
 
       // À chaque tick marché (ou patch positions), recalcule le PnL
       // position par position et l'equity globale pour aligner dashboard ↔ terminal.
-      if (next.players.length > 0 && (patch.market || patch.players || patch.addedPlayers)) {
+      if (!next.replayMode && next.players.length > 0 && (patch.market || patch.players || patch.addedPlayers)) {
         next.players = refreshAllPlayersPositions(next.players, next.market, next.paperStartingBalance);
       }
 

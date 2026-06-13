@@ -49,8 +49,8 @@ const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as Resol
  * et peut bloquer plusieurs viewers sur un backfill. On charge vite le viewport
  * récent, puis le scroll demande l'historique par tranches.
  */
-const FIRST_LOAD_BARS = 1500;
-const SCROLL_LOAD_BARS = 2000;
+const FIRST_LOAD_BARS = 2000;
+const SCROLL_LOAD_BARS = 4000;
 
 interface Subscription {
   pair: string;
@@ -225,15 +225,15 @@ export class BtfDatafeed implements IBasicDataFeed {
         pair,
         interval: String(intervalMin),
       });
-      // NB: TradingView envoie un `from` correspondant à la fenêtre visible
-      // (souvent ~1 jour au premier chargement). Si on le transmet au serveur,
-      // la requête SQL filtre `bar_time >= from` et ne renvoie qu'un petit
-      // sous-ensemble — d'où un chart vide au démarrage. On ignore donc `from`
-      // et on laisse le serveur prendre les `countBack` dernières bougies
-      // avant `to` (couvre à la fois le 1er load et le scroll vers le passé).
+      // Premier chargement : on ignore `from` (TV envoie souvent une fenêtre
+      // minuscule) et on charge les N dernières bougies avant `to`.
+      // Scroll vers le passé : on transmet `from` pour cibler la tranche
+      // manquante et permettre un backfill plus précis côté serveur.
       if (Number.isFinite(to) && to > 0) params.set('to', String(Math.floor(to)));
+      if (!firstDataRequest && Number.isFinite(from) && from > 0) {
+        params.set('from', String(Math.floor(from)));
+      }
       params.set('countBack', String(Math.floor(fetchCountBack)));
-      void from;
 
       const response = await fetch(`/api/paper/candles?${params.toString()}`);
       if (!response.ok) {
@@ -299,8 +299,10 @@ export class BtfDatafeed implements IBasicDataFeed {
         this.primeLastBar(pair, visible[visible.length - 1]);
       }
 
-      const reachedHistoryStart = visible.length < fetchCountBack;
-      onResult(visible, { noData: reachedHistoryStart });
+      // Ne signaler « plus d'historique » que si la réponse est vide : sinon
+      // TradingView arrête le scroll gauche même quand il reste de la donnée
+      // en amont (backfill lazy encore en cours).
+      onResult(visible, { noData: visible.length === 0 && raw.length === 0 });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Historique indisponible';
       onError(message);

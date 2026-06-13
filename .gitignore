@@ -32,3 +32,6 @@ charting_library-master/
 
 # Local Netlify folder
 .netlify
+
+# Dossier personnel de captures d'écran / médias (pas du code)
+src/Desktop/

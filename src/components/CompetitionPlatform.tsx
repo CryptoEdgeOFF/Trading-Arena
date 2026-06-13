@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
+import Seo from './Seo';
+import CompeteHeader from './CompeteHeader';
 import {
   AnimatedNumber,
   MetricCard,
@@ -10,6 +14,8 @@ import {
   formatPercent,
 } from './competeMetrics';
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
+import { NameBadges, type UserBadge } from './playerBadges';
+import { getSponsor } from '../lib/sponsors';
 import {
   clearPaperSessionToken,
   LEGACY_PAPER_SESSION_KEY,
@@ -25,8 +31,6 @@ import {
 } from '../lib/competeSession';
 
 const SESSION_KEY = COMPETE_SESSION_KEY;
-const COMPETE_INCIDENT_MESSAGE =
-  'La competition est de nouveau LIVE. Les PnL et les classements ont ete restaures a leur etat d\'avant l\'incident (positions en cours non restaurees). Bon trading !';
 
 function readCachedUser(): CompeteSessionUser | null {
   return readCachedCompeteUser();
@@ -56,12 +60,21 @@ function writeCachedJSON<T>(key: string, value: T): void {
 
 const PUBLIC_CACHE_KEY = 'btf-comp-public-cache';
 const MINE_CACHE_KEY = 'btf-comp-mine-cache';
+interface CashPrizeItem {
+  rank?: number;
+  imageUrl?: string;
+  title?: string;
+  description?: string;
+}
+
 interface CashPrize {
   currency: string;
   total: number;
   breakdown?: Array<{ rank: number; amount: number }>;
   label?: string;
   imageUrl?: string;
+  description?: string;
+  items?: CashPrizeItem[];
 }
 
 interface CompetitionPublic {
@@ -71,10 +84,15 @@ interface CompetitionPublic {
   executionMode: 'paper' | 'real';
   startAt: number;
   endAt: number;
+  registrationEndsAt?: number;
   isPublic: boolean;
   participants: number;
-  status: 'upcoming' | 'live' | 'ended';
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
+  canJoin?: boolean;
+  canTrade?: boolean;
   cashPrize?: CashPrize | null;
+  sponsor?: string | null;
+  sponsorReferralUrl?: string | null;
 }
 
 interface CompetitionMine {
@@ -84,13 +102,33 @@ interface CompetitionMine {
   executionMode: 'paper' | 'real';
   startAt: number;
   endAt: number;
-  status: 'upcoming' | 'live' | 'ended';
+  registrationEndsAt?: number;
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
+  canJoin?: boolean;
+  canTrade?: boolean;
   myEntry: {
     pnlUsd: number;
     pnlPercent: number;
     tradesCount: number;
   };
   cashPrize?: CashPrize | null;
+  participants?: number;
+  rank?: number | null;
+  sponsor?: string | null;
+}
+
+interface UserStats {
+  closedTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  grossProfit: number;
+  grossLoss: number;
+  profitFactor: number | null;
+  avgWin: number;
+  avgLoss: number;
+  avgRR: number | null;
+  netPnl: number;
 }
 
 type SessionUser = CompeteSessionUser;
@@ -111,12 +149,21 @@ interface PendingAuth {
   devSmsCode?: string;
 }
 
+function dateLocale(): string {
+  return i18n.resolvedLanguage === 'fr' ? 'fr-FR' : 'en-US';
+}
+
+/** Arène de qualification (ex. "BTF QUALIFICATIONS") — exclue des stats profil. */
+function isQualificationCompetition(title: string | undefined | null): boolean {
+  return /qualif/i.test(String(title || ''));
+}
+
 function fmtDateShort(value: number): string {
-  return new Date(value).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+  return new Date(value).toLocaleDateString(dateLocale(), { day: '2-digit', month: 'short' });
 }
 
 function fmtDateTime(value: number): string {
-  return new Date(value).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
+  return new Date(value).toLocaleString(dateLocale(), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function useCountdown(target: number): string {
@@ -147,7 +194,9 @@ function getPrizeTitle(prize: CashPrize | null | undefined): string {
 }
 
 function hasPrize(prize: CashPrize | null | undefined): prize is CashPrize {
-  return Boolean(prize && (prize.label || prize.imageUrl || prize.total > 0));
+  return Boolean(
+    prize && (prize.label || prize.imageUrl || prize.total > 0 || (prize.items && prize.items.length > 0)),
+  );
 }
 
 function CashPrizePill({ prize }: { prize: CashPrize | null | undefined }) {
@@ -164,14 +213,19 @@ function CashPrizePill({ prize }: { prize: CashPrize | null | undefined }) {
 }
 
 function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | undefined; compact?: boolean }) {
+  const { t } = useTranslation();
   if (!hasPrize(prize)) return null;
-  const title = getPrizeTitle(prize);
+  const items = prize.items || [];
+  const firstItem = items[0];
+  const title = getPrizeTitle(prize) || firstItem?.title || '';
+  const displayImage = prize.imageUrl || firstItem?.imageUrl || '';
+  const extraLots = prize.imageUrl ? items.length : Math.max(items.length - 1, 0);
   return (
     <div className={`flex items-center gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/8 ${compact ? 'mt-3 p-2.5' : 'mt-4 p-3'}`}>
-      {prize.imageUrl ? (
+      {displayImage ? (
         <OptimizedImage
-          src={prize.imageUrl}
-          alt={title || 'Récompense'}
+          src={displayImage}
+          alt={title || t('prize.rewardAlt')}
           className={`${compact ? 'h-12 w-12' : 'h-16 w-16'} shrink-0 rounded-xl border border-amber-400/25 object-cover`}
           displayWidth={compact ? 96 : 128}
         />
@@ -187,10 +241,13 @@ function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | un
         </div>
       )}
       <div className="min-w-0">
-        <div className="micro text-[9px] text-amber-300/85">À gagner</div>
+        <div className="micro text-[9px] text-amber-300/85">{t('prize.toWin')}</div>
         <div className="truncate text-sm font-bold text-white sm:text-base">{title}</div>
         {prize.total > 0 && prize.label && (
           <div className="mt-0.5 text-[11px] text-amber-100/60">{formatPrizeAmount(prize.total, prize.currency)}</div>
+        )}
+        {extraLots > 0 && (
+          <div className="mt-0.5 text-[11px] font-semibold text-amber-300/80">{t('prize.moreLots', { count: extraLots })}</div>
         )}
       </div>
     </div>
@@ -198,20 +255,23 @@ function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | un
 }
 
 function StatusPill({ status }: { status: CompetitionPublic['status'] }) {
+  const { t } = useTranslation();
   if (status === 'live') {
     return (
       <span className="pill pill-live">
         <span className="live-dot" />
-        Live
+        {t('status.live')}
       </span>
     );
   }
-  if (status === 'upcoming') return <span className="pill pill-coming">A venir</span>;
-  return <span className="pill pill-ended">Terminee</span>;
+  if (status === 'registration') return <span className="pill pill-coming">{t('status.registration')}</span>;
+  if (status === 'starting_soon') return <span className="pill pill-coming">{t('status.startingSoon')}</span>;
+  return <span className="pill pill-ended">{t('status.ended')}</span>;
 }
 
 function ModePill({ mode }: { mode: 'paper' | 'real' }) {
-  return <span className={`pill ${mode === 'real' ? 'pill-real' : 'pill-paper'}`}>{mode === 'paper' ? 'Paper' : 'Reel'}</span>;
+  const { t } = useTranslation();
+  return <span className={`pill ${mode === 'real' ? 'pill-real' : 'pill-paper'}`}>{mode === 'paper' ? t('mode.paper') : t('mode.real')}</span>;
 }
 
 function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: string) {
@@ -230,67 +290,9 @@ function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: 
   window.history.replaceState(null, '', `#${targetId}`);
 }
 
-function CompeteHeader({ user, onLogout }: { user: SessionUser | null; onLogout?: () => void }) {
-  return (
-    <header
-      className="compete-header sticky top-0 z-50 bg-[#050507]/95 backdrop-blur-xl sm:bg-[#050507]/80 sm:px-5 sm:pt-3"
-      style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
-    >
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 border-b border-white/10 bg-[#050507] px-3 py-2 shadow-[0_18px_60px_-42px_rgba(220,38,38,0.65)] sm:rounded-2xl sm:border sm:border-white/10 sm:bg-[#060609]/85 sm:px-4 sm:py-3 sm:backdrop-blur-2xl md:px-6">
-        <Link to="/compete" className="group flex min-w-0 items-center gap-2 sm:gap-3">
-          <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#dc2626]/30 bg-[#120506] sm:h-10 sm:w-10">
-            <span className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(220,38,38,0.35),transparent_62%)] opacity-80 transition-opacity group-hover:opacity-100" />
-            <img src="/assets/pictures/logoBTF.webp" alt="BTF" className="relative h-7 w-7 object-contain sm:h-8 sm:w-8" />
-          </span>
-          <div className="flex min-w-0 flex-col">
-            <div className="flex items-baseline gap-1.5 sm:gap-2">
-              <span className="display text-lg font-bold text-white sm:text-xl">BTF</span>
-              <span className="micro text-[10px] text-[#dc2626] sm:text-xs">Arena</span>
-            </div>
-            <span className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#dc2626] sm:text-[10px]">BETA</span>
-          </div>
-        </Link>
-        <nav className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-          <a className="ghost-cta px-2.5 py-1.5 text-[10px] sm:px-4 sm:py-2 sm:text-xs" href="#arenas" onClick={(event) => scrollToCompeteSection(event, 'arenas')}>Arènes</a>
-          {user ? (
-            <>
-              <div className="hidden items-center gap-2 rounded-full border border-[#232329] bg-[#0c0c10] px-3 py-1.5 md:flex">
-                <div tabIndex={0} className="group relative flex items-center gap-2 outline-none">
-                  {user.avatarUrl ? (
-                    <AvatarImage
-                      key={user.avatarUrl}
-                      src={user.avatarUrl}
-                      alt=""
-                      className="h-6 w-6 rounded-full object-cover"
-                      sizePx={24}
-                    />
-                  ) : (
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-[11px] font-bold uppercase">
-                      {user.name.slice(0, 2)}
-                    </span>
-                  )}
-                  <span className="text-sm text-[#b8b8c2] transition-colors group-hover:text-white">{user.name}</span>
-                  <div className="invisible absolute right-0 top-[calc(100%+10px)] z-50 w-44 rounded-xl border border-[#232329] bg-[#08080b] p-1.5 opacity-0 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.9)] transition-all group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
-                    <Link to="/compete/settings" className="block rounded-lg px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.14em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white">
-                      Settings
-                    </Link>
-                  </div>
-                </div>
-              </div>
-              <Link to="/compete/settings" className="ghost-cta px-2.5 py-1.5 text-[10px] md:hidden">Settings</Link>
-              <button type="button" onClick={onLogout} className="ghost-cta px-2.5 py-1.5 text-[10px] sm:px-4 sm:py-2 sm:text-sm">Deconnexion</button>
-            </>
-          ) : (
-            <span className="hidden" aria-hidden="true" />
-          )}
-        </nav>
-      </div>
-    </header>
-  );
-}
-
 export default function CompetitionPlatform() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   // Initialise the session synchronously from localStorage so authenticated
   // users see their data immediately on refresh, without waiting for the
   // backend to come back. We then validate in the background and clear the
@@ -319,12 +321,15 @@ export default function CompetitionPlatform() {
   const [myCompetitions, setMyCompetitions] = useState<CompetitionMine[]>(
     () => readCachedJSON<CompetitionMine[]>(MINE_CACHE_KEY) || [],
   );
+  const [myStats, setMyStats] = useState<UserStats | null>(null);
+  const [myBadges, setMyBadges] = useState<UserBadge[]>([]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const [joinTarget, setJoinTarget] = useState<CompetitionPublic | null>(null);
   const [joinCode, setJoinCode] = useState('');
+  const [joinSponsorId, setJoinSponsorId] = useState('');
   const [joinError, setJoinError] = useState('');
 
   // Single bootstrap call on mount: returns user + public + mine in one
@@ -347,6 +352,8 @@ export default function CompetitionPlatform() {
         const mineComps: CompetitionMine[] = data.myCompetitions || [];
         setPublicCompetitions(publicComps);
         setMyCompetitions(mineComps);
+        setMyStats((data.myStats as UserStats | null) ?? null);
+        setMyBadges((data.myBadges as UserBadge[] | undefined) ?? []);
         writeCachedJSON(PUBLIC_CACHE_KEY, publicComps);
         writeCachedJSON(MINE_CACHE_KEY, mineComps);
 
@@ -361,6 +368,7 @@ export default function CompetitionPlatform() {
             writeCachedUser(null);
             setSession(null);
             setMyCompetitions([]);
+            setMyStats(null);
             writeCachedJSON(MINE_CACHE_KEY, []);
           }
         }
@@ -455,7 +463,7 @@ export default function CompetitionPlatform() {
           body: JSON.stringify({ username: trimmedEmail }),
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Connexion test impossible');
+        if (!response.ok) throw new Error(data.error || t('authErrors.testLogin'));
         window.localStorage.setItem(SESSION_KEY, data.token);
         writeCachedUser(data.user);
         setSession({ token: data.token, user: data.user });
@@ -470,7 +478,7 @@ export default function CompetitionPlatform() {
         body: JSON.stringify({ email, name, phone: intent === 'signup' ? phone : undefined, intent }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Demande impossible');
+      if (!response.ok) throw new Error(data.error || t('authErrors.request'));
       setPendingAuth({
         intent,
         email: String(data.email || email).trim(),
@@ -482,7 +490,7 @@ export default function CompetitionPlatform() {
       setStep('verify-email');
       setOtp('');
     } catch (err: any) {
-      setError(err.message || 'Erreur inconnue');
+      setError(err.message || t('common.unknownError'));
     } finally {
       setBusy(false);
     }
@@ -499,7 +507,7 @@ export default function CompetitionPlatform() {
         body: JSON.stringify({ email: pendingAuth.email, code: otp }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Verification impossible');
+      if (!response.ok) throw new Error(data.error || t('authErrors.verify'));
 
       if (data.needsPhone) {
         setPendingAuth({
@@ -520,7 +528,7 @@ export default function CompetitionPlatform() {
       void refreshMyCompetitions(data.token);
       resetAuth();
     } catch (err: any) {
-      setError(err.message || 'Erreur inconnue');
+      setError(err.message || t('common.unknownError'));
     } finally {
       setBusy(false);
     }
@@ -537,14 +545,14 @@ export default function CompetitionPlatform() {
         body: JSON.stringify({ email: pendingAuth.email, code: smsOtp }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Verification SMS impossible');
+      if (!response.ok) throw new Error(data.error || t('authErrors.verifySms'));
       window.localStorage.setItem(SESSION_KEY, data.token);
       writeCachedUser(data.user);
       setSession({ token: data.token, user: data.user });
       void refreshMyCompetitions(data.token);
       resetAuth();
     } catch (err: any) {
-      setError(err.message || 'Erreur inconnue');
+      setError(err.message || t('common.unknownError'));
     } finally {
       setBusy(false);
     }
@@ -570,22 +578,35 @@ export default function CompetitionPlatform() {
   function openJoinModal(competition: CompetitionPublic) {
     if (!session) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      setError('Connecte-toi pour rejoindre une competition');
+      setError(t('authErrors.loginToJoin'));
       return;
     }
     setJoinTarget(competition);
     setJoinCode('');
+    setJoinSponsorId('');
     setJoinError('');
   }
 
   function closeJoinModal() {
     setJoinTarget(null);
     setJoinCode('');
+    setJoinSponsorId('');
     setJoinError('');
   }
 
   async function submitJoin() {
     if (!session || !joinTarget) return;
+    const sponsor = getSponsor(joinTarget.sponsor);
+    if (sponsor?.requiresAccountId) {
+      if (!joinSponsorId.trim()) {
+        setJoinError(t('sponsor.missingId', { name: sponsor.name }));
+        return;
+      }
+      if (sponsor.validateAccountId && !sponsor.validateAccountId(joinSponsorId)) {
+        setJoinError(t('sponsor.idInvalid', { name: sponsor.name, example: sponsor.accountIdExample || '' }));
+        return;
+      }
+    }
     setBusy(true);
     setJoinError('');
     try {
@@ -595,17 +616,21 @@ export default function CompetitionPlatform() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.token}`,
         },
-        body: JSON.stringify({ code: joinCode }),
+        body: JSON.stringify({
+          code: joinCode,
+          competitionId: joinTarget.id,
+          ...(sponsor?.requiresAccountId ? { sponsorAccountId: joinSponsorId.trim() } : {}),
+        }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Join impossible');
+      if (!response.ok) throw new Error(data.error || t('authErrors.join'));
       if (data.competitionId !== joinTarget.id) {
-        throw new Error('Le code ne correspond pas a cette competition');
+        throw new Error(t('authErrors.codeMismatch'));
       }
       await Promise.all([refreshPublicCompetitions(), refreshMyCompetitions(session.token)]);
       closeJoinModal();
     } catch (err: any) {
-      setJoinError(err.message || 'Erreur inconnue');
+      setJoinError(err.message || t('common.unknownError'));
     } finally {
       setBusy(false);
     }
@@ -633,7 +658,7 @@ export default function CompetitionPlatform() {
         body: JSON.stringify({ competitionId: competition.id }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Acces trading impossible');
+      if (!response.ok) throw new Error(data.error || t('authErrors.tradingAccess'));
       writePaperSessionToken('compete', data.token);
       if (data.player) {
         writePaperBootstrapCache({
@@ -651,30 +676,47 @@ export default function CompetitionPlatform() {
       // mounts already populated.
       navigate(buildTradeUrl(competition));
     } catch (err: any) {
-      setError(err.message || 'Erreur inconnue');
+      setError(err.message || t('common.unknownError'));
     } finally {
       setBusy(false);
     }
   }
 
-  const totalPnl = useMemo(() => myCompetitions.reduce((acc, entry) => acc + entry.myEntry.pnlUsd, 0), [myCompetitions]);
+  const activeMyCompetitions = useMemo(
+    () => myCompetitions.filter((competition) => competition.status !== 'ended'),
+    [myCompetitions],
+  );
+  const endedMyCompetitions = useMemo(
+    () => myCompetitions.filter((competition) => competition.status === 'ended'),
+    [myCompetitions],
+  );
+  const joinablePublicCompetitions = useMemo(
+    () => publicCompetitions.filter((competition) => competition.status !== 'ended'),
+    [publicCompetitions],
+  );
+  // Les stats du profil n'incluent pas les arènes de qualification (ex. BTF
+  // QUALIFICATIONS) — cohérent avec le leaderboard global.
+  const statsCompetitions = useMemo(
+    () => myCompetitions.filter((competition) => !isQualificationCompetition(competition.title)),
+    [myCompetitions],
+  );
+  const totalPnl = useMemo(() => statsCompetitions.reduce((acc, entry) => acc + entry.myEntry.pnlUsd, 0), [statsCompetitions]);
   const avgPnlPct = useMemo(() => {
-    if (myCompetitions.length === 0) return 0;
-    return myCompetitions.reduce((acc, entry) => acc + entry.myEntry.pnlPercent, 0) / myCompetitions.length;
-  }, [myCompetitions]);
+    if (statsCompetitions.length === 0) return 0;
+    return statsCompetitions.reduce((acc, entry) => acc + entry.myEntry.pnlPercent, 0) / statsCompetitions.length;
+  }, [statsCompetitions]);
 
   return (
     <div className="compete min-h-dvh-safe bg-[#050507]">
+      <Seo
+        title={t('seo.homeTitle')}
+        description={t('seo.homeDesc')}
+        keywords={t('seo.homeKeywords')}
+        path="/compete"
+      />
       <CompeteHeader user={session?.user || null} onLogout={logout} />
 
       <main className="compete-bg pb-8">
-        <section className="mx-auto max-w-7xl px-5 pt-4 sm:px-6 md:px-10">
-          <div className="rounded-2xl border border-emerald-500/35 bg-emerald-500/12 px-4 py-3 text-[12px] leading-relaxed text-emerald-100 sm:text-[13px]">
-            <div className="micro text-[10px] uppercase tracking-[0.16em] text-emerald-300">Competition LIVE</div>
-            <p className="mt-1 font-medium">{COMPETE_INCIDENT_MESSAGE}</p>
-          </div>
-        </section>
-
         {/* HERO — pas de marge négative sur mobile : évite que le contenu passe sous le header / la barre d'URL Safari */}
         <section id="signup" className="relative overflow-hidden pt-2 sm:-mt-[76px] sm:pt-[76px]">
           {/* Background trader silhouette */}
@@ -714,7 +756,7 @@ export default function CompetitionPlatform() {
                   transition={{ duration: 0.6, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
                   className="mt-6 max-w-xl text-base leading-relaxed text-[#b8b8c2] md:text-lg"
                 >
-                  La plateforme de tournoi officielle du Breakout Trading Fight.
+                  {t('hero.subtitle')}
                 </motion.p>
 
                 <motion.div
@@ -724,10 +766,10 @@ export default function CompetitionPlatform() {
                   className="mt-7 flex flex-col gap-3 sm:flex-row"
                 >
                   <a href="#arenas" onClick={(event) => scrollToCompeteSection(event, 'arenas')} className="blood-cta flex items-center justify-center px-6 py-4 text-sm">
-                    Voir les arènes
+                    {t('hero.ctaArenas')}
                   </a>
                   <a href="#process" onClick={(event) => scrollToCompeteSection(event, 'process')} className="ghost-cta flex items-center justify-center px-6 py-4 text-sm uppercase tracking-[0.14em]">
-                    Comment ça marche
+                    {t('hero.ctaHow')}
                   </a>
                 </motion.div>
               </div>
@@ -758,25 +800,35 @@ export default function CompetitionPlatform() {
                     onBack={() => { setStep('request'); setError(''); }}
                   />
                 ) : (
-                  <UserSummary user={session.user} pnlUsd={totalPnl} avgPnlPct={avgPnlPct} count={myCompetitions.length} />
+                  <UserSummary user={session.user} pnlUsd={totalPnl} avgPnlPct={avgPnlPct} count={statsCompetitions.length} stats={myStats} badges={myBadges} />
                 )}
               </div>
             </div>
           </div>
         </section>
 
+        <ProcessSection />
+
         {/* MES COMPETITIONS */}
         {session && (
           <section className="mx-auto max-w-7xl px-6 pt-6 md:px-10">
-            <SectionHeader eyebrow="Mes competitions" title="Tes arenes actives" />
-            {myCompetitions.length === 0 ? (
+            <SectionHeader eyebrow={t('sections.myCompetitionsEyebrow')} title={t('sections.activeArenasTitle')} />
+            {activeMyCompetitions.length === 0 ? (
               <div className="glass-card mt-6 p-10 text-center">
-                <p className="text-[#b8b8c2]">Tu n&apos;as encore rejoint aucune competition.</p>
-                <p className="mt-2 text-sm text-[#71717a]">Choisis-en une dans la liste publique ci-dessous.</p>
+                <p className="text-[#b8b8c2]">
+                  {myCompetitions.length === 0
+                    ? t('sections.emptyNoJoin')
+                    : t('sections.emptyNoActive')}
+                </p>
+                <p className="mt-2 text-sm text-[#71717a]">
+                  {myCompetitions.length === 0
+                    ? t('sections.hintChoose')
+                    : t('sections.hintHistory')}
+                </p>
               </div>
             ) : (
               <div className="mt-6 grid gap-5 md:grid-cols-2">
-                {myCompetitions.map((competition) => (
+                {activeMyCompetitions.map((competition) => (
                   <MyCompetitionCard
                     key={competition.id}
                     competition={competition}
@@ -789,22 +841,38 @@ export default function CompetitionPlatform() {
           </section>
         )}
 
-        <ProcessSection />
+        {session && endedMyCompetitions.length > 0 && (
+          <section className="mx-auto max-w-7xl px-6 pt-12 md:px-10">
+            <SectionHeader
+              eyebrow={t('sections.historyEyebrow')}
+              title={t('sections.historyTitle')}
+              sub={t('sections.historySub')}
+            />
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {endedMyCompetitions.map((competition) => (
+                <ArchivedCompetitionCard
+                  key={competition.id}
+                  competition={competition}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* PUBLIC COMPETITIONS */}
         <section id="arenas" className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
           <SectionHeader
-            eyebrow="Competitions publiques"
-            title="Rejoins une arene"
-            sub="Code requis pour participer. Demande-le a l'organisateur."
+            eyebrow={t('sections.publicEyebrow')}
+            title={t('sections.publicTitle')}
+            sub={t('sections.publicSub')}
           />
-          {publicCompetitions.length === 0 ? (
+          {joinablePublicCompetitions.length === 0 ? (
             <div className="glass-card mt-6 p-10 text-center text-sm text-[#b8b8c2]">
-              Aucune competition publique disponible pour le moment.
+              {t('sections.publicEmpty')}
             </div>
           ) : (
             <div className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-              {publicCompetitions.map((competition, idx) => {
+              {joinablePublicCompetitions.map((competition, idx) => {
                 const alreadyJoined = myCompetitions.some((entry) => entry.id === competition.id);
                 return (
                   <PublicCompetitionCard
@@ -820,6 +888,36 @@ export default function CompetitionPlatform() {
           )}
         </section>
 
+        {/* TRADE LIVE BONUS — accès aux liens d'affiliation / promos partenaires */}
+        <section className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
+          <Link
+            to="/compete/bonus"
+            className="group relative block overflow-hidden rounded-3xl border border-[#dc2626]/25 bg-gradient-to-br from-[#1a0709] via-[#0c0508] to-[#0a0a0d] p-6 transition-colors hover:border-[#dc2626]/55 md:p-9"
+          >
+            <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#dc2626]/20 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
+            <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-4">
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#dc2626]/30 bg-[#dc2626]/12 text-[#fca5a5]">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M20 12v8H4v-8M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85" />
+                  </svg>
+                </span>
+                <div>
+                  <div className="micro text-[10px] text-[#dc2626]">{t('bonus.eyebrow')}</div>
+                  <h2 className="display mt-1 text-2xl font-bold text-white sm:text-3xl">{t('bonus.title')}</h2>
+                  <p className="mt-2 max-w-xl text-sm text-[#b8b8c2]">{t('bonus.homeSub')}</p>
+                </div>
+              </div>
+              <span className="blood-cta flex shrink-0 items-center justify-center gap-2 px-6 py-4 text-sm uppercase tracking-[0.14em]">
+                {t('bonus.homeCta')}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
+              </span>
+            </div>
+          </Link>
+        </section>
+
       </main>
 
       {joinTarget && (
@@ -827,6 +925,8 @@ export default function CompetitionPlatform() {
           competition={joinTarget}
           code={joinCode}
           onCode={setJoinCode}
+          sponsorId={joinSponsorId}
+          onSponsorId={setJoinSponsorId}
           error={joinError}
           busy={busy}
           onClose={closeJoinModal}
@@ -840,18 +940,19 @@ export default function CompetitionPlatform() {
 /* ----------------------------- SUB COMPONENTS ----------------------------- */
 
 function ProcessSection() {
+  const { t } = useTranslation();
   const steps = [
-    { icon: 'user', title: 'Crée un compte', text: 'Inscris-toi rapidement avec ton email, ton pseudo et une vérification téléphone.' },
-    { icon: 'arena', title: 'Rejoins une arène', text: 'Choisis une compétition publique et entre le code donné par l’organisateur.' },
-    { icon: 'prize', title: 'Trade et remporte des prizes', text: 'Trade sur la plateforme, suis ton classement et vise les récompenses.' },
+    { icon: 'user', title: t('process.step1Title'), text: t('process.step1Text') },
+    { icon: 'arena', title: t('process.step2Title'), text: t('process.step2Text') },
+    { icon: 'prize', title: t('process.step3Title'), text: t('process.step3Text') },
   ];
 
   return (
     <section id="process" className="mx-auto max-w-7xl px-6 pt-10 md:px-10">
       <SectionHeader
-        eyebrow="Comment ça marche"
-        title="3 étapes pour participer"
-        sub="Le parcours doit être simple : créer son compte, rejoindre une arène, trader pour monter au classement."
+        eyebrow={t('process.eyebrow')}
+        title={t('process.title')}
+        sub={t('process.sub')}
       />
       <div className="mt-6 grid gap-4 md:grid-cols-3">
         {steps.map((step, index) => (
@@ -954,68 +1055,69 @@ function AuthPanel({
   onVerifyPhone: () => void;
   onBack: () => void;
 }) {
+  const { t } = useTranslation();
   const title = step === 'verify-phone'
-    ? 'Verification SMS'
+    ? t('auth.titleVerifyPhone')
     : step === 'verify-email'
-      ? 'Verifie ton email'
-      : intent === 'login' ? 'Se connecter' : 'Creer un compte';
+      ? t('auth.titleVerifyEmail')
+      : intent === 'login' ? t('auth.titleLogin') : t('auth.titleSignup');
   const subtitle = step === 'verify-phone'
-    ? 'Derniere etape : saisis le code recu par SMS pour valider ton numero.'
+    ? t('auth.subVerifyPhone')
     : step === 'verify-email'
-      ? 'Saisis le code a 6 chiffres recu par email.'
-      : 'Inscription par email + verification telephone (anti multi-comptes).';
+      ? t('auth.subVerifyEmail')
+      : t('auth.subRequest');
 
   return (
     <div className="glass-card relative overflow-hidden p-7 md:p-8">
       <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#dc2626]/15 blur-3xl" />
       <div className="relative">
-        <div className="micro text-[10px] text-[#dc2626]">Acces trader</div>
+        <div className="micro text-[10px] text-[#dc2626]">{t('auth.traderAccess')}</div>
         <h3 className="display mt-2 text-2xl font-bold text-white">{title}</h3>
         <p className="mt-1 text-sm text-[#b8b8c2]">{subtitle}</p>
 
         {step === 'request' && (
           <>
             <div className="mt-5 flex gap-1 rounded-2xl border border-[#232329] bg-[#0c0c10] p-1">
-              <button type="button" onClick={() => onSwitch('login')} className={`tab-btn ${intent === 'login' ? 'active' : ''}`}>Connexion</button>
-              <button type="button" onClick={() => onSwitch('signup')} className={`tab-btn ${intent === 'signup' ? 'active' : ''}`}>Inscription</button>
+              <button type="button" onClick={() => onSwitch('login')} className={`tab-btn ${intent === 'login' ? 'active' : ''}`}>{t('auth.tabLogin')}</button>
+              <button type="button" onClick={() => onSwitch('signup')} className={`tab-btn ${intent === 'signup' ? 'active' : ''}`}>{t('auth.tabSignup')}</button>
             </div>
 
             <div className="mt-5 space-y-3">
               <div>
-                <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">Email</label>
+                <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('auth.email')}</label>
                 <input
                   type="email"
                   autoComplete="email"
                   value={email}
                   onChange={(event) => onEmail(event.target.value)}
-                  placeholder="trader@exemple.com"
+                  placeholder={t('auth.emailPlaceholder')}
                   className="input-field"
                 />
               </div>
               {intent === 'signup' && (
                 <>
                   <div>
-                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">Pseudo</label>
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('auth.username')}</label>
                     <input
                       type="text"
                       value={name}
                       onChange={(event) => onName(event.target.value)}
-                      placeholder="Ton nom de trader"
+                      placeholder={t('auth.usernamePlaceholder')}
                       className="input-field"
                     />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">Telephone</label>
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('auth.phone')}</label>
                     <input
                       type="tel"
                       autoComplete="tel"
                       value={phone}
                       onChange={(event) => onPhone(event.target.value)}
-                      placeholder="+33 6 12 34 56 78"
+                      placeholder={t('auth.phonePlaceholder')}
                       className="input-field"
                     />
                     <p className="mt-1.5 text-[10px] text-[#71717a]">
-                      Verification SMS unique a l&apos;inscription (anti multi-comptes). Format international.
+                      {t('auth.phoneHint')}
                     </p>
                   </div>
                 </>
@@ -1028,10 +1130,10 @@ function AuthPanel({
               disabled={busy || !email.trim() || (intent === 'signup' && (!name.trim() || !phone.trim()))}
               className="blood-cta mt-5 w-full px-5 py-4 text-sm"
             >
-              {busy ? 'Envoi du code...' : 'Recevoir mon code'}
+              {busy ? t('auth.sending') : t('auth.getCode')}
             </button>
             <p className="mt-3 text-center text-[11px] text-[#71717a]">
-              {intent === 'login' ? 'Pas encore inscrit ? Bascule sur Inscription.' : 'Deja un compte ? Bascule sur Connexion.'}
+              {intent === 'login' ? t('auth.switchToSignup') : t('auth.switchToLogin')}
             </p>
           </>
         )}
@@ -1039,29 +1141,29 @@ function AuthPanel({
         {step === 'verify-email' && (
           <>
             <div className="mt-5 flex items-center gap-2">
-              <div className="step-pill step-pill-active">1. Email</div>
+              <div className="step-pill step-pill-active">{t('auth.stepEmail')}</div>
               <div className="h-px flex-1 bg-[#232329]" />
-              <div className={`step-pill ${pendingAuth?.intent === 'signup' ? '' : 'step-pill-disabled'}`}>2. SMS</div>
+              <div className={`step-pill ${pendingAuth?.intent === 'signup' ? '' : 'step-pill-disabled'}`}>{t('auth.stepSms')}</div>
             </div>
             {pendingAuth?.delivered ? (
               <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-                Code envoye a <span className="text-white">{pendingAuth.email}</span>
+                {t('auth.codeSentTo')} <span className="text-white">{pendingAuth.email}</span>
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100">
                 <div className="micro text-[10px] text-amber-300">
-                  {pendingAuth?.deliveryError ? 'Envoi email echoue' : 'Mode dev (mailer non configure)'}
+                  {pendingAuth?.deliveryError ? t('auth.emailSendFailed') : t('auth.devModeMailer')}
                 </div>
                 <div className="mt-1 text-[12px] leading-snug text-amber-200">
                   {pendingAuth?.deliveryError
                     ? `Resend: ${pendingAuth.deliveryError}`
-                    : <>Code genere pour <span className="text-white">{pendingAuth?.email}</span></>}
+                    : <>{t('auth.codeGeneratedFor')} <span className="text-white">{pendingAuth?.email}</span></>}
                 </div>
               </div>
             )}
             {pendingAuth?.devCode && (
               <div className="mt-3 rounded-xl border border-[#232329] bg-[#0c0c10] px-4 py-3">
-                <div className="micro text-[10px] text-[#71717a]">Code de secours</div>
+                <div className="micro text-[10px] text-[#71717a]">{t('auth.backupCode')}</div>
                 <div className="num mt-1 text-2xl font-bold tracking-[0.45em] text-white">{pendingAuth.devCode}</div>
               </div>
             )}
@@ -1079,14 +1181,14 @@ function AuthPanel({
             {error && <div className="mt-3 text-sm text-[#fca5a5]">{error}</div>}
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <button type="button" onClick={onVerify} disabled={busy || otp.length < 6} className="blood-cta flex-1 px-5 py-4 text-sm">
-                {busy ? 'Verification...' : 'Valider'}
+                {busy ? t('auth.verifying') : t('common.validate')}
               </button>
               <button type="button" onClick={onBack} className="ghost-cta px-4 py-3 text-sm">
-                Modifier email
+                {t('auth.editEmail')}
               </button>
             </div>
             <button type="button" onClick={onRequest} disabled={busy} className="mt-3 w-full text-center text-xs text-[#fca5a5] transition-colors hover:text-white disabled:opacity-50">
-              Renvoyer un code
+              {t('auth.resendCode')}
             </button>
           </>
         )}
@@ -1094,29 +1196,29 @@ function AuthPanel({
         {step === 'verify-phone' && (
           <>
             <div className="mt-5 flex items-center gap-2">
-              <div className="step-pill step-pill-done">1. Email</div>
+              <div className="step-pill step-pill-done">{t('auth.stepEmail')}</div>
               <div className="h-px flex-1 bg-[#dc2626]/40" />
-              <div className="step-pill step-pill-active">2. SMS</div>
+              <div className="step-pill step-pill-active">{t('auth.stepSms')}</div>
             </div>
             {pendingAuth?.smsDelivered ? (
               <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-                SMS envoye au <span className="text-white">{pendingAuth?.phoneMasked}</span>
+                {t('auth.smsSentTo')} <span className="text-white">{pendingAuth?.phoneMasked}</span>
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100">
                 <div className="micro text-[10px] text-amber-300">
-                  {pendingAuth?.smsError ? 'Envoi SMS echoue' : 'Mode dev (Twilio non configure)'}
+                  {pendingAuth?.smsError ? t('auth.smsSendFailed') : t('auth.devModeTwilio')}
                 </div>
                 <div className="mt-1 text-[12px] leading-snug text-amber-200">
                   {pendingAuth?.smsError
                     ? `Twilio: ${pendingAuth.smsError}`
-                    : <>SMS non envoye, utilise le code ci-dessous</>}
+                    : <>{t('auth.smsNotSent')}</>}
                 </div>
               </div>
             )}
             {pendingAuth?.devSmsCode && (
               <div className="mt-3 rounded-xl border border-[#232329] bg-[#0c0c10] px-4 py-3">
-                <div className="micro text-[10px] text-[#71717a]">Code de secours</div>
+                <div className="micro text-[10px] text-[#71717a]">{t('auth.backupCode')}</div>
                 <div className="num mt-1 text-2xl font-bold tracking-[0.45em] text-white">{pendingAuth.devSmsCode}</div>
               </div>
             )}
@@ -1134,14 +1236,14 @@ function AuthPanel({
             {error && <div className="mt-3 text-sm text-[#fca5a5]">{error}</div>}
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <button type="button" onClick={onVerifyPhone} disabled={busy || smsOtp.length < 6} className="blood-cta flex-1 px-5 py-4 text-sm">
-                {busy ? 'Verification...' : 'Confirmer mon compte'}
+                {busy ? t('auth.verifying') : t('auth.confirmAccount')}
               </button>
               <button type="button" onClick={onBack} className="ghost-cta px-4 py-3 text-sm">
-                Annuler
+                {t('common.cancel')}
               </button>
             </div>
             <p className="mt-3 text-center text-[11px] text-[#71717a]">
-              Tu n&apos;as pas recu le SMS ? Verifie le format du numero, ou redemande un code email pour redemarrer.
+              {t('auth.smsNotReceived')}
             </p>
           </>
         )}
@@ -1150,9 +1252,54 @@ function AuthPanel({
   );
 }
 
-function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pnlUsd: number; avgPnlPct: number; count: number }) {
+function StatTile({
+  label,
+  value,
+  tone = 'neutral',
+  delayClass,
+}: {
+  label: string;
+  value: string;
+  tone?: 'pos' | 'neg' | 'neutral';
+  delayClass?: string;
+}) {
+  const cardCls = `metric ${tone === 'pos' ? 'metric-pos' : tone === 'neg' ? 'metric-neg' : ''} card-shine rise-in ${delayClass || ''}`;
+  const valueCls = `metric-value ${tone === 'pos' ? 'is-pos' : tone === 'neg' ? 'is-neg' : ''}`;
+  return (
+    <div className={cardCls}>
+      <div className="metric-label">
+        <span className="truncate">{label}</span>
+      </div>
+      <div className={valueCls}>{value}</div>
+    </div>
+  );
+}
+
+function formatWinRate(stats: UserStats | null): string {
+  if (!stats || stats.wins + stats.losses === 0) return '—';
+  return `${(stats.winRate * 100).toFixed(1)}%`;
+}
+
+function formatAvgRR(stats: UserStats | null): string {
+  if (!stats || stats.avgRR == null) return '—';
+  return stats.avgRR.toFixed(2);
+}
+
+function formatProfitFactor(stats: UserStats | null): string {
+  if (!stats || stats.closedTrades === 0) return '—';
+  if (stats.profitFactor == null) return stats.wins > 0 ? '∞' : '—';
+  return stats.profitFactor.toFixed(2);
+}
+
+function UserSummary({ user, pnlUsd, avgPnlPct, count, stats, badges }: { user: SessionUser; pnlUsd: number; avgPnlPct: number; count: number; stats: UserStats | null; badges: UserBadge[] }) {
+  const { t } = useTranslation();
   const pnlTone = pnlUsd > 0 ? 'pos' : pnlUsd < 0 ? 'neg' : 'neutral';
   const avgTone = avgPnlPct > 0 ? 'pos' : avgPnlPct < 0 ? 'neg' : 'neutral';
+  const hasTrades = Boolean(stats && stats.closedTrades > 0);
+  const winTone: 'pos' | 'neg' | 'neutral' = hasTrades ? (stats!.winRate >= 0.5 ? 'pos' : 'neg') : 'neutral';
+  const rrTone: 'pos' | 'neg' | 'neutral' = stats && stats.avgRR != null ? (stats.avgRR >= 1 ? 'pos' : 'neg') : 'neutral';
+  const pfTone: 'pos' | 'neg' | 'neutral' =
+    hasTrades && stats!.profitFactor != null ? (stats!.profitFactor >= 1 ? 'pos' : 'neg') : hasTrades && stats!.profitFactor == null && stats!.wins > 0 ? 'pos' : 'neutral';
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -1178,15 +1325,18 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pn
             </span>
           )}
           <div className="min-w-0">
-            <div className="micro text-[10px] text-[#dc2626]">Mon profil</div>
-            <h3 className="display break-words text-xl font-bold leading-tight text-white sm:text-2xl">Salut {user.name}</h3>
+            <div className="micro text-[10px] text-[#dc2626]">{t('user.myProfile')}</div>
+            <h3 className="display flex flex-wrap items-center gap-1.5 break-words text-xl font-bold leading-tight text-white sm:text-2xl">
+              {t('user.greeting', { name: user.name })}
+              <NameBadges badges={badges} />
+            </h3>
           </div>
         </div>
         <p className="mt-1 break-all text-xs text-[#71717a] sm:text-sm">{user.email}</p>
 
         <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
           <MetricCard
-            label="PnL total"
+            label={t('user.totalPnl')}
             value={pnlUsd}
             format={(v) => formatCompactSigned(v)}
             unit="$"
@@ -1194,7 +1344,7 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pn
             delayClass="rise-in-1"
           />
           <MetricCard
-            label="PnL moy."
+            label={t('user.avgPnl')}
             value={avgPnlPct}
             format={(v) => formatPercent(v)}
             unit="%"
@@ -1202,15 +1352,87 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count }: { user: SessionUser; pn
             delayClass="rise-in-2"
           />
           <MetricCard
-            label="Arènes"
+            label={t('user.arenas')}
             value={count}
             format={(v) => formatCompactUnsigned(v)}
             tone="neutral"
             delayClass="rise-in-3"
           />
+          <StatTile label={t('user.winRate')} value={formatWinRate(stats)} tone={winTone} delayClass="rise-in-1" />
+          <StatTile label={t('user.avgRR')} value={formatAvgRR(stats)} tone={rrTone} delayClass="rise-in-2" />
+          <StatTile label={t('user.profitFactor')} value={formatProfitFactor(stats)} tone={pfTone} delayClass="rise-in-3" />
         </div>
+
       </div>
     </motion.div>
+  );
+}
+
+function ArchivedCompetitionCard({ competition }: { competition: CompetitionMine }) {
+  const { t } = useTranslation();
+  const pnlUsd = competition.myEntry.pnlUsd;
+  const pnlPercent = competition.myEntry.pnlPercent;
+  const pos = pnlPercent >= 0;
+  const rank = competition.rank ?? null;
+  const participants = competition.participants ?? null;
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="archived-card group relative overflow-hidden rounded-xl border border-white/[0.07] bg-[#0a0a0d] px-4 py-3.5"
+    >
+      {/* Bande latérale grisée + filigrane "archive" pour différencier des arènes actives */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-white/25 to-white/5" />
+      <div className="pointer-events-none absolute -right-6 top-1/2 -translate-y-1/2 select-none text-[64px] font-black uppercase leading-none tracking-tighter text-white/[0.03]">
+        ✓
+      </div>
+
+      <div className="relative flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#9a9aa6]">
+            {t('archived.ended')}
+          </span>
+          {hasPrize(competition.cashPrize) && (
+            <span className="truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-amber-200/70">
+              🏆 {getPrizeTitle(competition.cashPrize)}
+            </span>
+          )}
+        </div>
+        <Link
+          to={`/compete/leaderboard/${competition.id}`}
+          className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#71717a] transition-colors hover:text-white"
+        >
+          {t('archived.leaderboard')}
+        </Link>
+      </div>
+
+      <h3 className="display mt-2 break-words text-base font-bold leading-tight text-[#d4d4dc]">
+        {competition.title}
+      </h3>
+
+      <div className="mt-3 flex items-end justify-between gap-3">
+        <div>
+          <div className="micro text-[9px] text-[#71717a]">{t('archived.myRank')}</div>
+          <div className="display text-2xl font-bold leading-none text-white">
+            {rank ? `#${rank}` : '—'}
+            {participants != null && (
+              <span className="ml-1 text-[11px] font-medium text-[#71717a]">/ {participants}</span>
+            )}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="micro text-[9px] text-[#71717a]">{t('archived.myPnl')}</div>
+          <div className={`num text-xl font-bold leading-none ${pos ? 'text-[#34d399]' : 'text-[#f87171]'}`}>
+            {formatPercent(pnlPercent)}%
+          </div>
+          <div className={`num mt-0.5 text-[11px] ${pos ? 'text-[#34d399]/70' : 'text-[#f87171]/70'}`}>
+            {formatCompactSigned(pnlUsd)} USD
+          </div>
+        </div>
+      </div>
+    </motion.article>
   );
 }
 
@@ -1221,11 +1443,13 @@ function MyCompetitionCard({
   busy: boolean;
   onTrade: () => void;
 }) {
+  const { t } = useTranslation();
   const pnlPercent = competition.myEntry.pnlPercent;
   const pnlUsd = competition.myEntry.pnlUsd;
   const pos = pnlPercent >= 0;
   const isLive = competition.status === 'live';
   const isEnded = competition.status === 'ended';
+  const canTrade = competition.canTrade ?? isLive;
   const targetTs = isLive ? competition.endAt : competition.startAt;
   const countdown = useCountdown(targetTs);
   const fillRatio = Math.min(1, Math.abs(pnlPercent) / 100);
@@ -1267,7 +1491,7 @@ function MyCompetitionCard({
           }`}
         >
           <div className="metric-label">
-            <span>Mon PnL</span>
+            <span>{t('myCard.myPnl')}</span>
             <span className={`metric-trend ${pos ? 'up' : 'down'}`}>
               {pos ? '▲' : '▼'} arena
             </span>
@@ -1292,13 +1516,13 @@ function MyCompetitionCard({
 
         <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
           <div className="metric">
-            <div className="metric-label">{isLive ? 'Fin dans' : isEnded ? 'Status' : 'Démarre dans'}</div>
+            <div className="metric-label">{isLive ? t('myCard.endsIn') : isEnded ? t('myCard.statusLabel') : t('myCard.startsIn')}</div>
             <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4.2vw, 1.3rem)' }}>
-              {isEnded ? 'Terminée' : countdown}
+              {isEnded ? t('myCard.ended') : countdown}
             </div>
           </div>
           <div className="metric">
-            <div className="metric-label">Trades</div>
+            <div className="metric-label">{t('myCard.trades')}</div>
             <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4.2vw, 1.3rem)' }}>
               <AnimatedNumber value={competition.myEntry.tradesCount} format={(v) => formatCompactUnsigned(v)} />
             </div>
@@ -1309,22 +1533,22 @@ function MyCompetitionCard({
           <button
             type="button"
             onClick={onTrade}
-            disabled={busy || isEnded || !isLive}
+            disabled={busy || isEnded || !canTrade}
             className="blood-cta px-6 py-4 text-base sm:text-lg"
           >
             {busy
               ? '...'
               : isEnded
-                ? 'Arène fermée'
-                : !isLive
-                  ? `🔒 Ouvre dans ${countdown}`
-                  : 'TRADER'}
+                ? t('myCard.arenaClosed')
+                : !canTrade
+                  ? t('myCard.opensIn', { countdown })
+                  : t('myCard.trade')}
           </button>
           <Link
             to={`/compete/leaderboard/${competition.id}`}
             className="ghost-cta flex items-center justify-center px-4 py-3 text-xs uppercase tracking-[0.16em] sm:py-4"
           >
-            Leaderboard
+            {t('myCard.leaderboard')}
           </Link>
         </div>
       </div>
@@ -1340,8 +1564,11 @@ function PublicCompetitionCard({
   onJoin: () => void;
   index?: number;
 }) {
+  const { t } = useTranslation();
   const isEnded = competition.status === 'ended';
   const isLive = competition.status === 'live';
+  const canJoin = competition.canJoin ?? (competition.status === 'registration');
+  const sponsor = getSponsor(competition.sponsor);
   return (
     <motion.article
       initial={{ opacity: 0, y: 14 }}
@@ -1349,27 +1576,44 @@ function PublicCompetitionCard({
       transition={{ duration: 0.5, delay: 0.05 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
       whileHover={{ y: -3 }}
       className="glass-card card-shine lift group relative overflow-hidden p-5 sm:p-6"
+      style={sponsor ? { borderColor: `${sponsor.accent}66` } : undefined}
     >
       {isLive && <div className="hero-scanline" />}
-      <div className={`pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full blur-3xl transition-opacity duration-300 ${isLive ? 'bg-[#dc2626]/18' : 'bg-[#dc2626]/8'} group-hover:bg-[#dc2626]/22`} />
+      <div
+        className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full blur-3xl transition-opacity duration-300"
+        style={{ backgroundColor: `${sponsor ? sponsor.accent : '#dc2626'}${isLive ? '2e' : '14'}` }}
+      />
+      {sponsor && (
+        <div
+          className="absolute right-3 top-3 z-10 flex items-center rounded-full border px-2.5 py-1.5 backdrop-blur-sm"
+          style={{ borderColor: `${sponsor.accent}80`, backgroundColor: `${sponsor.accent}26` }}
+        >
+          <img src={sponsor.logoUrl} alt={sponsor.name} className="h-4 w-auto object-contain" />
+        </div>
+      )}
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
           <StatusPill status={competition.status} />
-          <ModePill mode={competition.executionMode} />
+          {!sponsor && <ModePill mode={competition.executionMode} />}
         </div>
 
         <h3 className="display mt-4 break-words text-lg font-bold leading-tight text-white sm:text-xl">{competition.title}</h3>
+        {sponsor && (
+          <div className="mt-1 text-[11px] font-medium" style={{ color: sponsor.accentSoft }}>
+            {t('sponsor.sponsoredBy', { name: sponsor.name })}
+          </div>
+        )}
         <PrizePreview prize={competition.cashPrize} />
 
         <div className="mt-5 grid grid-cols-2 gap-2.5 sm:gap-3">
           <div className="metric">
-            <div className="metric-label">Traders</div>
+            <div className="metric-label">{t('publicCard.traders')}</div>
             <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4.2vw, 1.35rem)' }}>
               <AnimatedNumber value={competition.participants} format={(v) => formatCompactUnsigned(v)} />
             </div>
           </div>
           <div className="metric">
-            <div className="metric-label">Période</div>
+            <div className="metric-label">{t('publicCard.period')}</div>
             <div className="metric-value" style={{ fontSize: 'clamp(0.85rem, 3vw, 0.95rem)' }}>
               <span className="truncate">{fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}</span>
             </div>
@@ -1380,23 +1624,28 @@ function PublicCompetitionCard({
           {alreadyJoined ? (
             <span className="flex items-center justify-center gap-2 rounded-xl border border-[#10b981]/30 bg-[#10b981]/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#34d399]">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-              Inscrit
+              {t('publicCard.joined')}
             </span>
           ) : (
             <button
               type="button"
               onClick={onJoin}
-              disabled={isEnded}
+              disabled={isEnded || !canJoin}
               className="blood-cta px-4 py-3 text-sm"
+              style={sponsor && canJoin ? { background: sponsor.accent, boxShadow: `0 16px 40px -18px ${sponsor.accent}` } : undefined}
             >
-              {isEnded ? 'Arène fermée' : 'Rejoindre'}
+              {isEnded
+                ? t('publicCard.arenaClosed')
+                : !canJoin
+                  ? t('publicCard.joinClosed')
+                  : t('publicCard.join')}
             </button>
           )}
           <Link
             to={`/compete/leaderboard/${competition.id}`}
             className="ghost-cta flex items-center justify-center px-4 py-3 text-xs uppercase tracking-[0.14em]"
           >
-            Leaderboard
+            {t('publicCard.leaderboard')}
           </Link>
         </div>
       </div>
@@ -1405,52 +1654,133 @@ function PublicCompetitionCard({
 }
 
 function JoinCompetitionModal({
-  competition, code, onCode, error, busy, onClose, onSubmit,
+  competition, code, onCode, sponsorId, onSponsorId, error, busy, onClose, onSubmit,
 }: {
   competition: CompetitionPublic;
   code: string;
   onCode: (value: string) => void;
+  sponsorId: string;
+  onSponsorId: (value: string) => void;
   error: string;
   busy: boolean;
   onClose: () => void;
   onSubmit: () => void;
 }) {
+  const { t } = useTranslation();
+  const sponsor = getSponsor(competition.sponsor);
+  const accent = sponsor?.accent ?? '#dc2626';
+  const accentSoft = sponsor?.accentSoft ?? '#fca5a5';
+  const referralUrl = competition.sponsorReferralUrl || sponsor?.referralUrl || '';
+  const needsSponsorId = Boolean(sponsor?.requiresAccountId);
+  const sponsorIdFormatInvalid = Boolean(
+    needsSponsorId && sponsorId.trim() && sponsor?.validateAccountId && !sponsor.validateAccountId(sponsorId),
+  );
+  // Une arène sans code est accessible librement : on ne demande pas de code.
+  const needsCode = Boolean(competition.code);
+  const submitDisabled = busy || (needsCode && !code.trim()) || (needsSponsorId && !sponsorId.trim()) || sponsorIdFormatInvalid;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={onClose}>
       <div
-        className="compete compete-modal relative w-full max-w-md overflow-hidden rounded-2xl border border-[#dc2626]/30 bg-gradient-to-b from-[#1a0a0a] to-[#0a0a0d] p-7 shadow-[0_30px_80px_-20px_rgba(220,38,38,0.4)]"
+        className="compete compete-modal relative w-full max-w-md overflow-hidden rounded-2xl border bg-gradient-to-b from-[#140a14] to-[#0a0a0d] p-7"
+        style={{ borderColor: `${accent}4d`, boxShadow: `0 30px 80px -20px ${accent}66` }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-[#dc2626]/30 blur-3xl" />
+        <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full blur-3xl" style={{ backgroundColor: `${accent}4d` }} />
         <div className="relative">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="micro text-[10px] text-[#fca5a5]">Rejoindre l&apos;arene</div>
+              {sponsor ? (
+                <div className="flex items-center gap-2">
+                  <img src={sponsor.logoUrl} alt={sponsor.name} className="h-4 w-auto object-contain" />
+                  <span className="micro text-[10px] text-[#71717a]">{t('sponsor.partnerTag')}</span>
+                </div>
+              ) : (
+                <div className="micro text-[10px]" style={{ color: accentSoft }}>{t('joinModal.eyebrow')}</div>
+              )}
               <h3 className="display mt-2 text-2xl font-bold text-white">{competition.title}</h3>
               <div className="mt-1 text-xs text-[#71717a]">{fmtDateTime(competition.startAt)} → {fmtDateTime(competition.endAt)}</div>
             </div>
-            <button type="button" onClick={onClose} className="text-[#71717a] hover:text-white" aria-label="Fermer">
+            <button type="button" onClick={onClose} className="text-[#71717a] hover:text-white" aria-label={t('common.close')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M6 18L18 6" /></svg>
             </button>
           </div>
 
-          <p className="mt-5 text-sm text-[#b8b8c2]">
-            Saisis le code communique par l&apos;organisateur.
-          </p>
-          <input
-            type="text"
-            value={code}
-            onChange={(event) => onCode(event.target.value.toUpperCase())}
-            placeholder="CODE COMPETITION"
-            autoFocus
-            className="input-field mt-3 text-center font-mono text-lg tracking-[0.32em]"
-          />
-          {error && <div className="mt-3 text-sm text-[#fca5a5]">{error}</div>}
+          {needsSponsorId && sponsor && (
+            <div className="mt-5 rounded-xl border p-4" style={{ borderColor: `${accent}4d`, backgroundColor: `${accent}14` }}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.14em]" style={{ color: accentSoft }}>
+                {t('sponsor.gateTitle')}
+              </div>
+              <ol className="mt-2 list-decimal space-y-1 pl-4 text-[13px] text-[#cfd0d8]">
+                <li>{t('sponsor.gateStep1', { name: sponsor.name })}</li>
+                <li>{t('sponsor.gateStep2', { name: sponsor.name })}</li>
+              </ol>
+              {referralUrl && (
+                <a
+                  href={referralUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-bold uppercase tracking-[0.12em] text-white transition-transform hover:scale-[1.02]"
+                  style={{ background: accent }}
+                >
+                  <img src={sponsor.logoUrl} alt="" aria-hidden className="h-3.5 w-auto object-contain" />
+                  {t('sponsor.signUpShort')}
+                </a>
+              )}
+              <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[#9a9aa6]">
+                {t('sponsor.idLabel', { name: sponsor.name })}
+              </label>
+              <input
+                type="text"
+                value={sponsorId}
+                onChange={(event) => onSponsorId(event.target.value.toUpperCase())}
+                placeholder={sponsor.accountIdExample || t('sponsor.idPlaceholder', { name: sponsor.name })}
+                className="input-field mt-1.5 font-mono tracking-[0.12em]"
+                aria-invalid={sponsorIdFormatInvalid}
+                style={sponsorIdFormatInvalid ? { borderColor: '#f87171' } : undefined}
+              />
+              {sponsorIdFormatInvalid && (
+                <div className="mt-1.5 text-[12px] text-[#fca5a5]">
+                  {t('sponsor.idInvalid', { name: sponsor.name, example: sponsor.accountIdExample || '' })}
+                </div>
+              )}
+              <div className="mt-3 flex items-start gap-1.5 text-[11px] font-medium text-[#f5b86b]">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <span>{t('sponsor.disqualifyWarning')}</span>
+              </div>
+            </div>
+          )}
+
+          {needsCode && (
+            <>
+              <p className="mt-5 text-sm text-[#b8b8c2]">
+                {t('joinModal.instruction')}
+              </p>
+              <input
+                type="text"
+                value={code}
+                onChange={(event) => onCode(event.target.value.toUpperCase())}
+                placeholder={t('joinModal.codePlaceholder')}
+                autoFocus={!needsSponsorId}
+                className="input-field mt-3 text-center font-mono text-lg tracking-[0.32em]"
+              />
+            </>
+          )}
+          {error && <div className="mt-3 text-sm" style={{ color: accentSoft }}>{error}</div>}
 
           <div className="mt-5 grid grid-cols-[1fr_1.4fr] gap-3">
-            <button type="button" onClick={onClose} className="ghost-cta px-4 py-3 text-sm">Annuler</button>
-            <button type="button" onClick={onSubmit} disabled={busy || !code.trim()} className="blood-cta px-4 py-3 text-sm">
-              {busy ? '...' : 'Rejoindre'}
+            <button type="button" onClick={onClose} className="ghost-cta px-4 py-3 text-sm">{t('joinModal.cancel')}</button>
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={submitDisabled}
+              className="blood-cta px-4 py-3 text-sm"
+              style={sponsor ? { background: accent, boxShadow: `0 16px 40px -18px ${accent}` } : undefined}
+            >
+              {busy ? '...' : t('joinModal.join')}
             </button>
           </div>
         </div>

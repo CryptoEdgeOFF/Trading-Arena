@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../stores/useGameStore';
 import { formatTime } from '../utils/formatters';
 
@@ -7,6 +8,7 @@ const BTF_LOGO_SRC = '/assets/pictures/btf-dashboard.webp';
 const KRAKEN_LOGO_SRC = '/assets/pictures/kraken-logo-white.webp';
 
 export default function Header() {
+  const { t } = useTranslation();
   const { eventStarted, eventStartTime, eventEndTime, players, platformMode } = useGameStore();
   const [now, setNow] = useState(Date.now());
   const [isFullscreen, setIsFullscreen] = useState(
@@ -42,7 +44,7 @@ export default function Header() {
   const remainingMs = countdownMode ? Math.max(0, eventEndTime - now) : 0;
   const elapsedMs = eventStarted && eventStartTime ? now - eventStartTime : 0;
   const timerMs = countdownMode ? remainingMs : elapsedMs;
-  const timerLabel = countdownMode ? 'Temps restant' : 'Temps écoulé';
+  const timerLabel = countdownMode ? t('dashboardHeader.timeRemaining') : t('dashboardHeader.timeElapsed');
   const isWarn = countdownMode && remainingMs <= 60_000;
 
   return (
@@ -57,14 +59,14 @@ export default function Header() {
           <img src="/assets/pictures/logoBTF.webp" alt="BTF" />
         </div>
         <div>
-          <div className="micro mb-0.5 text-red-300/70">Breakout Trading Fight</div>
+          <div className="micro mb-0.5 text-red-300/70">{t('dashboardHeader.eyebrow')}</div>
           <h1 className="display text-3xl font-bold tracking-[0.05em] text-white leading-none">
             ARENA <span className="text-red-500">·</span> LIVE
           </h1>
           <div className="mt-1.5 flex items-center gap-2">
             <span className={`live-pill ${eventStarted ? 'is-live' : 'is-idle'}`}>
               {eventStarted ? <span className="live-dot" /> : <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />}
-              {eventStarted ? 'On Air' : 'Standby'}
+              {eventStarted ? t('dashboardHeader.onAir') : t('dashboardHeader.standby')}
             </span>
             <span className="live-pill is-idle text-zinc-400">{platformMode}</span>
           </div>
@@ -102,7 +104,7 @@ export default function Header() {
         animate={{ opacity: 1, x: 0 }}
       >
         <div className="text-right">
-          <div className="micro text-zinc-500">Traders en arène</div>
+          <div className="micro text-zinc-500">{t('dashboardHeader.tradersInArena')}</div>
           <div className="display text-3xl font-bold text-white leading-none">
             {activePlayers}
             <span className="text-zinc-600">/{players.length}</span>
@@ -124,8 +126,8 @@ export default function Header() {
         <button
           type="button"
           onClick={toggleFullscreen}
-          aria-label={isFullscreen ? 'Quitter le plein écran' : 'Activer le plein écran'}
-          title={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+          aria-label={isFullscreen ? t('dashboardHeader.exitFullscreen') : t('dashboardHeader.enterFullscreen')}
+          title={isFullscreen ? t('dashboardHeader.exitFullscreen') : t('dashboardHeader.fullscreen')}
           className="group relative flex h-11 w-11 items-center justify-center rounded-xl border border-red-500/25 bg-black/40 text-zinc-300 transition-colors hover:border-red-500/55 hover:text-white hover:bg-red-500/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
         >
           {isFullscreen ? (

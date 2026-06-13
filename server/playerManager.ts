@@ -210,6 +210,12 @@ export class PlayerManager {
       this.pool = new Pool({
         connectionString: databaseUrl,
         ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+        // Plafond de connexions volontairement borné : 6 pools dans le process,
+        // on évite de saturer le plafond Postgres (Neon/Render). Roster = pool
+        // la plus sollicitée (flush batch 2s).
+        max: Number(process.env.PG_POOL_MAX_ROSTER) || 8,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 10_000,
       });
       this.pool.on('error', (err) => {
         console.error('[player pool] idle client error:', err.message || err);
@@ -223,7 +229,16 @@ export class PlayerManager {
         }
         this.updateRankings();
         this.checkBadges();
-        this.markRosterDirty();
+        // Ne persister que les joueurs réellement suivis par le moteur (ceux
+        // avec positions/ordres live) au lieu de marquer dirty toute la Map de
+        // comptes paper. Évite de réécrire des milliers de lignes inchangées
+        // toutes les 2s sous fort débit de ticks.
+        const trackedIds = this.paperEngine.getTrackedPlayerIds();
+        if (trackedIds.length > 0) {
+          for (const id of trackedIds) this.markRosterDirty(id);
+        } else {
+          this.markRosterDirty();
+        }
         this.broadcastState();
       },
       (pairs) => {
@@ -260,7 +275,13 @@ export class PlayerManager {
     const ids = Array.from(this.dirtyPlayerIds);
     this.dirtyPlayerIds.clear();
     await this.enqueueDbWrite('Failed to flush dirty players', async () => {
-      const stored = this.currentRoster().filter((p) => ids.includes(p.id));
+      // Tri par id pour garantir un ordre de verrouillage cohérent entre
+      // transactions concurrentes et éviter les deadlocks Postgres sur
+      // comp_paper_players (deux flushs qui verrouillent les mêmes lignes
+      // dans des ordres différents).
+      const stored = this.currentRoster()
+        .filter((p) => ids.includes(p.id))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       if (stored.length === 0) return;
       const placeholders: string[] = [];
       const params: string[] = [];
@@ -2562,6 +2583,9 @@ export class PlayerManager {
     player.badges.push(badge);
     this.badgeHolders.set(type, player.id);
     this.pendingBadges.push({ playerId: player.id, badge });
+    // Marque ce joueur dirty pour que le badge soit persisté, même si le tick
+    // courant ne persiste plus que les joueurs suivis par le moteur.
+    this.markRosterDirty(player.id);
   }
 
   /**

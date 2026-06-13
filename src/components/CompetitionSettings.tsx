@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from './LanguageSwitcher';
 import { compressImage } from '../utils/imageUpload';
 import {
   COMPETE_SESSION_KEY,
@@ -18,6 +20,7 @@ function initials(name: string): string {
 
 export default function CompetitionSettings() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [token, setToken] = useState('');
   const [user, setUser] = useState<SessionUser | null>(null);
   const [name, setName] = useState('');
@@ -58,7 +61,7 @@ export default function CompetitionSettings() {
       signal: controller.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error('Session invalide');
+        if (!response.ok) throw new Error(t('settings.invalidSession'));
         return response.json();
       })
       .then((data) => {
@@ -84,12 +87,12 @@ export default function CompetitionSettings() {
       });
 
     return () => controller.abort();
-  }, [navigate]);
+  }, [navigate, t]);
 
   const phoneStatus = useMemo(() => {
-    if (!user?.phone) return 'Non renseigne';
-    return user.phoneVerifiedAt ? 'Verifie' : 'A reverifier';
-  }, [user]);
+    if (!user?.phone) return t('settings.phoneNotProvided');
+    return user.phoneVerifiedAt ? t('settings.phoneVerified') : t('settings.phoneToReverify');
+  }, [user, t]);
 
   async function saveProfile() {
     setBusy(true);
@@ -105,12 +108,12 @@ export default function CompetitionSettings() {
         body: JSON.stringify({ name, phone, socials }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Modification impossible');
+      if (!response.ok) throw new Error(data.error || t('settings.updateFailed'));
       setUser(data.user);
       writeCachedCompeteUser(data.user);
-      setMessage('Profil mis a jour');
+      setMessage(t('settings.profileUpdated'));
     } catch (err: any) {
-      setError(err.message || 'Erreur inconnue');
+      setError(err.message || t('common.unknownError'));
     } finally {
       setBusy(false);
     }
@@ -132,12 +135,12 @@ export default function CompetitionSettings() {
         body: form,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Upload impossible');
+      if (!response.ok) throw new Error(data.error || t('settings.uploadFailed'));
       setUser(data.user);
       writeCachedCompeteUser(data.user);
-      setMessage('Photo de profil mise a jour');
+      setMessage(t('settings.avatarUpdated'));
     } catch (err: any) {
-      setError(err.message || 'Erreur inconnue');
+      setError(err.message || t('common.unknownError'));
     } finally {
       setUploading(false);
     }
@@ -151,9 +154,9 @@ export default function CompetitionSettings() {
       >
         <div className="mx-auto flex max-w-4xl items-center justify-between px-5 py-3 md:px-10 md:py-4">
           <Link to="/compete" className="ghost-cta px-3 py-2 text-xs uppercase tracking-[0.14em]">
-            Retour arena
+            {t('settings.backToArena')}
           </Link>
-          <span className="micro text-[10px] text-[#dc2626]">Settings</span>
+          <span className="micro text-[10px] text-[#dc2626]">{t('settings.settings')}</span>
         </div>
       </header>
 
@@ -162,10 +165,10 @@ export default function CompetitionSettings() {
           <section className="glass-card overflow-hidden p-5 md:p-8">
             <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
               <div>
-                <div className="micro text-[10px] text-[#dc2626]">Settings</div>
-                <h1 className="display mt-2 text-3xl font-bold text-white md:text-5xl">Profil trader</h1>
+                <div className="micro text-[10px] text-[#dc2626]">{t('settings.settings')}</div>
+                <h1 className="display mt-2 text-3xl font-bold text-white md:text-5xl">{t('settings.traderProfile')}</h1>
                 <p className="mt-2 text-sm text-[#a1a1aa]">
-                  Gere ton pseudo, ta photo, ton telephone et tes reseaux visibles sur BTF Arena.
+                  {t('settings.intro')}
                 </p>
               </div>
               <div className="flex items-center gap-4 rounded-2xl border border-[#232329] bg-black/25 p-4">
@@ -183,7 +186,7 @@ export default function CompetitionSettings() {
                   </div>
                 )}
                 <label className="ghost-cta cursor-pointer px-4 py-2 text-xs uppercase tracking-[0.14em]">
-                  {uploading ? 'Upload...' : 'Changer photo'}
+                  {uploading ? t('settings.uploading') : t('settings.changePhoto')}
                   <input
                     type="file"
                     accept="image/*"
@@ -198,33 +201,33 @@ export default function CompetitionSettings() {
 
           <section className="mt-5 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="glass-card p-5 md:p-6">
-              <h2 className="display text-2xl font-bold text-white">Informations</h2>
+              <h2 className="display text-2xl font-bold text-white">{t('settings.information')}</h2>
               <div className="mt-5 space-y-4">
                 <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">Email</label>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('settings.email')}</label>
                   <input className="input-field opacity-70" value={user?.email || ''} disabled />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">Pseudo</label>
+                  <label className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('settings.username')}</label>
                   <input className="input-field" value={name} onChange={(event) => setName(event.target.value)} />
                 </div>
                 <div>
                   <div className="mb-1.5 flex items-center justify-between gap-3">
-                    <label className="block text-xs uppercase tracking-[0.18em] text-[#71717a]">Telephone</label>
+                    <label className="block text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('settings.phone')}</label>
                     <span className={`text-[10px] uppercase tracking-[0.16em] ${user?.phoneVerifiedAt ? 'text-[#34d399]' : 'text-amber-300'}`}>
                       {phoneStatus}
                     </span>
                   </div>
                   <input className="input-field opacity-70" value={phone} readOnly placeholder="+33 6 12 34 56 78" />
                   <p className="mt-2 text-[11px] text-[#71717a]">
-                    Numero verifie a l&apos;inscription. Il ne peut pas etre modifie ici (anti multi-comptes).
+                    {t('settings.phoneHelp')}
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="glass-card p-5 md:p-6">
-              <h2 className="display text-2xl font-bold text-white">Reseaux sociaux</h2>
+              <h2 className="display text-2xl font-bold text-white">{t('settings.socials')}</h2>
               <div className="mt-5 space-y-4">
                 {(['x', 'instagram', 'discord', 'website'] as const).map((key) => (
                   <div key={key}>
@@ -243,6 +246,17 @@ export default function CompetitionSettings() {
             </div>
           </section>
 
+          <section className="glass-card mt-5 p-5 md:p-6">
+            <h2 className="display text-2xl font-bold text-white">{t('settings.preferences')}</h2>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-[0.18em] text-[#71717a]">{t('settings.language')}</div>
+                <p className="mt-1.5 text-[13px] text-[#a1a1aa]">{t('settings.languageHelp')}</p>
+              </div>
+              <LanguageSwitcher />
+            </div>
+          </section>
+
           {(error || message) && (
             <div className={`mt-5 rounded-2xl border px-4 py-3 text-sm ${error ? 'border-[#ef4444]/30 bg-[#ef4444]/10 text-[#fca5a5]' : 'border-[#10b981]/30 bg-[#10b981]/10 text-[#86efac]'}`}>
               {error || message}
@@ -250,8 +264,8 @@ export default function CompetitionSettings() {
           )}
 
           <div className="mt-5 flex justify-end">
-            <button type="button" onClick={saveProfile} disabled={busy || !name.trim() || !phone.trim()} className="blood-cta px-6 py-4 text-sm">
-              {busy ? 'Sauvegarde...' : 'Sauvegarder'}
+            <button type="button" onClick={saveProfile} disabled={busy || !name.trim()} className="blood-cta px-6 py-4 text-sm">
+              {busy ? t('settings.saving') : t('settings.save')}
             </button>
           </div>
         </div>

@@ -51,11 +51,22 @@ export function isValidStopLoss(side: Side, refPrice: number, stopLoss: number |
   return side === 'long' ? stopLoss < refPrice : stopLoss > refPrice;
 }
 
-/** TP valide : au-dessus du prix de ref pour un long, en-dessous pour un short. */
+/** TP valide vs prix actuel : ne doit pas être déjà atteint (pas de trigger immédiat). */
 export function isValidTakeProfit(side: Side, refPrice: number, takeProfit: number | null | undefined): boolean {
   if (takeProfit == null || !Number.isFinite(takeProfit) || takeProfit <= 0) return true;
   if (!Number.isFinite(refPrice) || refPrice <= 0) return true;
   return side === 'long' ? takeProfit > refPrice : takeProfit < refPrice;
+}
+
+/** TP valide vs entrée : doit rester côté gain (pas un stop loss déguisé). */
+export function isValidTakeProfitVsEntry(
+  side: Side,
+  entryPrice: number,
+  takeProfit: number | null | undefined,
+): boolean {
+  if (takeProfit == null || !Number.isFinite(takeProfit) || takeProfit <= 0) return true;
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return true;
+  return side === 'long' ? takeProfit > entryPrice : takeProfit < entryPrice;
 }
 
 export function isValidRiskPrice(

@@ -8,22 +8,28 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { PlayerManager } from './playerManager.js';
-import { EventConfig, StatePatch } from './types.js';
+import { EventConfig, StatePatch, type Trade } from './types.js';
 import * as kraken from './kraken.js';
+import type { OhlcCandle } from './kraken.js';
 import * as binance from './binance.js';
+import * as cryptoCandles from './cryptoCandles.js';
 import { pairToBinanceSymbol } from './binance.js';
 import * as hyperliquid from './hyperliquid.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
+import * as cryptoCandlesStore from './cryptoCandlesStore.js';
 import * as itick from './itick.js';
 import * as itickCandles from './itickCandles.js';
 import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair, registerItickCrypto, cryptoCodes as itickCryptoCodes } from './itickInstruments.js';
 import { startItickToPaperBridge } from './itickToPaperBridge.js';
 import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine.js';
 import { CompetitionManager } from './competitionManager.js';
+import { CompetitionNotifier } from './competitionNotifications.js';
+import { computeTradeStats, type TradeStats } from './tradeStats.js';
 import { sendOtpEmail } from './mailer.js';
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
 import { getMarketMetadata } from './marketMetadata.js';
-import { optimizeUploadedImage } from './imageOptimize.js';
+import * as promotionsStore from './promotionsStore.js';
+import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
 
@@ -71,6 +77,10 @@ server.on('upgrade', (req, socket, head) => {
 const itickClients = new Set<WebSocket>();
 itickWss.on('connection', (ws) => {
   itickClients.add(ws);
+  (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  ws.on('pong', () => {
+    (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  });
   // Greeting + replay du dernier tick connu pour chaque symbole abonné côté
   // serveur, pour que le navigateur reçoive immédiatement la valeur courante.
   try {
@@ -87,6 +97,24 @@ itickWss.on('connection', (ws) => {
   }
   ws.on('close', () => itickClients.delete(ws));
 });
+if (!process.env.NETLIFY) {
+  const itickHeartbeat = setInterval(() => {
+    itickWss.clients.forEach((ws) => {
+      const sock = ws as WebSocket & { isAlive?: boolean };
+      if (sock.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      sock.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // noop
+      }
+    });
+  }, Number(process.env.WS_HEARTBEAT_MS) || 30_000);
+  itickHeartbeat.unref?.();
+}
 itick.itickFeed.on('tick', (tick) => {
   if (itickClients.size === 0) return;
   const msg = JSON.stringify({ type: 'itick:tick', data: tick });
@@ -185,6 +213,22 @@ setInterval(() => {
     else rateBuckets.set(key, fresh);
   }
 }, 5 * 60 * 1000).unref?.();
+
+// Garde-fou global anti-abus/DDoS sur /api : plafond généreux par IP (le temps
+// réel passe par WebSocket, donc le REST ne fait que du polling léger). Bloque
+// les scripts qui martèlent des centaines de requêtes/seconde. /api/health est
+// exempté pour ne jamais bloquer le healthcheck de la plateforme.
+const GLOBAL_API_WINDOW_MS = Number(process.env.GLOBAL_RATE_WINDOW_MS) || 60_000;
+const GLOBAL_API_MAX = Number(process.env.GLOBAL_RATE_MAX) || 600;
+const globalApiLimiter = rateLimit({ windowMs: GLOBAL_API_WINDOW_MS, max: GLOBAL_API_MAX, key: 'global-api' });
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') {
+    next();
+    return;
+  }
+  globalApiLimiter(req, res, next);
+});
+
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -835,6 +879,14 @@ function detachArenaClient(ws: WebSocket): void {
 wss.on('connection', (ws, req) => {
   clients.add(ws);
 
+  // Heartbeat : le socket est marqué vivant à la connexion, puis à chaque pong.
+  // L'interval ci-dessous ping périodiquement et termine les sockets muets
+  // (clients crashés, réseau coupé) qui resteraient sinon dans `clients`.
+  (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  ws.on('pong', () => {
+    (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  });
+
   // Send a full snapshot to the freshly connected client. Subsequent
   // updates arrive as small diffs (`state:patch`), which keeps a 500-trader
   // competition under a few KB per broadcast.
@@ -859,6 +911,30 @@ wss.on('connection', (ws, req) => {
     detachArenaClient(ws);
   });
 });
+
+// Heartbeat global /ws : toutes les 30s, on termine les sockets qui n'ont pas
+// répondu au ping précédent, puis on re-ping les autres. Évite l'accumulation
+// de connexions « zombies » (compteur clients.size gonflé, fuite mémoire).
+// Inutile en serverless (pas de process long-lived, pas de clients WS).
+const WS_HEARTBEAT_MS = Number(process.env.WS_HEARTBEAT_MS) || 30_000;
+if (!IS_SERVERLESS) {
+  const heartbeatTimer = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      const sock = ws as WebSocket & { isAlive?: boolean };
+      if (sock.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      sock.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // noop : le close handler nettoiera les Sets/Maps
+      }
+    });
+  }, WS_HEARTBEAT_MS);
+  heartbeatTimer.unref?.();
+}
 
 // --- Admin auth ---
 
@@ -1370,6 +1446,7 @@ app.get('/api/paper/candles', async (req, res) => {
     // Pair iTick (forex / commodity / index) → store local Postgres.
     // Si vide, backfill REST iTick (avec fallback Hyperliquid xyz si dispo).
     if (isItickPair(pair)) {
+      // getCandles backfill lazy (scroll gauche) via ensureScrollHistory.
       let itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
       if (itickBars.length === 0) {
         const nowSec = Math.floor(Date.now() / 1000);
@@ -1378,8 +1455,6 @@ app.get('/api/paper/candles', async (req, res) => {
         try {
           await itickCandles.backfillRange(pair, interval, targetFrom, targetTo);
         } catch (err) {
-          // Quota / rate-limit iTick : on n'échoue pas la route, on
-          // tombera juste sur le fallback Hyperliquid plus bas.
           console.warn(`[candles] backfill iTick ${pair} ${interval}m KO:`, (err as Error).message);
         }
         itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
@@ -1398,11 +1473,16 @@ app.get('/api/paper/candles', async (req, res) => {
         }
       }
     } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
-      // Crypto : cache mémoire dont l'upstream suit la chaîne de fallback
-      // Binance → iTick → Bybit (cf. cryptoCandles). Premier hit ~7s pour
-      // 40k bars, suivants instantanés.
-      candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+      // Crypto : store Postgres persistant (cryptoCandlesStore) avec backfill
+      // à la demande au scroll. L'historique survit aux redémarrages et les
+      // scrolls suivants sont servis depuis la DB sans retaper l'upstream.
+      candles = await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
       source = 'binance';
+      if (candles.length === 0) {
+        // Repli : si le store n'a encore rien (ex. backfill upstream KO),
+        // on retombe sur le cache RAM historique pour ne pas vider le chart.
+        candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
+      }
     } else if (manager.getMarketDataSource() === 'binance') {
       candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
       source = 'binance';
@@ -1419,6 +1499,81 @@ app.get('/api/paper/candles', async (req, res) => {
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Historique indisponible' });
   }
+});
+
+/**
+ * POST /api/admin/replay/candles — bougies 1m multi-paires pour le mode
+ * Replay (rejouer une partie live passée). Body: { pairs, fromMs, toMs }.
+ * Sert la fenêtre demandée depuis les stores persistants (itick/crypto),
+ * avec backfill REST à la demande si la DB ne couvre pas encore la période.
+ */
+app.post('/api/admin/replay/candles', requireAdmin, async (req, res) => {
+  const pairs = Array.isArray(req.body?.pairs)
+    ? [...new Set((req.body.pairs as unknown[]).map((p) => String(p || '').trim().toUpperCase()).filter(Boolean))]
+    : [];
+  const fromMs = Number(req.body?.fromMs);
+  const toMs = Number(req.body?.toMs);
+  if (pairs.length === 0 || pairs.length > 16) {
+    res.status(400).json({ error: 'pairs requis (1 à 16 paires)' });
+    return;
+  }
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+    res.status(400).json({ error: 'Fenêtre fromMs/toMs invalide' });
+    return;
+  }
+  if (toMs - fromMs > 24 * 60 * 60 * 1000) {
+    res.status(400).json({ error: 'Fenêtre limitée à 24h' });
+    return;
+  }
+
+  // Marge d'une bougie de chaque côté pour interpoler proprement aux bords.
+  const fromSec = Math.floor(fromMs / 1000) - 120;
+  const toSec = Math.ceil(toMs / 1000) + 120;
+  const countBack = Math.ceil((toSec - fromSec) / 60) + 10;
+  const candleOpts = { from: fromSec, to: toSec, countBack };
+
+  const out: Record<string, OhlcCandle[]> = {};
+  const errors: Record<string, string> = {};
+  for (const pair of pairs) {
+    try {
+      let bars: OhlcCandle[] = [];
+      if (isItickPair(pair)) {
+        bars = await itickCandles.getCandles(pair, 1, candleOpts);
+        // Couverture incomplète (partie ancienne pas encore en DB) → backfill REST.
+        if (bars.length < Math.max(1, Math.floor((toSec - fromSec) / 60) - 30)) {
+          try {
+            await itickCandles.backfillRange(pair, 1, fromSec, toSec);
+          } catch (err) {
+            console.warn(`[replay] backfill iTick ${pair} KO:`, (err as Error).message);
+          }
+          bars = await itickCandles.getCandles(pair, 1, candleOpts);
+        }
+        if (bars.length === 0) {
+          // Dernier recours : REST iTick direct (paginé), sans passer par la DB.
+          const inst = findItickByPair(pair);
+          if (inst) {
+            bars = await itick.getKline(inst.code, 1, Math.min(500, countBack), toSec * 1000, inst.asset);
+            bars = bars.filter((bar) => bar.time >= fromSec && bar.time <= toSec);
+          }
+        }
+      } else if (pairToBinanceSymbol(pair)) {
+        bars = await cryptoCandlesStore.getCandles(pair, 1, candleOpts);
+        if (bars.length === 0) {
+          const result = await cryptoCandles.getCryptoOhlc(pair, 1, { to: toSec, countBack });
+          bars = result.candles.filter((bar) => bar.time >= fromSec && bar.time <= toSec);
+        }
+      }
+      if (bars.length === 0) {
+        errors[pair] = 'Aucune bougie disponible sur la fenêtre';
+      } else {
+        out[pair] = bars;
+      }
+    } catch (err) {
+      errors[pair] = (err as Error).message || 'Erreur historique';
+    }
+  }
+
+  res.json({ candles: out, errors });
 });
 
 app.post('/api/paper/session', rateLimit({ windowMs: 10 * 60 * 1000, max: 15, key: 'paper-session' }), async (req, res) => {
@@ -1953,13 +2108,45 @@ app.post('/api/admin/prize-image', requireAdmin, upload.single('image'), async (
       res.status(400).json({ error: 'Fichier image illisible' });
       return;
     }
-    const optimized = await optimizeUploadedImage(buffer, { maxSide: 960, quality: 82 });
+    // Détourage auto du fond blanc (visuels de lots souvent exportés avec un
+    // fond blanc plutôt que transparent). N'affecte que les images dont les
+    // bords sont blancs ; sinon l'image est conservée telle quelle.
+    const optimized = await transparentizeWhiteBackground(buffer, { maxSide: 960 });
     const id = crypto.randomUUID();
     await competitionManager.putPrizeImage(id, optimized.mime, optimized.buffer);
     invalidateBlobCache(`prize:${id}`);
     res.json({ imageUrl: `/api/prize-images/${id}?v=${Date.now()}` });
   } catch (error: any) {
     console.error('[prize-image] upload failed:', error?.message);
+    res.status(500).json({ error: error.message || 'Upload impossible' });
+  }
+});
+
+// Upload d'un logo/visuel de promotion. Contrairement aux lots, on NE détoure
+// PAS le blanc (les logos sont déjà détourés / souvent blancs sur transparent)
+// et on préserve la transparence (WebP avec alpha). Servi via /api/prize-images/:id.
+app.post('/api/admin/promotion-image', requireAdmin, upload.single('image'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 512, quality: 86 });
+    const id = crypto.randomUUID();
+    await competitionManager.putPrizeImage(id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`prize:${id}`);
+    res.json({ imageUrl: `/api/prize-images/${id}?v=${Date.now()}` });
+  } catch (error: any) {
+    console.error('[promotion-image] upload failed:', error?.message);
     res.status(500).json({ error: error.message || 'Upload impossible' });
   }
 });
@@ -1979,6 +2166,56 @@ app.get('/api/prize-images/:id', async (req, res) => {
   }
 });
 
+/* ----------------------- PROMOTIONS / TRADE LIVE BONUS ----------------------- */
+
+// Liste publique des deals partenaires (page /compete/bonus).
+app.get('/api/promotions', async (req, res) => {
+  try {
+    const lang = String(req.query.lang || '').toLowerCase() === 'en' ? 'en' : 'fr';
+    const promotions = await promotionsStore.listPublicPromotions(lang);
+    res.json({ promotions });
+  } catch (error: any) {
+    console.error('[promotions] list public failed:', error?.message);
+    res.status(500).json({ error: error.message || 'Lecture des promotions impossible' });
+  }
+});
+
+app.get('/api/admin/promotions', requireAdmin, async (_req, res) => {
+  try {
+    const promotions = await promotionsStore.listPromotions();
+    res.json({ promotions });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture des promotions impossible' });
+  }
+});
+
+app.post('/api/admin/promotions', requireAdmin, async (req, res) => {
+  try {
+    const promotion = await promotionsStore.createPromotion(req.body || {});
+    res.json({ ok: true, promotion });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Création de la promotion impossible' });
+  }
+});
+
+app.patch('/api/admin/promotions/:id', requireAdmin, async (req, res) => {
+  try {
+    const promotion = await promotionsStore.updatePromotion(String(req.params.id || ''), req.body || {});
+    res.json({ ok: true, promotion });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Mise à jour de la promotion impossible' });
+  }
+});
+
+app.delete('/api/admin/promotions/:id', requireAdmin, async (req, res) => {
+  try {
+    await promotionsStore.deletePromotion(String(req.params.id || ''));
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression de la promotion impossible' });
+  }
+});
+
 /**
  * Lightweight finalize-only sync. Fast in the common case (no ended
  * competitions) and unavoidable: orders must close at competition end. We
@@ -1988,6 +2225,24 @@ app.get('/api/prize-images/:id', async (req, res) => {
 async function maybeFinalizeEndedCompetitions(): Promise<void> {
   if (!competitionManager.hasCompetitionsNeedingFinalization()) return;
   await finalizeEndedCompetitions();
+}
+
+// --- Notifications email des arènes (départ imminent, podium perdu, fin) ---
+// Boucle background : inutile en serverless (pas de process long-lived sur
+// Netlify) ; en prod Railway / dev local elle tourne toutes les 60s. On
+// finalise d'abord les arènes terminées pour que les emails de résultats
+// partent avec des classements définitifs.
+const competitionNotifier = new CompetitionNotifier(competitionManager);
+if (!IS_SERVERLESS) {
+  const notifierTimer = setInterval(() => {
+    void (async () => {
+      await maybeFinalizeEndedCompetitions();
+      await competitionNotifier.tick();
+    })().catch((error) => {
+      console.error('[notifier] loop error:', (error as Error)?.message);
+    });
+  }, 60_000);
+  if (typeof notifierTimer.unref === 'function') notifierTimer.unref();
 }
 
 app.get('/api/competition/public', async (_req, res) => {
@@ -2012,6 +2267,118 @@ app.get('/api/competition/mine', async (req, res) => {
  * separate Lambda invocations dramatically reduces the perceived load time
  * on Netlify (each cold start is ~1-3s).
  */
+/**
+ * Agrège les trades de plusieurs paper players (toutes les arènes d'un user)
+ * et calcule les stats globales (winrate, RR moyen, profit factor...).
+ */
+function aggregateStatsForPlayerIds(paperPlayerIds: string[]): TradeStats {
+  const trades: Trade[] = [];
+  for (const id of paperPlayerIds) {
+    const player = manager.getPlayerById(id);
+    if (player?.trades?.length) trades.push(...player.trades);
+  }
+  return computeTradeStats(trades);
+}
+
+/**
+ * Journal de trades personnel : tous les trades (opens + closes) de
+ * l'utilisateur, toutes arènes confondues (hors qualifications), rattachés à
+ * leur arène. Les opens sont inclus car ils portent les frais d'entrée :
+ * trade.pnl est un PnL prix pur (cf. exchangePaperEngine), le client déduit
+ * les frais (opens + closes) pour une courbe d'équité et des stats nettes.
+ * Triés par date croissante pour un cumul direct côté client.
+ */
+app.get('/api/competition/my-trades', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const links = competitionManager.listUserArenaPlayers(user.id);
+  const trades: Array<{
+    id: string;
+    competitionId: string;
+    competitionTitle: string;
+    pair: string;
+    side: 'long' | 'short';
+    action: 'open' | 'close';
+    size: number;
+    price: number;
+    entryPrice?: number;
+    leverage: number;
+    fee: number;
+    pnl: number;
+    time: number;
+  }> = [];
+  for (const link of links) {
+    const player = manager.getPlayerById(link.paperPlayerId);
+    if (!player?.trades?.length) continue;
+    for (const trade of player.trades) {
+      if (trade.action !== 'close' && trade.action !== 'open') continue;
+      trades.push({
+        id: trade.id,
+        competitionId: link.competitionId,
+        competitionTitle: link.competitionTitle,
+        pair: trade.pair,
+        side: trade.side,
+        action: trade.action,
+        size: trade.size,
+        price: trade.price,
+        entryPrice: typeof trade.entryPrice === 'number' ? trade.entryPrice : undefined,
+        leverage: trade.leverage,
+        fee: Number(trade.fee) || 0,
+        pnl: Number(trade.pnl) || 0,
+        time: trade.time,
+      });
+    }
+  }
+  trades.sort((a, b) => a.time - b.time);
+  // Cap large : suffisant pour une courbe d'équité complète sans payload géant.
+  res.json({ trades: trades.slice(-2000) });
+});
+
+/**
+ * Profil public d'un joueur : consultable par tout le monde (pas d'auth).
+ * Ne contient jamais d'info sensible (email, téléphone).
+ */
+app.get('/api/competition/player/:userId', async (req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const profile = competitionManager.getPublicPlayerProfile(String(req.params.userId || ''));
+  if (!profile) {
+    res.status(404).json({ error: 'Joueur introuvable' });
+    return;
+  }
+  const { paperPlayerIds, ...rest } = profile;
+  res.json({ ...rest, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
+});
+
+app.get('/api/competition/global-leaderboard', async (_req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const participations = competitionManager.listUserParticipations();
+  const rows = participations.map((p) => {
+    const stats = aggregateStatsForPlayerIds(p.paperPlayerIds);
+    return {
+      userId: p.userId,
+      name: p.name,
+      avatarUrl: p.avatarUrl,
+      badges: p.badges,
+      pnlUsd: p.pnlUsd,
+      arenas: p.arenas,
+      stats,
+    };
+  });
+  // On classe par PnL total décroissant ; les profils sans aucun trade fermé
+  // passent en bas.
+  rows.sort((a, b) => {
+    const aActive = a.stats.closedTrades > 0 ? 1 : 0;
+    const bActive = b.stats.closedTrades > 0 ? 1 : 0;
+    if (aActive !== bActive) return bActive - aActive;
+    return b.pnlUsd - a.pnlUsd;
+  });
+  res.json({ rows });
+});
+
 app.get('/api/competition/bootstrap', async (req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
   const [user] = await Promise.all([
@@ -2020,10 +2387,16 @@ app.get('/api/competition/bootstrap', async (req, res) => {
   ]);
   const publicCompetitions = competitionManager.listPublicCompetitions();
   const myCompetitions = user ? competitionManager.listUserCompetitions(user.id) : [];
+  const myStats = user
+    ? aggregateStatsForPlayerIds(competitionManager.getPaperPlayerIdsForUserStats(user.id))
+    : null;
+  const myBadges = user ? competitionManager.getUserBadges(user.id) : [];
   res.json({
     user,
     publicCompetitions,
     myCompetitions,
+    myStats,
+    myBadges,
   });
 });
 
@@ -2038,7 +2411,12 @@ app.post('/api/competition/join', async (req, res) => {
     // another Lambda, then persist the join atomically before responding so
     // the next click ("Trader") sees the entry on any Lambda.
     await refreshCompetitionStoreIfServerless();
-    const competition = competitionManager.joinCompetition(user.id, String(req.body?.code || ''));
+    const competition = competitionManager.joinCompetition(
+      user.id,
+      String(req.body?.code || ''),
+      req.body?.sponsorAccountId,
+      req.body?.competitionId,
+    );
     await competitionManager.persist();
     res.json({ ok: true, competitionId: competition.id });
   } catch (error: any) {
@@ -2180,7 +2558,7 @@ app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
 });
 
 app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
-  const { title, code, executionMode, startAt, endAt, isPublic, cashPrize } = req.body || {};
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, isPublic, cashPrize, sponsor, sponsorReferralUrl } = req.body || {};
   try {
     const competition = competitionManager.createCompetition({
       title: String(title || ''),
@@ -2188,8 +2566,11 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       executionMode: executionMode === 'real' ? 'real' : 'paper',
       startAt: Number(startAt),
       endAt: Number(endAt),
+      registrationEndsAt,
       isPublic: Boolean(isPublic),
       cashPrize,
+      sponsor,
+      sponsorReferralUrl,
     });
     await competitionManager.persist();
     res.json({ ok: true, competition });
@@ -2200,7 +2581,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const { title, code, executionMode, startAt, endAt, isPublic, cashPrize } = body;
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, isPublic, cashPrize, sponsor, sponsorReferralUrl } = body;
   try {
     const patch: Record<string, unknown> = {};
     if (title !== undefined) patch.title = String(title);
@@ -2208,8 +2589,15 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
     if (executionMode !== undefined) patch.executionMode = executionMode === 'real' ? 'real' : 'paper';
     if (startAt !== undefined) patch.startAt = Number(startAt);
     if (endAt !== undefined) patch.endAt = Number(endAt);
+    if (registrationEndsAt !== undefined) {
+      patch.registrationEndsAt = registrationEndsAt == null || registrationEndsAt === ''
+        ? null
+        : Number(registrationEndsAt);
+    }
     if (isPublic !== undefined) patch.isPublic = Boolean(isPublic);
     if ('cashPrize' in body) patch.cashPrize = cashPrize;
+    if ('sponsor' in body) patch.sponsor = sponsor;
+    if ('sponsorReferralUrl' in body) patch.sponsorReferralUrl = sponsorReferralUrl;
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);
     await competitionManager.persist();
@@ -2252,10 +2640,24 @@ app.post('/api/admin/competitions/result', requireAdmin, async (req, res) => {
   }
 });
 
+// Middleware d'erreur Express global : doit être enregistré APRÈS toutes les
+// routes. Capture toute erreur synchrone ou rejet propagé via next(err) afin
+// de renvoyer une réponse JSON propre au lieu de laisser la connexion pendre
+// (ou le process planter). Les 4 paramètres sont obligatoires pour qu'Express
+// le reconnaisse comme error handler.
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('[express:error]', req.method, req.path, err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(err?.status || 500).json({ error: err?.message || 'Erreur serveur interne' });
+});
+
 const serverReady = Promise.all([
   competitionManager.ready,
   manager.ready,
   itickCandles.initItickCandlesStore(),
+  cryptoCandlesStore.initCryptoCandlesStore(),
 ]).then(async () => {
   resyncCompetitionPlayerIsolation();
   // Pousse la balance des arènes online (persistée côté compétition) dans le
@@ -2351,6 +2753,15 @@ if (!process.env.NETLIFY) {
 // stale-revalidate) where the user request has already been served.
 process.on('unhandledRejection', (reason) => {
   console.warn('[unhandledRejection]', reason);
+});
+
+// Dernier rempart : une exception synchrone non catchée laisserait Node tuer le
+// process et perdre l'état en RAM (positions/ordres non flushés). On la logue et
+// on garde le process vivant — cohérent avec la politique unhandledRejection
+// ci-dessus. La majorité de ces erreurs viennent de callbacks de feeds upstream
+// (WS Binance/Bybit/iTick) et ne doivent pas faire tomber tout le serveur.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
 });
 
 export { serverReady };

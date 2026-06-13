@@ -97,6 +97,8 @@ export interface Trade {
   pnl: number;
   time: number;
   action: 'open' | 'close' | 'update';
+  /** Prix d'entrée de la position (rempli sur les trades de clôture). */
+  entryPrice?: number;
 }
 
 export interface Position {

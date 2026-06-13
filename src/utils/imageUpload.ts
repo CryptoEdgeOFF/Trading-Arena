@@ -11,11 +11,14 @@
  */
 export async function compressImage(
   file: File,
-  options: { maxSide?: number; quality?: number; mime?: string } = {},
+  options: { maxSide?: number; quality?: number; mime?: string; preserveAlpha?: boolean } = {},
 ): Promise<Blob> {
   const maxSide = options.maxSide ?? 1024;
   const quality = options.quality ?? 0.85;
-  const mime = options.mime ?? 'image/jpeg';
+  // Pour les logos détourés, on conserve la transparence (WebP par défaut) au
+  // lieu d'aplatir sur fond blanc + JPEG.
+  const preserveAlpha = options.preserveAlpha ?? false;
+  const mime = options.mime ?? (preserveAlpha ? 'image/webp' : 'image/jpeg');
 
   const url = URL.createObjectURL(file);
   try {
@@ -33,9 +36,12 @@ export async function compressImage(
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D non supporté');
-    // Fond blanc pour les images avec alpha, sinon JPEG produirait du noir.
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, w, h);
+    // Fond blanc pour les images avec alpha (sinon JPEG produirait du noir),
+    // sauf si on veut préserver la transparence (logos détourés).
+    if (!preserveAlpha) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+    }
     ctx.drawImage(img, 0, 0, w, h);
 
     const blob = await new Promise<Blob | null>((resolve) =>

@@ -1,12 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 const CONTACT_EMAIL = 'breakout.pro.tv@gmail.com';
-
-const BUG_REPORT_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
-  '[BTF Arena] Rapport de bug',
-)}&body=${encodeURIComponent(
-  "Décris le bug rencontré :\n\n- Page :\n- Ce qui s'est passé :\n- Ce qui était attendu :\n- Étapes pour reproduire :\n",
-)}`;
 
 function BugIcon({ className }: { className?: string }) {
   return (
@@ -35,9 +30,14 @@ function BugIcon({ className }: { className?: string }) {
 }
 
 export default function LegalFooter() {
+  const { t } = useTranslation();
   const location = useLocation();
   const fromCompete = location.pathname.startsWith('/compete');
   const suffix = fromCompete ? '?from=compete' : '';
+
+  const bugReportHref = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
+    t('footer.bugReportSubject'),
+  )}&body=${encodeURIComponent(t('footer.bugReportBody'))}`;
 
   return (
     <footer
@@ -56,17 +56,17 @@ export default function LegalFooter() {
             {CONTACT_EMAIL}
           </a>
           <nav className="flex flex-wrap gap-x-2 gap-y-0.5 uppercase tracking-[0.1em] sm:gap-x-3 sm:gap-y-1 sm:tracking-[0.14em]">
-            <Link className="transition-colors hover:text-white" to={`/cgu${suffix}`}>CGU</Link>
-            <Link className="transition-colors hover:text-white" to={`/confidentialite${suffix}`}>Confidentialité</Link>
-            <Link className="hidden transition-colors hover:text-white sm:inline" to={`/mentions-legales${suffix}`}>Mentions légales</Link>
-            <Link className="transition-colors hover:text-white" to={`/risques${suffix}`}>Risques</Link>
+            <Link className="transition-colors hover:text-white" to={`/cgu${suffix}`}>{t('footer.cgu')}</Link>
+            <Link className="transition-colors hover:text-white" to={`/confidentialite${suffix}`}>{t('footer.privacy')}</Link>
+            <Link className="hidden transition-colors hover:text-white sm:inline" to={`/mentions-legales${suffix}`}>{t('footer.legalNotice')}</Link>
+            <Link className="transition-colors hover:text-white" to={`/risques${suffix}`}>{t('footer.risks')}</Link>
           </nav>
           <a
-            href={BUG_REPORT_HREF}
+            href={bugReportHref}
             className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-600/90 px-2.5 py-1 font-semibold uppercase tracking-[0.1em] text-white transition-colors hover:bg-red-500 sm:tracking-[0.14em]"
           >
             <BugIcon className="h-3.5 w-3.5" />
-            Reporter un bug
+            {t('footer.reportBug')}
           </a>
         </div>
       </div>

@@ -27,11 +27,29 @@ export interface CompetitionEntry {
   tradesCount: number;
   updatedAt: number;
   paperPlayerId?: string;
+  /**
+   * Identifiant public fourni par le participant pour satisfaire la condition
+   * d'accès d'une arène sponsorisée (ex. identifiant public Kraken). Renseigné
+   * au moment du join quand le sponsor de l'arène l'exige.
+   */
+  sponsorAccountId?: string | null;
 }
 
 export interface CashPrizeBreakdownEntry {
   rank: number;
   amount: number;
+}
+
+/**
+ * Un lot additionnel (récompense physique ou autre) : photo + titre + texte
+ * libre. Permet d'afficher plusieurs lots, pas seulement un montant en USD.
+ */
+export interface CashPrizeItem {
+  /** Place associée au lot (1 = 1er, 2 = 2e, ...). Optionnel. */
+  rank?: number;
+  imageUrl?: string;
+  title?: string;
+  description?: string;
 }
 
 export interface CashPrize {
@@ -47,6 +65,72 @@ export interface CashPrize {
    * paragraphs). Supports plain newlines.
    */
   description?: string;
+  /**
+   * Lots additionnels (photos + texte libre). Chaque entrée est un lot à
+   * gagner en plus (ou à la place) du cash. Affiché sur la carte et le
+   * leaderboard public.
+   */
+  items?: CashPrizeItem[];
+}
+
+const MAX_PRIZE_ITEMS = 12;
+
+/**
+ * Vrai si le titre correspond à une arène de qualification (exclue du
+ * classement global). Couvre "BTF QUALIFICATIONS" et variantes.
+ */
+function isQualificationCompetition(title: string | undefined | null): boolean {
+  return /qualif/i.test(String(title || ''));
+}
+
+/**
+ * Badges collectionnables affichés à côté du pseudo :
+ * - 'btf2026'         : a participé à une arène de qualification BTF (événement physique Paris 2026).
+ * - 'champion'        : a terminé 1er d'au moins une arène terminée.
+ * - 'paris-champion'  : vainqueur de la finale amateur physique BTF à Paris (4-5 juin 2026).
+ *                       Attribué manuellement à une liste fixe de gagnants.
+ */
+export type UserBadge = 'btf2026' | 'champion' | 'paris-champion';
+
+/**
+ * Vainqueurs de la compétition amateur en présentiel (Paris, 4-5 juin 2026).
+ * Liste fixe d'IDs utilisateurs : badge attribué manuellement (hors logique
+ * d'arène). Éditer ici pour ajouter/retirer un gagnant.
+ */
+const PARIS_CHAMPION_USER_IDS: ReadonlySet<string> = new Set([
+  'd8d54a95-9bf2-4f21-a604-cc8ada178ee4', // EVO
+  'ed09da92-fa40-431d-9525-61ae4c12ba34', // yoyo
+  '020c58bc-6b39-4803-93dd-4385d1b8fd9f', // Martin Gale
+  'c426b642-893f-456e-8cb7-1ae7e699f974', // Celia
+]);
+
+function normalizeCashPrizeItems(input: unknown): CashPrizeItem[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const items = input
+    .map((row: unknown): CashPrizeItem | null => {
+      if (!row || typeof row !== 'object') return null;
+      const r = row as { rank?: unknown; imageUrl?: unknown; title?: unknown; description?: unknown };
+      const rankRaw = Number(r.rank);
+      const rank = Number.isFinite(rankRaw) && rankRaw >= 1 ? Math.min(Math.floor(rankRaw), 999) : undefined;
+      const imageUrl = String(r.imageUrl ?? '').trim().slice(0, 5000);
+      const title = String(r.title ?? '').trim().slice(0, 120);
+      const description = String(r.description ?? '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '')
+        .trim()
+        .slice(0, 1500);
+      if (!imageUrl && !title && !description) return null;
+      return {
+        ...(rank ? { rank } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(title ? { title } : {}),
+        ...(description ? { description } : {}),
+      };
+    })
+    .filter((row): row is CashPrizeItem => row !== null)
+    .slice(0, MAX_PRIZE_ITEMS)
+    .sort((a, b) => (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER));
+  return items.length > 0 ? items : undefined;
 }
 
 export interface Competition {
@@ -56,14 +140,64 @@ export interface Competition {
   executionMode: 'paper' | 'real';
   startAt: number;
   endAt: number;
+  /**
+   * Fin de la phase d'inscription (join). Par défaut = `startAt` (inscriptions
+   * jusqu'au début du trading). Peut être antérieure pour fermer les
+   * inscriptions avant le départ.
+   */
+  registrationEndsAt?: number | null;
   isPublic: boolean;
   createdAt: number;
   entries: CompetitionEntry[];
   cashPrize?: CashPrize | null;
   finalizedAt?: number | null;
+  /**
+   * Clé du sponsor de l'arène (ex. 'kraken'). null = arène standard BTF.
+   * Détermine le thème (couleurs + logo) et la condition d'accès (saisie d'un
+   * identifiant public sponsor au moment du join). Voir SPONSOR_DEFS.
+   */
+  sponsor?: string | null;
+  /**
+   * Lien d'affiliation/parrainage du sponsor, saisi par l'admin à la création
+   * de l'arène. Affiché dans la modale de join (bouton « S'inscrire »). Si
+   * vide, le client retombe sur le lien par défaut du registre sponsor.
+   */
+  sponsorReferralUrl?: string | null;
+  /** Timestamp d'envoi de l'email « l'arène démarre bientôt » (anti-doublon). */
+  notifiedStartSoonAt?: number | null;
+  /** Timestamp d'envoi des emails de résultats de fin d'arène (anti-doublon). */
+  notifiedEndedAt?: number | null;
+  /** Timestamp d'envoi de l'email « nouvelle arène disponible » (anti-doublon). */
+  notifiedNewArenaAt?: number | null;
 }
 
-export type CompetitionStatus = 'upcoming' | 'live' | 'ended';
+export type CompetitionStatus = 'registration' | 'starting_soon' | 'live' | 'ended';
+
+/**
+ * Sponsors connus. Le serveur ne stocke que la clé + sait quels sponsors
+ * imposent la saisie d'un identifiant public au join. Le thème (couleurs,
+ * logo, lien de parrainage) vit côté client dans src/lib/sponsors.ts.
+ */
+const SPONSOR_DEFS: Record<string, { requiresAccountId: boolean; accountIdPattern?: RegExp }> = {
+  // Un identifiant public Kraken ressemble à « AA38 N84G TUDE DOOA » :
+  // 16 caractères alphanumériques, regroupés par 4. On ignore les espaces.
+  kraken: { requiresAccountId: true, accountIdPattern: /^[A-Z0-9]{16}$/ },
+};
+
+function normalizeSponsor(input: unknown): string | null {
+  const key = String(input ?? '').trim().toLowerCase();
+  if (!key) return null;
+  return SPONSOR_DEFS[key] ? key : null;
+}
+
+function normalizeSponsorReferralUrl(input: unknown): string | null {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+  // On n'accepte que des URL http(s) pour éviter les schémas dangereux
+  // (javascript:, data:, etc.) injectés dans un href.
+  if (!/^https?:\/\//i.test(raw)) return null;
+  return raw.slice(0, 2000);
+}
 
 interface CompetitionStore {
   users: CompetitionUser[];
@@ -136,10 +270,29 @@ function normalizeSocialUrl(value: unknown): string | undefined {
   return raw;
 }
 
-function inferCompetitionStatus(startAt: number, endAt: number, now = Date.now()): CompetitionStatus {
-  if (now < startAt) return 'upcoming';
-  if (now > endAt) return 'ended';
-  return 'live';
+type CompetitionTiming = Pick<Competition, 'startAt' | 'endAt' | 'registrationEndsAt'>;
+
+function getRegistrationEndsAt(competition: CompetitionTiming): number {
+  const raw = competition.registrationEndsAt;
+  if (raw != null && Number.isFinite(raw)) return raw;
+  return competition.startAt;
+}
+
+function inferCompetitionStatus(competition: CompetitionTiming, now = Date.now()): CompetitionStatus {
+  if (now > competition.endAt) return 'ended';
+  if (now >= competition.startAt) return 'live';
+  const registrationEndsAt = getRegistrationEndsAt(competition);
+  if (now >= registrationEndsAt) return 'starting_soon';
+  return 'registration';
+}
+
+function canJoinCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
+  if (now > competition.endAt) return false;
+  return now < getRegistrationEndsAt(competition);
+}
+
+function canTradeCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
+  return now >= competition.startAt && now <= competition.endAt;
 }
 
 /**
@@ -151,18 +304,22 @@ function inferCompetitionStatus(startAt: number, endAt: number, now = Date.now()
 function sortAndRankLeaderboard<T extends { pnlPercent: number; pnlUsd: number; tradesCount: number }>(
   rows: T[],
 ): Array<T & { rank: number }> {
-  // Classement strictement par PnL (% puis $). On ne privilégie plus les
-  // joueurs ayant tradé : sinon, après la restauration (trades remis à 0),
-  // un joueur ayant passé 1 trade depuis la réouverture passerait devant des
-  // PnL bien supérieurs restés à 0 trade.
-  const sorted = rows.slice().sort((a, b) => (
-    b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd
-  ));
+  // Traders classés en premier (PnL % puis $) ; les inscrits sans trade
+  // (tradesCount === 0) restent en bas avec rank = 0 et ne figurent pas au podium.
+  const sorted = rows.slice().sort((a, b) => {
+    const aTraded = a.tradesCount > 0 ? 1 : 0;
+    const bTraded = b.tradesCount > 0 ? 1 : 0;
+    if (aTraded !== bTraded) return bTraded - aTraded;
+    return b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd;
+  });
   let rank = 0;
-  return sorted.map((row) => ({
-    ...row,
-    rank: (rank += 1),
-  }));
+  return sorted.map((row) => {
+    if (row.tradesCount <= 0) {
+      return { ...row, rank: 0 };
+    }
+    rank += 1;
+    return { ...row, rank };
+  });
 }
 
 function normalizeCashPrize(input: unknown): CashPrize | null {
@@ -175,6 +332,7 @@ function normalizeCashPrize(input: unknown): CashPrize | null {
     label?: unknown;
     imageUrl?: unknown;
     description?: unknown;
+    items?: unknown;
   };
   const total = Number(data.total);
   const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
@@ -204,12 +362,15 @@ function normalizeCashPrize(input: unknown): CashPrize | null {
     if (breakdown.length === 0) breakdown = undefined;
   }
 
+  const items = normalizeCashPrizeItems(data.items);
+
   if (
     safeTotal === 0 &&
     (!breakdown || breakdown.length === 0) &&
     !label &&
     !imageUrl &&
-    !description
+    !description &&
+    (!items || items.length === 0)
   ) {
     return null;
   }
@@ -221,6 +382,7 @@ function normalizeCashPrize(input: unknown): CashPrize | null {
     ...(label ? { label } : {}),
     ...(imageUrl ? { imageUrl } : {}),
     ...(description ? { description } : {}),
+    ...(items ? { items } : {}),
   };
 }
 
@@ -279,6 +441,10 @@ export class CompetitionManager {
       this.pool = new Pool({
         connectionString: databaseUrl,
         ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+        // Borne les connexions (auth, sessions, store compétitions).
+        max: Number(process.env.PG_POOL_MAX_COMPETITION) || 8,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 10_000,
       });
       // Prevent the entire process from crashing when the Postgres pool emits
       // an asynchronous error (e.g. transient network drops on Neon).
@@ -1200,24 +1366,46 @@ export class CompetitionManager {
     executionMode: 'paper' | 'real';
     startAt: number;
     endAt: number;
+    registrationEndsAt?: unknown;
     isPublic: boolean;
     cashPrize?: unknown;
+    sponsor?: unknown;
+    sponsorReferralUrl?: unknown;
   }): Competition {
     const title = String(input.title || '').trim();
     const code = normalizeCode(input.code);
     const executionMode = input.executionMode === 'real' ? 'real' : 'paper';
     const startAt = Number(input.startAt);
     const endAt = Number(input.endAt);
+    let registrationEndsAt: number | null = null;
+    if (input.registrationEndsAt != null && input.registrationEndsAt !== '') {
+      registrationEndsAt = Number(input.registrationEndsAt);
+      if (!Number.isFinite(registrationEndsAt)) throw new Error('Date fin inscriptions invalide');
+    }
     const isPublic = Boolean(input.isPublic);
     const cashPrize = normalizeCashPrize(input.cashPrize);
+    const sponsor = normalizeSponsor(input.sponsor);
+    const sponsorReferralUrl = normalizeSponsorReferralUrl(input.sponsorReferralUrl);
 
     if (!title) throw new Error('Titre requis');
-    if (!code || code.length < 4) throw new Error('Code competition invalide');
+    // Code optionnel : une arène sans code est accessible librement (pas de
+    // saisie demandée au join). Si un code est fourni, il doit faire ≥ 4
+    // caractères et rester unique.
+    if (code) {
+      if (code.length < 4) throw new Error('Code competition invalide');
+      if (Array.from(this.competitions.values()).some((entry) => entry.code && entry.code === code)) {
+        throw new Error('Code competition deja utilise');
+      }
+    }
     if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt) {
       throw new Error('Dates competition invalides');
     }
-    if (Array.from(this.competitions.values()).some((entry) => entry.code === code)) {
-      throw new Error('Code competition deja utilise');
+    const effectiveRegistrationEndsAt = registrationEndsAt ?? startAt;
+    if (effectiveRegistrationEndsAt > startAt) {
+      throw new Error('Les inscriptions doivent se terminer avant ou au debut du trading');
+    }
+    if (effectiveRegistrationEndsAt > endAt) {
+      throw new Error('La fin des inscriptions doit etre avant la fin de l arene');
     }
 
     const competition: Competition = {
@@ -1227,10 +1415,13 @@ export class CompetitionManager {
       executionMode,
       startAt,
       endAt,
+      registrationEndsAt: effectiveRegistrationEndsAt,
       isPublic,
       createdAt: Date.now(),
       entries: [],
       cashPrize,
+      sponsor,
+      sponsorReferralUrl,
     };
 
     this.competitions.set(competition.id, competition);
@@ -1238,13 +1429,13 @@ export class CompetitionManager {
     return competition;
   }
 
-  listAdminCompetitions(): Array<Competition & { status: 'upcoming' | 'live' | 'ended'; participants: number; entriesDetailed: Array<CompetitionEntry & { user: CompetitionUser | null }> }> {
+  listAdminCompetitions(): Array<Competition & { status: CompetitionStatus; participants: number; entriesDetailed: Array<CompetitionEntry & { user: CompetitionUser | null }> }> {
     const competitions = Array.from(this.competitions.values())
       .sort((a, b) => b.createdAt - a.createdAt);
 
     return competitions.map((competition) => ({
       ...competition,
-      status: inferCompetitionStatus(competition.startAt, competition.endAt),
+      status: inferCompetitionStatus(competition),
       participants: competition.entries.length,
       entriesDetailed: competition.entries
         .map((entry) => ({ ...entry, user: this.users.get(entry.userId) || null }))
@@ -1259,11 +1450,17 @@ export class CompetitionManager {
     executionMode: 'paper' | 'real';
     startAt: number;
     endAt: number;
+    registrationEndsAt: number;
     isPublic: boolean;
     participants: number;
-    status: 'upcoming' | 'live' | 'ended';
+    status: CompetitionStatus;
+    canJoin: boolean;
+    canTrade: boolean;
     cashPrize: CashPrize | null;
+    sponsor: string | null;
+    sponsorReferralUrl: string | null;
   }> {
+    const now = Date.now();
     return Array.from(this.competitions.values())
       .filter((competition) => competition.isPublic)
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -1274,38 +1471,81 @@ export class CompetitionManager {
         executionMode: competition.executionMode,
         startAt: competition.startAt,
         endAt: competition.endAt,
+        registrationEndsAt: getRegistrationEndsAt(competition),
         isPublic: competition.isPublic,
         participants: competition.entries.length,
-        status: inferCompetitionStatus(competition.startAt, competition.endAt),
+        status: inferCompetitionStatus(competition, now),
+        canJoin: canJoinCompetition(competition, now),
+        canTrade: canTradeCompetition(competition, now),
         cashPrize: competition.cashPrize ?? null,
+        sponsor: competition.sponsor ?? null,
+        sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
       }));
   }
 
-  joinCompetition(userId: string, codeInput: string): Competition {
+  joinCompetition(userId: string, codeInput: string, sponsorAccountIdInput?: unknown, competitionIdInput?: unknown): Competition {
     const code = normalizeCode(codeInput);
-    const competition = Array.from(this.competitions.values()).find((entry) => entry.code === code);
+    let competition: Competition | undefined;
+    if (code) {
+      // Join classique par code (on n'apparie jamais sur un code vide).
+      competition = Array.from(this.competitions.values()).find((entry) => entry.code && entry.code === code);
+    } else {
+      // Pas de code fourni → join d'une arène ouverte (sans code) via son id.
+      const competitionId = String(competitionIdInput ?? '').trim();
+      const found = competitionId ? this.competitions.get(competitionId) : undefined;
+      // On refuse l'accès sans code à une arène protégée par un code.
+      if (found && !found.code) competition = found;
+      else if (found && found.code) throw new Error('Code requis');
+    }
     if (!competition) throw new Error('Competition introuvable');
-    if (inferCompetitionStatus(competition.startAt, competition.endAt) === 'ended') {
-      throw new Error('Competition terminee');
-    }
-    const already = competition.entries.some((entry) => entry.userId === userId);
-    if (!already) {
-      // Plafond de participants (anti-DoS / charge WS+DB). Les inscrits déjà
-      // présents peuvent toujours rejouer ; on ne refuse que les nouveaux.
-      if (competition.entries.length >= MAX_ARENA_PARTICIPANTS) {
-        throw new Error('Cette arene est complete');
+
+    // Condition d'accès sponsor : si l'arène est sponsorisée par un partenaire
+    // qui exige un identifiant public (ex. Kraken), il doit être fourni.
+    const sponsorDef = competition.sponsor ? SPONSOR_DEFS[competition.sponsor] : null;
+    let sponsorAccountId: string | null = null;
+    if (sponsorDef?.requiresAccountId) {
+      // Canonicalisation : on enlève les espaces et on passe en majuscules
+      // pour stocker une forme stable et valider le format.
+      const cleaned = String(sponsorAccountIdInput ?? '').replace(/\s+/g, '').toUpperCase().slice(0, 64);
+      if (!cleaned) throw new Error('Identifiant sponsor requis');
+      if (sponsorDef.accountIdPattern && !sponsorDef.accountIdPattern.test(cleaned)) {
+        throw new Error('Identifiant sponsor invalide');
       }
-      competition.entries.push({
-        userId,
-        joinedAt: Date.now(),
-        pnlUsd: 0,
-        pnlPercent: 0,
-        tradesCount: 0,
-        updatedAt: Date.now(),
-      });
-      this.competitions.set(competition.id, competition);
-      this.save();
+      sponsorAccountId = cleaned;
     }
+
+    const existing = competition.entries.find((entry) => entry.userId === userId);
+    if (!existing && !canJoinCompetition(competition)) {
+      throw new Error('Les inscriptions sont fermees pour cette arene');
+    }
+
+    if (existing) {
+      // Inscrit : on permet de (re)renseigner / corriger l'identifiant sponsor.
+      if (sponsorAccountId && existing.sponsorAccountId !== sponsorAccountId) {
+        existing.sponsorAccountId = sponsorAccountId;
+        existing.updatedAt = Date.now();
+        this.competitions.set(competition.id, competition);
+        this.save();
+      }
+      return competition;
+    }
+
+    // Plafond de participants (anti-DoS / charge WS+DB). Les inscrits déjà
+    // présents peuvent toujours rejouer ; on ne refuse que les nouveaux.
+    if (competition.entries.length >= MAX_ARENA_PARTICIPANTS) {
+      throw new Error('Cette arene est complete');
+    }
+    competition.entries.push({
+      userId,
+      joinedAt: Date.now(),
+      pnlUsd: 0,
+      pnlPercent: 0,
+      tradesCount: 0,
+      updatedAt: Date.now(),
+      ...(sponsorAccountId ? { sponsorAccountId } : {}),
+    });
+    this.competitions.set(competition.id, competition);
+    this.save();
     return competition;
   }
 
@@ -1320,18 +1560,18 @@ export class CompetitionManager {
   getCompetitionStatus(competitionId: string): CompetitionStatus {
     const competition = this.competitions.get(competitionId);
     if (!competition) throw new Error('Competition introuvable');
-    return inferCompetitionStatus(competition.startAt, competition.endAt);
+    return inferCompetitionStatus(competition);
   }
 
   assertCompetitionTradingOpen(competitionId: string): Competition {
     const competition = this.competitions.get(competitionId);
     if (!competition) throw new Error('Competition introuvable');
-    const status = inferCompetitionStatus(competition.startAt, competition.endAt);
-    if (status === 'upcoming') {
+    if (!canTradeCompetition(competition)) {
+      const status = inferCompetitionStatus(competition);
+      if (status === 'ended') {
+        throw new Error('La competition est terminee');
+      }
       throw new Error('La competition n a pas encore commence');
-    }
-    if (status === 'ended') {
-      throw new Error('La competition est terminee');
     }
     return competition;
   }
@@ -1375,6 +1615,110 @@ export class CompetitionManager {
     await this.persist();
   }
 
+  /**
+   * Regroupe toutes les participations par utilisateur pour le leaderboard
+   * global : nom, avatar, total PnL (somme des entries), nombre d'arènes et
+   * la liste des paperPlayerId (pour calculer winrate / RR / profit factor à
+   * partir des trades dans index.ts).
+   */
+  listUserParticipations(): Array<{
+    userId: string;
+    name: string;
+    avatarUrl: string | null;
+    badges: UserBadge[];
+    pnlUsd: number;
+    arenas: number;
+    paperPlayerIds: string[];
+  }> {
+    const byUser = new Map<string, { pnlUsd: number; arenas: number; paperPlayerIds: string[] }>();
+    for (const competition of this.competitions.values()) {
+      // Les arènes de qualification (ex. "BTF QUALIFICATIONS") ne comptent pas
+      // dans le classement global : elles servent à se qualifier, pas à
+      // cumuler des stats globales.
+      if (isQualificationCompetition(competition.title)) continue;
+      for (const entry of competition.entries) {
+        let rec = byUser.get(entry.userId);
+        if (!rec) {
+          rec = { pnlUsd: 0, arenas: 0, paperPlayerIds: [] };
+          byUser.set(entry.userId, rec);
+        }
+        rec.pnlUsd += Number(entry.pnlUsd) || 0;
+        rec.arenas += 1;
+        if (entry.paperPlayerId) rec.paperPlayerIds.push(entry.paperPlayerId);
+      }
+    }
+    const badges = this.getAllUserBadges();
+    return Array.from(byUser.entries()).map(([userId, rec]) => {
+      const user = this.users.get(userId);
+      return {
+        userId,
+        name: user?.name || 'Participant',
+        avatarUrl: user?.avatarUrl || null,
+        badges: badges.get(userId) ?? [],
+        pnlUsd: rec.pnlUsd,
+        arenas: rec.arenas,
+        paperPlayerIds: rec.paperPlayerIds,
+      };
+    });
+  }
+
+  private badgesCacheAt = 0;
+  private badgesCache: Map<string, UserBadge[]> = new Map();
+
+  /**
+   * Badges par utilisateur (cf. UserBadge). Mis en cache 10s : les arènes
+   * terminées ne changent plus et les leaderboards sont pollés toutes les 2s,
+   * inutile de re-classer chaque arène terminée à chaque appel.
+   */
+  getAllUserBadges(): Map<string, UserBadge[]> {
+    const now = Date.now();
+    if (now - this.badgesCacheAt < 10_000) return this.badgesCache;
+
+    const champions = new Set<string>();
+    const btf2026 = new Set<string>();
+    for (const competition of this.competitions.values()) {
+      if (isQualificationCompetition(competition.title)) {
+        for (const entry of competition.entries) btf2026.add(entry.userId);
+      }
+      if (inferCompetitionStatus(competition) !== 'ended') continue;
+      const ranked = sortAndRankLeaderboard(competition.entries.slice());
+      const winner = ranked.find((entry) => entry.rank === 1);
+      if (winner) champions.add(winner.userId);
+    }
+
+    const map = new Map<string, UserBadge[]>();
+    // Vainqueurs Paris en premier (badge le plus prestigieux).
+    for (const userId of PARIS_CHAMPION_USER_IDS) map.set(userId, ['paris-champion']);
+    for (const userId of champions) {
+      const list = map.get(userId);
+      if (list) list.push('champion');
+      else map.set(userId, ['champion']);
+    }
+    for (const userId of btf2026) {
+      const list = map.get(userId);
+      if (list) list.push('btf2026');
+      else map.set(userId, ['btf2026']);
+    }
+    this.badgesCache = map;
+    this.badgesCacheAt = now;
+    return map;
+  }
+
+  getUserBadges(userId: string): UserBadge[] {
+    return this.getAllUserBadges().get(userId) ?? [];
+  }
+
+  /** Total PnL (somme des entries) d'un user, tous arènes confondues. */
+  getUserTotalPnl(userId: string): number {
+    let total = 0;
+    for (const competition of this.competitions.values()) {
+      for (const entry of competition.entries) {
+        if (entry.userId === userId) total += Number(entry.pnlUsd) || 0;
+      }
+    }
+    return total;
+  }
+
   /** Tous les paperPlayerId associés à un user (1 par compétition rejointe). */
   getPaperPlayerIdsForUser(userId: string): string[] {
     const out: string[] = [];
@@ -1388,11 +1732,54 @@ export class CompetitionManager {
     return out;
   }
 
+  /**
+   * Comme getPaperPlayerIdsForUser mais en excluant les arènes de
+   * qualification — utilisé pour les stats du profil (winrate, RR, profit
+   * factor) afin de ne pas compter la BTF Qualification.
+   */
+  getPaperPlayerIdsForUserStats(userId: string): string[] {
+    const out: string[] = [];
+    for (const competition of this.competitions.values()) {
+      if (isQualificationCompetition(competition.title)) continue;
+      for (const entry of competition.entries) {
+        if (entry.userId === userId && entry.paperPlayerId) {
+          out.push(entry.paperPlayerId);
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Paper players d'un user avec l'arène associée (hors qualification) —
+   * utilisé par le journal de trades pour rattacher chaque trade à son arène.
+   */
+  listUserArenaPlayers(userId: string): Array<{
+    paperPlayerId: string;
+    competitionId: string;
+    competitionTitle: string;
+  }> {
+    const out: Array<{ paperPlayerId: string; competitionId: string; competitionTitle: string }> = [];
+    for (const competition of this.competitions.values()) {
+      if (isQualificationCompetition(competition.title)) continue;
+      for (const entry of competition.entries) {
+        if (entry.userId === userId && entry.paperPlayerId) {
+          out.push({
+            paperPlayerId: entry.paperPlayerId,
+            competitionId: competition.id,
+            competitionTitle: competition.title,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
   getCompetitionsNeedingFinalization(now = Date.now()): Array<{ competitionId: string; paperPlayerIds: string[] }> {
     return Array.from(this.competitions.values())
       .filter((competition) => (
         !competition.finalizedAt
-        && inferCompetitionStatus(competition.startAt, competition.endAt, now) === 'ended'
+        && inferCompetitionStatus(competition, now) === 'ended'
       ))
       .map((competition) => ({
         competitionId: competition.id,
@@ -1410,7 +1797,7 @@ export class CompetitionManager {
   hasCompetitionsNeedingFinalization(now = Date.now()): boolean {
     for (const competition of this.competitions.values()) {
       if (competition.finalizedAt) continue;
-      if (inferCompetitionStatus(competition.startAt, competition.endAt, now) !== 'ended') continue;
+      if (inferCompetitionStatus(competition, now) !== 'ended') continue;
       if (competition.entries.some((entry) => Boolean(entry.paperPlayerId))) return true;
     }
     return false;
@@ -1452,14 +1839,24 @@ export class CompetitionManager {
     executionMode: 'paper' | 'real';
     startAt: number;
     endAt: number;
-    status: 'upcoming' | 'live' | 'ended';
+    status: CompetitionStatus;
+    registrationEndsAt: number;
+    canJoin: boolean;
+    canTrade: boolean;
     myEntry: CompetitionEntry;
     cashPrize: CashPrize | null;
+    participants: number;
+    rank: number | null;
+    sponsor: string | null;
+    sponsorReferralUrl: string | null;
   }> {
     return Array.from(this.competitions.values())
       .filter((competition) => competition.entries.some((entry) => entry.userId === userId))
       .map((competition) => {
         const myEntry = competition.entries.find((entry) => entry.userId === userId)!;
+        const ranked = sortAndRankLeaderboard(competition.entries.slice());
+        const myRanked = ranked.find((entry) => entry.userId === userId);
+        const now = Date.now();
         return {
           id: competition.id,
           title: competition.title,
@@ -1467,12 +1864,113 @@ export class CompetitionManager {
           executionMode: competition.executionMode,
           startAt: competition.startAt,
           endAt: competition.endAt,
-          status: inferCompetitionStatus(competition.startAt, competition.endAt),
+          registrationEndsAt: getRegistrationEndsAt(competition),
+          status: inferCompetitionStatus(competition, now),
+          canJoin: canJoinCompetition(competition, now),
+          canTrade: canTradeCompetition(competition, now),
           myEntry,
           cashPrize: competition.cashPrize ?? null,
+          participants: competition.entries.length,
+          // rank 0 = pas classé (aucun trade) → null côté client.
+          rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
+          sponsor: competition.sponsor ?? null,
+          sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
         };
       })
       .sort((a, b) => b.startAt - a.startAt);
+  }
+
+  /**
+   * Profil public d'un joueur : infos non sensibles (jamais d'email/téléphone),
+   * badges, et historique des arènes PUBLIQUES auxquelles il a participé.
+   * Les stats de trading sont calculées dans index.ts à partir de
+   * paperPlayerIds (arènes hors qualification, comme le leaderboard global).
+   */
+  getPublicPlayerProfile(userId: string): {
+    user: {
+      id: string;
+      name: string;
+      avatarUrl: string | null;
+      socials: { x?: string; instagram?: string; discord?: string; website?: string };
+    };
+    badges: UserBadge[];
+    totalPnlUsd: number;
+    paperPlayerIds: string[];
+    arenas: Array<{
+      id: string;
+      title: string;
+      status: CompetitionStatus;
+      startAt: number;
+      endAt: number;
+      participants: number;
+      rank: number | null;
+      pnlUsd: number;
+      pnlPercent: number;
+      tradesCount: number;
+    }>;
+  } | null {
+    const user = this.users.get(userId);
+    if (!user) return null;
+
+    let totalPnlUsd = 0;
+    const paperPlayerIds: string[] = [];
+    const arenas: Array<{
+      id: string;
+      title: string;
+      status: CompetitionStatus;
+      startAt: number;
+      endAt: number;
+      participants: number;
+      rank: number | null;
+      pnlUsd: number;
+      pnlPercent: number;
+      tradesCount: number;
+    }> = [];
+
+    for (const competition of this.competitions.values()) {
+      const entry = competition.entries.find((item) => item.userId === userId);
+      if (!entry) continue;
+      const isQualif = isQualificationCompetition(competition.title);
+      if (!isQualif) {
+        totalPnlUsd += Number(entry.pnlUsd) || 0;
+        if (entry.paperPlayerId) paperPlayerIds.push(entry.paperPlayerId);
+      }
+      // Seules les arènes publiques apparaissent dans l'historique consultable.
+      if (!competition.isPublic) continue;
+      const ranked = sortAndRankLeaderboard(competition.entries.slice());
+      const myRanked = ranked.find((item) => item.userId === userId);
+      arenas.push({
+        id: competition.id,
+        title: competition.title,
+        status: inferCompetitionStatus(competition),
+        startAt: competition.startAt,
+        endAt: competition.endAt,
+        participants: competition.entries.length,
+        rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
+        pnlUsd: Number(entry.pnlUsd) || 0,
+        pnlPercent: Number(entry.pnlPercent) || 0,
+        tradesCount: Math.max(0, Math.floor(Number(entry.tradesCount) || 0)),
+      });
+    }
+    arenas.sort((a, b) => b.startAt - a.startAt);
+
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        avatarUrl: user.avatarUrl || null,
+        socials: {
+          x: user.socials?.x,
+          instagram: user.socials?.instagram,
+          discord: user.socials?.discord,
+          website: user.socials?.website,
+        },
+      },
+      badges: this.getUserBadges(userId),
+      totalPnlUsd,
+      paperPlayerIds,
+      arenas,
+    };
   }
 
   deleteCompetition(id: string): { paperPlayerIds: string[] } {
@@ -1492,8 +1990,11 @@ export class CompetitionManager {
     executionMode: 'paper' | 'real';
     startAt: number;
     endAt: number;
+    registrationEndsAt: number | null;
     isPublic: boolean;
     cashPrize: unknown;
+    sponsor: unknown;
+    sponsorReferralUrl: unknown;
   }>): Competition {
     const competition = this.competitions.get(id);
     if (!competition) throw new Error('Competition introuvable');
@@ -1506,10 +2007,13 @@ export class CompetitionManager {
 
     if (patch.code !== undefined) {
       const code = normalizeCode(patch.code);
-      if (!code || code.length < 4) throw new Error('Code competition invalide');
-      const taken = Array.from(this.competitions.values())
-        .some((entry) => entry.id !== id && entry.code === code);
-      if (taken) throw new Error('Code competition deja utilise');
+      // Code vide autorisé → arène ouverte (sans saisie de code au join).
+      if (code) {
+        if (code.length < 4) throw new Error('Code competition invalide');
+        const taken = Array.from(this.competitions.values())
+          .some((entry) => entry.id !== id && entry.code && entry.code === code);
+        if (taken) throw new Error('Code competition deja utilise');
+      }
       competition.code = code;
     }
 
@@ -1522,8 +2026,21 @@ export class CompetitionManager {
     if (!Number.isFinite(nextStart) || !Number.isFinite(nextEnd) || nextEnd <= nextStart) {
       throw new Error('Dates competition invalides');
     }
+    let nextRegistrationEndsAt = patch.registrationEndsAt !== undefined
+      ? (patch.registrationEndsAt == null ? nextStart : Number(patch.registrationEndsAt))
+      : getRegistrationEndsAt(competition);
+    if (!Number.isFinite(nextRegistrationEndsAt)) {
+      throw new Error('Date fin inscriptions invalide');
+    }
+    if (nextRegistrationEndsAt > nextStart) {
+      throw new Error('Les inscriptions doivent se terminer avant ou au debut du trading');
+    }
+    if (nextRegistrationEndsAt > nextEnd) {
+      throw new Error('La fin des inscriptions doit etre avant la fin de l arene');
+    }
     competition.startAt = nextStart;
     competition.endAt = nextEnd;
+    competition.registrationEndsAt = nextRegistrationEndsAt;
 
     if (patch.isPublic !== undefined) {
       competition.isPublic = Boolean(patch.isPublic);
@@ -1531,6 +2048,14 @@ export class CompetitionManager {
 
     if (patch.cashPrize !== undefined) {
       competition.cashPrize = normalizeCashPrize(patch.cashPrize);
+    }
+
+    if (patch.sponsor !== undefined) {
+      competition.sponsor = normalizeSponsor(patch.sponsor);
+    }
+
+    if (patch.sponsorReferralUrl !== undefined) {
+      competition.sponsorReferralUrl = normalizeSponsorReferralUrl(patch.sponsorReferralUrl);
     }
 
     this.competitions.set(competition.id, competition);
@@ -1585,7 +2110,10 @@ export class CompetitionManager {
       executionMode: 'paper' | 'real';
       startAt: number;
       endAt: number;
-      status: 'upcoming' | 'live' | 'ended';
+      registrationEndsAt: number;
+      status: CompetitionStatus;
+      canJoin: boolean;
+      canTrade: boolean;
       participants: number;
       cashPrize: CashPrize | null;
     };
@@ -1601,6 +2129,7 @@ export class CompetitionManager {
     const ranked = sortAndRankLeaderboard(competition.entries.slice());
     const myEntry = ranked.find((entry) => entry.paperPlayerId === paperPlayerId) ?? null;
 
+    const now = Date.now();
     return {
       competition: {
         id: competition.id,
@@ -1609,7 +2138,10 @@ export class CompetitionManager {
         executionMode: competition.executionMode,
         startAt: competition.startAt,
         endAt: competition.endAt,
-        status: inferCompetitionStatus(competition.startAt, competition.endAt),
+        registrationEndsAt: getRegistrationEndsAt(competition),
+        status: inferCompetitionStatus(competition, now),
+        canJoin: canJoinCompetition(competition, now),
+        canTrade: canTradeCompetition(competition, now),
         participants: competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
       },
@@ -1622,21 +2154,133 @@ export class CompetitionManager {
     };
   }
 
+  /**
+   * Vue minimale des compétitions pour le moteur de notifications email
+   * (départ imminent, podium perdu, résultats de fin).
+   */
+  listCompetitionsForNotifier(): Array<{
+    id: string;
+    title: string;
+    startAt: number;
+    endAt: number;
+    status: CompetitionStatus;
+    entriesCount: number;
+    isPublic: boolean;
+    createdAt: number;
+    notifiedStartSoonAt: number | null;
+    notifiedEndedAt: number | null;
+    notifiedNewArenaAt: number | null;
+  }> {
+    return Array.from(this.competitions.values()).map((competition) => ({
+      id: competition.id,
+      title: competition.title,
+      startAt: competition.startAt,
+      endAt: competition.endAt,
+      status: inferCompetitionStatus(competition),
+      entriesCount: competition.entries.length,
+      isPublic: competition.isPublic,
+      createdAt: competition.createdAt,
+      notifiedStartSoonAt: competition.notifiedStartSoonAt ?? null,
+      notifiedEndedAt: competition.notifiedEndedAt ?? null,
+      notifiedNewArenaAt: competition.notifiedNewArenaAt ?? null,
+    }));
+  }
+
+  /** Marque une notification comme envoyée (persisté, anti-doublon). */
+  markCompetitionNotified(competitionId: string, kind: 'startSoon' | 'ended' | 'newArena'): void {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return;
+    if (kind === 'startSoon') competition.notifiedStartSoonAt = Date.now();
+    else if (kind === 'ended') competition.notifiedEndedAt = Date.now();
+    else competition.notifiedNewArenaAt = Date.now();
+    this.competitions.set(competition.id, competition);
+    this.save();
+  }
+
+  /**
+   * Détails d'une arène + liste de diffusion pour l'email « nouvelle arène
+   * disponible ». On notifie tous les utilisateurs inscrits sur la plateforme,
+   * sauf ceux déjà inscrits à cette arène (inutile de les inviter).
+   */
+  getNewArenaPayload(competitionId: string): {
+    title: string;
+    startAt: number;
+    endAt: number;
+    cashPrize: CashPrize | null;
+    sponsor: string | null;
+    recipients: Array<{ name: string; email: string }>;
+  } | null {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return null;
+    const alreadyIn = new Set(competition.entries.map((entry) => entry.userId));
+    const recipients: Array<{ name: string; email: string }> = [];
+    for (const user of this.users.values()) {
+      if (alreadyIn.has(user.id)) continue;
+      if (!user.email) continue;
+      recipients.push({ name: user.name || 'Trader', email: user.email });
+    }
+    return {
+      title: competition.title,
+      startAt: competition.startAt,
+      endAt: competition.endAt,
+      cashPrize: competition.cashPrize ?? null,
+      sponsor: competition.sponsor ?? null,
+      recipients,
+    };
+  }
+
+  /**
+   * Classement courant avec emails — utilisé par le notifier pour les emails
+   * de podium et de résultats. Ne vérifie pas isPublic (notifie aussi les
+   * arènes privées).
+   */
+  getRankedEntriesForNotifier(competitionId: string): Array<{
+    rank: number;
+    userId: string;
+    name: string;
+    email: string;
+    pnlUsd: number;
+    pnlPercent: number;
+    tradesCount: number;
+  }> {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return [];
+    return sortAndRankLeaderboard(
+      competition.entries.map((entry) => {
+        const user = this.users.get(entry.userId);
+        return {
+          userId: entry.userId,
+          name: user?.name || 'Participant',
+          email: user?.email || '',
+          pnlPercent: entry.pnlPercent,
+          pnlUsd: entry.pnlUsd,
+          tradesCount: entry.tradesCount,
+        };
+      }),
+    );
+  }
+
   getPublicLeaderboard(competitionId: string): {
     competition: {
       id: string;
       title: string;
       startAt: number;
       endAt: number;
-      status: 'upcoming' | 'live' | 'ended';
+      registrationEndsAt: number;
+      status: CompetitionStatus;
+      canJoin: boolean;
+      canTrade: boolean;
       participants: number;
       cashPrize: CashPrize | null;
+      sponsor: string | null;
+      sponsorReferralUrl: string | null;
     };
     leaderboard: Array<{
       rank: number;
       userId: string;
       name: string;
       avatarUrl: string | null;
+      badges: UserBadge[];
       pnlPercent: number;
       pnlUsd: number;
       tradesCount: number;
@@ -1646,6 +2290,7 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition || !competition.isPublic) throw new Error('Leaderboard introuvable');
 
+    const badges = this.getAllUserBadges();
     const leaderboard = sortAndRankLeaderboard(
       competition.entries.map((entry) => {
         const user = this.users.get(entry.userId);
@@ -1653,6 +2298,7 @@ export class CompetitionManager {
           userId: entry.userId,
           name: user?.name || 'Participant',
           avatarUrl: user?.avatarUrl || null,
+          badges: badges.get(entry.userId) ?? [],
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
@@ -1661,15 +2307,21 @@ export class CompetitionManager {
       }),
     );
 
+    const now = Date.now();
     return {
       competition: {
         id: competition.id,
         title: competition.title,
         startAt: competition.startAt,
         endAt: competition.endAt,
-        status: inferCompetitionStatus(competition.startAt, competition.endAt),
+        registrationEndsAt: getRegistrationEndsAt(competition),
+        status: inferCompetitionStatus(competition, now),
+        canJoin: canJoinCompetition(competition, now),
+        canTrade: canTradeCompetition(competition, now),
         participants: competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
+        sponsor: competition.sponsor ?? null,
+        sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
       },
       leaderboard,
     };
@@ -1687,7 +2339,10 @@ export class CompetitionManager {
       code: string;
       startAt: number;
       endAt: number;
-      status: 'upcoming' | 'live' | 'ended';
+      registrationEndsAt: number;
+      status: CompetitionStatus;
+      canJoin: boolean;
+      canTrade: boolean;
       participants: number;
       cashPrize: CashPrize | null;
     };
@@ -1696,6 +2351,7 @@ export class CompetitionManager {
       userId: string;
       name: string;
       avatarUrl: string | null;
+      badges: UserBadge[];
       pnlPercent: number;
       pnlUsd: number;
       tradesCount: number;
@@ -1705,6 +2361,7 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
 
+    const badges = this.getAllUserBadges();
     const leaderboard = sortAndRankLeaderboard(
       competition.entries.map((entry) => {
         const user = this.users.get(entry.userId);
@@ -1712,6 +2369,7 @@ export class CompetitionManager {
           userId: entry.userId,
           name: user?.name || 'Participant',
           avatarUrl: user?.avatarUrl || null,
+          badges: badges.get(entry.userId) ?? [],
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
@@ -1720,6 +2378,7 @@ export class CompetitionManager {
       }),
     );
 
+    const now = Date.now();
     return {
       competition: {
         id: competition.id,
@@ -1727,7 +2386,10 @@ export class CompetitionManager {
         code: competition.code,
         startAt: competition.startAt,
         endAt: competition.endAt,
-        status: inferCompetitionStatus(competition.startAt, competition.endAt),
+        registrationEndsAt: getRegistrationEndsAt(competition),
+        status: inferCompetitionStatus(competition, now),
+        canJoin: canJoinCompetition(competition, now),
+        canTrade: canTradeCompetition(competition, now),
         participants: competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
       },

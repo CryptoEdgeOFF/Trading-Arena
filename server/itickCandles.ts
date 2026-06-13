@@ -193,6 +193,9 @@ export function initItickCandlesStore(): Promise<void> {
   pool = new Pool({
     connectionString: databaseUrl,
     ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
+    max: Number(process.env.PG_POOL_MAX_CANDLES) || 4,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
   });
   pool.on('error', (err) => {
     console.error('[itickCandles pool] idle client error:', err.message || err);
@@ -712,6 +715,69 @@ export async function backfillRange(
   return backfillSeries(inst, { intervalMin, limit: count, endTs: toSec * 1000, upsert: false });
 }
 
+/** Backfills lazy au scroll gauche (dédupliqués par requête). */
+const inflightScrollBackfills = new Map<string, Promise<void>>();
+
+async function countBarsBefore(pair: string, intervalMin: number, toSec: number): Promise<number> {
+  if (pool) {
+    await schemaReady;
+    const result = await pool.query<{ n: string }>(
+      'SELECT COUNT(*)::bigint AS n FROM itick_candles WHERE pair = $1 AND timeframe = $2 AND bar_time <= $3',
+      [pair, intervalMin, toSec],
+    );
+    return Number(result.rows[0]?.n ?? 0);
+  }
+  const series = memorySeries.get(seriesKey(pair, intervalMin));
+  if (!series) return 0;
+  return [...series.bars.values()].filter((bar) => bar.time <= toSec).length;
+}
+
+/** Étend l'historique en DB si le scroll demande plus de barres que stockées. */
+async function ensureScrollHistory(
+  pair: string,
+  intervalMin: number,
+  toSec: number,
+  countBack: number,
+  fromSec: number | null,
+): Promise<void> {
+  if (!findByPair(pair)) return;
+  const intervalSec = intervalMin * 60;
+  const required = fromSec != null
+    ? Math.max(countBack, Math.ceil((toSec - fromSec) / intervalSec) + 2)
+    : countBack;
+  const maxAttempts = 6;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const available = await countBarsBefore(pair, intervalMin, toSec);
+    if (available >= required) return;
+
+    const prevAvailable = available;
+    const stillMissing = required - available + 200;
+    const fetchFrom = Math.max(0, toSec - stillMissing * intervalSec);
+    const dedupeKey = `${pair}:${intervalMin}:${toSec}:${attempt}`;
+    let job = inflightScrollBackfills.get(dedupeKey);
+    if (!job) {
+      job = (async () => {
+        try {
+          await backfillRange(pair, intervalMin, fetchFrom, toSec);
+        } catch (err) {
+          console.warn(
+            `[itickCandles] scroll backfill ${pair} ${intervalMin}m KO:`,
+            (err as Error).message,
+          );
+        } finally {
+          inflightScrollBackfills.delete(dedupeKey);
+        }
+      })();
+      inflightScrollBackfills.set(dedupeKey, job);
+    }
+    await job;
+
+    const after = await countBarsBefore(pair, intervalMin, toSec);
+    if (after <= prevAvailable) break;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /*                                  Reads                                      */
 /* -------------------------------------------------------------------------- */
@@ -742,6 +808,8 @@ export async function getCandles(
     opts.countBack && opts.countBack > 0 ? Math.floor(opts.countBack) : 5000,
   );
   const fromSec = opts.from && opts.from > 0 ? Math.floor(opts.from) : null;
+
+  await ensureScrollHistory(pair, safeInterval, toSec, targetCount, fromSec);
 
   if (pool) {
     await schemaReady;
