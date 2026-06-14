@@ -1,5 +1,5 @@
 import type { CashPrize, CompetitionManager } from './competitionManager.js';
-import { isMailerConfigured, sendNewArenaEmail, sendNotificationEmail } from './mailer.js';
+import { isMailerConfigured, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
 
 /**
  * Moteur de notifications email des arènes online :
@@ -107,21 +107,47 @@ interface PodiumState {
 
 type SendFn = typeof sendNotificationEmail;
 type SendArenaFn = typeof sendNewArenaEmail;
+type SendPrizeFn = typeof sendPrizeWinnerEmail;
+
+/**
+ * Construit les lots gagnés par rang à partir de la dotation : breakdown cash
+ * (rang → montant) + items (lots avec un rang). Sert à n'envoyer l'email
+ * « gagnant » qu'aux participants réellement récompensés.
+ */
+function prizeLinesByRank(prize: CashPrize | null): Map<number, string[]> {
+  const byRank = new Map<number, string[]>();
+  if (!prize) return byRank;
+  const push = (rank: number, line: string) => {
+    if (!Number.isFinite(rank) || rank < 1 || !line) return;
+    const list = byRank.get(rank) || [];
+    list.push(line);
+    byRank.set(rank, list);
+  };
+  for (const entry of prize.breakdown || []) {
+    if (entry.amount > 0) push(entry.rank, formatPrizeAmount(entry.amount, prize.currency));
+  }
+  for (const item of prize.items || []) {
+    if (item.rank) push(item.rank, item.title?.trim() || `Lot ${rankShortLabel(item.rank)}`);
+  }
+  return byRank;
+}
 
 export class CompetitionNotifier {
   private podiumStates = new Map<string, PodiumState>();
   private running = false;
   private readonly send: SendFn;
   private readonly sendArena: SendArenaFn;
+  private readonly sendPrize: SendPrizeFn;
   private readonly mailerReady: () => boolean;
 
   constructor(
     private readonly competitionManager: CompetitionManager,
     // Injection pour les tests : envoi factice sans toucher Resend.
-    deps: { send?: SendFn; sendArena?: SendArenaFn; mailerReady?: () => boolean } = {},
+    deps: { send?: SendFn; sendArena?: SendArenaFn; sendPrize?: SendPrizeFn; mailerReady?: () => boolean } = {},
   ) {
     this.send = deps.send || sendNotificationEmail;
     this.sendArena = deps.sendArena || sendNewArenaEmail;
+    this.sendPrize = deps.sendPrize || sendPrizeWinnerEmail;
     this.mailerReady = deps.mailerReady || isMailerConfigured;
   }
 
@@ -312,9 +338,31 @@ export class CompetitionNotifier {
 
     const ranked = this.competitionManager.getRankedEntriesForNotifier(competitionId);
     const total = ranked.length;
+    // Lots par rang : sert à envoyer un email distinct (demande d'adresse
+    // ERC20) aux gagnants, et l'email de résultats classique aux autres.
+    const winningByRank = prizeLinesByRank(this.competitionManager.getCompetitionCashPrize(competitionId));
     let sent = 0;
+    let winners = 0;
     for (const entry of ranked) {
       if (!entry.email) continue;
+
+      const prizeLines = entry.tradesCount > 0 ? winningByRank.get(entry.rank) : undefined;
+      if (prizeLines && prizeLines.length) {
+        // Gagnant d'un lot → email dédié pour récupérer son adresse ERC20.
+        await this.sendPrize(entry.email, {
+          recipientName: entry.name,
+          competitionTitle: title,
+          rank: entry.rank,
+          rankLabel: rankShortLabel(entry.rank),
+          prizeLines,
+          totalParticipants: total,
+        });
+        winners += 1;
+        sent += 1;
+        await sleep(SEND_SPACING_MS);
+        continue;
+      }
+
       const onPodium = entry.rank <= PODIUM_SIZE && entry.tradesCount > 0;
       const heading = onPodium
         ? `Félicitations, tu finis #${entry.rank} !`
@@ -334,6 +382,6 @@ export class CompetitionNotifier {
       sent += 1;
       await sleep(SEND_SPACING_MS);
     }
-    console.log(`[notifier] ended "${title}" → ${sent} emails`);
+    console.log(`[notifier] ended "${title}" → ${sent} emails (dont ${winners} gagnant${winners > 1 ? 's' : ''})`);
   }
 }

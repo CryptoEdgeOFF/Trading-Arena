@@ -13,23 +13,50 @@ const APP_NAME = process.env.APP_NAME || 'BTF Trade';
 // Vider cette variable (ou la retirer du .env) pour repasser en envoi réel.
 const TEST_REDIRECT_EMAIL = (process.env.MAIL_TEST_REDIRECT || '').trim();
 
-// Bannière esport intégrée en pièce jointe inline (CID) dans l'email de
-// nouvelle arène. On l'embarque en CID plutôt qu'en URL pour qu'elle s'affiche
-// même sans hébergement public et qu'elle échappe au re-thème de Gmail (une
-// image n'est jamais recolorée). Chargée une seule fois et mise en cache.
-const ARENA_BANNER_CID = 'btf-arena-banner';
-let arenaBannerCache: Buffer | null | undefined;
+// Bannière BTF Arena intégrée en pièce jointe inline (CID) en haut de TOUS les
+// emails. On l'embarque en CID plutôt qu'en URL pour qu'elle s'affiche même
+// sans hébergement public et qu'elle échappe au re-thème de Gmail (une image
+// n'est jamais recolorée). Chargée une seule fois et mise en cache.
+const EMAIL_BANNER_CID = 'btf-arena-banner';
+let emailBannerCache: Buffer | null | undefined;
 
-function getArenaBanner(): Buffer | null {
-  if (arenaBannerCache !== undefined) return arenaBannerCache;
+function getEmailBanner(): Buffer | null {
+  if (emailBannerCache !== undefined) return emailBannerCache;
   try {
     const here = dirname(fileURLToPath(import.meta.url));
-    arenaBannerCache = readFileSync(join(here, 'assets', 'arena-email-banner.jpg'));
+    emailBannerCache = readFileSync(join(here, 'assets', 'email-banner.png'));
   } catch (err) {
-    console.warn('[mailer] bannière arène introuvable, repli sur en-tête texte:', (err as Error)?.message);
-    arenaBannerCache = null;
+    console.warn('[mailer] bannière email introuvable, repli sur en-tête texte:', (err as Error)?.message);
+    emailBannerCache = null;
   }
-  return arenaBannerCache;
+  return emailBannerCache;
+}
+
+/** Pièce jointe inline (CID) de la bannière, à fusionner dans les options Resend. */
+function bannerAttachments(): { attachments: Array<{ filename: string; content: Buffer; contentId: string; contentType: string }> } | Record<string, never> {
+  const banner = getEmailBanner();
+  if (!banner) return {};
+  return {
+    attachments: [
+      {
+        filename: 'btf-arena-banner.png',
+        content: banner,
+        contentId: EMAIL_BANNER_CID,
+        contentType: 'image/png',
+      },
+    ],
+  };
+}
+
+/** Ligne <tr> contenant la bannière, à insérer en première ligne de la carte email. */
+function bannerRowHtml(): string {
+  const banner = getEmailBanner();
+  if (!banner) {
+    return `<tr><td bgcolor="#e11d2a" style="background-color:#e11d2a;height:5px;font-size:0;line-height:0;">&nbsp;</td></tr>`;
+  }
+  return `<tr><td bgcolor="#000000" style="background-color:#000000;font-size:0;line-height:0;">
+    <img src="cid:${EMAIL_BANNER_CID}" width="600" alt="BTF Arena" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;text-decoration:none;" />
+  </td></tr>`;
 }
 
 const client = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
@@ -89,6 +116,7 @@ export async function sendOtpEmail(
       subject: subj,
       html,
       text,
+      ...bannerAttachments(),
     });
     if (error) {
       console.error('[mailer] resend error:', error);
@@ -104,6 +132,157 @@ export async function sendOtpEmail(
 
 export function isMailerConfigured(): boolean {
   return Boolean(client);
+}
+
+// Adresse de contact pour la remise des lots (réponses des gagnants).
+const PRIZE_CONTACT_EMAIL = (process.env.PRIZE_CONTACT_EMAIL || 'breakout.pro.tv@gmail.com').trim();
+
+export interface PrizeWinnerEmailOptions {
+  recipientName: string;
+  competitionTitle: string;
+  rank: number;
+  rankLabel: string;
+  /** Lignes de lots gagnés (ex. ["2 500 USDT", "MacBook Pro"]). */
+  prizeLines: string[];
+  totalParticipants: number;
+}
+
+/**
+ * Email dédié aux GAGNANTS d'un lot : félicitations + demande de l'adresse
+ * de réception ERC20 (réseau Ethereum) pour envoyer la récompense. Distinct de
+ * l'email de résultats générique.
+ */
+export async function sendPrizeWinnerEmail(
+  to: string,
+  options: PrizeWinnerEmailOptions,
+): Promise<SendOtpResult> {
+  const subject = `🏆 Tu as gagné un lot — ${options.competitionTitle}`;
+  const html = renderPrizeWinnerHtml(options);
+  const text = renderPrizeWinnerText(options);
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[mailer] prize-winner "${options.competitionTitle}" (#${options.rank}) -> ${to}`);
+  }
+
+  if (!client) {
+    return { delivered: false, error: 'no-smtp' };
+  }
+
+  const { to: rcpt, subject: subj } = applyTestRedirect(to, subject);
+
+  try {
+    const { error } = await client.emails.send({
+      from: FROM_EMAIL,
+      to: rcpt,
+      subject: subj,
+      html,
+      text,
+      replyTo: PRIZE_CONTACT_EMAIL,
+      ...bannerAttachments(),
+    });
+    if (error) {
+      console.error('[mailer] resend error:', error);
+      return { delivered: false, error: typeof error === 'string' ? error : (error.message || 'send failed') };
+    }
+    return { delivered: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'send failed';
+    console.error('[mailer] resend throw:', message);
+    return { delivered: false, error: message };
+  }
+}
+
+function renderPrizeWinnerText(o: PrizeWinnerEmailOptions): string {
+  const lines: string[] = [];
+  lines.push(`Felicitations ${o.recipientName} !`, '');
+  lines.push(`Tu termines ${o.rankLabel} de l'arene "${o.competitionTitle}" sur ${o.totalParticipants} participants et tu remportes un lot :`);
+  for (const prize of o.prizeLines) lines.push(`- ${prize}`);
+  lines.push('');
+  lines.push('POUR RECEVOIR TON LOT :');
+  lines.push(`Reponds a cet email (${PRIZE_CONTACT_EMAIL}) avec ton adresse de reception ERC20 (reseau Ethereum, pour USDT/USDC).`);
+  lines.push('');
+  lines.push('Important : verifie bien que ton adresse est sur le reseau Ethereum (ERC20). Une adresse erronee peut entrainer une perte definitive des fonds.');
+  return lines.join('\n');
+}
+
+function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions): string {
+  const C = {
+    page: '#050507',
+    card: '#0a0c12',
+    tile: '#13151d',
+    border: '#23262f',
+    red: '#ff3344',
+    redBtn: '#e11d2a',
+    white: '#ffffff',
+    text: '#aab0c0',
+    faint: '#6b7180',
+    gold: '#ffd166',
+    green: '#34d399',
+  };
+
+  const prizeRows = o.prizeLines
+    .map((prize, i) => `
+      <tr>
+        <td width="40" style="padding:12px 0 12px 16px;font-size:20px;line-height:1;">${i === 0 ? '🏆' : '🎁'}</td>
+        <td style="padding:12px 16px 12px 0;font-size:16px;color:${C.white};font-weight:700;${i > 0 ? `border-top:1px solid ${C.border};` : ''}">${escapeHtml(prize)}</td>
+      </tr>`)
+    .join('');
+
+  const mailtoSubject = encodeURIComponent(`Mon lot - ${o.competitionTitle} (${o.rankLabel})`);
+  const mailtoBody = encodeURIComponent('Bonjour,\n\nVoici mon adresse de reception ERC20 (reseau Ethereum) pour recevoir mon lot :\n\nAdresse ERC20 : \n\nMerci !');
+  const mailtoUrl = `mailto:${PRIZE_CONTACT_EMAIL}?subject=${mailtoSubject}&body=${mailtoBody}`;
+
+  return `<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark only" />
+    <meta name="supported-color-schemes" content="dark only" />
+  </head>
+  <body style="margin:0;padding:0;background-color:${C.page};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e5e7eb;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.page}" style="background-color:${C.page};padding:24px 0;">
+      <tr><td align="center" bgcolor="${C.page}" style="background-color:${C.page};">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:600px;max-width:100%;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;overflow:hidden;">
+          ${bannerRowHtml()}
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:30px 30px 4px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;">🏆 Tu as gagné un lot</div>
+            <h1 style="margin:14px 0 6px;font-size:30px;line-height:1.08;color:${C.white};font-weight:900;letter-spacing:-0.5px;">Félicitations, ${escapeHtml(o.recipientName)} !</h1>
+            <div style="font-size:15px;font-weight:700;color:${C.red};letter-spacing:0.5px;">${escapeHtml(o.rankLabel)} sur ${o.totalParticipants} · ${escapeHtml(o.competitionTitle)}</div>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;margin:8px 0 10px;">▍ Ton lot</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.tile}" style="background-color:${C.tile};border:1px solid ${C.border};border-radius:14px;">
+              ${prizeRows}
+            </table>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.green};font-weight:800;margin:8px 0 10px;">▍ Comment recevoir ton lot</div>
+            <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:${C.text};">Pour t'envoyer ta récompense, réponds à cet email avec ton <strong style="color:${C.white};">adresse de réception ERC20</strong> (réseau Ethereum, pour recevoir des USDT/USDC).</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" align="left" style="margin:2px 0 6px;">
+              <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
+                <a href="${mailtoUrl}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">Envoyer mon adresse ERC20 ▸</a>
+              </td></tr>
+            </table>
+            <div style="clear:both;"></div>
+            <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${C.faint};">⚠️ Vérifie bien que ton adresse est sur le réseau <strong style="color:${C.text};">Ethereum (ERC20)</strong>. Une adresse erronée ou sur un autre réseau peut entraîner une perte définitive des fonds.</p>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:14px 30px 30px;">
+            <p style="margin:0;font-size:12px;line-height:1.6;color:${C.faint};">Une question ? Écris-nous à <a href="mailto:${PRIZE_CONTACT_EMAIL}" style="color:${C.red};text-decoration:underline;">${PRIZE_CONTACT_EMAIL}</a>.</p>
+          </td></tr>
+
+          <tr><td bgcolor="#08090e" style="background-color:#08090e;border-top:1px solid ${C.border};padding:18px 30px;text-align:center;">
+            <div style="font-size:13px;font-weight:900;letter-spacing:4px;color:${C.white};text-transform:uppercase;">BTF<span style="color:${C.red};">·</span>ARENA</div>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
 }
 
 export interface NotificationEmailOptions {
@@ -148,6 +327,7 @@ export async function sendNotificationEmail(
       subject: subj,
       html,
       text,
+      ...bannerAttachments(),
     });
     if (error) {
       console.error('[mailer] resend error:', error);
@@ -198,7 +378,7 @@ export async function sendNewArenaEmail(
   options: NewArenaEmailOptions,
 ): Promise<SendOtpResult> {
   const subject = `Nouvelle arène : ${options.title}`;
-  const banner = getArenaBanner();
+  const banner = getEmailBanner();
   const html = renderNewArenaHtml(options, Boolean(banner));
   const text = renderNewArenaText(options);
 
@@ -219,18 +399,7 @@ export async function sendNewArenaEmail(
       subject: subj,
       html,
       text,
-      ...(banner
-        ? {
-            attachments: [
-              {
-                filename: 'arena-email-banner.jpg',
-                content: banner,
-                contentId: ARENA_BANNER_CID,
-                contentType: 'image/jpeg',
-              },
-            ],
-          }
-        : {}),
+      ...bannerAttachments(),
     });
     if (error) {
       console.error('[mailer] resend error:', error);
@@ -359,7 +528,7 @@ export function renderNewArenaHtml(o: NewArenaEmailOptions, withBanner = false):
           ${withBanner
             ? `<!-- bannière image (immunisée contre le re-thème de Gmail) -->
           <tr><td bgcolor="#000000" style="background-color:#000000;font-size:0;line-height:0;">
-            <img src="cid:${ARENA_BANNER_CID}" width="600" alt="BTF Arena — Nouvelle arène" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;text-decoration:none;" />
+            <img src="cid:${EMAIL_BANNER_CID}" width="600" alt="BTF Arena — Nouvelle arène" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;text-decoration:none;" />
           </td></tr>`
             : `<!-- accent rouge -->
           <tr><td bgcolor="${C.redBtn}" style="background-color:${C.redBtn};height:5px;font-size:0;line-height:0;">&nbsp;</td></tr>`}
@@ -418,12 +587,19 @@ function renderNotificationHtml(options: NotificationEmailOptions): string {
     : '';
 
   return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#050507;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e5e7eb;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#050507;padding:32px 0;">
-      <tr><td align="center">
-        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#0c0c10;border:1px solid #1a1a20;border-radius:16px;overflow:hidden;">
-          <tr><td style="padding:32px;">
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark only" />
+    <meta name="supported-color-schemes" content="dark only" />
+  </head>
+  <body style="margin:0;padding:0;background-color:#050507;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e5e7eb;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#050507" style="background-color:#050507;padding:24px 0;">
+      <tr><td align="center" bgcolor="#050507" style="background-color:#050507;">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" bgcolor="#0c0c10" style="width:480px;max-width:100%;background-color:#0c0c10;border:1px solid #1a1a20;border-radius:16px;overflow:hidden;">
+          ${bannerRowHtml()}
+          <tr><td bgcolor="#0c0c10" style="background-color:#0c0c10;padding:32px;">
             ${eyebrow}
             <h1 style="margin:0 0 16px;font-size:22px;color:#ffffff;">${escapeHtml(options.heading)}</h1>
             ${paragraphs}
@@ -460,15 +636,22 @@ function renderOtpHtml(code: string, intent: 'signup' | 'login'): string {
     : 'Voici ton code de connexion a usage unique.';
 
   return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#0b1020;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e5e7eb;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0b1020;padding:32px 0;">
-      <tr><td align="center">
-        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#111935;border-radius:16px;overflow:hidden;">
-          <tr><td style="padding:32px;">
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark only" />
+    <meta name="supported-color-schemes" content="dark only" />
+  </head>
+  <body style="margin:0;padding:0;background-color:#050507;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e5e7eb;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#050507" style="background-color:#050507;padding:24px 0;">
+      <tr><td align="center" bgcolor="#050507" style="background-color:#050507;">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" bgcolor="#0a0c12" style="width:480px;max-width:100%;background-color:#0a0c12;border:1px solid #1d2233;border-radius:16px;overflow:hidden;">
+          ${bannerRowHtml()}
+          <tr><td bgcolor="#0a0c12" style="background-color:#0a0c12;padding:32px;">
             <h1 style="margin:0 0 8px;font-size:22px;color:#ffffff;">${headline}</h1>
             <p style="margin:0 0 24px;font-size:14px;color:#94a3b8;">${sub}</p>
-            <div style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:36px;letter-spacing:10px;font-weight:700;color:#34d399;background:#0b1325;border:1px solid #1f2a4a;border-radius:12px;padding:18px;text-align:center;">${code}</div>
+            <div style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:36px;letter-spacing:10px;font-weight:700;color:#34d399;background-color:#0b1325;border:1px solid #1f2a4a;border-radius:12px;padding:18px;text-align:center;">${code}</div>
             <p style="margin:24px 0 0;font-size:12px;color:#64748b;">Le code expire dans 10 minutes. Si tu n'es pas a l'origine de cette demande, ignore cet email.</p>
           </td></tr>
         </table>

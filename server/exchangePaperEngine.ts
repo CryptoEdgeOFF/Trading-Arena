@@ -124,9 +124,11 @@ export const PAPER_PAIRS: PaperPairDef[] = [
  *  par côté (0,1 bps) → ~0,002 % aller-retour. Le mark affiché (chart,
  *  PnL flottant) reste le mid iTick = TradingView. */
 const SPREAD_BPS = 0.1;
-// Même barème que la compétition online, divisé par 3.
-const TAKER_FEE_RATE = 0.00005 / 3; // ~0,00167 % — ordres au marché
-const MAKER_FEE_RATE = 0.00002 / 3; // ~0,00067 % — ordres limites
+// Barème aligné sur une vraie plateforme (type futures crypto) : taker 0,04 %
+// au marché, maker 0,02 % en limite. Prélevé sur le notionnel à l'ouverture
+// comme à la fermeture.
+const TAKER_FEE_RATE = 0.0004; // 0,04 % — ordres au marché
+const MAKER_FEE_RATE = 0.0002; // 0,02 % — ordres limites
 const MAX_LEVERAGE = 50;
 const MIN_LEVERAGE = 1;
 /** Notional minimal d'un ordre (anti-spam de positions "dust"). */

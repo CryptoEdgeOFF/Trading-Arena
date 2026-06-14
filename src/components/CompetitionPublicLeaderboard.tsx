@@ -238,11 +238,7 @@ export default function CompetitionPublicLeaderboard() {
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4 md:px-10">
           <Link to="/compete" className="flex items-center gap-3">
-            <img src="/assets/pictures/logoBTF.webp" alt="BTF" className="h-9 w-9 rounded-lg object-contain" />
-            <div className="flex items-baseline gap-2">
-              <span className="display text-xl font-bold text-white">BTF</span>
-              <span className="micro text-xs text-[#dc2626]">Arena</span>
-            </div>
+            <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-9 w-auto object-contain" />
           </Link>
           <div className="flex items-center gap-2">
             <Link to="/compete" className="ghost-cta px-4 py-2 text-sm">

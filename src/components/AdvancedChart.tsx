@@ -516,6 +516,8 @@ export default function AdvancedChart({
             'header_saveload',
             'header_screenshot',
             'use_localstorage_for_settings',
+            // Supprime les bulles d'aide/tuto bleues qui s'affichent à l'ouverture.
+            'popup_hints',
             ...(isMobile
               ? ([
                   'left_toolbar',
@@ -525,7 +527,18 @@ export default function AdvancedChart({
                 ] as const)
               : []),
           ],
-          enabled_features: ['hide_left_toolbar_by_default'],
+          // Barre d'outils de dessin toujours dépliée (plus besoin de cliquer pour la sortir).
+          enabled_features: [],
+          // Plages temporelles du bas remplacées par des libellés clairs : les
+          // défauts TradingView ("3m" = 3 mois, "1m" = 1 mois) se lisaient comme
+          // "3 min" / "1 min", ce qui prêtait à confusion.
+          time_frames: [
+            { text: '1D', resolution: '5' as ResolutionString, description: '1 jour' },
+            { text: '5D', resolution: '30' as ResolutionString, description: '5 jours' },
+            { text: '1M', resolution: '240' as ResolutionString, description: '1 mois' },
+            { text: '6M', resolution: '1D' as ResolutionString, description: '6 mois' },
+            { text: '1A', resolution: '1D' as ResolutionString, description: '1 an' },
+          ],
           overrides: {
             'paneProperties.background': '#0e0c0d',
             'paneProperties.backgroundType': 'solid',
@@ -2102,6 +2115,20 @@ export default function AdvancedChart({
           );
         })}
       </div>
+
+      {/* Attribution TradingView, posée dans la zone vide de la barre du bas
+          (centre), à gauche du fuseau horaire — visible et sans recouvrement. */}
+      {!isMobile && (
+        <a
+          href="https://www.tradingview.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="pointer-events-auto absolute bottom-[6px] left-1/2 z-[31] -translate-x-1/2 select-none whitespace-nowrap text-[10px] font-medium tracking-wide text-[#8b92a1] transition-colors hover:text-[#cbd2dd]"
+          style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' }}
+        >
+          Powered by TradingView
+        </a>
+      )}
     </div>
   );
 }

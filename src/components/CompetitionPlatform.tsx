@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -312,6 +312,7 @@ export default function CompetitionPlatform() {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [smsOtp, setSmsOtp] = useState('');
+  const [consent, setConsent] = useState(false);
   const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
 
   // Hydrate competition lists from localStorage too so the page renders
@@ -333,55 +334,56 @@ export default function CompetitionPlatform() {
   const [joinSponsorId, setJoinSponsorId] = useState('');
   const [joinError, setJoinError] = useState('');
 
+  // Récupère (ou rafraîchit) l'état complet de la plateforme : user + public + mine.
+  // Réutilisable au montage et à la volée (ex. quand un timer de départ atteint 0).
+  const refreshData = useCallback(async () => {
+    const token = window.localStorage.getItem(SESSION_KEY);
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    try {
+      const response = await fetch('/api/competition/bootstrap', { headers });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!data) return;
+
+      const publicComps: CompetitionPublic[] = data.publicCompetitions || [];
+      const mineComps: CompetitionMine[] = data.myCompetitions || [];
+      setPublicCompetitions(publicComps);
+      setMyCompetitions(mineComps);
+      setMyStats((data.myStats as UserStats | null) ?? null);
+      setMyBadges((data.myBadges as UserBadge[] | undefined) ?? []);
+      writeCachedJSON(PUBLIC_CACHE_KEY, publicComps);
+      writeCachedJSON(MINE_CACHE_KEY, mineComps);
+
+      if (token) {
+        if (data.user) {
+          const merged = mergeSessionUser(readCachedCompeteUser(), data.user as CompeteSessionUser);
+          setSession({ token, user: merged });
+          writeCachedCompeteUser(merged);
+        } else {
+          // Token rejected by server -> clear the optimistic session.
+          window.localStorage.removeItem(SESSION_KEY);
+          writeCachedUser(null);
+          setSession(null);
+          setMyCompetitions([]);
+          setMyStats(null);
+          writeCachedJSON(MINE_CACHE_KEY, []);
+        }
+      }
+    } catch {
+      // Network failure: keep the optimistic state so the UI stays usable.
+    }
+  }, []);
+
   // Single bootstrap call on mount: returns user + public + mine in one
   // round-trip, eliminating the cascade of cold starts that used to slow
   // down the page after a refresh.
   useEffect(() => {
     // Ne jamais réutiliser une ancienne clé unique qui pouvait contenir une session LIVE.
     window.localStorage.removeItem(LEGACY_PAPER_SESSION_KEY);
-
-    let cancelled = false;
-    const token = window.localStorage.getItem(SESSION_KEY);
-    const headers: Record<string, string> = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    fetch('/api/competition/bootstrap', { headers })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        const publicComps: CompetitionPublic[] = data.publicCompetitions || [];
-        const mineComps: CompetitionMine[] = data.myCompetitions || [];
-        setPublicCompetitions(publicComps);
-        setMyCompetitions(mineComps);
-        setMyStats((data.myStats as UserStats | null) ?? null);
-        setMyBadges((data.myBadges as UserBadge[] | undefined) ?? []);
-        writeCachedJSON(PUBLIC_CACHE_KEY, publicComps);
-        writeCachedJSON(MINE_CACHE_KEY, mineComps);
-
-        if (token) {
-          if (data.user) {
-            const merged = mergeSessionUser(readCachedCompeteUser(), data.user as CompeteSessionUser);
-            setSession({ token, user: merged });
-            writeCachedCompeteUser(merged);
-          } else {
-            // Token rejected by server -> clear the optimistic session.
-            window.localStorage.removeItem(SESSION_KEY);
-            writeCachedUser(null);
-            setSession(null);
-            setMyCompetitions([]);
-            setMyStats(null);
-            writeCachedJSON(MINE_CACHE_KEY, []);
-          }
-        }
-      })
-      .catch(() => {
-        // Network failure: keep the optimistic state so the UI stays usable.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void refreshData();
+  }, [refreshData]);
 
   // Re-sync depuis le cache quand on revient sur l'onglet (ex. après Settings).
   useEffect(() => {
@@ -476,7 +478,13 @@ export default function CompetitionPlatform() {
       const response = await fetch('/api/competition/auth/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, name, phone: intent === 'signup' ? phone : undefined, intent }),
+        body: JSON.stringify({
+          email,
+          name,
+          phone: intent === 'signup' ? phone : undefined,
+          intent,
+          ...(intent === 'signup' ? { consent } : {}),
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('authErrors.request'));
@@ -793,6 +801,7 @@ export default function CompetitionPlatform() {
                     phone={phone}
                     otp={otp}
                     smsOtp={smsOtp}
+                    consent={consent}
                     busy={busy}
                     error={error}
                     pendingAuth={pendingAuth}
@@ -800,6 +809,7 @@ export default function CompetitionPlatform() {
                     onEmail={setEmail}
                     onName={setName}
                     onPhone={setPhone}
+                    onConsent={setConsent}
                     onOtp={setOtp}
                     onSmsOtp={setSmsOtp}
                     onRequest={requestCode}
@@ -842,6 +852,7 @@ export default function CompetitionPlatform() {
                     competition={competition}
                     busy={busy}
                     onTrade={() => startCompetitionTrading(competition)}
+                    onStart={refreshData}
                   />
                 ))}
               </div>
@@ -1039,8 +1050,8 @@ function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title: string
 }
 
 function AuthPanel({
-  intent, step, email, name, phone, otp, smsOtp, busy, error, pendingAuth,
-  onSwitch, onEmail, onName, onPhone, onOtp, onSmsOtp, onRequest, onVerify, onVerifyPhone, onBack,
+  intent, step, email, name, phone, otp, smsOtp, consent, busy, error, pendingAuth,
+  onSwitch, onEmail, onName, onPhone, onOtp, onSmsOtp, onConsent, onRequest, onVerify, onVerifyPhone, onBack,
 }: {
   intent: AuthIntent;
   step: AuthStep;
@@ -1049,6 +1060,7 @@ function AuthPanel({
   phone: string;
   otp: string;
   smsOtp: string;
+  consent: boolean;
   busy: boolean;
   error: string;
   pendingAuth: PendingAuth | null;
@@ -1058,6 +1070,7 @@ function AuthPanel({
   onPhone: (value: string) => void;
   onOtp: (value: string) => void;
   onSmsOtp: (value: string) => void;
+  onConsent: (value: boolean) => void;
   onRequest: () => void;
   onVerify: () => void;
   onVerifyPhone: () => void;
@@ -1128,6 +1141,21 @@ function AuthPanel({
                       {t('auth.phoneHint')}
                     </p>
                   </div>
+                  <label className="flex items-start gap-2 pt-1 text-[10px] leading-snug text-[#8a8a93]">
+                    <input
+                      type="checkbox"
+                      checked={consent}
+                      onChange={(event) => onConsent(event.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#dc2626]"
+                    />
+                    <span>
+                      {t('auth.consentText')}{' '}
+                      <a href="/cgu" target="_blank" rel="noopener noreferrer" className="text-[#fca5a5] underline hover:text-white">{t('footer.cgu')}</a>{' '}
+                      {t('auth.consentAnd')}{' '}
+                      <a href="/confidentialite" target="_blank" rel="noopener noreferrer" className="text-[#fca5a5] underline hover:text-white">{t('footer.privacy')}</a>
+                      {t('auth.consentNewsletter')}
+                    </span>
+                  </label>
                 </>
               )}
             </div>
@@ -1135,7 +1163,7 @@ function AuthPanel({
             <button
               type="button"
               onClick={onRequest}
-              disabled={busy || !email.trim() || (intent === 'signup' && (!name.trim() || !phone.trim()))}
+              disabled={busy || !email.trim() || (intent === 'signup' && (!name.trim() || !phone.trim() || !consent))}
               className="blood-cta mt-5 w-full px-5 py-4 text-sm"
             >
               {busy ? t('auth.sending') : t('auth.getCode')}
@@ -1445,11 +1473,12 @@ function ArchivedCompetitionCard({ competition }: { competition: CompetitionMine
 }
 
 function MyCompetitionCard({
-  competition, busy, onTrade,
+  competition, busy, onTrade, onStart,
 }: {
   competition: CompetitionMine;
   busy: boolean;
   onTrade: () => void;
+  onStart?: () => void;
 }) {
   const { t } = useTranslation();
   const pnlPercent = competition.myEntry.pnlPercent;
@@ -1457,10 +1486,23 @@ function MyCompetitionCard({
   const pos = pnlPercent >= 0;
   const isLive = competition.status === 'live';
   const isEnded = competition.status === 'ended';
-  const canTrade = competition.canTrade ?? isLive;
   const targetTs = isLive ? competition.endAt : competition.startAt;
   const countdown = useCountdown(targetTs);
+  // L'horloge locale ré-évalue à chaque tick (useCountdown re-render chaque seconde) :
+  // dès que l'heure de départ est atteinte, on débloque le bouton sans rafraîchir.
+  const startReached = !isLive && !isEnded && Date.now() >= competition.startAt;
+  const canTrade = (competition.canTrade ?? isLive) || startReached;
   const fillRatio = Math.min(1, Math.abs(pnlPercent) / 100);
+
+  // Quand le compte à rebours franchit 0, on resynchronise une fois l'état serveur
+  // (statut, PnL, accès) pour que la carte reflète la compétition désormais en cours.
+  const startSyncedRef = useRef(false);
+  useEffect(() => {
+    if (startReached && !startSyncedRef.current) {
+      startSyncedRef.current = true;
+      onStart?.();
+    }
+  }, [startReached, onStart]);
 
   return (
     <motion.article

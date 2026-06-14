@@ -248,18 +248,12 @@ export default function CompeteHeader({
       style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
     >
       <div className="relative z-10 mx-auto flex max-w-7xl items-center justify-between gap-2 border-b border-white/10 bg-[#050507] px-3 py-2 shadow-[0_18px_60px_-42px_rgba(220,38,38,0.65)] sm:rounded-2xl sm:border sm:border-white/10 sm:bg-[#060609]/85 sm:px-4 sm:py-3 sm:backdrop-blur-2xl md:px-6">
-        <Link to="/compete" className="group flex shrink-0 items-center gap-2 sm:gap-3">
-          <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#dc2626]/30 bg-[#120506] sm:h-10 sm:w-10">
-            <span className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(220,38,38,0.35),transparent_62%)] opacity-80 transition-opacity group-hover:opacity-100" />
-            <img src="/assets/pictures/logoBTF.webp" alt="BTF" className="relative h-7 w-7 object-contain sm:h-8 sm:w-8" />
-          </span>
-          <div className="flex flex-col">
-            <div className="flex items-baseline gap-1.5 whitespace-nowrap sm:gap-2">
-              <span className="display text-lg font-bold text-white sm:text-xl">BTF</span>
-              <span className="micro text-[10px] text-[#dc2626] sm:text-xs">Arena</span>
-            </div>
-            <span className="mt-0.5 text-[7px] font-bold uppercase tracking-[0.18em] text-white sm:text-[8px]">BETA</span>
-          </div>
+        <Link to="/compete" className="group flex shrink-0 items-center">
+          <img
+            src="/assets/pictures/BTF_ARENA_logo.png"
+            alt="BTF Arena"
+            className="h-10 w-auto object-contain transition-transform duration-200 group-hover:scale-[1.03] sm:h-11"
+          />
         </Link>
 
         {/* Navigation principale (desktop) */}

@@ -16,6 +16,16 @@ export interface CompetitionUser {
     discord?: string;
     website?: string;
   };
+  /**
+   * Preuve de consentement RGPD recueillie à l'inscription : acceptation des
+   * CGU/Confidentialité + opt-in newsletter. `acceptedAt` horodate le moment
+   * où l'utilisateur a coché la case et soumis le formulaire.
+   */
+  consent?: {
+    termsAccepted: boolean;
+    newsletter: boolean;
+    acceptedAt: number;
+  } | null;
   createdAt: number;
 }
 
@@ -400,6 +410,10 @@ interface PendingOtp {
   // timestamp du dernier envoi (cooldown). Voir requestOtp.
   resends?: number;
   lastSentAt?: number;
+  // Consentement RGPD (signup uniquement) : acceptation conditions + newsletter,
+  // horodaté au moment de la soumission du formulaire.
+  consent?: boolean;
+  consentAt?: number;
 }
 
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -539,7 +553,7 @@ export class CompetitionManager {
    * et son unicite verifiee tout de suite, mais le SMS n'est envoye qu'apres
    * la validation du code email (etape 2).
    */
-  async requestOtp(input: { email: string; name?: string; phone?: string; intent: 'signup' | 'login' }): Promise<{ code: string; expiresAt: number }> {
+  async requestOtp(input: { email: string; name?: string; phone?: string; intent: 'signup' | 'login'; consent?: boolean }): Promise<{ code: string; expiresAt: number }> {
     const email = normalizeEmail(input.email);
     if (!isValidEmail(email)) {
       throw new Error('Email invalide');
@@ -556,6 +570,9 @@ export class CompetitionManager {
     const name = String(input.name || '').trim();
     let phone: string | undefined;
     if (input.intent === 'signup') {
+      if (!input.consent) {
+        throw new Error('Tu dois accepter les conditions et le consentement pour t inscrire');
+      }
       if (!name) {
         throw new Error('Pseudo requis pour l inscription');
       }
@@ -610,6 +627,9 @@ export class CompetitionManager {
       step: 'email',
       resends,
       lastSentAt: Date.now(),
+      ...(input.intent === 'signup'
+        ? { consent: Boolean(input.consent), consentAt: Date.now() }
+        : {}),
     });
 
     return { code, expiresAt };
@@ -790,6 +810,11 @@ export class CompetitionManager {
       name: finalName,
       phone: pending.phone,
       phoneVerifiedAt: Date.now(),
+      consent: {
+        termsAccepted: Boolean(pending.consent),
+        newsletter: Boolean(pending.consent),
+        acceptedAt: pending.consentAt ?? Date.now(),
+      },
       createdAt: Date.now(),
     };
     this.users.set(user.id, user);
@@ -2184,6 +2209,11 @@ export class CompetitionManager {
       notifiedEndedAt: competition.notifiedEndedAt ?? null,
       notifiedNewArenaAt: competition.notifiedNewArenaAt ?? null,
     }));
+  }
+
+  /** Dotation d'une arène (cash + lots), pour déterminer les gagnants à la fin. */
+  getCompetitionCashPrize(competitionId: string): CashPrize | null {
+    return this.competitions.get(competitionId)?.cashPrize ?? null;
   }
 
   /** Marque une notification comme envoyée (persisté, anti-doublon). */

@@ -23,7 +23,6 @@ import {
   sizeUnitLabel,
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
-import logoBtf from '../assets/pictures/logoBTF.webp';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
 import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
@@ -49,8 +48,8 @@ import {
 const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
 const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
-const DEMO_TAKER_FEE = 0.00005 / 3;
-const DEMO_MAKER_FEE = 0.00002 / 3;
+const DEMO_TAKER_FEE = 0.0004; // 0,04 % — aligné sur le barème réel (cf. moteur)
+const DEMO_MAKER_FEE = 0.0002; // 0,02 %
 
 /** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
 function isRestingLimitTriggered(
@@ -422,11 +421,8 @@ function TopBar({
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2.5 py-2 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
       <div className="flex items-center gap-2">
-        <img src={logoBtf} alt="BTF" className="h-8 w-8 rounded object-contain" />
-        <div className="leading-tight">
-          <div className="font-rajdhani text-[15px] font-bold tracking-wide text-white">BTF Trade</div>
-          <div className="text-[9px] uppercase tracking-[0.18em] text-[#7a8090]">Terminal</div>
-        </div>
+        <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-7 w-auto object-contain" />
+        <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#7a8090]">Terminal</span>
       </div>
 
       <div className="hidden min-w-0 md:block">

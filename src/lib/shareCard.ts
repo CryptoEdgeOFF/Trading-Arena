@@ -225,34 +225,16 @@ function paintBackground(ctx: CanvasRenderingContext2D) {
 function paintHeader(ctx: CanvasRenderingContext2D, logo: HTMLImageElement | null, tag: string) {
   const x = 80;
   const y = 84;
-  const box = 78;
+  const box = 88;
 
-  roundRectPath(ctx, x, y, box, box, 20);
-  ctx.save();
-  ctx.fillStyle = '#150506';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(220,38,38,0.45)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.clip();
+  // Logo wordmark "BTF ARENA" (ratio préservé).
   if (logo) {
-    const pad = 12;
-    ctx.drawImage(logo, x + pad, y + pad, box - pad * 2, box - pad * 2);
+    const ratio = logo.width && logo.height ? logo.width / logo.height : 1015 / 446;
+    const logoW = box * ratio;
+    ctx.drawImage(logo, x, y, logoW, box);
   }
-  ctx.restore();
 
   ctx.textBaseline = 'alphabetic';
-  ctx.textAlign = 'left';
-  ctx.font = '700 46px ' + FONT_DISPLAY;
-  ctx.fillStyle = COLORS.white;
-  ctx.fillText('BTFARENA', x + box + 22, y + 42);
-  const arenaW = ctx.measureText('BTFARENA').width;
-  ctx.font = '600 26px ' + FONT_MICRO;
-  ctx.fillStyle = COLORS.red;
-  withLetterSpacing(ctx, '2px', () => ctx.fillText('.COM', x + box + 22 + arenaW + 8, y + 41));
-  ctx.font = '600 18px ' + FONT_MICRO;
-  ctx.fillStyle = COLORS.faint;
-  withLetterSpacing(ctx, '4px', () => ctx.fillText('TRADING ARENA', x + box + 22, y + 70));
 
   // Tag à droite.
   if (tag) {
@@ -560,7 +542,7 @@ function paintDetailCell(
 }
 
 async function paint(ctx: CanvasRenderingContext2D, data: ShareCardData, allowAvatar: boolean) {
-  const logo = await loadImage('/assets/pictures/logoBTF.webp', false);
+  const logo = await loadImage('/assets/pictures/BTF_ARENA_logo.png', false);
 
   paintBackground(ctx);
   paintHeader(ctx, logo, data.kind === 'rank' ? 'Classement' : 'Trade');

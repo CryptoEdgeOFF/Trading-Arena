@@ -47,6 +47,7 @@ export default function LegalFooter() {
       <div className="mx-auto flex max-w-7xl flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <span className="font-rajdhani text-[11px] font-bold tracking-wide text-white sm:text-sm">BTF Arena</span>
+          <span className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[0.18em] text-white sm:text-[8px]">BETA</span>
           <span className="text-[#454b57]">·</span>
           <span>© 2026 BTF</span>
         </div>

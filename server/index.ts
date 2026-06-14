@@ -1890,7 +1890,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
 });
 
 app.post('/api/competition/auth/request', rateLimit({ windowMs: 10 * 60 * 1000, max: 8, key: 'auth-request' }), async (req, res) => {
-  const { email, name, intent, phone } = req.body || {};
+  const { email, name, intent, phone, consent } = req.body || {};
   const safeIntent = intent === 'signup' ? 'signup' : intent === 'login' ? 'login' : null;
   if (!safeIntent) {
     res.status(400).json({ error: 'intent invalide (signup ou login)' });
@@ -1904,6 +1904,7 @@ app.post('/api/competition/auth/request', rateLimit({ windowMs: 10 * 60 * 1000, 
       name: name == null ? undefined : String(name),
       phone: phone == null ? undefined : String(phone),
       intent: safeIntent,
+      consent: Boolean(consent),
     });
 
     const result = await sendOtpEmail(String(email || '').trim(), code, safeIntent);
