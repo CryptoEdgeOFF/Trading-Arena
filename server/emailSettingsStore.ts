@@ -141,7 +141,9 @@ function defaultSettings(): EmailSettings {
   const envRedirect = (process.env.MAIL_TEST_REDIRECT || '').trim();
   const kinds = {} as Record<EmailKind, EmailKindSetting>;
   for (const kind of EMAIL_KINDS) {
-    kinds[kind] = { mode: 'on', overrides: {} };
+    // `new_arena` est une annonce de masse (tous les inscrits) → désactivée par
+    // défaut pour éviter tout envoi accidentel ; à activer explicitement.
+    kinds[kind] = { mode: kind === 'new_arena' ? 'off' : 'on', overrides: {} };
   }
   return {
     // Si une redirection de test était configurée via l'env, on démarre en mode

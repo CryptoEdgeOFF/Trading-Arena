@@ -2351,6 +2351,33 @@ if (!IS_SERVERLESS) {
   if (typeof notifierTimer.unref === 'function') notifierTimer.unref();
 }
 
+// Envoi MANUEL de l'annonce « nouvelle arène » à tous les utilisateurs non
+// inscrits. Fiable (synchrone, sans dépendre du minuteur). Respecte le réglage
+// du panneau Emails (type new_arena en mode `off` → refusé).
+app.post('/api/admin/emails/announce-arena', requireAdmin, async (req, res) => {
+  const competitionId = String(req.body?.competitionId || '').trim();
+  if (!competitionId) {
+    res.status(400).json({ error: 'competitionId requis' });
+    return;
+  }
+  try {
+    if (IS_SERVERLESS) await competitionManager.refresh();
+    const result = await competitionNotifier.announceNewArena(competitionId);
+    if (!result.ok) {
+      const messages: Record<string, string> = {
+        'mailer-off': 'Service email non configuré (RESEND_API_KEY manquant).',
+        blocked: 'Le type « Nouvelle arène » est sur Bloqué dans les réglages. Mets-le sur Actif ou Test.',
+        'not-found': 'Arène introuvable.',
+      };
+      res.status(400).json({ error: messages[result.reason || ''] || 'Envoi impossible', ...result });
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error)?.message || 'Envoi impossible' });
+  }
+});
+
 app.get('/api/competition/public', async (_req, res) => {
   await maybeFinalizeEndedCompetitions();
   res.json({ competitions: competitionManager.listPublicCompetitions() });

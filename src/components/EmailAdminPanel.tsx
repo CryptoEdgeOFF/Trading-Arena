@@ -90,6 +90,9 @@ export default function EmailAdminPanel({ adminFetch }: { adminFetch: AdminFetch
   const [expanded, setExpanded] = useState<EmailKind | null>(null);
   const [testTargets, setTestTargets] = useState<Record<string, string>>({});
   const [sendingTest, setSendingTest] = useState<EmailKind | null>(null);
+  const [arenas, setArenas] = useState<Array<{ id: string; title: string; status: string; isPublic: boolean }>>([]);
+  const [selectedArena, setSelectedArena] = useState('');
+  const [announcing, setAnnouncing] = useState(false);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
@@ -118,10 +121,53 @@ export default function EmailAdminPanel({ adminFetch }: { adminFetch: AdminFetch
     }
   }, [adminFetch]);
 
+  const loadArenas = useCallback(async () => {
+    try {
+      const res = await adminFetch('/api/admin/competitions');
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = (Array.isArray(data.competitions) ? data.competitions : [])
+        .filter((c: any) => c.isPublic && c.status !== 'ended')
+        .map((c: any) => ({ id: c.id, title: c.title, status: c.status, isPublic: c.isPublic }));
+      setArenas(list);
+    } catch {
+      // informatif seulement
+    }
+  }, [adminFetch]);
+
   useEffect(() => {
     loadConfig();
     loadLog();
-  }, [loadConfig, loadLog]);
+    loadArenas();
+  }, [loadConfig, loadLog, loadArenas]);
+
+  async function announceArena() {
+    if (!selectedArena) {
+      setMsg({ kind: 'err', text: 'Choisis une arène à annoncer.' });
+      return;
+    }
+    const arena = arenas.find((a) => a.id === selectedArena);
+    if (!window.confirm(`Envoyer l'annonce « nouvelle arène » à tous les utilisateurs non inscrits pour « ${arena?.title || selectedArena} » ?`)) {
+      return;
+    }
+    setAnnouncing(true);
+    setMsg(null);
+    try {
+      const res = await adminFetch('/api/admin/emails/announce-arena', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ competitionId: selectedArena }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Envoi impossible');
+      setMsg({ kind: 'ok', text: `Annonce envoyée — ${data.sent} email(s).` });
+      loadLog();
+    } catch (err) {
+      setMsg({ kind: 'err', text: (err as Error)?.message || 'Erreur' });
+    } finally {
+      setAnnouncing(false);
+    }
+  }
 
   useEffect(() => {
     const timer = window.setInterval(loadLog, 20_000);
@@ -275,6 +321,39 @@ export default function EmailAdminPanel({ adminFetch }: { adminFetch: AdminFetch
           )}
         </div>
       )}
+
+      {/* Annonce manuelle d'une nouvelle arène */}
+      <div className="mb-6 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+        <div className="mb-1 text-sm font-semibold text-white">Annoncer une nouvelle arène</div>
+        <p className="mb-3 text-xs text-slate-400">
+          Envoie l'email « nouvelle arène » à tous les utilisateurs non inscrits, immédiatement.
+          Nécessite que le type « Nouvelle arène disponible » soit sur <span className="text-emerald-300">Actif</span> (envoi réel) ou <span className="text-amber-300">Test</span>.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={selectedArena}
+            onChange={(e) => setSelectedArena(e.target.value)}
+            className="flex-1 min-w-[220px] rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+          >
+            <option value="">— Choisir une arène —</option>
+            {arenas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.title} ({a.status})
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={announceArena}
+            disabled={announcing || !selectedArena}
+            className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
+          >
+            {announcing ? 'Envoi…' : 'Envoyer l\u2019annonce'}
+          </button>
+        </div>
+        {arenas.length === 0 && (
+          <p className="mt-2 text-xs text-slate-500">Aucune arène publique en cours.</p>
+        )}
+      </div>
 
       {/* Types d'emails */}
       <div className="space-y-3">

@@ -1,5 +1,6 @@
 import type { CashPrize, CompetitionManager } from './competitionManager.js';
 import { isMailerConfigured, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
+import { getEmailSettings } from './emailSettingsStore.js';
 
 /**
  * Moteur de notifications email des arènes online :
@@ -25,10 +26,6 @@ const ENDED_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // évite d'envoyer un email de lancement pour des arènes déjà anciennes au
 // moment du déploiement de cette fonctionnalité.
 const NEW_ARENA_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-// Diffusion « nouvelle arène » DÉSACTIVÉE par défaut : c'est un email envoyé à
-// TOUS les utilisateurs, donc on l'active explicitement via une variable
-// d'environnement uniquement quand on veut réellement lancer une annonce.
-const NEW_ARENA_ANNOUNCE_ENABLED = process.env.ENABLE_NEW_ARENA_EMAIL === 'true';
 const PODIUM_COOLDOWN_MS = 30 * 60 * 1000; // 1 email max / 30 min / joueur / arène
 const PODIUM_SIZE = 3;
 // Resend limite à ~2 req/s : on espace les envois en rafale.
@@ -159,6 +156,14 @@ export class CompetitionNotifier {
     try {
       const competitions = this.competitionManager.listCompetitionsForNotifier();
       const liveIds = new Set<string>();
+      // L'annonce « nouvelle arène » est pilotée depuis le panneau admin Emails
+      // (type new_arena). Mode `off` (défaut) → aucune annonce automatique.
+      let newArenaAuto = false;
+      try {
+        newArenaAuto = (await getEmailSettings()).kinds.new_arena?.mode !== 'off';
+      } catch {
+        newArenaAuto = false;
+      }
 
       for (const competition of competitions) {
         if (competition.status === 'live') liveIds.add(competition.id);
@@ -168,7 +173,7 @@ export class CompetitionNotifier {
         // sur les arènes vides car une nouvelle arène n'a généralement aucun
         // inscrit.
         if (
-          NEW_ARENA_ANNOUNCE_ENABLED &&
+          newArenaAuto &&
           competition.isPublic &&
           competition.status !== 'ended' &&
           !competition.notifiedNewArenaAt
@@ -245,13 +250,13 @@ export class CompetitionNotifier {
     console.log(`[notifier] start-soon "${title}" → ${sent} emails`);
   }
 
-  private async sendNewArena(competitionId: string, title: string): Promise<void> {
+  private async sendNewArena(competitionId: string, title: string): Promise<number> {
     // Marqué AVANT l'envoi (anti double-blast si l'envoi en masse échoue à
     // mi-chemin : mieux vaut quelques manqués qu'un renvoi général).
     this.competitionManager.markCompetitionNotified(competitionId, 'newArena');
 
     const payload = this.competitionManager.getNewArenaPayload(competitionId);
-    if (!payload) return;
+    if (!payload) return 0;
 
     const prize = payload.cashPrize;
     const startLabel = formatArenaDateTime(payload.startAt);
@@ -291,6 +296,27 @@ export class CompetitionNotifier {
       await sleep(SEND_SPACING_MS);
     }
     console.log(`[notifier] new-arena "${title}" → ${sent} emails`);
+    return sent;
+  }
+
+  /**
+   * Envoi MANUEL de l'annonce « nouvelle arène » (déclenché depuis l'admin),
+   * indépendant du minuteur et de la fenêtre de 24 h. Respecte le réglage du
+   * panneau (type new_arena en mode `off` → refusé). Renvoie le nombre d'envois.
+   */
+  async announceNewArena(competitionId: string): Promise<{ ok: boolean; sent: number; reason?: string }> {
+    if (!this.mailerReady()) return { ok: false, sent: 0, reason: 'mailer-off' };
+    let mode = 'off';
+    try {
+      mode = (await getEmailSettings()).kinds.new_arena?.mode ?? 'off';
+    } catch {
+      mode = 'off';
+    }
+    if (mode === 'off') return { ok: false, sent: 0, reason: 'blocked' };
+    const payload = this.competitionManager.getNewArenaPayload(competitionId);
+    if (!payload) return { ok: false, sent: 0, reason: 'not-found' };
+    const sent = await this.sendNewArena(competitionId, payload.title);
+    return { ok: true, sent };
   }
 
   private async checkPodium(competitionId: string, title: string, now: number): Promise<void> {
