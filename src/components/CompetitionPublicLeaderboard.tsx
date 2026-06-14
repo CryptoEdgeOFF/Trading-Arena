@@ -418,7 +418,7 @@ export default function CompetitionPublicLeaderboard() {
                   <>
                     {ranked.length > 0 ? (
                       <div className="glass-card mt-6 overflow-hidden">
-                        <div className="grid grid-cols-[44px_1.4fr_1fr_0.9fr_0.6fr] items-center gap-2 border-b border-[#232329] bg-[#0c0c10] px-3 py-3 text-[9px] uppercase tracking-[0.16em] text-[#71717a] sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 sm:text-[10px] md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr]">
+                        <div className="grid grid-cols-[40px_1.7fr_1fr_0.9fr_0.5fr] items-center gap-2 border-b border-[#232329] bg-[#0c0c10] px-3 py-3 text-[9px] uppercase tracking-[0.16em] text-[#71717a] sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 sm:text-[10px] md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr]">
                           <div>{t('leaderboard.thRank')}</div>
                           <div>{t('leaderboard.thTrader')}</div>
                           <div className="text-right">{t('leaderboard.thPnlPct')}</div>
@@ -699,7 +699,7 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.4, delay: Math.min(index, 12) * 0.025, ease: [0.22, 1, 0.36, 1] }}
-      className={`row-hover grid grid-cols-[44px_1.4fr_1fr_0.9fr_0.6fr] items-center gap-2 border-l px-3 text-sm sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr] ${compact ? 'py-2 sm:py-2' : 'py-3 sm:py-3.5'} ${isMe ? 'border-[#dc2626] bg-[#dc2626]/10' : 'border-transparent'} ${noTrade ? 'opacity-60' : ''}`}
+      className={`row-hover grid grid-cols-[40px_1.7fr_1fr_0.9fr_0.5fr] items-center gap-2 border-l px-3 text-sm sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr] ${compact ? 'py-2 sm:py-2' : 'py-3 sm:py-3.5'} ${isMe ? 'border-[#dc2626] bg-[#dc2626]/10' : 'border-transparent'} ${noTrade ? 'opacity-60' : ''}`}
     >
       <div>
         {noTrade ? (
@@ -710,7 +710,7 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
       </div>
       <Link
         to={`/compete/player/${row.userId}`}
-        className="group flex min-w-0 items-center gap-2 sm:gap-3"
+        className="group flex min-w-0 items-center gap-2 overflow-hidden sm:gap-3"
         title={t('playerProfile.viewProfile')}
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white sm:h-8 sm:w-8 sm:text-[11px]">
@@ -725,7 +725,7 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
             getInitials(row.name)
           )}
         </span>
-        <span className="display flex min-w-0 items-center gap-2 text-sm font-semibold text-white sm:text-base">
+        <span className="display flex min-w-0 items-center gap-1 text-sm font-semibold text-white sm:gap-2 sm:text-base">
           <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
           <NameBadges badges={row.badges} compact />
           {isMe && (
@@ -771,7 +771,7 @@ function EnrolledRow({ row, index, isMe = false }: { row: LeaderboardRow; index:
     >
       <Link
         to={`/compete/player/${row.userId}`}
-        className="group flex min-w-0 items-center gap-2 sm:gap-3"
+        className="group flex min-w-0 items-center gap-2 overflow-hidden sm:gap-3"
         title={t('playerProfile.viewProfile')}
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white sm:h-8 sm:w-8 sm:text-[11px]">
@@ -781,7 +781,7 @@ function EnrolledRow({ row, index, isMe = false }: { row: LeaderboardRow; index:
             getInitials(row.name)
           )}
         </span>
-        <span className="display flex min-w-0 items-center gap-2 text-sm font-semibold text-white sm:text-base">
+        <span className="display flex min-w-0 items-center gap-1 text-sm font-semibold text-white sm:gap-2 sm:text-base">
           <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
           <NameBadges badges={row.badges} compact />
           {isMe && (

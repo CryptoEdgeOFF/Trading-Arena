@@ -29,14 +29,14 @@ export const en = {
   },
 
   seo: {
-    homeTitle: 'Free crypto trading competitions & prizes to win',
+    homeTitle: 'Free online trading competitions & prizes to win',
     homeDesc:
-      'Join 100% free crypto trading competitions on BTF Trading Arena. Compete against traders worldwide, climb the live leaderboard and win prizes. Free sign-up, real-time trading.',
+      'Join 100% free trading competitions on BTF Trading Arena: crypto, forex, indices, stocks and commodities. Compete against traders worldwide, climb the live leaderboard and win prizes. Free sign-up, real-time trading.',
     homeKeywords:
-      'trading competition, online trading competition, free crypto trading, trading tournament, win prizes, trading contest, paper trading, crypto trading contest',
+      'trading competition, online trading competition, free trading, trading tournament, win prizes, trading contest, paper trading, forex trading, indices trading, stock trading, commodities trading',
     leaderboardTitle: 'Global Leaderboard',
     leaderboardDesc:
-      'Discover the best traders on BTF Trading Arena. Live global ranking of free crypto trading competitions.',
+      'Discover the best traders on BTF Trading Arena. Live global ranking of free online trading competitions.',
     bonusTitle: 'Live Trading Bonus — Broker & Exchange Deals',
     bonusDesc:
       'Exclusive bonuses and promo codes for our partner brokers and exchanges. Deposit rewards, reduced fees and special offers for BTF Trading Arena traders.',

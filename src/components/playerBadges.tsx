@@ -70,17 +70,41 @@ const CHIP_STYLES: Record<UserBadge, string> = {
 export function NameBadges({ badges, compact = false }: { badges?: UserBadge[] | null; compact?: boolean }) {
   const { t } = useTranslation();
   if (!badges?.length) return null;
+  const sorted = sortBadges(badges);
+
+  // Mode compact (listes/classements denses) : petites icônes de badge, pour
+  // garder le pseudo lisible. Le libellé complet reste accessible en infobulle.
+  if (compact) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-0.5 align-middle">
+        {sorted.map((badge) => {
+          const def = BADGE_DEFS[badge];
+          return (
+            <img
+              key={badge}
+              src={def.src}
+              alt={t(def.nameKey)}
+              title={`${t(def.nameKey)} — ${t(def.descKey)}`}
+              loading="lazy"
+              draggable={false}
+              className="h-4 w-4 shrink-0 select-none object-contain"
+              style={{ filter: `drop-shadow(0 0 3px ${def.glow}99)` }}
+            />
+          );
+        })}
+      </span>
+    );
+  }
+
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 align-middle">
-      {sortBadges(badges).map((badge) => {
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-1 align-middle">
+      {sorted.map((badge) => {
         const def = BADGE_DEFS[badge];
         return (
           <span
             key={badge}
             title={`${t(def.nameKey)} — ${t(def.descKey)}`}
-            className={`whitespace-nowrap rounded-md border font-bold uppercase tracking-[0.1em] ${CHIP_STYLES[badge]} ${
-              compact ? 'px-1 py-px text-[8px]' : 'px-1.5 py-0.5 text-[9px]'
-            }`}
+            className={`whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em] ${CHIP_STYLES[badge]}`}
           >
             {t(def.nameKey)}
           </span>

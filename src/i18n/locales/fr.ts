@@ -31,14 +31,14 @@ export const fr: TranslationResources = {
   },
 
   seo: {
-    homeTitle: 'Compétitions de trading crypto gratuites & lots à gagner',
+    homeTitle: 'Compétitions de trading en ligne gratuites & lots à gagner',
     homeDesc:
-      'Participe à des compétitions de trading crypto 100% gratuites sur BTF Trading Arena. Affronte des traders du monde entier, grimpe au classement en temps réel et gagne des lots. Inscription gratuite, trading en temps réel.',
+      'Participe à des compétitions de trading 100% gratuites sur BTF Trading Arena : crypto, forex, indices, actions et matières premières. Affronte des traders du monde entier, grimpe au classement en temps réel et gagne des lots. Inscription gratuite, trading en temps réel.',
     homeKeywords:
-      'compétition de trading, compétition de trading en ligne, trading crypto gratuit, tournoi de trading, lots à gagner, concours de trading, paper trading',
+      'compétition de trading, compétition de trading en ligne, trading gratuit, tournoi de trading, lots à gagner, concours de trading, paper trading, trading forex, trading indices, trading actions, trading matières premières',
     leaderboardTitle: 'Classement global',
     leaderboardDesc:
-      'Découvre les meilleurs traders de BTF Trading Arena. Classement global en temps réel des compétitions de trading crypto gratuites.',
+      'Découvre les meilleurs traders de BTF Trading Arena. Classement global en temps réel des compétitions de trading en ligne gratuites.',
     bonusTitle: 'Live Trading Bonus — Deals broker & exchange',
     bonusDesc:
       'Bonus exclusifs et codes promo pour nos brokers et exchanges partenaires. Récompenses de dépôt, frais réduits et offres spéciales pour les traders de BTF Trading Arena.',

@@ -169,7 +169,7 @@ export default function CompetitionGlobalLeaderboard() {
                           <div className="flex items-center gap-3">
                             <Link
                               to={`/compete/player/${row.userId}`}
-                              className="group flex min-w-0 items-center gap-3"
+                              className="group flex min-w-0 items-center gap-3 overflow-hidden"
                               title={t('playerProfile.viewProfile')}
                             >
                               {row.avatarUrl ? (
@@ -185,9 +185,9 @@ export default function CompetitionGlobalLeaderboard() {
                                 </span>
                               )}
                               <div className="min-w-0">
-                                <div className="flex items-center gap-2">
+                                <div className="flex min-w-0 items-center gap-1.5">
                                   <span className="truncate text-sm font-semibold text-white underline-offset-2 group-hover:underline">{row.name}</span>
-                                  <NameBadges badges={row.badges} />
+                                  <NameBadges badges={row.badges} compact />
                                 </div>
                                 {noTrades && (
                                   <div className="text-[10px] text-[#71717a]">{t('globalLeaderboard.noTrades')}</div>
