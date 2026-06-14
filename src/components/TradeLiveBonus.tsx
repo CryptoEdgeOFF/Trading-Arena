@@ -79,13 +79,13 @@ function CopyCodeButton({ code, accent, partner }: { code: string; accent: strin
     <button
       type="button"
       onClick={copy}
-      className="group flex min-w-0 items-center gap-2 rounded-lg border border-dashed px-3 py-2 transition-colors"
+      className="group flex w-full items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 transition-colors"
       style={{ borderColor: `${accent}66`, backgroundColor: `${accent}12` }}
       title={t('bonus.copyCode')}
     >
       <span className="micro shrink-0 text-[9px] uppercase tracking-[0.18em] text-[#9a9aa6]">{t('bonus.code')}</span>
-      <span className="num truncate text-sm font-bold tracking-[0.12em] text-white">{code}</span>
-      <span className="ml-1 shrink-0 text-[#a5a5b0] group-hover:text-white" style={{ color: copied ? accent : undefined }}>
+      <span className="num min-w-0 flex-1 break-all text-left text-sm font-bold tracking-[0.12em] text-white">{code}</span>
+      <span className="shrink-0 text-[#a5a5b0] group-hover:text-white" style={{ color: copied ? accent : undefined }}>
         {copied ? (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points="20 6 9 17 4 12" />
@@ -167,7 +167,7 @@ function PartnerCard({ partner, index, featured = false }: { partner: Partner; i
           </div>
         )}
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-col gap-2.5">
           {partner.promoCode && <CopyCodeButton code={partner.promoCode} accent={partner.accent} partner={partner.name} />}
           {live ? (
             <a
@@ -175,7 +175,7 @@ function PartnerCard({ partner, index, featured = false }: { partner: Partner; i
               target="_blank"
               rel="noopener noreferrer sponsored"
               onClick={() => analytics.promoClick({ partner: partner.name, category: partner.category, url: partner.referralUrl })}
-              className="ml-auto flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-black transition-transform hover:-translate-y-0.5"
+              className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-black transition-transform hover:-translate-y-0.5"
               style={{ backgroundColor: partner.accent, boxShadow: `0 16px 40px -18px ${partner.accent}` }}
             >
               {t('bonus.claim')}
@@ -184,7 +184,7 @@ function PartnerCard({ partner, index, featured = false }: { partner: Partner; i
               </svg>
             </a>
           ) : (
-            <span className="ml-auto rounded-xl border border-[#232329] bg-[#0c0c10] px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">
+            <span className="w-full rounded-xl border border-[#232329] bg-[#0c0c10] px-4 py-2.5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-[#71717a]">
               {t('bonus.soon')}
             </span>
           )}
