@@ -444,28 +444,20 @@ function TopBar({
     : '/compete';
 
   return (
-    <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
-      <div className="flex items-center gap-2">
+    <header className="relative flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
+      {/* Logo compact (mobile uniquement) */}
+      <div className="flex items-center gap-2 md:hidden">
         <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-6 w-auto object-contain sm:h-7" />
-        <span className="hidden rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#7a8090] sm:inline-block">Terminal</span>
       </div>
 
-      <div className="hidden min-w-0 md:block">
-        <div className="truncate text-[13px] font-semibold text-white">
-          {liveMode ? 'BTF Live event' : (competition?.title || t('terminal.tradingTerminal'))}
-        </div>
-        <div className="text-[10px] uppercase tracking-[0.16em] text-[#7a8090]">
-          {liveMode
-            ? t('terminal.traderAccess')
-            : (competition?.status === 'live'
-              ? t('terminal.competitionLive')
-              : competition?.status === 'registration' || competition?.status === 'starting_soon'
-                ? t('terminal.competitionUpcoming')
-                : t('terminal.paperTrading'))}
-        </div>
-      </div>
+      {/* Gros logo centré (desktop uniquement) */}
+      <img
+        src="/assets/pictures/BTFarenaLOGOTERMINAL.webp"
+        alt="BTF Arena"
+        className="pointer-events-none absolute left-1/2 top-1/2 hidden h-14 w-auto max-w-[44%] -translate-x-1/2 -translate-y-1/2 object-contain md:block lg:h-16"
+      />
 
-      <div className="order-3 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-none md:ml-auto md:w-auto md:min-w-[360px]">
+      <div className="order-3 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-none md:mr-auto md:w-auto md:min-w-[360px]">
         <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
           <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.balance')}</div>
           <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">{fmt(balance, 2)} <span className="text-[9px] text-[#7a8090] md:text-[10px]">USD</span></div>
