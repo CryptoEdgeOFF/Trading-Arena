@@ -70,6 +70,12 @@ const MAX_LIVE_BARS = 200;
 let pool: Pool | null = null;
 let schemaReady: Promise<void> = Promise.resolve();
 
+/** Stats du pool Postgres (monitoring admin). null si pas de DB configurée. */
+export function getCandlesPoolStats(): { max: number | null; total: number; idle: number; waiting: number } | null {
+  if (!pool) return null;
+  return { max: (pool.options?.max as number) ?? null, total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
+}
+
 /** Backfills en cours, dédupliqués par (pair, interval, to). */
 const inflightBackfills = new Map<string, Promise<void>>();
 

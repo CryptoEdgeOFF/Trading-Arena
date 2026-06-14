@@ -455,8 +455,9 @@ export class CompetitionManager {
       this.pool = new Pool({
         connectionString: databaseUrl,
         ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false },
-        // Borne les connexions (auth, sessions, store compétitions).
-        max: Number(process.env.PG_POOL_MAX_COMPETITION) || 8,
+        // Borne les connexions (auth, sessions, store compétitions). Pool le
+        // plus sollicité pendant le trading des arènes online → défaut relevé.
+        max: Number(process.env.PG_POOL_MAX_COMPETITION) || 12,
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 10_000,
       });
@@ -2232,6 +2233,33 @@ export class CompetitionManager {
    * disponible ». On notifie tous les utilisateurs inscrits sur la plateforme,
    * sauf ceux déjà inscrits à cette arène (inutile de les inviter).
    */
+  /** Statistiques runtime pour le monitoring admin (lecture seule). */
+  getRuntimeStats(): {
+    users: number;
+    competitions: number;
+    liveCompetitions: number;
+    pool: { max: number | null; total: number; idle: number; waiting: number } | null;
+  } {
+    let liveCompetitions = 0;
+    const now = Date.now();
+    for (const c of this.competitions.values()) {
+      if (inferCompetitionStatus(c, now) === 'live') liveCompetitions += 1;
+    }
+    return {
+      users: this.users.size,
+      competitions: this.competitions.size,
+      liveCompetitions,
+      pool: this.pool
+        ? {
+            max: (this.pool.options?.max as number) ?? null,
+            total: this.pool.totalCount,
+            idle: this.pool.idleCount,
+            waiting: this.pool.waitingCount,
+          }
+        : null,
+    };
+  }
+
   getNewArenaPayload(competitionId: string): {
     title: string;
     startAt: number;

@@ -30,13 +30,14 @@ import {
   getEmailSettings,
   updateEmailSettings,
   listEmailLog,
+  getEmailPoolStats,
   EMAIL_CATALOG,
   EMAIL_KINDS,
   type EmailKind,
   type EmailSettingsPatch,
 } from './emailSettingsStore.js';
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
-import { getMarketMetadata } from './marketMetadata.js';
+import { getMarketMetadata, getMarketMetadataPoolStats } from './marketMetadata.js';
 import * as promotionsStore from './promotionsStore.js';
 import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
@@ -2376,6 +2377,59 @@ app.post('/api/admin/emails/announce-arena', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: (err as Error)?.message || 'Envoi impossible' });
   }
+});
+
+// Métriques runtime pour surveiller la charge en direct (connexions WS, pools
+// Postgres, traders actifs). Lecture seule, admin uniquement.
+app.get('/api/admin/metrics', requireAdmin, (_req, res) => {
+  let arenaSockets = 0;
+  const arenaByCompetition: Array<{ competitionId: string; sockets: number }> = [];
+  for (const [competitionId, sockets] of arenaClients) {
+    arenaSockets += sockets.size;
+    arenaByCompetition.push({ competitionId, sockets: sockets.size });
+  }
+  arenaByCompetition.sort((a, b) => b.sockets - a.sockets);
+
+  const mem = process.memoryUsage();
+  const playerStats = manager.getRuntimeStats();
+  const compStats = competitionManager.getRuntimeStats();
+
+  res.json({
+    at: Date.now(),
+    uptimeSec: Math.round(process.uptime()),
+    serverless: IS_SERVERLESS,
+    memoryMB: {
+      rss: Math.round(mem.rss / 1048576),
+      heapUsed: Math.round(mem.heapUsed / 1048576),
+      heapTotal: Math.round(mem.heapTotal / 1048576),
+      external: Math.round(mem.external / 1048576),
+    },
+    websockets: {
+      total: clients.size,
+      paperTraders: paperClients.size,
+      arenaCompetitions: arenaClients.size,
+      arenaSockets,
+      arenaByCompetition: arenaByCompetition.slice(0, 20),
+    },
+    traders: {
+      tracked: playerStats.trackedPlayers,
+      active: playerStats.activePlayers,
+      withOpenPositions: playerStats.withOpenPositions,
+    },
+    competitions: {
+      total: compStats.competitions,
+      live: compStats.liveCompetitions,
+      users: compStats.users,
+    },
+    pools: {
+      competition: compStats.pool,
+      roster: playerStats.pool,
+      candles: cryptoCandlesStore.getCandlesPoolStats(),
+      marketMetadata: getMarketMetadataPoolStats(),
+      promotions: promotionsStore.getPromotionsPoolStats(),
+      email: getEmailPoolStats(),
+    },
+  });
 });
 
 app.get('/api/competition/public', async (_req, res) => {

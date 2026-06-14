@@ -364,6 +364,12 @@ export async function listEmailLog(limit = 100): Promise<EmailLogEntry[]> {
   }));
 }
 
+/** Stats du pool Postgres (monitoring admin). null si pas de DB configurée. */
+export function getEmailPoolStats(): { max: number | null; total: number; idle: number; waiting: number } | null {
+  if (!pool) return null;
+  return { max: (pool.options?.max as number) ?? null, total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
+}
+
 /** Résout un texte éditable : surcharge admin sinon défaut du catalogue, avec substitution de {variables}. */
 export function resolveEmailText(
   settings: EmailSettings | undefined,

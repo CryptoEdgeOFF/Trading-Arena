@@ -4,6 +4,7 @@ import { compressImage } from '../utils/imageUpload';
 import { SPONSOR_OPTIONS } from '../lib/sponsors';
 import { ADMIN_BASE, PROMOTIONS_ADMIN_PATH, EMAILS_ADMIN_PATH } from '../lib/adminPath';
 import ItickFeedPanel from './ItickFeedPanel';
+import AdminMetricsPanel from './AdminMetricsPanel';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -641,6 +642,8 @@ export default function CompetitionAdmin() {
             {error || info}
           </div>
         )}
+
+        <AdminMetricsPanel adminFetch={adminFetch} />
 
         <section className="mb-8 rounded-2xl border border-amber-400/20 bg-slate-900/60 p-6">
           <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">

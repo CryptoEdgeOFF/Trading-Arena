@@ -213,7 +213,7 @@ export class PlayerManager {
         // Plafond de connexions volontairement borné : 6 pools dans le process,
         // on évite de saturer le plafond Postgres (Neon/Render). Roster = pool
         // la plus sollicitée (flush batch 2s).
-        max: Number(process.env.PG_POOL_MAX_ROSTER) || 8,
+        max: Number(process.env.PG_POOL_MAX_ROSTER) || 12,
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 10_000,
       });
@@ -873,6 +873,32 @@ export class PlayerManager {
 
   getPlayers(): Player[] {
     return Array.from(this.players.values());
+  }
+
+  /** Statistiques runtime pour le monitoring admin (lecture seule). */
+  getRuntimeStats(): {
+    trackedPlayers: number;
+    activePlayers: number;
+    withOpenPositions: number;
+    pool: { max: number | null; total: number; idle: number; waiting: number } | null;
+  } {
+    let withOpenPositions = 0;
+    for (const player of this.players.values()) {
+      if (player.openPositions && player.openPositions.length > 0) withOpenPositions += 1;
+    }
+    return {
+      trackedPlayers: this.players.size,
+      activePlayers: this.getActivePlayers().length,
+      withOpenPositions,
+      pool: this.pool
+        ? {
+            max: (this.pool.options?.max as number) ?? null,
+            total: this.pool.totalCount,
+            idle: this.pool.idleCount,
+            waiting: this.pool.waitingCount,
+          }
+        : null,
+    };
   }
 
   getActivePlayers(): Player[] {

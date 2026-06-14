@@ -108,6 +108,12 @@ function getPool(): Pool | null {
   return pool;
 }
 
+/** Stats du pool Postgres (monitoring admin). null si pas de DB configurée. */
+export function getMarketMetadataPoolStats(): { max: number | null; total: number; idle: number; waiting: number } | null {
+  if (!pool) return null;
+  return { max: (pool.options?.max as number) ?? null, total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
+}
+
 export async function ensureMarketMetadataTable(): Promise<void> {
   const db = getPool();
   if (!db) return;
