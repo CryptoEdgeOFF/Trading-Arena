@@ -339,6 +339,9 @@ export const en = {
     joinClosed: 'Registration closed',
     join: 'Join',
     leaderboard: 'Leaderboard',
+    registrationEnds: 'Registration open until',
+    registrationClosed: 'Registration closed',
+    tradingStarts: 'Trading starts on',
   },
 
   joinModal: {
@@ -469,6 +472,8 @@ export const en = {
     slHintShort: 'SL must be > ref price for a short',
     slHintLong: 'SL must be < ref price for a long',
     btnWaitingEvent: 'Waiting event',
+    btnEventEnded: 'Event ended',
+    startsIn: 'Starts in',
     btnMarketClosed: 'Market closed',
     btnEnterQty: 'Enter quantity',
     btnSending: 'Sending...',

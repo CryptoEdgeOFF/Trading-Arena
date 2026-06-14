@@ -167,6 +167,47 @@ function fmtDateTime(value: number): string {
   return new Date(value).toLocaleString(dateLocale(), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+/**
+ * Bloc d'info planning : rappelle quand les inscriptions se terminent et quand
+ * le trading démarre. Affiché uniquement avant le départ (inscription / bientôt).
+ */
+function ScheduleInfo({
+  startAt,
+  registrationEndsAt,
+  status,
+  className = '',
+}: {
+  startAt: number;
+  registrationEndsAt?: number;
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  if (status === 'live' || status === 'ended') return null;
+  const regEnd = registrationEndsAt ?? startAt;
+  const regClosed = Date.now() >= regEnd;
+  return (
+    <div className={`space-y-1.5 rounded-lg border border-[#241e30] bg-white/[0.02] px-3 py-2.5 text-[11px] leading-tight text-[#a1a1aa] sm:text-xs ${className}`}>
+      <div className="flex items-center gap-2">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#dc6a6a]">
+          <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+        <span>
+          {regClosed
+            ? t('publicCard.registrationClosed')
+            : <>{t('publicCard.registrationEnds')} <span className="font-semibold text-white">{fmtDateTime(regEnd)}</span></>}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#34d399]">
+          <polygon points="5 3 19 12 5 21 5 3" />
+        </svg>
+        <span>{t('publicCard.tradingStarts')} <span className="font-semibold text-white">{fmtDateTime(startAt)}</span></span>
+      </div>
+    </div>
+  );
+}
+
 function useCountdown(target: number): string {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -1534,6 +1575,13 @@ function MyCompetitionCard({
           {fmtDateShort(competition.startAt)} <span className="text-[#52525b]">→</span> {fmtDateShort(competition.endAt)}
         </div>
 
+        <ScheduleInfo
+          startAt={competition.startAt}
+          registrationEndsAt={competition.registrationEndsAt}
+          status={competition.status}
+          className="mt-3"
+        />
+
         {/* Big PnL hero block */}
         <div
           className={`metric metric-pnl-big mt-5 ${pos ? 'metric-pos' : 'metric-neg'} ${
@@ -1670,6 +1718,13 @@ function PublicCompetitionCard({
           </div>
         </div>
 
+        <ScheduleInfo
+          startAt={competition.startAt}
+          registrationEndsAt={competition.registrationEndsAt}
+          status={competition.status}
+          className="mt-4"
+        />
+
         <div className="mt-5 grid gap-2.5 sm:grid-cols-[1.4fr_1fr]">
           {alreadyJoined ? (
             <span className="flex items-center justify-center gap-2 rounded-xl border border-[#10b981]/30 bg-[#10b981]/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#34d399]">
@@ -1754,6 +1809,13 @@ function JoinCompetitionModal({
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M6 18L18 6" /></svg>
             </button>
           </div>
+
+          <ScheduleInfo
+            startAt={competition.startAt}
+            registrationEndsAt={competition.registrationEndsAt}
+            status={competition.status}
+            className="mt-4"
+          />
 
           {needsSponsorId && sponsor && (
             <div className="mt-5 rounded-xl border p-4" style={{ borderColor: `${accent}4d`, backgroundColor: `${accent}14` }}>

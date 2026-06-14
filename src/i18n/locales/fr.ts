@@ -341,6 +341,9 @@ export const fr: TranslationResources = {
     joinClosed: 'Inscriptions fermées',
     join: 'Rejoindre',
     leaderboard: 'Leaderboard',
+    registrationEnds: 'Inscriptions ouvertes jusqu’au',
+    registrationClosed: 'Inscriptions terminées',
+    tradingStarts: 'Le trading démarre le',
   },
 
   joinModal: {
@@ -471,6 +474,8 @@ export const fr: TranslationResources = {
     slHintShort: 'SL doit être > prix de ref pour un short',
     slHintLong: 'SL doit être < prix de ref pour un long',
     btnWaitingEvent: "En attente de l'événement",
+    btnEventEnded: 'Événement terminé',
+    startsIn: 'Démarre dans',
     btnMarketClosed: 'Marché fermé',
     btnEnterQty: 'Entre une quantité',
     btnSending: 'Envoi...',

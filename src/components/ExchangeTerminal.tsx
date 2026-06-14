@@ -48,8 +48,8 @@ import {
 const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
 const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
-const DEMO_TAKER_FEE = 0.0004; // 0,04 % — aligné sur le barème réel (cf. moteur)
-const DEMO_MAKER_FEE = 0.0002; // 0,02 %
+const DEMO_TAKER_FEE = 0.0004 / 3; // ≈ 0,01333 % — aligné sur le barème réel (cf. moteur)
+const DEMO_MAKER_FEE = 0.0002 / 3; // ≈ 0,00667 %
 
 /** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
 function isRestingLimitTriggered(
@@ -382,6 +382,19 @@ const ICONS = {
 
 /* ------------------------------------------------------------------ TOP BAR */
 
+/** Compte à rebours lisible : « 2j 04h 13m 09s » (jours masqués si nuls). */
+function formatDHMS(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  if (d > 0) return `${d}j ${pad(h)}h ${pad(m)}m ${pad(sec)}s`;
+  if (h > 0) return `${h}h ${pad(m)}m ${pad(sec)}s`;
+  return `${m}m ${pad(sec)}s`;
+}
+
 function TopBar({
   player,
   trader,
@@ -400,13 +413,25 @@ function TopBar({
   const eventStarted = useGameStore((s) => s.eventStarted);
   const [now, setNow] = useState(Date.now());
 
+  // Cible du compte à rebours de la compétition (mode arène, hors live BTF) :
+  // si elle est en cours → temps jusqu'à la fin ; si à venir → jusqu'au départ.
+  const compStatus = competition?.status;
+  const compUpcoming = compStatus === 'registration' || compStatus === 'starting_soon';
+  const compEnded = compStatus === 'ended';
+  const compTarget = !liveMode
+    ? (compStatus === 'live' ? competition?.endAt ?? null : compUpcoming ? competition?.startAt ?? null : null)
+    : null;
+
   useEffect(() => {
-    if (!liveMode || !eventStarted || eventEndTime == null) return;
+    const liveActive = liveMode && eventStarted && eventEndTime != null;
+    const compActive = compTarget != null;
+    if (!liveActive && !compActive) return;
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, [liveMode, eventStarted, eventEndTime]);
+  }, [liveMode, eventStarted, eventEndTime, compTarget]);
 
   const remainingMs = eventEndTime != null ? Math.max(0, eventEndTime - now) : null;
+  const compRemainingMs = compTarget != null ? Math.max(0, compTarget - now) : null;
   const balance = player?.currentBalance ?? 0;
   const pnl = player?.pnl ?? 0;
   const pnlPct = player?.pnlPercent ?? 0;
@@ -419,10 +444,10 @@ function TopBar({
     : '/compete';
 
   return (
-    <header className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2.5 py-2 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
+    <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
       <div className="flex items-center gap-2">
-        <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-7 w-auto object-contain" />
-        <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#7a8090]">Terminal</span>
+        <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-6 w-auto object-contain sm:h-7" />
+        <span className="hidden rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-[#7a8090] sm:inline-block">Terminal</span>
       </div>
 
       <div className="hidden min-w-0 md:block">
@@ -441,17 +466,17 @@ function TopBar({
       </div>
 
       <div className="order-3 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-none md:ml-auto md:w-auto md:min-w-[360px]">
-        <div className="border-r border-[#241e30] px-2 py-1.5 md:px-3">
+        <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
           <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.balance')}</div>
           <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">{fmt(balance, 2)} <span className="text-[9px] text-[#7a8090] md:text-[10px]">USD</span></div>
         </div>
-        <div className="border-r border-[#241e30] px-2 py-1.5 md:px-3">
+        <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
           <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">PNL</div>
           <span className="num block truncate text-[11px] font-semibold md:text-[13px]" style={{ color: pnlPos ? '#15c990' : '#f43f6e' }}>
             {pnlPos ? '+' : ''}{pnl.toFixed(2)} <span className="hidden text-[10px] sm:inline">({pnlPos ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
           </span>
         </div>
-        <div className="px-2 py-1.5 md:px-3">
+        <div className="px-2 py-1 md:px-3 md:py-1.5">
           <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">Rank</div>
           <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">
             {rank ? `#${rank}` : '–'} {participants !== null && <span className="text-[10px] text-[#7a8090]">/ {participants}</span>}
@@ -459,27 +484,35 @@ function TopBar({
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-1.5 md:ml-0">
+      <div className="order-2 ml-auto flex items-center gap-1.5 md:order-none md:ml-0">
         {liveMode && remainingMs != null && (
-          <div className={`rounded-xl border px-3 py-1.5 text-center ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
-            <div className="text-[8px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.remaining')}</div>
-            <div className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</div>
+          <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+            <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">{t('terminal.remaining')}</span>
+            <span className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</span>
+          </div>
+        )}
+        {!liveMode && (compRemainingMs != null || compEnded) && (
+          <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${!compEnded && compRemainingMs != null && compRemainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+            <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">
+              {compEnded ? t('terminal.btnEventEnded') : compUpcoming ? t('terminal.startsIn') : t('terminal.remaining')}
+            </span>
+            {!compEnded && <span className="num text-[12px] font-bold text-white">{formatDHMS(compRemainingMs ?? 0)}</span>}
           </div>
         )}
         {liveMode ? (
           <button
             type="button"
             onClick={onLogout}
-            className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-red-500/50 hover:text-white"
+            className="cursor-pointer whitespace-nowrap rounded-lg border border-[#241e30] bg-[#181517] px-2.5 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-red-500/50 hover:text-white"
           >
             {t('terminal.logout')}
           </button>
         ) : (
           <>
-            <a href={homeHref} className="cursor-pointer rounded-xl border border-[#241e30] bg-[#181517] px-3 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
+            <a href={homeHref} className="cursor-pointer whitespace-nowrap rounded-lg border border-[#241e30] bg-[#181517] px-2.5 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
               {t('terminal.home')}
             </a>
-            <a href={leaderboardHref} className="cursor-pointer rounded-xl border border-[#dc2626]/35 bg-[#dc2626]/15 px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
+            <a href={leaderboardHref} className="cursor-pointer whitespace-nowrap rounded-lg border border-[#dc2626]/35 bg-[#dc2626]/15 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
               {t('terminal.leaderboard')}
             </a>
           </>
@@ -522,6 +555,7 @@ interface OrderFormProps {
   player: Player | null;
   busy: boolean;
   eventStarted: boolean;
+  eventEnded?: boolean;
   error: string;
   onSubmit: (extras?: { stopLoss: number | null; takeProfit: number | null }) => void;
   onPreviewChange: (preview: ChartOrderPreview | null) => void;
@@ -746,9 +780,11 @@ function PairSelectorMenu({
 function AccountSizeSlider({
   value,
   onChange,
+  compact = false,
 }: {
   value: number;
   onChange: (percent: number) => void;
+  compact?: boolean;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -776,7 +812,7 @@ function AccountSizeSlider({
 
   return (
     <div className="select-none">
-      <div className="mb-2.5 flex items-center justify-between gap-2">
+      <div className={`flex items-center justify-between gap-2 ${compact ? 'mb-1.5' : 'mb-2.5'}`}>
         <span className="text-[11px] text-[#9f98af]">Account size</span>
         <div className="flex items-center gap-1">
           {presets.map((preset) => (
@@ -796,7 +832,7 @@ function AccountSizeSlider({
         </div>
       </div>
 
-      <div className="rounded-xl border border-[#241e30] bg-[#15121f] px-3 py-2">
+      <div className={`rounded-xl border border-[#241e30] bg-[#15121f] px-3 ${compact ? 'py-1' : 'py-2'}`}>
         <div
           ref={trackRef}
           className="relative h-6 cursor-pointer touch-none"
@@ -841,7 +877,7 @@ function OrderForm(props: OrderFormProps) {
     side, setSide, orderType, setOrderType,
     size, setSize, limitPrice, setLimitPrice,
     leverage, setLeverage: _setLeverage, ticker, player,
-    busy, eventStarted, error, onSubmit, onPreviewChange,
+    busy, eventStarted, eventEnded = false, error, onSubmit, onPreviewChange,
     tpSlEnabled, setTpSlEnabled,
     takeProfitInput, setTakeProfitInput,
     stopLossInput, setStopLossInput,
@@ -1304,7 +1340,9 @@ function OrderForm(props: OrderFormProps) {
           className={`btn-primary-shadow ${!isSell ? 'is-buy' : ''} mt-3 flex h-12 w-full cursor-pointer items-center justify-center rounded-2xl text-[20px] font-bold tracking-tight text-[#0b1b12] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50`}
           style={{ background: isSell ? SELL : '#67dd88' }}
         >
-          {!eventStarted
+          {eventEnded
+            ? t('terminal.btnEventEnded')
+            : !eventStarted
             ? t('terminal.btnWaitingEvent')
             : !marketOpen
               ? t('terminal.btnMarketClosed')
@@ -1334,7 +1372,7 @@ function OrderForm(props: OrderFormProps) {
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-[#9498a4]">{t('terminal.estimatedFees')}</span>
-            <span className="text-[#e0e2ea]">{(fee / (ticker?.markPrice || 1)).toFixed(9)} {base}</span>
+            <span className="text-[#e0e2ea]">{fmt(fee, 2)} USD</span>
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-[#9498a4]">{t('terminal.marginUsed')}</span>
@@ -1484,8 +1522,8 @@ function MobileQuickTrade({
   }
 
   return (
-    <div className="shrink-0 border-t border-[#2a2236] bg-[#0e0817] px-2.5 pb-2.5 pt-2">
-      <AccountSizeSlider value={percent} onChange={applyPercent} />
+    <div className="shrink-0 border-t border-[#2a2236] bg-[#0e0817] px-2.5 pb-2 pt-1.5">
+      <AccountSizeSlider value={percent} onChange={applyPercent} compact />
       <div className="mt-1 flex items-center justify-between px-0.5 text-[10px]">
         <span className="text-[#7a8090]">
           {notional > 0 ? `≈ ${fmt(notional, 0)} USD` : t('terminal.btnEnterQty')}
@@ -1494,12 +1532,12 @@ function MobileQuickTrade({
           {size} {pairBase(selectedPair)}
         </span>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-1.5 grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => place('long')}
           disabled={disabled}
-          className="flex h-11 items-center justify-center rounded-xl text-[15px] font-bold text-[#06231a] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-9 items-center justify-center rounded-xl text-[14px] font-bold text-[#06231a] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           style={{ background: '#18c98e' }}
         >
           {t('terminal.buy')}
@@ -1508,7 +1546,7 @@ function MobileQuickTrade({
           type="button"
           onClick={() => place('short')}
           disabled={disabled}
-          className="flex h-11 items-center justify-center rounded-xl text-[15px] font-bold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-9 items-center justify-center rounded-xl text-[14px] font-bold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           style={{ background: '#f43f6e' }}
         >
           {t('terminal.sell')}
@@ -1594,7 +1632,7 @@ function ChartArea({
         // Quick asset switcher for the mobile "Graphique" tab — same dropdown
         // (categories pills + search + price list) as the order form, so the
         // experience is consistent across tabs.
-        <div className="flex shrink-0 items-center gap-2 border-b border-[#2a2236] bg-[#0e0817] px-2 py-1.5">
+        <div className="relative z-40 flex shrink-0 items-center gap-2 border-b border-[#2a2236] bg-[#0e0817] px-2 py-1.5">
           <PairSelectorMenu
             selectedPair={pair}
             pairs={pairs}
@@ -1721,6 +1759,7 @@ function PositionRow({
         <Td>{fmt(currentPrice * position.size, 2)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
         <Td>{fmtMarketPrice(position.liquidationPrice, category)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
         <Td>{fmt(position.margin, 2)} <span className="text-[10px] text-[#7a8090]">USD</span></Td>
+        <Td><span className="text-[#f0a14b]">{fmt(position.feesPaid, 2)}</span> <span className="text-[10px] text-[#7a8090]">USD</span></Td>
         <Td>
           <span style={{ color: pnlPos ? '#15c990' : '#c026d3' }}>
             {pnlPos ? '+' : ''}{position.pnl.toFixed(2)} USD
@@ -1774,7 +1813,7 @@ function PositionRow({
 
       {panel === 'close' && (
         <tr className="bg-[#0d0a17]">
-          <td colSpan={11} className="px-4 py-3">
+          <td colSpan={12} className="px-4 py-3">
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-wide text-[#7a8090]">{t('terminal.closeNow')}</label>
@@ -2464,6 +2503,7 @@ function BottomTabs({
                   <Th>{t('terminal.thValue')}</Th>
                   <Th>{t('terminal.thLiqEstimate')}</Th>
                   <Th>{t('terminal.thInitialMargin')}</Th>
+                  <Th>{t('terminal.thFees')}</Th>
                   <Th>{t('terminal.thUnrealizedPnl')}</Th>
                   <Th>{t('terminal.thTpSl')}</Th>
                   <Th />
@@ -4233,6 +4273,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     : (demoMode
       ? true
       : (competitionContext ? competitionContext.mode === 'paper' : liveEventTradingAllowed));
+  const eventEnded = !demoMode && competitionContext?.status === 'ended';
   void paperStartingBalance;
 
   const selectedCategory = meta.marketMetadata[selectedPair]?.category;
@@ -4268,6 +4309,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       player={player}
       busy={busy}
       eventStarted={canTradeNow}
+      eventEnded={eventEnded}
       error={error}
       onSubmit={submitOrder}
       onPreviewChange={setOrderPreview}
@@ -4438,7 +4480,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       )}
 
       {livePaperMode && session && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-2 pb-2 sm:p-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 p-2 pb-2 sm:gap-2 sm:p-3">
           <TopBar
             player={player}
             trader={session.player}
@@ -4487,7 +4529,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
             <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'chart' ? 'flex' : 'hidden'}`}>
               {/* Graphique : réduit en hauteur pour laisser la place au panneau
                   de trade rapide juste en dessous (avant la barre d'onglets). */}
-              <div className="flex min-h-[200px] flex-1 flex-col">
+              <div className="flex min-h-[260px] flex-1 flex-col">
                 {chartPanel}
               </div>
               <MobileQuickTrade
@@ -4519,7 +4561,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
                 key={item.id}
                 type="button"
                 onClick={() => setMobileTab(item.id)}
-                className={`h-10 rounded-xl text-[11px] font-bold transition-colors ${
+                className={`h-8 rounded-lg text-[11px] font-bold transition-colors ${
                   mobileTab === item.id
                     ? 'bg-[#dc2626] text-white shadow-[0_10px_30px_-18px_rgba(220,38,38,0.9)]'
                     : 'text-[#8f899e] hover:bg-[#171320] hover:text-white'

@@ -127,8 +127,8 @@ const SPREAD_BPS = 0.1;
 // Barème aligné sur une vraie plateforme (type futures crypto) : taker 0,04 %
 // au marché, maker 0,02 % en limite. Prélevé sur le notionnel à l'ouverture
 // comme à la fermeture.
-const TAKER_FEE_RATE = 0.0004; // 0,04 % — ordres au marché
-const MAKER_FEE_RATE = 0.0002; // 0,02 % — ordres limites
+const TAKER_FEE_RATE = 0.0004 / 3; // ≈ 0,01333 % — ordres au marché
+const MAKER_FEE_RATE = 0.0002 / 3; // ≈ 0,00667 % — ordres limites
 const MAX_LEVERAGE = 50;
 const MIN_LEVERAGE = 1;
 /** Notional minimal d'un ordre (anti-spam de positions "dust"). */
