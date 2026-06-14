@@ -2,7 +2,7 @@ import { Helmet } from 'react-helmet-async';
 import { useTranslation } from 'react-i18next';
 
 export const SITE_URL = 'https://btfarena.com';
-const DEFAULT_OG_IMAGE = `${SITE_URL}/og-image.png`;
+const DEFAULT_OG_IMAGE = `${SITE_URL}/og-image.png?v=2`;
 
 type SeoProps = {
   /** Page title (without the brand suffix, which is appended automatically). */
