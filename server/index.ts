@@ -1038,7 +1038,7 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
         durationLabel: '4 jours',
         prizeHeadline: '5 000 USDT',
         prizeBreakdown: ['1er · 2 500', '2e · 1 500', '3e · 1 000'],
-        ctaUrl: (process.env.APP_PUBLIC_URL || '').trim() || undefined,
+        ctaUrl: (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim(),
       });
     } else {
       // arena_start_soon | arena_podium_lost | arena_results → notification générique
@@ -1059,7 +1059,7 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
           ],
           highlight: '#1 / 128 · +12.4%',
           ctaLabel: 'Voir la plateforme',
-          ctaUrl: (process.env.APP_PUBLIC_URL || '').trim() || undefined,
+          ctaUrl: (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim(),
         },
         kind,
       );

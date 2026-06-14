@@ -31,7 +31,10 @@ const PODIUM_SIZE = 3;
 // Resend limite à ~2 req/s : on espace les envois en rafale.
 const SEND_SPACING_MS = 600;
 
-const APP_PUBLIC_URL = (process.env.APP_PUBLIC_URL || '').trim().replace(/\/$/, '');
+// URL publique du site, avec repli sur le domaine de prod pour que les emails
+// contiennent TOUJOURS un lien cliquable (même si APP_PUBLIC_URL n'est pas
+// défini côté serveur, ce qui était le cas sur Railway).
+const APP_PUBLIC_URL = (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim().replace(/\/$/, '');
 
 function arenaUrl(competitionId: string): string | undefined {
   if (!APP_PUBLIC_URL) return undefined;
