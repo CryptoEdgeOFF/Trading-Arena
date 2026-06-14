@@ -592,6 +592,7 @@ export const fr: TranslationResources = {
     signUp: 'S’inscrire sur {{name}}',
     idLabel: 'Identifiant public',
     idPlaceholder: 'Ton identifiant public',
+    idHint: 'Tu trouves ton identifiant public dans ton compte {{name}}, rubrique Paramètres / Compte.',
     missingId: 'Saisis ton identifiant public pour rejoindre.',
     idInvalid: 'Format d’identifiant invalide. Attendu : quelque chose comme {{example}}.',
     disqualifyWarning: 'Un identifiant incorrect entraînera la disqualification.',
@@ -617,14 +618,13 @@ export const fr: TranslationResources = {
     privacy: 'Confidentialité',
     legalNotice: 'Mentions légales',
     risks: 'Risques',
+    rules: 'Règlement',
     reportBug: 'Reporter un bug',
   },
 
   legal: {
     back: 'Retour à BTF Arena',
     brand: 'Breakout Trading Fight',
-    draftNote:
-      'Version de travail à faire relire par un professionnel du droit avant lancement commercial public.',
     cgu: {
       title: "Conditions Générales d'Utilisation",
       intro:
@@ -738,6 +738,58 @@ export const fr: TranslationResources = {
           title: 'Responsabilité utilisateur',
           body:
             "Chaque utilisateur reste responsable de ses décisions, de sa gestion du risque et du respect de la réglementation applicable dans son pays.",
+        },
+      ],
+    },
+    reglement: {
+      title: 'Règlement général des compétitions',
+      intro:
+        "Les compétitions organisées sur la plateforme BTF Arena ont pour objectif de mettre en avant les compétences des participants en matière d'analyse et de prise de décision sur les marchés financiers à travers un environnement de simulation (paper trading). Les compétitions sont gratuites et ne nécessitent aucun investissement financier de la part des participants.",
+      sections: [
+        {
+          title: '1. Objet',
+          body:
+            "Les compétitions organisées sur la plateforme BTF Arena ont pour objectif de mettre en avant les compétences des participants en matière d'analyse et de prise de décision sur les marchés financiers à travers un environnement de simulation (paper trading). Les compétitions sont gratuites et ne nécessitent aucun investissement financier de la part des participants.",
+        },
+        {
+          title: '2. Conditions de participation',
+          body:
+            "La participation est ouverte à toute personne majeure disposant d'un compte utilisateur valide sur la plateforme BTF Arena. L'organisateur se réserve le droit de refuser ou d'annuler la participation de tout utilisateur ne respectant pas le présent règlement ou ayant adopté un comportement frauduleux, abusif ou contraire à l'esprit de la compétition.",
+        },
+        {
+          title: '3. Pays éligibles',
+          body:
+            "Certaines compétitions peuvent être limitées à des territoires spécifiques pour des raisons réglementaires. L'organisateur se réserve le droit d'exclure certains pays ou juridictions dans lesquels les compétitions, récompenses ou activités proposées pourraient être soumises à des restrictions légales particulières. Il appartient à chaque participant de vérifier qu'il est autorisé à participer conformément aux lois applicables dans son pays de résidence.",
+        },
+        {
+          title: '4. Fonctionnement des compétitions',
+          body:
+            "Les compétitions se déroulent exclusivement sur des comptes de démonstration (paper trading) et n'impliquent aucun dépôt, investissement ou risque financier réel. Les classements sont établis selon les critères définis pour chaque compétition (performance, rendement, score ou tout autre indicateur communiqué avant le début de l'événement). L'organisateur se réserve le droit de modifier, suspendre ou annuler une compétition en cas de problème technique, de fraude ou de circonstances exceptionnelles.",
+        },
+        {
+          title: '5. Récompenses',
+          body:
+            "Les récompenses annoncées pour chaque compétition sont attribuées aux participants éligibles selon le classement final officiel publié par l'organisateur. Les récompenses peuvent prendre la forme de sommes d'argent, de cartes cadeaux, de produits, de services, de crédits promotionnels, d'évaluations de prop firms ou de tout autre lot communiqué avant le début de la compétition. L'organisateur se réserve le droit de remplacer un lot par un autre de valeur équivalente en cas d'indisponibilité.",
+        },
+        {
+          title: '6. Vérification des gagnants',
+          body:
+            "Avant l'attribution d'une récompense, l'organisateur peut demander aux gagnants de fournir des informations complémentaires permettant de vérifier leur identité et leur éligibilité. Tout participant ayant utilisé des méthodes frauduleuses, automatisées ou contraires aux règles de la compétition pourra être disqualifié sans préavis.",
+        },
+        {
+          title: '7. Fiscalité',
+          body:
+            "Les gains, récompenses ou avantages obtenus dans le cadre des compétitions peuvent être soumis à des obligations fiscales selon le pays de résidence du participant. Chaque gagnant demeure seul responsable de la déclaration et du paiement de toute taxe, impôt ou contribution éventuellement applicable à la réception de ses gains. L'organisateur ne fournit aucun conseil fiscal et ne saurait être tenu responsable des obligations fiscales des participants.",
+        },
+        {
+          title: '8. Limitation de responsabilité',
+          body:
+            "L'organisateur ne garantit aucun gain financier futur ni aucune performance réelle sur les marchés financiers. Les compétitions sont organisées à des fins éducatives, ludiques et de démonstration uniquement. La participation à une compétition ne constitue ni un conseil en investissement, ni une recommandation financière, ni une offre de services d'investissement.",
+        },
+        {
+          title: '9. Acceptation du règlement',
+          body:
+            "Toute participation à une compétition organisée sur BTF Arena implique l'acceptation pleine et entière du présent règlement ainsi que des Conditions Générales d'Utilisation de la plateforme.",
         },
       ],
     },

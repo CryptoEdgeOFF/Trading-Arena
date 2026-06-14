@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
-type LegalPageType = 'cgu' | 'confidentialite' | 'mentions' | 'risques';
+type LegalPageType = 'cgu' | 'confidentialite' | 'mentions' | 'risques' | 'reglement';
 
 interface LegalSection {
   title: string;
@@ -39,10 +39,6 @@ export function LegalPage({ type }: { type: LegalPageType }) {
               </article>
             ))}
           </div>
-
-          <p className="mt-8 text-xs leading-6 text-[#8f96a3]">
-            {t('legal.draftNote')}
-          </p>
         </section>
       </div>
     </main>

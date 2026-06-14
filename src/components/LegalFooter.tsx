@@ -60,6 +60,7 @@ export default function LegalFooter() {
             <Link className="transition-colors hover:text-white" to={`/confidentialite${suffix}`}>{t('footer.privacy')}</Link>
             <Link className="hidden transition-colors hover:text-white sm:inline" to={`/mentions-legales${suffix}`}>{t('footer.legalNotice')}</Link>
             <Link className="transition-colors hover:text-white" to={`/risques${suffix}`}>{t('footer.risks')}</Link>
+            <Link className="transition-colors hover:text-white" to={`/reglement${suffix}`}>{t('footer.rules')}</Link>
           </nav>
           <a
             href={bugReportHref}

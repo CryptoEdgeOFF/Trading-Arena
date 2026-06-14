@@ -590,6 +590,7 @@ export const en = {
     signUp: 'Sign up on {{name}}',
     idLabel: 'Public account ID',
     idPlaceholder: 'Your public account ID',
+    idHint: 'You can find your public ID in your {{name}} account, under Settings / Account.',
     missingId: 'Enter your public account ID to join.',
     idInvalid: 'Invalid ID format. Expected something like {{example}}.',
     disqualifyWarning: 'An incorrect ID will result in disqualification.',
@@ -615,14 +616,13 @@ export const en = {
     privacy: 'Privacy',
     legalNotice: 'Legal notice',
     risks: 'Risks',
+    rules: 'Competition rules',
     reportBug: 'Report a bug',
   },
 
   legal: {
     back: 'Back to BTF Arena',
     brand: 'Breakout Trading Fight',
-    draftNote:
-      'Working version to be reviewed by a legal professional before public commercial launch.',
     cgu: {
       title: 'Terms of Service',
       intro:
@@ -736,6 +736,58 @@ export const en = {
           title: 'User responsibility',
           body:
             'Each user remains responsible for their decisions, their risk management and compliance with the regulations applicable in their country.',
+        },
+      ],
+    },
+    reglement: {
+      title: 'General competition rules',
+      intro:
+        'Competitions held on the BTF Arena platform aim to showcase participants\u2019 skills in analyzing and making decisions on financial markets through a simulation (paper trading) environment. Competitions are free and require no financial investment from participants.',
+      sections: [
+        {
+          title: '1. Purpose',
+          body:
+            'Competitions held on the BTF Arena platform aim to showcase participants\u2019 skills in analyzing and making decisions on financial markets through a simulation (paper trading) environment. Competitions are free and require no financial investment from participants.',
+        },
+        {
+          title: '2. Eligibility to participate',
+          body:
+            'Participation is open to any person of legal age holding a valid user account on the BTF Arena platform. The organizer reserves the right to refuse or cancel the participation of any user who does not comply with these rules or who engages in fraudulent, abusive behavior or behavior contrary to the spirit of the competition.',
+        },
+        {
+          title: '3. Eligible countries',
+          body:
+            'Some competitions may be restricted to specific territories for regulatory reasons. The organizer reserves the right to exclude certain countries or jurisdictions where the competitions, rewards or activities offered could be subject to particular legal restrictions. It is each participant\u2019s responsibility to verify that they are allowed to participate in accordance with the laws applicable in their country of residence.',
+        },
+        {
+          title: '4. How competitions work',
+          body:
+            'Competitions take place exclusively on demo (paper trading) accounts and involve no deposit, investment or real financial risk. Rankings are established according to the criteria defined for each competition (performance, return, score or any other indicator communicated before the event begins). The organizer reserves the right to modify, suspend or cancel a competition in the event of a technical problem, fraud or exceptional circumstances.',
+        },
+        {
+          title: '5. Rewards',
+          body:
+            'Rewards announced for each competition are awarded to eligible participants according to the official final ranking published by the organizer. Rewards may take the form of cash, gift cards, products, services, promotional credits, prop firm evaluations or any other prize communicated before the start of the competition. The organizer reserves the right to replace a prize with another of equivalent value in the event of unavailability.',
+        },
+        {
+          title: '6. Winner verification',
+          body:
+            'Before awarding a reward, the organizer may ask winners to provide additional information to verify their identity and eligibility. Any participant who has used fraudulent, automated methods or methods contrary to the competition rules may be disqualified without notice.',
+        },
+        {
+          title: '7. Taxation',
+          body:
+            'Winnings, rewards or benefits obtained as part of the competitions may be subject to tax obligations depending on the participant\u2019s country of residence. Each winner remains solely responsible for declaring and paying any tax, duty or contribution potentially applicable upon receipt of their winnings. The organizer provides no tax advice and cannot be held responsible for participants\u2019 tax obligations.',
+        },
+        {
+          title: '8. Limitation of liability',
+          body:
+            'The organizer does not guarantee any future financial gain or any real performance on the financial markets. Competitions are organized for educational, entertainment and demonstration purposes only. Participating in a competition does not constitute investment advice, a financial recommendation, or an offer of investment services.',
+        },
+        {
+          title: '9. Acceptance of the rules',
+          body:
+            'Any participation in a competition held on BTF Arena implies full and complete acceptance of these rules as well as the platform\u2019s Terms of Use.',
         },
       ],
     },

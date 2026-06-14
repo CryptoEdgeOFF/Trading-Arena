@@ -1737,6 +1737,14 @@ function JoinCompetitionModal({
               <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[#9a9aa6]">
                 {t('sponsor.idLabel', { name: sponsor.name })}
               </label>
+              <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-snug text-[#8a8a94]">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <span>{t('sponsor.idHint', { name: sponsor.name })}</span>
+              </p>
               <input
                 type="text"
                 value={sponsorId}

@@ -64,6 +64,14 @@ function AppRoutes() {
     trackPageView(path);
   }, [location.pathname]);
 
+  // Remet le scroll en haut à chaque changement de route (sinon on conserve la
+  // position de la page précédente). On laisse les ancres « #section » gérer
+  // leur propre défilement.
+  useEffect(() => {
+    if (location.hash) return;
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
+
   return (
     <>
       <Routes>
@@ -88,6 +96,7 @@ function AppRoutes() {
         <Route path="/confidentialite" element={<LegalPage type="confidentialite" />} />
         <Route path="/mentions-legales" element={<LegalPage type="mentions" />} />
         <Route path="/risques" element={<LegalPage type="risques" />} />
+        <Route path="/reglement" element={<LegalPage type="reglement" />} />
         <Route path="*" element={<Navigate to="/compete" replace />} />
       </Routes>
       {!hideFooter && <LegalFooter />}
