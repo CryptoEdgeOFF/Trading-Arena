@@ -18,6 +18,7 @@ import FeedTest from './components/FeedTest';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
 import { ADMIN_ENABLED, ADMIN_PATH, ADMIN_PATH_REGEX } from './lib/adminPath';
+import { trackPageView } from './lib/analytics';
 
 const ADMIN_SEG = ADMIN_PATH_REGEX ? `|${ADMIN_PATH_REGEX}` : '';
 const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
@@ -53,6 +54,14 @@ function AppRoutes() {
     } else if (meta && meta.getAttribute('content')?.includes('noindex')) {
       meta.remove();
     }
+  }, [location.pathname]);
+
+  // Suivi GA4 des pages vues (SPA). On masque le chemin admin secret pour ne
+  // pas l'exposer dans les données analytics.
+  useEffect(() => {
+    const onAdmin = ADMIN_ENABLED && location.pathname.startsWith(`/${ADMIN_PATH}`);
+    const path = onAdmin ? '/admin' : location.pathname;
+    trackPageView(path);
   }, [location.pathname]);
 
   return (

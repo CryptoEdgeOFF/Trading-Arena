@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import Seo from './Seo';
 import CompeteHeader from './CompeteHeader';
+import { analytics } from '../lib/analytics';
 
 type PartnerCategory = 'exchange' | 'broker' | 'prop' | 'tool' | 'community';
 
@@ -59,13 +60,14 @@ function PartnerLogo({ partner, size = 'md' }: { partner: Partner; size?: 'md' |
   );
 }
 
-function CopyCodeButton({ code, accent }: { code: string; accent: string }) {
+function CopyCodeButton({ code, accent, partner }: { code: string; accent: string; partner: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(code);
+      analytics.promoCodeCopy({ partner, code });
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -166,12 +168,13 @@ function PartnerCard({ partner, index, featured = false }: { partner: Partner; i
         )}
 
         <div className="flex items-center gap-2.5">
-          {partner.promoCode && <CopyCodeButton code={partner.promoCode} accent={partner.accent} />}
+          {partner.promoCode && <CopyCodeButton code={partner.promoCode} accent={partner.accent} partner={partner.name} />}
           {live ? (
             <a
               href={partner.referralUrl}
               target="_blank"
               rel="noopener noreferrer sponsored"
+              onClick={() => analytics.promoClick({ partner: partner.name, category: partner.category, url: partner.referralUrl })}
               className="ml-auto flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold uppercase tracking-[0.12em] text-black transition-transform hover:-translate-y-0.5"
               style={{ backgroundColor: partner.accent, boxShadow: `0 16px 40px -18px ${partner.accent}` }}
             >

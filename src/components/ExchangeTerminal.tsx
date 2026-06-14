@@ -30,6 +30,7 @@ import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
 import { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
 import { withDisplayWidth } from '../utils/imageUrl';
+import { analytics } from '../lib/analytics';
 import {
   clearAllPaperSessions,
   clearPaperSessionToken,
@@ -3958,6 +3959,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('terminal.orderRejected'));
+      analytics.tradePlaced({
+        pair: selectedPair,
+        side: effSide,
+        orderType: effType,
+        leverage,
+        platform: terminalPlatform,
+        competitionId: urlCompetitionId,
+      });
       if (orderType === 'limit') {
         resetLimitOrderDraft();
       } else {

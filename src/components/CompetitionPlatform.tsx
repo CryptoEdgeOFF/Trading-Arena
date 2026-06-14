@@ -16,6 +16,7 @@ import {
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
 import { getSponsor } from '../lib/sponsors';
+import { analytics } from '../lib/analytics';
 import {
   clearPaperSessionToken,
   LEGACY_PAPER_SESSION_KEY,
@@ -525,6 +526,7 @@ export default function CompetitionPlatform() {
       window.localStorage.setItem(SESSION_KEY, data.token);
       writeCachedUser(data.user);
       setSession({ token: data.token, user: data.user });
+      analytics.login('email');
       void refreshMyCompetitions(data.token);
       resetAuth();
     } catch (err: any) {
@@ -549,6 +551,7 @@ export default function CompetitionPlatform() {
       window.localStorage.setItem(SESSION_KEY, data.token);
       writeCachedUser(data.user);
       setSession({ token: data.token, user: data.user });
+      analytics.signUp('email');
       void refreshMyCompetitions(data.token);
       resetAuth();
     } catch (err: any) {
@@ -627,6 +630,11 @@ export default function CompetitionPlatform() {
       if (data.competitionId !== joinTarget.id) {
         throw new Error(t('authErrors.codeMismatch'));
       }
+      analytics.competitionJoin({
+        competitionId: joinTarget.id,
+        competitionName: joinTarget.title,
+        sponsor: joinTarget.sponsor ?? undefined,
+      });
       await Promise.all([refreshPublicCompetitions(), refreshMyCompetitions(session.token)]);
       closeJoinModal();
     } catch (err: any) {

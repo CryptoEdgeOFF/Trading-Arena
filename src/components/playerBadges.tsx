@@ -244,7 +244,8 @@ function BadgeShowcaseContent({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.25 }}
       onClick={onClose}
-      className="fixed inset-0 z-[130] flex items-center justify-center bg-black/80 px-6 backdrop-blur-md"
+      className="fixed inset-0 z-[130] flex items-center justify-center overflow-y-auto bg-black/80 px-6 py-8 backdrop-blur-md"
+      style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}
     >
       {/* Halo radial de fond teinté par la couleur du badge */}
       <div
@@ -263,7 +264,7 @@ function BadgeShowcaseContent({
         className="relative flex w-full max-w-md flex-col items-center text-center"
       >
         {/* Zone badge + particules */}
-        <div className="relative flex h-96 w-96 items-center justify-center">
+        <div className="relative flex h-60 w-60 items-center justify-center sm:h-96 sm:w-96">
           {/* Particules animées en continu */}
           {earned &&
             particles.map((p) => (
@@ -289,8 +290,8 @@ function BadgeShowcaseContent({
 
           {/* Anneau pulsant */}
           <motion.div
-            className="absolute rounded-full"
-            style={{ width: 300, height: 300, border: `2px solid ${def.glow}55` }}
+            className="absolute h-[200px] w-[200px] rounded-full sm:h-[300px] sm:w-[300px]"
+            style={{ border: `2px solid ${def.glow}55` }}
             animate={{ scale: [1, 1.18, 1], opacity: [0.5, 0.1, 0.5] }}
             transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
           />
@@ -300,7 +301,7 @@ function BadgeShowcaseContent({
             src={def.src}
             alt={t(def.nameKey)}
             draggable={false}
-            className={`relative z-10 h-72 w-auto select-none ${earned ? '' : 'opacity-40 grayscale'}`}
+            className={`relative z-10 h-44 w-auto select-none sm:h-72 ${earned ? '' : 'opacity-40 grayscale'}`}
             style={earned ? { filter: `drop-shadow(0 0 26px ${def.glow}aa)` } : undefined}
             animate={earned ? { y: [0, -8, 0] } : undefined}
             transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
@@ -309,7 +310,7 @@ function BadgeShowcaseContent({
 
         {/* Nom du badge */}
         <h3
-          className="mt-8 font-rajdhani text-4xl font-bold uppercase tracking-wide text-white"
+          className="mt-3 font-rajdhani text-3xl font-bold uppercase tracking-wide text-white sm:mt-8 sm:text-4xl"
           style={earned ? { textShadow: `0 0 30px ${def.glow}66` } : undefined}
         >
           {t(def.nameKey)}
@@ -327,7 +328,7 @@ function BadgeShowcaseContent({
         </span>
 
         {/* Explication : comment l'obtenir */}
-        <div className="mt-5 w-full rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+        <div className="mt-4 w-full rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:mt-5 sm:p-5">
           <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[#71717a]">
             {t('badges.howEarned')}
           </div>
@@ -337,7 +338,7 @@ function BadgeShowcaseContent({
         <button
           type="button"
           onClick={onClose}
-          className="mt-6 rounded-full border border-white/15 bg-white/5 px-6 py-2 text-xs font-bold uppercase tracking-[0.14em] text-white transition-colors hover:bg-white/10"
+          className="mt-5 rounded-full border border-white/15 bg-white/5 px-6 py-2 text-xs font-bold uppercase tracking-[0.14em] text-white transition-colors hover:bg-white/10 sm:mt-6"
         >
           {t('common.close')}
         </button>
