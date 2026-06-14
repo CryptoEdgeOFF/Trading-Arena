@@ -238,7 +238,7 @@ export class CompetitionNotifier {
         ],
         ctaLabel: "Rejoindre l'arène",
         ctaUrl: arenaUrl(competitionId),
-      });
+      }, 'arena_start_soon');
       sent += 1;
       await sleep(SEND_SPACING_MS);
     }
@@ -327,7 +327,7 @@ export class CompetitionNotifier {
         highlight: `#${entry.rank} · ${formatPnl(entry.pnlUsd, entry.pnlPercent)}`,
         ctaLabel: 'Reprendre ma place',
         ctaUrl: arenaUrl(competitionId),
-      });
+      }, 'arena_podium_lost');
       console.log(`[notifier] podium-lost "${title}" → ${entry.name} (#${entry.rank})`);
       await sleep(SEND_SPACING_MS);
     }
@@ -378,7 +378,7 @@ export class CompetitionNotifier {
         highlight: `#${entry.rank} / ${total} · ${formatPnl(entry.pnlUsd, entry.pnlPercent)}`,
         ctaLabel: 'Voir le classement',
         ctaUrl: arenaUrl(competitionId),
-      });
+      }, 'arena_results');
       sent += 1;
       await sleep(SEND_SPACING_MS);
     }

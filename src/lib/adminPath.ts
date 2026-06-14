@@ -27,6 +27,9 @@ export const ARENA_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/arenes` : '/comp
 /** Route d'admin des promotions (Trade Live Bonus), ex. `/ctrl-…/promotions`. */
 export const PROMOTIONS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/promotions` : '/compete';
 
+/** Route d'admin des emails (suivi & configuration), ex. `/ctrl-…/emails`. */
+export const EMAILS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/emails` : '/compete';
+
 /** Version échappée pour insertion dans une RegExp. */
 export const ADMIN_PATH_REGEX = ADMIN_PATH
   ? ADMIN_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

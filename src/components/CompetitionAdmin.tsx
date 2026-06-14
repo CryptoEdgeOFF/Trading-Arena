@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { compressImage } from '../utils/imageUpload';
 import { SPONSOR_OPTIONS } from '../lib/sponsors';
-import { ADMIN_BASE, PROMOTIONS_ADMIN_PATH } from '../lib/adminPath';
+import { ADMIN_BASE, PROMOTIONS_ADMIN_PATH, EMAILS_ADMIN_PATH } from '../lib/adminPath';
 import ItickFeedPanel from './ItickFeedPanel';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
@@ -622,6 +622,7 @@ export default function CompetitionAdmin() {
                 <span aria-hidden>←</span> BTF Arena
               </Link>
               <Link to={PROMOTIONS_ADMIN_PATH} className="text-slate-500 hover:text-amber-200">Admin Promotions</Link>
+              <Link to={EMAILS_ADMIN_PATH} className="text-slate-500 hover:text-amber-200">Admin Emails</Link>
             </div>
             <h1 className="font-rajdhani text-3xl font-bold text-white">Admin Arènes</h1>
             <p className="text-sm text-slate-400">Crée, ajuste et clôture les compétitions en ligne.</p>

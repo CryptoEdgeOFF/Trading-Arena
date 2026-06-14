@@ -12,6 +12,7 @@ import CompetitionPlayerProfile from './components/CompetitionPlayerProfile';
 import CompetitionSettings from './components/CompetitionSettings';
 import CompetitionAdmin from './components/CompetitionAdmin';
 import PromotionsAdmin from './components/PromotionsAdmin';
+import EmailAdminPage from './components/EmailAdminPage';
 import AdminPanel from './components/AdminPanel';
 import ReplayViewer from './components/ReplayViewer';
 import FeedTest from './components/FeedTest';
@@ -79,6 +80,7 @@ function AppRoutes() {
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}`} element={<AdminPanel />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/arenes`} element={<CompetitionAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/promotions`} element={<PromotionsAdmin />} />}
+        {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/emails`} element={<EmailAdminPage />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay`} element={<ReplayViewer />} />}
         <Route path="/feed-test" element={<FeedTest />} />
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />

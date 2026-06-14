@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Resend } from 'resend';
+import {
+  getEmailSettingsCached,
+  resolveEmailText,
+  logEmail,
+  type EmailKind,
+  type EmailSettings,
+} from './emailSettingsStore.js';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'BTF Trade <onboarding@resend.dev>';
@@ -71,19 +78,94 @@ if (TEST_REDIRECT_EMAIL) {
   );
 }
 
-/**
- * En mode test, remplace le destinataire réel par l'adresse de test et préfixe
- * le sujet pour savoir à qui l'email aurait dû partir. Sans redirection
- * configurée, renvoie le destinataire/sujet d'origine.
- */
-function applyTestRedirect(to: string, subject: string): { to: string; subject: string } {
-  if (!TEST_REDIRECT_EMAIL) return { to, subject };
-  return { to: TEST_REDIRECT_EMAIL, subject: `[TEST → ${to}] ${subject}` };
-}
-
 export interface SendOtpResult {
   delivered: boolean;
   error?: string;
+}
+
+interface DispatchParams {
+  kind: EmailKind;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  replyTo?: string;
+  /** Paramètres déjà chargés (évite un 2e fetch quand le caller les a lus pour le texte). */
+  settings?: EmailSettings;
+}
+
+/**
+ * Point d'envoi unique : applique les réglages admin (activé / bloqué / test),
+ * envoie via Resend puis journalise le résultat. Ne throw jamais.
+ *  - mode `off`        → rien n'est envoyé (statut `blocked`).
+ *  - mode `test` ou test global → redirigé vers `testRedirect`.
+ *  - sinon              → envoi réel.
+ */
+async function dispatch(p: DispatchParams): Promise<SendOtpResult> {
+  let settings: EmailSettings;
+  try {
+    settings = p.settings ?? (await getEmailSettingsCached());
+  } catch {
+    // Si la config est inaccessible, on retombe sur un envoi normal (best-effort).
+    settings = {
+      globalTest: Boolean(TEST_REDIRECT_EMAIL),
+      testRedirect: TEST_REDIRECT_EMAIL,
+      kinds: {} as EmailSettings['kinds'],
+      updatedAt: Date.now(),
+    };
+  }
+  const kindSetting = settings.kinds[p.kind] ?? { mode: 'on' as const, overrides: {} };
+
+  if (kindSetting.mode === 'off') {
+    await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: 'blocked', error: 'désactivé' });
+    return { delivered: false, error: 'blocked' };
+  }
+
+  const wantRedirect = settings.globalTest || kindSetting.mode === 'test';
+  const testAddr = (settings.testRedirect || TEST_REDIRECT_EMAIL || '').trim();
+  let rcpt = p.to;
+  let subj = p.subject;
+  let redirectedTo: string | undefined;
+
+  if (wantRedirect) {
+    if (!testAddr) {
+      await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: 'blocked', error: 'mode test sans adresse de redirection' });
+      return { delivered: false, error: 'test-no-address' };
+    }
+    rcpt = testAddr;
+    redirectedTo = testAddr;
+    subj = `[TEST → ${p.to}] ${p.subject}`;
+  }
+
+  if (!client) {
+    await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: 'no-smtp', error: 'no-smtp', redirectedTo });
+    return { delivered: false, error: 'no-smtp' };
+  }
+
+  try {
+    const { error } = await client.emails.send({
+      from: FROM_EMAIL,
+      to: rcpt,
+      subject: subj,
+      html: p.html,
+      text: p.text,
+      ...(p.replyTo ? { replyTo: p.replyTo } : {}),
+      ...bannerAttachments(),
+    });
+    if (error) {
+      const msg = typeof error === 'string' ? error : (error.message || 'send failed');
+      console.error('[mailer] resend error:', error);
+      await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: 'failed', error: msg, redirectedTo });
+      return { delivered: false, error: msg };
+    }
+    await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: redirectedTo ? 'test' : 'sent', redirectedTo });
+    return { delivered: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'send failed';
+    console.error('[mailer] resend throw:', message);
+    await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: 'failed', error: message, redirectedTo });
+    return { delivered: false, error: message };
+  }
 }
 
 export async function sendOtpEmail(
@@ -91,43 +173,23 @@ export async function sendOtpEmail(
   code: string,
   intent: 'signup' | 'login',
 ): Promise<SendOtpResult> {
-  const subject = intent === 'signup'
-    ? `Confirme ton inscription ${APP_NAME} (${code})`
-    : `Ton code de connexion ${APP_NAME} (${code})`;
+  const settings = await getEmailSettingsCached().catch(() => undefined);
+  const T = (key: string) => resolveEmailText(settings, 'otp', key, { code });
 
-  const html = renderOtpHtml(code, intent);
-  const text = renderOtpText(code, intent);
+  const subject = T(intent === 'signup' ? 'subjectSignup' : 'subjectLogin');
+  const heading = T(intent === 'signup' ? 'headingSignup' : 'headingLogin');
+  const intro = T(intent === 'signup' ? 'introSignup' : 'introLogin');
+  const expiryNote = T('expiryNote');
+
+  const html = renderOtpHtml(code, heading, intro, expiryNote);
+  const text = renderOtpText(code, heading, expiryNote);
 
   // Ne jamais logger l'OTP en clair en production (fuite via logs).
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[mailer] OTP for ${to} (${intent}): ${code}`);
   }
 
-  if (!client) {
-    return { delivered: false, error: 'no-smtp' };
-  }
-
-  const { to: rcpt, subject: subj } = applyTestRedirect(to, subject);
-
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to: rcpt,
-      subject: subj,
-      html,
-      text,
-      ...bannerAttachments(),
-    });
-    if (error) {
-      console.error('[mailer] resend error:', error);
-      return { delivered: false, error: typeof error === 'string' ? error : (error.message || 'send failed') };
-    }
-    return { delivered: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'send failed';
-    console.error('[mailer] resend throw:', message);
-    return { delivered: false, error: message };
-  }
+  return dispatch({ kind: 'otp', to, subject, html, text, settings });
 }
 
 export function isMailerConfigured(): boolean {
@@ -152,60 +214,54 @@ export interface PrizeWinnerEmailOptions {
  * de réception ERC20 (réseau Ethereum) pour envoyer la récompense. Distinct de
  * l'email de résultats générique.
  */
+interface PrizeTexts {
+  eyebrow: string;
+  claimTitle: string;
+  claimText: string;
+  buttonLabel: string;
+  warning: string;
+}
+
 export async function sendPrizeWinnerEmail(
   to: string,
   options: PrizeWinnerEmailOptions,
 ): Promise<SendOtpResult> {
-  const subject = `🏆 Tu as gagné un lot — ${options.competitionTitle}`;
-  const html = renderPrizeWinnerHtml(options);
-  const text = renderPrizeWinnerText(options);
+  const settings = await getEmailSettingsCached().catch(() => undefined);
+  const vars = { title: options.competitionTitle, rank: options.rankLabel };
+  const T = (key: string) => resolveEmailText(settings, 'prize_winner', key, vars);
+  const subject = T('subject');
+  const texts: PrizeTexts = {
+    eyebrow: T('eyebrow'),
+    claimTitle: T('claimTitle'),
+    claimText: T('claimText'),
+    buttonLabel: T('buttonLabel'),
+    warning: T('warning'),
+  };
+  const html = renderPrizeWinnerHtml(options, texts);
+  const text = renderPrizeWinnerText(options, texts);
 
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[mailer] prize-winner "${options.competitionTitle}" (#${options.rank}) -> ${to}`);
   }
 
-  if (!client) {
-    return { delivered: false, error: 'no-smtp' };
-  }
-
-  const { to: rcpt, subject: subj } = applyTestRedirect(to, subject);
-
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to: rcpt,
-      subject: subj,
-      html,
-      text,
-      replyTo: PRIZE_CONTACT_EMAIL,
-      ...bannerAttachments(),
-    });
-    if (error) {
-      console.error('[mailer] resend error:', error);
-      return { delivered: false, error: typeof error === 'string' ? error : (error.message || 'send failed') };
-    }
-    return { delivered: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'send failed';
-    console.error('[mailer] resend throw:', message);
-    return { delivered: false, error: message };
-  }
+  return dispatch({ kind: 'prize_winner', to, subject, html, text, replyTo: PRIZE_CONTACT_EMAIL, settings });
 }
 
-function renderPrizeWinnerText(o: PrizeWinnerEmailOptions): string {
+function renderPrizeWinnerText(o: PrizeWinnerEmailOptions, texts: PrizeTexts): string {
   const lines: string[] = [];
   lines.push(`Felicitations ${o.recipientName} !`, '');
   lines.push(`Tu termines ${o.rankLabel} de l'arene "${o.competitionTitle}" sur ${o.totalParticipants} participants et tu remportes un lot :`);
   for (const prize of o.prizeLines) lines.push(`- ${prize}`);
   lines.push('');
-  lines.push('POUR RECEVOIR TON LOT :');
-  lines.push(`Reponds a cet email (${PRIZE_CONTACT_EMAIL}) avec ton adresse de reception ERC20 (reseau Ethereum, pour USDT/USDC).`);
+  lines.push(`${texts.claimTitle.toUpperCase()} :`);
+  lines.push(texts.claimText);
+  lines.push(`(${PRIZE_CONTACT_EMAIL})`);
   lines.push('');
-  lines.push('Important : verifie bien que ton adresse est sur le reseau Ethereum (ERC20). Une adresse erronee peut entrainer une perte definitive des fonds.');
+  lines.push(texts.warning);
   return lines.join('\n');
 }
 
-function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions): string {
+function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions, texts: PrizeTexts): string {
   const C = {
     page: '#050507',
     card: '#0a0c12',
@@ -247,7 +303,7 @@ function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions): string {
           ${bannerRowHtml()}
 
           <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:30px 30px 4px;">
-            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;">🏆 Tu as gagné un lot</div>
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;">${escapeHtml(texts.eyebrow)}</div>
             <h1 style="margin:14px 0 6px;font-size:30px;line-height:1.08;color:${C.white};font-weight:900;letter-spacing:-0.5px;">Félicitations, ${escapeHtml(o.recipientName)} !</h1>
             <div style="font-size:15px;font-weight:700;color:${C.red};letter-spacing:0.5px;">${escapeHtml(o.rankLabel)} sur ${o.totalParticipants} · ${escapeHtml(o.competitionTitle)}</div>
           </td></tr>
@@ -260,15 +316,15 @@ function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions): string {
           </td></tr>
 
           <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
-            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.green};font-weight:800;margin:8px 0 10px;">▍ Comment recevoir ton lot</div>
-            <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:${C.text};">Pour t'envoyer ta récompense, réponds à cet email avec ton <strong style="color:${C.white};">adresse de réception ERC20</strong> (réseau Ethereum, pour recevoir des USDT/USDC).</p>
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.green};font-weight:800;margin:8px 0 10px;">▍ ${escapeHtml(texts.claimTitle)}</div>
+            <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:${C.text};">${escapeHtml(texts.claimText)}</p>
             <table role="presentation" cellpadding="0" cellspacing="0" align="left" style="margin:2px 0 6px;">
               <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
-                <a href="${mailtoUrl}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">Envoyer mon adresse ERC20 ▸</a>
+                <a href="${mailtoUrl}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">${escapeHtml(texts.buttonLabel)}</a>
               </td></tr>
             </table>
             <div style="clear:both;"></div>
-            <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${C.faint};">⚠️ Vérifie bien que ton adresse est sur le réseau <strong style="color:${C.text};">Ethereum (ERC20)</strong>. Une adresse erronée ou sur un autre réseau peut entraîner une perte définitive des fonds.</p>
+            <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${C.faint};">⚠️ ${escapeHtml(texts.warning)}</p>
           </td></tr>
 
           <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:14px 30px 30px;">
@@ -306,6 +362,7 @@ export async function sendNotificationEmail(
   to: string,
   subject: string,
   options: NotificationEmailOptions,
+  kind: EmailKind = 'arena_results',
 ): Promise<SendOtpResult> {
   const html = renderNotificationHtml(options);
   const text = renderNotificationText(options);
@@ -314,31 +371,7 @@ export async function sendNotificationEmail(
     console.log(`[mailer] notification "${subject}" -> ${to}`);
   }
 
-  if (!client) {
-    return { delivered: false, error: 'no-smtp' };
-  }
-
-  const { to: rcpt, subject: subj } = applyTestRedirect(to, subject);
-
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to: rcpt,
-      subject: subj,
-      html,
-      text,
-      ...bannerAttachments(),
-    });
-    if (error) {
-      console.error('[mailer] resend error:', error);
-      return { delivered: false, error: typeof error === 'string' ? error : (error.message || 'send failed') };
-    }
-    return { delivered: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'send failed';
-    console.error('[mailer] resend throw:', message);
-    return { delivered: false, error: message };
-  }
+  return dispatch({ kind, to, subject, html, text });
 }
 
 function escapeHtml(value: string): string {
@@ -377,43 +410,21 @@ export async function sendNewArenaEmail(
   to: string,
   options: NewArenaEmailOptions,
 ): Promise<SendOtpResult> {
-  const subject = `Nouvelle arène : ${options.title}`;
+  const settings = await getEmailSettingsCached().catch(() => undefined);
+  const subject = resolveEmailText(settings, 'new_arena', 'subject', { title: options.title });
+  const ctaLabel = resolveEmailText(settings, 'new_arena', 'ctaLabel');
   const banner = getEmailBanner();
-  const html = renderNewArenaHtml(options, Boolean(banner));
-  const text = renderNewArenaText(options);
+  const html = renderNewArenaHtml(options, Boolean(banner), ctaLabel);
+  const text = renderNewArenaText(options, ctaLabel);
 
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[mailer] new-arena "${options.title}" -> ${to}`);
   }
 
-  if (!client) {
-    return { delivered: false, error: 'no-smtp' };
-  }
-
-  const { to: rcpt, subject: subj } = applyTestRedirect(to, subject);
-
-  try {
-    const { error } = await client.emails.send({
-      from: FROM_EMAIL,
-      to: rcpt,
-      subject: subj,
-      html,
-      text,
-      ...bannerAttachments(),
-    });
-    if (error) {
-      console.error('[mailer] resend error:', error);
-      return { delivered: false, error: typeof error === 'string' ? error : (error.message || 'send failed') };
-    }
-    return { delivered: true };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'send failed';
-    console.error('[mailer] resend throw:', message);
-    return { delivered: false, error: message };
-  }
+  return dispatch({ kind: 'new_arena', to, subject, html, text, settings });
 }
 
-function renderNewArenaText(o: NewArenaEmailOptions): string {
+function renderNewArenaText(o: NewArenaEmailOptions, ctaLabel: string): string {
   const lines: string[] = [];
   lines.push('NOUVELLE ARÈNE', '');
   lines.push(`${o.title} vient d'ouvrir !`, '');
@@ -431,11 +442,11 @@ function renderNewArenaText(o: NewArenaEmailOptions): string {
     if (o.prizeDescription) lines.push(o.prizeDescription);
     lines.push('');
   }
-  if (o.ctaUrl) lines.push(`Rejoindre l'arène : ${o.ctaUrl}`);
+  if (o.ctaUrl) lines.push(`${ctaLabel} : ${o.ctaUrl}`);
   return lines.join('\n');
 }
 
-export function renderNewArenaHtml(o: NewArenaEmailOptions, withBanner = false): string {
+export function renderNewArenaHtml(o: NewArenaEmailOptions, withBanner = false, ctaLabel = "Rejoindre l'arène ▸"): string {
   // Couleurs verrouillées en inline + attributs bgcolor : Gmail ignore la
   // propriété raccourcie `background:` et certaines règles, donc on utilise
   // systématiquement `background-color` + l'attribut HTML bgcolor pour que le
@@ -506,7 +517,7 @@ export function renderNewArenaHtml(o: NewArenaEmailOptions, withBanner = false):
       <tr><td align="center">
         <table role="presentation" cellpadding="0" cellspacing="0" align="center">
           <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
-            <a href="${safeUrl}" target="_blank" rel="noopener" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:15px;font-weight:900;letter-spacing:2px;text-transform:uppercase;padding:18px 50px;border-radius:10px;">Rejoindre l'arène ▸</a>
+            <a href="${safeUrl}" target="_blank" rel="noopener" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:15px;font-weight:900;letter-spacing:2px;text-transform:uppercase;padding:18px 50px;border-radius:10px;">${escapeHtml(ctaLabel)}</a>
           </td></tr>
         </table>
       </td></tr>
@@ -614,27 +625,17 @@ function renderNotificationHtml(options: NotificationEmailOptions): string {
 </html>`;
 }
 
-function renderOtpText(code: string, intent: 'signup' | 'login'): string {
-  const headline = intent === 'signup'
-    ? `Bienvenue sur ${APP_NAME} !`
-    : `Connexion a ${APP_NAME}`;
+function renderOtpText(code: string, headline: string, expiryNote: string): string {
   return [
     headline,
     '',
     `Ton code de verification est : ${code}`,
     '',
-    'Il expire dans 10 minutes. Ne le partage avec personne.',
+    expiryNote,
   ].join('\n');
 }
 
-function renderOtpHtml(code: string, intent: 'signup' | 'login'): string {
-  const headline = intent === 'signup'
-    ? `Bienvenue sur ${APP_NAME}`
-    : `Connexion a ${APP_NAME}`;
-  const sub = intent === 'signup'
-    ? 'Confirme ton inscription en saisissant le code ci-dessous.'
-    : 'Voici ton code de connexion a usage unique.';
-
+function renderOtpHtml(code: string, headline: string, sub: string, expiryNote: string): string {
   return `<!doctype html>
 <html lang="fr">
   <head>
@@ -649,10 +650,10 @@ function renderOtpHtml(code: string, intent: 'signup' | 'login'): string {
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" bgcolor="#0a0c12" style="width:480px;max-width:100%;background-color:#0a0c12;border:1px solid #1d2233;border-radius:16px;overflow:hidden;">
           ${bannerRowHtml()}
           <tr><td bgcolor="#0a0c12" style="background-color:#0a0c12;padding:32px;">
-            <h1 style="margin:0 0 8px;font-size:22px;color:#ffffff;">${headline}</h1>
-            <p style="margin:0 0 24px;font-size:14px;color:#94a3b8;">${sub}</p>
+            <h1 style="margin:0 0 8px;font-size:22px;color:#ffffff;">${escapeHtml(headline)}</h1>
+            <p style="margin:0 0 24px;font-size:14px;color:#94a3b8;">${escapeHtml(sub)}</p>
             <div style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:36px;letter-spacing:10px;font-weight:700;color:#34d399;background-color:#0b1325;border:1px solid #1f2a4a;border-radius:12px;padding:18px;text-align:center;">${code}</div>
-            <p style="margin:24px 0 0;font-size:12px;color:#64748b;">Le code expire dans 10 minutes. Si tu n'es pas a l'origine de cette demande, ignore cet email.</p>
+            <p style="margin:24px 0 0;font-size:12px;color:#64748b;">${escapeHtml(expiryNote)}</p>
           </td></tr>
         </table>
         <p style="margin:24px 0 0;font-size:11px;color:#475569;">${APP_NAME}</p>

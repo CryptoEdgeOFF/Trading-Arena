@@ -25,7 +25,16 @@ import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine
 import { CompetitionManager } from './competitionManager.js';
 import { CompetitionNotifier } from './competitionNotifications.js';
 import { computeTradeStats, type TradeStats } from './tradeStats.js';
-import { sendOtpEmail } from './mailer.js';
+import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail } from './mailer.js';
+import {
+  getEmailSettings,
+  updateEmailSettings,
+  listEmailLog,
+  EMAIL_CATALOG,
+  EMAIL_KINDS,
+  type EmailKind,
+  type EmailSettingsPatch,
+} from './emailSettingsStore.js';
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
 import { getMarketMetadata } from './marketMetadata.js';
 import * as promotionsStore from './promotionsStore.js';
@@ -963,6 +972,102 @@ app.post('/api/admin/logout', async (req, res) => {
   const token = getAdminToken(req);
   if (token) await competitionManager.deleteAdminToken(token);
   res.json({ ok: true });
+});
+
+// --- Suivi & configuration des emails (panneau admin « Emails ») ---------
+app.get('/api/admin/emails/config', requireAdmin, async (_req, res) => {
+  try {
+    const settings = await getEmailSettings();
+    res.json({ settings, catalog: EMAIL_CATALOG });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error)?.message || 'Lecture impossible' });
+  }
+});
+
+app.post('/api/admin/emails/config', requireAdmin, async (req, res) => {
+  try {
+    const body = (req.body || {}) as EmailSettingsPatch;
+    const settings = await updateEmailSettings(body);
+    res.json({ settings });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error)?.message || 'Enregistrement impossible' });
+  }
+});
+
+app.get('/api/admin/emails/log', requireAdmin, async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 100;
+    const entries = await listEmailLog(limit);
+    res.json({ entries });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error)?.message || 'Lecture impossible' });
+  }
+});
+
+// Envoi d'un email de test (données factices) pour prévisualiser un template.
+app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
+  const kind = String(req.body?.kind || '') as EmailKind;
+  const to = String(req.body?.to || '').trim();
+  if (!EMAIL_KINDS.includes(kind)) {
+    res.status(400).json({ error: 'Type d\'email inconnu' });
+    return;
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+    res.status(400).json({ error: 'Adresse email invalide' });
+    return;
+  }
+  try {
+    let result;
+    if (kind === 'otp') {
+      result = await sendOtpEmail(to, '123456', 'login');
+    } else if (kind === 'prize_winner') {
+      result = await sendPrizeWinnerEmail(to, {
+        recipientName: 'Trader Test',
+        competitionTitle: 'Arène de démonstration',
+        rank: 1,
+        rankLabel: '1ʳᵉ place',
+        prizeLines: ['2 500 USDT', 'MacBook Pro'],
+        totalParticipants: 128,
+      });
+    } else if (kind === 'new_arena') {
+      result = await sendNewArenaEmail(to, {
+        recipientName: 'Trader Test',
+        title: 'Arène de démonstration',
+        startLabel: 'lundi 16 juin 18:00',
+        endLabel: 'vendredi 20 juin 18:00',
+        durationLabel: '4 jours',
+        prizeHeadline: '5 000 USDT',
+        prizeBreakdown: ['1er · 2 500', '2e · 1 500', '3e · 1 000'],
+        ctaUrl: (process.env.APP_PUBLIC_URL || '').trim() || undefined,
+      });
+    } else {
+      // arena_start_soon | arena_podium_lost | arena_results → notification générique
+      const headings: Record<string, string> = {
+        arena_start_soon: "L'arène démarre bientôt",
+        arena_podium_lost: 'On t’a pris ta place sur le podium !',
+        arena_results: "Résultats — Arène de démonstration",
+      };
+      result = await sendNotificationEmail(
+        to,
+        `[Test] ${headings[kind] || 'Notification'}`,
+        {
+          eyebrow: 'Arène de démonstration',
+          heading: headings[kind] || 'Notification',
+          bodyLines: [
+            'Salut Trader Test,',
+            'Ceci est un email de test envoyé depuis le panneau admin pour prévisualiser le rendu.',
+          ],
+          highlight: '#1 / 128 · +12.4%',
+          ctaLabel: 'Voir la plateforme',
+          ctaUrl: (process.env.APP_PUBLIC_URL || '').trim() || undefined,
+        },
+        kind,
+      );
+    }
+    res.json({ ok: Boolean(result?.delivered), result });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error)?.message || 'Envoi impossible' });
+  }
 });
 
 // --- Réparation ONE-SHOT : fermetures fantômes du 2026-06-01 ~22:19 UTC ---
