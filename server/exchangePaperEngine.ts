@@ -6,7 +6,7 @@ import * as binance from './binance.js';
 import * as hyperliquid from './hyperliquid.js';
 import * as engineCandlesCache from './engineCandlesCache.js';
 import * as cryptoCandlesStore from './cryptoCandlesStore.js';
-import { ITICK_INSTRUMENTS } from './itickInstruments.js';
+import { ITICK_INSTRUMENTS, findByPair } from './itickInstruments.js';
 import { itickFeed } from './itick.js';
 import { pnlToAccountCcy } from './pairFx.js';
 import { assertMarketOpen, getMarketSessionForPair } from './marketHours.js';
@@ -127,8 +127,32 @@ const SPREAD_BPS = 0.1;
 // Barème aligné sur une vraie plateforme (type futures crypto) : taker 0,04 %
 // au marché, maker 0,02 % en limite. Prélevé sur le notionnel à l'ouverture
 // comme à la fermeture.
-const TAKER_FEE_RATE = 0.0004 / 3; // ≈ 0,01333 % — ordres au marché
-const MAKER_FEE_RATE = 0.0002 / 3; // ≈ 0,00667 % — ordres limites
+const TAKER_FEE_RATE = 0.0004 / 3; // ≈ 0,01333 % — ordres au marché (crypto)
+const MAKER_FEE_RATE = 0.0002 / 3; // ≈ 0,00667 % — ordres limites (crypto)
+
+// Frais réduits pour les actifs non-crypto. Taux unique appliqué aussi bien au
+// marché qu'en limite (pas de distinction maker/taker pour ces classes).
+const FOREX_FEE_RATE = 0.00003; // 0,003 %
+const COMMODITY_FEE_RATE = 0.00003; // 0,003 %
+const INDEX_FEE_RATE = 0.00002; // 0,002 %
+
+/**
+ * Taux de frais selon la classe d'actif du pair :
+ *  - crypto (pair absent du registre iTick)  → barème maker/taker historique ;
+ *  - forex / commodities / indices            → taux unique réduit ci-dessus.
+ * Appliqué de façon transparente à l'ouverture (marché/limite) et à la clôture.
+ */
+function resolveFeeRate(pair: string, type: 'taker' | 'maker'): number {
+  const inst = findByPair(pair);
+  if (inst) {
+    switch (inst.category) {
+      case 'forex': return FOREX_FEE_RATE;
+      case 'commodity': return COMMODITY_FEE_RATE;
+      case 'index': return INDEX_FEE_RATE;
+    }
+  }
+  return type === 'maker' ? MAKER_FEE_RATE : TAKER_FEE_RATE;
+}
 const MAX_LEVERAGE = 50;
 const MIN_LEVERAGE = 1;
 /** Notional minimal d'un ordre (anti-spam de positions "dust"). */
@@ -883,7 +907,7 @@ export class PaperTradingEngine {
         updatedAt: Date.now(),
         stopLoss: inputStopLoss,
         takeProfit: inputTakeProfit,
-      }, executionPrice, TAKER_FEE_RATE);
+      }, executionPrice, resolveFeeRate(pair, 'taker'));
     }
 
     const limitPrice = Number(input.limitPrice);
@@ -899,7 +923,7 @@ export class PaperTradingEngine {
 
     const notional = limitPrice * size;
     const marginRequired = notional / leverage;
-    const feeEstimate = notional * MAKER_FEE_RATE;
+    const feeEstimate = notional * resolveFeeRate(pair, 'maker');
     if (marginRequired + feeEstimate > player.availableMargin) {
       throw new Error(`Capital disponible insuffisant (${player.availableMargin.toFixed(2)}$)`);
     }
@@ -1033,7 +1057,7 @@ export class PaperTradingEngine {
     }
 
     const portion = sizeToClose / existing.size;
-    const closeFee = exitPrice * sizeToClose * TAKER_FEE_RATE;
+    const closeFee = exitPrice * sizeToClose * resolveFeeRate(pair, 'taker');
     const rawRealizedPnl = existing.side === 'long'
       ? (exitPrice - existing.entryPrice) * sizeToClose
       : (existing.entryPrice - exitPrice) * sizeToClose;
@@ -1165,7 +1189,7 @@ export class PaperTradingEngine {
 
     const notional = newLimit * order.size;
     const marginRequired = notional / order.leverage;
-    const feeEstimate = notional * MAKER_FEE_RATE;
+    const feeEstimate = notional * resolveFeeRate(order.pair, 'maker');
     const previousReserve = order.marginReserved + order.feeEstimate;
     const nextReserve = marginRequired + feeEstimate;
     const extraNeeded = nextReserve - previousReserve;
@@ -1764,7 +1788,7 @@ export class PaperTradingEngine {
           + `size=${order.size} orderId=${order.id} placedAt=${order.createdAt ?? '?'}`,
         );
         player.openOrders = player.openOrders.filter((entry) => entry.id !== order.id);
-        this.executeOrder(player, order, fillPrice, MAKER_FEE_RATE);
+        this.executeOrder(player, order, fillPrice, resolveFeeRate(order.pair, 'maker'));
       }
     }
   }
@@ -1867,7 +1891,7 @@ export class PaperTradingEngine {
     }
 
     const portion = sizeToClose / existing.size;
-    const closeFee = exitPrice * sizeToClose * TAKER_FEE_RATE;
+    const closeFee = exitPrice * sizeToClose * resolveFeeRate(existing.pair, 'taker');
     const rawRealizedPnl = existing.side === 'long'
       ? (exitPrice - existing.entryPrice) * sizeToClose
       : (existing.entryPrice - exitPrice) * sizeToClose;

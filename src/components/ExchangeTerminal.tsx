@@ -51,6 +51,30 @@ const DEMO_STARTING_BALANCE = 100_000;
 const DEMO_TAKER_FEE = 0.0004 / 3; // ≈ 0,01333 % — aligné sur le barème réel (cf. moteur)
 const DEMO_MAKER_FEE = 0.0002 / 3; // ≈ 0,00667 %
 
+// Frais réduits non-crypto (alignés sur le moteur serveur). Taux unique
+// appliqué au marché comme en limite.
+const FOREX_FEE_RATE = 0.00003; // 0,003 %
+const COMMODITY_FEE_RATE = 0.00003; // 0,003 %
+const INDEX_FEE_RATE = 0.00002; // 0,002 %
+
+/**
+ * Taux de frais selon la catégorie d'actif. Forex / indices / commodities =
+ * taux unique réduit ; toute autre catégorie (crypto, actions) retombe sur le
+ * barème maker/taker fourni en `base`.
+ */
+function assetFeeRate(
+  category: string | undefined,
+  type: 'taker' | 'maker',
+  base: { maker: number; taker: number },
+): number {
+  switch (category) {
+    case 'forex': return FOREX_FEE_RATE;
+    case 'commodities': return COMMODITY_FEE_RATE;
+    case 'indices': return INDEX_FEE_RATE;
+    default: return type === 'maker' ? base.maker : base.taker;
+  }
+}
+
 /** Ordre limite passif : déclenchement au prix limite (pas de fill market immédiat). */
 function isRestingLimitTriggered(
   side: 'long' | 'short',
@@ -908,7 +932,7 @@ function OrderForm(props: OrderFormProps) {
     : Number(limitPrice) || 0;
   const total = refPrice * engineQty;
   const margin = leverage > 0 ? total / leverage : 0;
-  const fee = total * (orderType === 'market' ? meta.fees.taker : meta.fees.maker);
+  const fee = total * assetFeeRate(category, orderType === 'market' ? 'taker' : 'maker', meta.fees);
   const available = (player?.availableMargin ?? 0);
   const maxNotional = available * leverage;
   const maxEngineQty = refPrice > 0 ? maxNotional / refPrice : 0;
@@ -3389,7 +3413,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
         const notional = fillPrice * order.size;
         const margin = notional / order.leverage;
-        const fee = notional * DEMO_MAKER_FEE;
+        const fee = notional * assetFeeRate(meta.marketMetadata[order.pair]?.category, 'maker', { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE });
         feesAdded += fee;
         const openedAt = Date.now();
         newPositions.unshift({
@@ -3724,7 +3748,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
       const notional = limitPrice * order.size;
       const marginRequired = notional / order.leverage;
-      const feeEstimate = notional * DEMO_MAKER_FEE;
+      const feeEstimate = notional * assetFeeRate(meta.marketMetadata[order.pair]?.category, 'maker', { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE });
 
       return {
         ...current,
@@ -3781,7 +3805,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       }
       const notional = limit * qty;
       const margin = leverage > 0 ? notional / leverage : 0;
-      const fee = notional * DEMO_MAKER_FEE;
+      const fee = notional * assetFeeRate(meta.marketMetadata[selectedPair]?.category, 'maker', { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE });
       if (margin + fee > demoPlayer.availableMargin) {
         setError('Marge demo insuffisante.');
         return;
@@ -3816,7 +3840,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     const price = effSide === 'long' ? currentTicker.askPrice : currentTicker.bidPrice;
     const notional = price * qty;
     const margin = leverage > 0 ? notional / leverage : 0;
-    const fee = notional * DEMO_TAKER_FEE;
+    const fee = notional * assetFeeRate(meta.marketMetadata[selectedPair]?.category, 'taker', { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE });
 
     if (margin + fee > demoPlayer.availableMargin) {
       setError('Marge demo insuffisante.');
@@ -3885,7 +3909,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
     const sizeRatio = closeSize / position.size;
     const pnl = (price - position.entryPrice) * closeSize * (position.side === 'long' ? 1 : -1);
-    const fee = price * closeSize * DEMO_TAKER_FEE;
+    const fee = price * closeSize * assetFeeRate(meta.marketMetadata[pair]?.category, 'taker', { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE });
     const closedAt = Date.now();
     const trade: Trade = {
       id: crypto.randomUUID(),
