@@ -470,7 +470,7 @@ function TopBar({
   return (
     <header className="relative flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
       {/* Logo compact (mobile uniquement) */}
-      <div className="flex items-center gap-2 md:hidden">
+      <div className="order-1 flex items-center gap-2 md:hidden">
         <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-6 w-auto object-contain sm:h-7" />
       </div>
 
@@ -481,7 +481,27 @@ function TopBar({
         className="pointer-events-none absolute left-1/2 top-1/2 hidden h-14 w-auto max-w-[44%] -translate-x-1/2 -translate-y-1/2 object-contain md:block lg:h-16"
       />
 
-      <div className="order-3 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-none md:mr-auto md:w-auto md:min-w-[360px]">
+      {/* Compte à rebours : collé au logo sur mobile, à droite sur desktop */}
+      {((liveMode && remainingMs != null) || (!liveMode && (compRemainingMs != null || compEnded))) && (
+        <div className="order-2 flex items-center md:order-2">
+          {liveMode && remainingMs != null && (
+            <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+              <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">{t('terminal.remaining')}</span>
+              <span className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</span>
+            </div>
+          )}
+          {!liveMode && (compRemainingMs != null || compEnded) && (
+            <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${!compEnded && compRemainingMs != null && compRemainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+              <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">
+                {compEnded ? t('terminal.btnEventEnded') : compUpcoming ? t('terminal.startsIn') : t('terminal.remaining')}
+              </span>
+              {!compEnded && <span className="num text-[12px] font-bold text-white">{formatDHMS(compRemainingMs ?? 0)}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="order-4 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-1 md:mr-auto md:w-auto md:min-w-[360px]">
         <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
           <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.balance')}</div>
           <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">{fmt(balance, 2)} <span className="text-[9px] text-[#7a8090] md:text-[10px]">USD</span></div>
@@ -500,21 +520,7 @@ function TopBar({
         </div>
       </div>
 
-      <div className="order-2 ml-auto flex items-center gap-1.5 md:order-none md:ml-0">
-        {liveMode && remainingMs != null && (
-          <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
-            <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">{t('terminal.remaining')}</span>
-            <span className="num text-[12px] font-bold text-white">{formatTime(remainingMs)}</span>
-          </div>
-        )}
-        {!liveMode && (compRemainingMs != null || compEnded) && (
-          <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${!compEnded && compRemainingMs != null && compRemainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
-            <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">
-              {compEnded ? t('terminal.btnEventEnded') : compUpcoming ? t('terminal.startsIn') : t('terminal.remaining')}
-            </span>
-            {!compEnded && <span className="num text-[12px] font-bold text-white">{formatDHMS(compRemainingMs ?? 0)}</span>}
-          </div>
-        )}
+      <div className="order-3 ml-auto flex items-center gap-1.5 md:order-3 md:ml-0">
         {liveMode ? (
           <button
             type="button"
