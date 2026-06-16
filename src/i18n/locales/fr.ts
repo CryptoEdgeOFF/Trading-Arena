@@ -440,7 +440,7 @@ export const fr: TranslationResources = {
     competitionUpcoming: 'Compétition à venir',
     paperTrading: 'Paper trading',
     balance: 'Solde',
-    remaining: 'Restant',
+    remaining: 'Fin',
     logout: 'Déconnexion',
     home: 'Accueil',
     leaderboard: 'Leaderboard',

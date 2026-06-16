@@ -438,7 +438,7 @@ export const en = {
     competitionUpcoming: 'Competition upcoming',
     paperTrading: 'Paper trading',
     balance: 'Balance',
-    remaining: 'Remaining',
+    remaining: 'End',
     logout: 'Log out',
     home: 'Home',
     leaderboard: 'Leaderboard',
