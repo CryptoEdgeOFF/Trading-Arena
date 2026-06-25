@@ -31,17 +31,19 @@ export const fr: TranslationResources = {
   },
 
   seo: {
-    homeTitle: 'Compétitions de trading en ligne gratuites & lots à gagner',
+    homeTitle: 'BTF Arena : compétition de trading en ligne 100% gratuite & lots à gagner',
     homeDesc:
-      'Participe à des compétitions de trading 100% gratuites sur BTF Trading Arena : crypto, forex, indices, actions et matières premières. Affronte des traders du monde entier, grimpe au classement en temps réel et gagne des lots. Inscription gratuite, trading en temps réel.',
+      'BTF Arena, la compétition de trading en ligne 100% gratuite : crypto, forex, indices, actions et matières premières. Affronte des traders du monde entier, grimpe au classement en temps réel et gagne des lots exclusifs. Inscription gratuite, sans dépôt.',
     homeKeywords:
-      'compétition de trading, compétition de trading en ligne, trading gratuit, tournoi de trading, lots à gagner, concours de trading, paper trading, trading forex, trading indices, trading actions, trading matières premières',
-    leaderboardTitle: 'Classement global',
+      'BTF Arena, compétition de trading, compétition de trading en ligne, trading gratuit, tournoi de trading, lots à gagner, concours de trading, paper trading, trading forex, trading indices, trading actions, trading matières premières',
+    leaderboardTitle: 'Classement global des traders',
     leaderboardDesc:
-      'Découvre les meilleurs traders de BTF Trading Arena. Classement global en temps réel des compétitions de trading en ligne gratuites.',
+      'Découvre les meilleurs traders de BTF Arena. Classement global en temps réel des compétitions de trading en ligne 100% gratuites.',
+    arenaDesc:
+      'Classement en temps réel de l’arène « {{title}} » sur BTF Arena — compétition de trading en ligne 100% gratuite. Suis les meilleurs traders et les lots à gagner.',
     bonusTitle: 'Live Trading Bonus — Deals broker & exchange',
     bonusDesc:
-      'Bonus exclusifs et codes promo pour nos brokers et exchanges partenaires. Récompenses de dépôt, frais réduits et offres spéciales pour les traders de BTF Trading Arena.',
+      'Bonus exclusifs et codes promo pour nos brokers et exchanges partenaires. Récompenses de dépôt, frais réduits et offres spéciales pour les traders de BTF Arena.',
   },
 
   lang: {
@@ -53,6 +55,7 @@ export const fr: TranslationResources = {
   header: {
     arenas: 'Arènes',
     settings: 'Réglages',
+    payouts: 'Payout',
     logout: 'Déconnexion',
     login: 'Connexion',
     menu: 'Menu',
@@ -60,9 +63,12 @@ export const fr: TranslationResources = {
   },
 
   hero: {
+    eyebrow: 'BTF Arena · Compétition de trading en ligne 100% gratuite',
+    seoHeading: 'BTF Arena — Compétition de trading en ligne gratuite',
     ctaArenas: 'Voir les arènes',
     ctaHow: 'Comment ça marche',
-    subtitle: 'La plateforme de tournoi officielle du Breakout Trading Fight.',
+    subtitle:
+      'Rejoins BTF Arena, la compétition de trading en ligne 100% gratuite : crypto, forex, indices, actions et matières premières. Grimpe au classement en temps réel et gagne des lots exclusifs.',
   },
 
   status: {
@@ -193,7 +199,14 @@ export const fr: TranslationResources = {
 
   globalLeaderboard: {
     title: 'Leaderboard global',
-    subtitle: 'Stats cumulées sur toutes les arènes',
+    subtitle: 'Classement par saison et classement all-time',
+    seasonBoard: 'Saison en cours',
+    allTimeBoard: 'All-time',
+    globalTab: 'Global Leaderboard',
+    comingSoon: 'Bientôt disponible',
+    comingSoonDesc: 'Cette saison n\u2019a pas encore commencé. Le classement sera dévoilé dès son lancement.',
+    allTimeTitle: 'Leaderboard global',
+    allTimeDesc: 'Stats cumulées sur toutes les arènes et toutes les saisons',
     back: 'Retour',
     rank: 'Rang',
     trader: 'Trader',
@@ -210,6 +223,64 @@ export const fr: TranslationResources = {
     rewardTitle: 'Le top 5 remporte une invitation au BTF 2027',
     rewardDesc: 'Les 5 meilleurs traders du leaderboard global gagnent une invitation personnelle à l\u2019événement BTF 2027.',
     qualifies: 'BTF 2027',
+    prize: {
+      eyebrow: '{{season}} · Le grand prix',
+      headline: '90 jours pour finir #1 et trader au BTF 2027',
+      subtitle: 'Pendant toute la {{season}}, participe à un maximum d’arènes : le classement additionne ton PnL total sur toutes les arènes de la saison. Plus tu performes souvent, plus tu peux prendre la tête et décrocher ta place dans l’arène physique du BTF 2027.',
+      badgeLabel: 'Badge de Champion',
+      badgeHint: 'Voir le badge en grand',
+      shirtLabel: 'Maillot officiel du Champion',
+      shirtTag: 'Ton ticket pour l\u2019arène physique BTF 2027',
+      arenaLabel: 'Accès Arène BTF 2027',
+      arenaDesc: 'Ta place pour trader en live dans l\u2019arène physique à Paris',
+      winnerNote: 'Un seul vainqueur par saison — la place est unique.',
+      step1: 'Enchaîne les arènes',
+      step2: 'Cumule ton PnL total',
+      step3: 'Finis #1 après 90 jours',
+      cta: 'Voir le badge',
+    },
+  },
+
+  homeSeason: {
+    eyebrow: 'Saison en cours',
+    live: 'En direct',
+    title: 'La {{season}} est lancée',
+    subtitle: 'Grimpe au classement de la saison et décroche le badge de champion, le maillot officiel et ta place dans l\u2019arène physique du BTF 2027.',
+    stackTitle: 'Enchaîne les arènes pour grimper',
+    stackDesc: 'Ton classement de saison cumule les performances de toutes tes arènes. Plus tu enchaînes d\u2019arènes en tradant proprement, plus tu montes — une seule arène ne suffit pas.',
+    prizeBadge: 'Badge Champion',
+    prizeShirt: 'Maillot officiel',
+    prizeArena: 'Arène BTF 2027',
+    tagline: 'Grimpe au classement et décroche le badge, le maillot et ta place au BTF 2027.',
+    prizesLabel: 'À remporter',
+    daysLeftLabel: 'jours restants',
+    lastDayLabel: 'Dernier jour',
+    progressLabel: 'Saison écoulée',
+    rankReward: 'Réservé au n°1 du classement',
+    cta: 'Voir le classement de la saison',
+    ctaShort: 'Explorer la saison',
+  },
+
+  seasons: {
+    upcoming: 'Bientôt',
+    ended: 'Terminée',
+    daysLeft: '{{count}} jours restants',
+    lastDay: 'Dernier jour !',
+    startsIn: 'Débute dans {{count}} jours',
+    badgesTitle: 'Badge saison',
+    championBadge: '#1 de la saison',
+    summer2026: {
+      name: 'Summer Season',
+      rewardEyebrow: 'Summer Season · Récompenses',
+      rewardTitle: 'Le #1 remporte le badge de champion de la saison',
+      rewardDesc: 'Le meilleur trader de la Summer Season décroche le badge de champion affiché sur son profil, en plus des lots exclusifs.',
+    },
+    autumn2026: {
+      name: 'Autumn Season',
+      rewardEyebrow: 'Autumn Season · Récompenses',
+      rewardTitle: 'Le #1 remporte le badge de champion de la saison',
+      rewardDesc: 'Le meilleur trader de l\u2019Autumn Season décroche le badge de champion affiché sur son profil, en plus des lots exclusifs.',
+    },
   },
 
   bonus: {
@@ -267,6 +338,32 @@ export const fr: TranslationResources = {
     statusEnded: 'Terminée',
   },
 
+  payouts: {
+    title: 'Payouts',
+    viewCertificate: 'Voir le certificat de payout',
+    download: 'Télécharger',
+  },
+
+  payoutPage: {
+    title: 'Payout',
+    eyebrow: 'Mes gains',
+    intro: 'Retrouve ici les arènes que tu as gagnées, ta place et le montant de ta récompense. Soumets ton adresse ERC20 pour demander le versement.',
+    backToArena: '← Arènes',
+    empty: 'Tu n’as pas encore de payout disponible.',
+    unknownArena: 'Arène',
+    place: 'Place {{rank}}',
+    erc20Label: 'Adresse ERC20 (Ethereum)',
+    erc20Hint: 'Vérifie que ton adresse est bien sur le réseau Ethereum. Une erreur peut entraîner une perte définitive des fonds.',
+    requestBtn: 'Request payout',
+    statusAvailable: 'Disponible',
+    statusPending: 'En attente',
+    statusApproved: 'Versé',
+    pendingMsg: 'Ta demande est en cours de traitement (sous 48 h ouvrées). Tu recevras un email dès que le virement sera confirmé.',
+    approvedMsg: 'Ton payout a été envoyé. Merci d’avoir participé !',
+    invalidAddress: 'Adresse ERC20 invalide (format 0x suivi de 40 caractères hexadécimaux).',
+    invalidSession: 'Session expirée. Reconnecte-toi.',
+  },
+
   badges: {
     title: 'Badges',
     parisChampion: 'Champion Paris 2026',
@@ -275,6 +372,12 @@ export const fr: TranslationResources = {
     champion: 'Champion Online',
     championDesc: 'A terminé 1er d\u2019une arène',
     championLong: 'Décerné aux traders qui terminent à la 1ʳᵉ place d\u2019une arène de trading. Il récompense la meilleure performance (PnL) parmi tous les participants d\u2019une compétition terminée.',
+    summerChampion: 'Champion Summer',
+    summerChampionDesc: '#1 du leaderboard global Summer Season',
+    summerChampionLong: 'Décerné au trader #1 du leaderboard global de la Summer Season. En plus du badge, le champion remporte le maillot officiel et son invitation pour trader dans l\u2019arène physique du BTF 2027.',
+    autumnChampion: 'Champion Autumn',
+    autumnChampionDesc: '#1 du leaderboard global Autumn Season',
+    autumnChampionLong: 'Décerné au trader #1 du leaderboard global de l\u2019Autumn Season. Le champion remporte son invitation pour trader dans l\u2019arène physique du BTF 2027.',
     btf2026: 'BTF 2026',
     btf2026Desc: 'A participé aux qualifications BTF 2026 à Paris',
     btf2026Long: 'Badge commémoratif réservé aux participants des qualifications BTF 2026 à Paris, lors de l\u2019événement physique des 4 et 5 juin. Un symbole réservé aux pionniers de l\u2019arène.',
@@ -293,8 +396,8 @@ export const fr: TranslationResources = {
     hintChoose: 'Choisis-en une dans la liste publique ci-dessous.',
     hintHistory: "Tes anciennes arènes sont disponibles dans l'historique.",
     historyEyebrow: 'Historique',
-    historyTitle: 'Tes arènes archivées',
-    historySub: 'Retrouve les compétitions auxquelles tu as participé, avec ton PnL final et le leaderboard.',
+    historyTitle: 'Arènes archivées',
+    historySub: 'Toutes les arènes terminées, avec leur classement final — même celles auxquelles tu n\u2019as pas participé.',
     publicEyebrow: 'Compétitions publiques',
     publicTitle: 'Rejoins une arène',
     publicSub: "Code requis pour participer. Demande-le à l'organisateur.",
@@ -318,6 +421,8 @@ export const fr: TranslationResources = {
     leaderboard: 'Classement →',
     myRank: 'Ma position',
     myPnl: 'Mon PnL',
+    participants: 'Participants',
+    notJoined: 'Tu n\u2019y as pas participé',
   },
 
   myCard: {
@@ -344,6 +449,10 @@ export const fr: TranslationResources = {
     registrationEnds: 'Inscriptions ouvertes jusqu’au',
     registrationClosed: 'Inscriptions terminées',
     tradingStarts: 'Le trading démarre le',
+    dailyDrawdown: 'Drawdown journalier',
+    prizePool: 'Grosse dotation',
+    online: 'Arène en ligne',
+    freeEntry: 'Entrée libre',
   },
 
   joinModal: {
@@ -352,6 +461,9 @@ export const fr: TranslationResources = {
     codePlaceholder: 'CODE COMPÉTITION',
     cancel: 'Annuler',
     join: 'Rejoindre',
+    rulesTitle: "Règles de l'arène",
+    dailyDrawdownRule: 'Limite de drawdown journalier de {{percent}} %',
+    dailyDrawdownRuleDesc: "Si ton équité descend de {{percent}} % sous ton solde de début de journée, ton compte est éliminé et tu ne peux plus trader. Reset à 00h00 UTC.",
   },
 
   leaderboard: {
@@ -375,6 +487,11 @@ export const fr: TranslationResources = {
     allTraders: 'Tous les traders',
     noTraderYet: 'Aucun trader inscrit pour le moment.',
     noRankedYet: 'Personne a encore passé un trade dans cette arène.',
+    breached: 'Éliminé',
+    breachedTitle: 'Compte éliminé — limite de drawdown journalier atteinte',
+    breachedList: 'Éliminés',
+    breachedSectionTitle: 'Comptes éliminés',
+    breachedSectionHint: 'Ces traders ont atteint la limite de drawdown journalier. Ils sont hors classement et ne peuvent plus trader.',
     enrolledList: 'Participants',
     enrolledNoTrade: 'Inscrits — pas encore tradé',
     enrolledNoTradeHint: 'Pas de rang tant qu’aucun ordre n’a été exécuté.',
@@ -482,6 +599,11 @@ export const fr: TranslationResources = {
     sideTotal: 'Total position',
     estimatedFees: 'Frais de trading estimés',
     marginUsed: 'Marge utilisée pour cet ordre',
+    dailyDrawdownLabel: 'Limite de perte journalière ({{percent}} %)',
+    dailyDrawdownValue: 'Plancher {{amount}} USD',
+    dailyDrawdownHint: "Compte éliminé si ton équité atteint ce niveau aujourd'hui (reset 00h00 UTC).",
+    breachedBtn: 'Compte éliminé',
+    breachedBanner: 'Compte éliminé — limite de drawdown journalier atteinte. Tu ne peux plus trader dans cette arène.',
 
     partial: 'partiel',
     clickToEdit: 'Cliquer pour modifier',
@@ -604,6 +726,29 @@ export const fr: TranslationResources = {
     missingId: 'Saisis ton identifiant public pour rejoindre.',
     idInvalid: 'Format d’identifiant invalide. Attendu : quelque chose comme {{example}}.',
     disqualifyWarning: 'Un identifiant incorrect entraînera la disqualification.',
+    introTitle: 'Compétition réservée aux utilisateurs {{name}}',
+    introSubtitle: 'Cette arène est ouverte exclusivement aux traders disposant d’un compte {{name}} actif.',
+    ninjatraderAbout:
+      'NinjaTrader est une plateforme de trading professionnelle pour futures, forex et actions. Charts avancés, exécution rapide et outils d’analyse utilisés par des milliers de traders actifs.',
+    signUpFree: 'Inscription gratuite (1 minute)',
+    alreadyHaveAccount: 'J’ai déjà un compte',
+    creatingAccount: 'Je crée mon compte',
+    emailLabel: 'Adresse email {{name}}',
+    emailPlaceholder: 'ton@email.com',
+    emailHint: 'Indique l’adresse email exacte liée à ton compte {{name}}.',
+    emailHintNew:
+      'Une fois ton compte créé sur NinjaTrader, reviens ici et saisis la même adresse email que celle utilisée lors de l’inscription.',
+    emailInvalid: 'Adresse email invalide.',
+    emailVerifyWarning:
+      'NinjaTrader vérifie les adresses email des participants. Une adresse incorrecte entraînera ta disqualification automatique de la compétition.',
+    signUpViaAffiliate:
+      'Crée ton compte NinjaTrader gratuitement via notre lien partenaire. L’inscription prend environ 1 minute.',
+    afterSignUpNote:
+      'Une fois ton compte créé, reviens ici, clique sur « J’ai déjà un compte » et saisis l’adresse email utilisée lors de l’inscription.',
+    accountCreated: 'J’ai créé mon compte',
+    continue: 'Continuer',
+    back: 'Retour',
+    missingEmail: 'Saisis ton adresse email {{name}} pour continuer.',
   },
 
   dashboardHeader: {

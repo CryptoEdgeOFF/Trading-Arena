@@ -29,17 +29,19 @@ export const en = {
   },
 
   seo: {
-    homeTitle: 'Free online trading competitions & prizes to win',
+    homeTitle: 'BTF Arena: free online trading competition with prizes to win',
     homeDesc:
-      'Join 100% free trading competitions on BTF Trading Arena: crypto, forex, indices, stocks and commodities. Compete against traders worldwide, climb the live leaderboard and win prizes. Free sign-up, real-time trading.',
+      'BTF Arena, the 100% free online trading competition: crypto, forex, indices, stocks and commodities. Compete against traders worldwide, climb the live leaderboard and win exclusive prizes. Free sign-up, no deposit.',
     homeKeywords:
-      'trading competition, online trading competition, free trading, trading tournament, win prizes, trading contest, paper trading, forex trading, indices trading, stock trading, commodities trading',
-    leaderboardTitle: 'Global Leaderboard',
+      'BTF Arena, trading competition, online trading competition, free trading, trading tournament, win prizes, trading contest, paper trading, forex trading, indices trading, stock trading, commodities trading',
+    leaderboardTitle: 'Global traders leaderboard',
     leaderboardDesc:
-      'Discover the best traders on BTF Trading Arena. Live global ranking of free online trading competitions.',
+      'Discover the best traders on BTF Arena. Live global ranking of 100% free online trading competitions.',
+    arenaDesc:
+      'Live leaderboard of the “{{title}}” arena on BTF Arena — a 100% free online trading competition. Follow the top traders and the prizes to win.',
     bonusTitle: 'Live Trading Bonus — Broker & Exchange Deals',
     bonusDesc:
-      'Exclusive bonuses and promo codes for our partner brokers and exchanges. Deposit rewards, reduced fees and special offers for BTF Trading Arena traders.',
+      'Exclusive bonuses and promo codes for our partner brokers and exchanges. Deposit rewards, reduced fees and special offers for BTF Arena traders.',
   },
 
   lang: {
@@ -51,6 +53,7 @@ export const en = {
   header: {
     arenas: 'Arenas',
     settings: 'Settings',
+    payouts: 'Payout',
     logout: 'Log out',
     login: 'Log in',
     menu: 'Menu',
@@ -58,9 +61,12 @@ export const en = {
   },
 
   hero: {
+    eyebrow: 'BTF Arena · 100% free online trading competition',
+    seoHeading: 'BTF Arena — Free online trading competition',
     ctaArenas: 'View arenas',
     ctaHow: 'How it works',
-    subtitle: 'The official tournament platform of the Breakout Trading Fight.',
+    subtitle:
+      'Join BTF Arena, the 100% free online trading competition: crypto, forex, indices, stocks and commodities. Climb the live leaderboard and win exclusive prizes.',
   },
 
   status: {
@@ -191,7 +197,14 @@ export const en = {
 
   globalLeaderboard: {
     title: 'Global leaderboard',
-    subtitle: 'All-time stats across every arena',
+    subtitle: 'Per-season rankings and the all-time leaderboard',
+    seasonBoard: 'Current season',
+    allTimeBoard: 'All-time',
+    globalTab: 'Global Leaderboard',
+    comingSoon: 'Coming soon',
+    comingSoonDesc: 'This season hasn\u2019t started yet. The leaderboard will be revealed at launch.',
+    allTimeTitle: 'Global leaderboard',
+    allTimeDesc: 'Cumulative stats across all arenas and all seasons',
     back: 'Back',
     rank: 'Rank',
     trader: 'Trader',
@@ -208,6 +221,64 @@ export const en = {
     rewardTitle: 'Top 5 win an invitation to BTF 2027',
     rewardDesc: 'The 5 best traders on the global leaderboard earn a personal invitation to the BTF 2027 event.',
     qualifies: 'BTF 2027',
+    prize: {
+      eyebrow: '{{season}} · The grand prize',
+      headline: '90 days to finish #1 and trade at BTF 2027',
+      subtitle: 'During the full {{season}}, join as many arenas as possible: the leaderboard adds up your total PnL across every arena in the season. The more often you perform, the higher you climb toward the BTF 2027 physical arena.',
+      badgeLabel: 'Champion badge',
+      badgeHint: 'View the badge full-size',
+      shirtLabel: 'Official Champion jersey',
+      shirtTag: 'Your ticket to the BTF 2027 physical arena',
+      arenaLabel: 'BTF 2027 Arena access',
+      arenaDesc: 'Your seat to trade live in the Paris physical arena',
+      winnerNote: 'One winner per season — the seat is unique.',
+      step1: 'Stack arenas',
+      step2: 'Compound total PnL',
+      step3: 'Finish #1 after 90 days',
+      cta: 'View the badge',
+    },
+  },
+
+  homeSeason: {
+    eyebrow: 'Season live',
+    live: 'Live',
+    title: 'The {{season}} is live',
+    subtitle: 'Climb the season leaderboard and earn the champion badge, the official jersey and your seat in the BTF 2027 physical arena.',
+    stackTitle: 'Stack arenas to climb',
+    stackDesc: 'Your season ranking adds up the performance of all your arenas. The more arenas you complete trading clean, the higher you climb — a single arena is not enough.',
+    prizeBadge: 'Champion badge',
+    prizeShirt: 'Official jersey',
+    prizeArena: 'BTF 2027 arena',
+    tagline: 'Climb the ranking and claim the badge, the jersey and your BTF 2027 seat.',
+    prizesLabel: 'Up for grabs',
+    daysLeftLabel: 'days left',
+    lastDayLabel: 'Last day',
+    progressLabel: 'Season elapsed',
+    rankReward: 'Reserved for the #1 ranked',
+    cta: 'View the season leaderboard',
+    ctaShort: 'Explore the season',
+  },
+
+  seasons: {
+    upcoming: 'Soon',
+    ended: 'Ended',
+    daysLeft: '{{count}} days left',
+    lastDay: 'Last day!',
+    startsIn: 'Starts in {{count}} days',
+    badgesTitle: 'Season badge',
+    championBadge: 'Season #1',
+    summer2026: {
+      name: 'Summer Season',
+      rewardEyebrow: 'Summer Season · Rewards',
+      rewardTitle: 'The #1 earns the season champion badge',
+      rewardDesc: 'The top trader of the Summer Season earns the champion badge displayed on their profile, on top of exclusive prizes.',
+    },
+    autumn2026: {
+      name: 'Autumn Season',
+      rewardEyebrow: 'Autumn Season · Rewards',
+      rewardTitle: 'The #1 earns the season champion badge',
+      rewardDesc: 'The top trader of the Autumn Season earns the champion badge displayed on their profile, on top of exclusive prizes.',
+    },
   },
 
   bonus: {
@@ -265,6 +336,32 @@ export const en = {
     statusEnded: 'Ended',
   },
 
+  payouts: {
+    title: 'Payouts',
+    viewCertificate: 'View payout certificate',
+    download: 'Download',
+  },
+
+  payoutPage: {
+    title: 'Payout',
+    eyebrow: 'My winnings',
+    intro: 'See the arenas you won, your rank and prize amount. Submit your ERC20 address to request your payout.',
+    backToArena: '← Arenas',
+    empty: 'You don’t have any payouts yet.',
+    unknownArena: 'Arena',
+    place: 'Rank {{rank}}',
+    erc20Label: 'ERC20 address (Ethereum)',
+    erc20Hint: 'Make sure your address is on the Ethereum network. A wrong address may result in permanent loss of funds.',
+    requestBtn: 'Request payout',
+    statusAvailable: 'Available',
+    statusPending: 'Pending',
+    statusApproved: 'Paid',
+    pendingMsg: 'Your request is being processed (within 48 business hours). You’ll receive an email once the transfer is confirmed.',
+    approvedMsg: 'Your payout has been sent. Thanks for playing!',
+    invalidAddress: 'Invalid ERC20 address (expected 0x followed by 40 hex characters).',
+    invalidSession: 'Session expired. Please log in again.',
+  },
+
   badges: {
     title: 'Badges',
     parisChampion: 'Paris 2026 Champion',
@@ -273,6 +370,12 @@ export const en = {
     champion: 'Champion Online',
     championDesc: 'Finished 1st in an arena',
     championLong: 'Awarded to traders who finish 1st in a trading arena. It rewards the best performance (PnL) among all participants of a completed competition.',
+    summerChampion: 'Summer Champion',
+    summerChampionDesc: '#1 on the Summer Season global leaderboard',
+    summerChampionLong: 'Awarded to the #1 trader on the Summer Season global leaderboard. On top of the badge, the champion wins the official jersey and an invitation to trade live in the BTF 2027 physical arena.',
+    autumnChampion: 'Autumn Champion',
+    autumnChampionDesc: '#1 on the Autumn Season global leaderboard',
+    autumnChampionLong: 'Awarded to the #1 trader on the Autumn Season global leaderboard. The champion earns an invitation to trade live in the BTF 2027 physical arena.',
     btf2026: 'BTF 2026',
     btf2026Desc: 'Took part in the BTF 2026 qualifications in Paris',
     btf2026Long: 'Commemorative badge reserved for participants of the BTF 2026 qualifiers in Paris, during the physical event on June 4-5. A symbol reserved for the arena pioneers.',
@@ -291,8 +394,8 @@ export const en = {
     hintChoose: 'Pick one from the public list below.',
     hintHistory: 'Your past arenas are available in the history.',
     historyEyebrow: 'History',
-    historyTitle: 'Your archived arenas',
-    historySub: 'Find the competitions you took part in, with your final PnL and the leaderboard.',
+    historyTitle: 'Archived arenas',
+    historySub: 'All closed arenas, with their final leaderboard — even the ones you did not join.',
     publicEyebrow: 'Public competitions',
     publicTitle: 'Join an arena',
     publicSub: 'A code is required to participate. Ask the organizer for it.',
@@ -316,6 +419,8 @@ export const en = {
     leaderboard: 'Leaderboard →',
     myRank: 'My rank',
     myPnl: 'My PnL',
+    participants: 'Participants',
+    notJoined: 'You did not take part',
   },
 
   myCard: {
@@ -342,6 +447,10 @@ export const en = {
     registrationEnds: 'Registration open until',
     registrationClosed: 'Registration closed',
     tradingStarts: 'Trading starts on',
+    dailyDrawdown: 'Daily drawdown',
+    prizePool: 'Big prizepool',
+    online: 'Online arena',
+    freeEntry: 'Free entry',
   },
 
   joinModal: {
@@ -350,6 +459,9 @@ export const en = {
     codePlaceholder: 'COMPETITION CODE',
     cancel: 'Cancel',
     join: 'Join',
+    rulesTitle: 'Arena rules',
+    dailyDrawdownRule: 'Daily drawdown limit of {{percent}}%',
+    dailyDrawdownRuleDesc: 'If your equity drops {{percent}}% below your start-of-day balance, your account is eliminated and you can no longer trade. Resets at 00:00 UTC.',
   },
 
   leaderboard: {
@@ -373,6 +485,11 @@ export const en = {
     allTraders: 'All traders',
     noTraderYet: 'No trader registered yet.',
     noRankedYet: 'No one has traded in this arena yet.',
+    breached: 'Breached',
+    breachedTitle: 'Account breached — daily drawdown limit reached',
+    breachedList: 'Eliminated',
+    breachedSectionTitle: 'Breached accounts',
+    breachedSectionHint: 'These traders hit the daily drawdown limit. They are out of the ranking and can no longer trade.',
     enrolledList: 'Participants',
     enrolledNoTrade: 'Enrolled — no trades yet',
     enrolledNoTradeHint: 'No rank until at least one order is filled.',
@@ -480,6 +597,11 @@ export const en = {
     sideTotal: 'Side total',
     estimatedFees: 'Estimated trading fees',
     marginUsed: 'Margin used for this order',
+    dailyDrawdownLabel: 'Daily loss limit ({{percent}}%)',
+    dailyDrawdownValue: 'Floor {{amount}} USD',
+    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today (resets 00:00 UTC).',
+    breachedBtn: 'Account breached',
+    breachedBanner: 'Account breached — daily drawdown limit reached. You can no longer trade in this arena.',
 
     partial: 'partial',
     clickToEdit: 'Click to edit',
@@ -602,6 +724,29 @@ export const en = {
     missingId: 'Enter your public account ID to join.',
     idInvalid: 'Invalid ID format. Expected something like {{example}}.',
     disqualifyWarning: 'An incorrect ID will result in disqualification.',
+    introTitle: 'Competition reserved for {{name}} users',
+    introSubtitle: 'This arena is open exclusively to traders with an active {{name}} account.',
+    ninjatraderAbout:
+      'NinjaTrader is a professional trading platform for futures, forex and stocks. Advanced charts, fast execution and analysis tools used by thousands of active traders.',
+    signUpFree: 'Free sign-up (1 minute)',
+    alreadyHaveAccount: 'I already have an account',
+    creatingAccount: 'I am creating my account',
+    emailLabel: '{{name}} email address',
+    emailPlaceholder: 'you@email.com',
+    emailHint: 'Enter the exact email address linked to your {{name}} account.',
+    emailHintNew:
+      'Once your NinjaTrader account is created, come back here and enter the same email address you used to sign up.',
+    emailInvalid: 'Invalid email address.',
+    emailVerifyWarning:
+      'NinjaTrader verifies participant email addresses. An incorrect email will result in automatic disqualification from the competition.',
+    signUpViaAffiliate:
+      'Create your NinjaTrader account for free via our partner link. Sign-up takes about 1 minute.',
+    afterSignUpNote:
+      'Once your account is created, come back here, click “I already have an account” and enter the email address you used to sign up.',
+    accountCreated: 'I created my account',
+    continue: 'Continue',
+    back: 'Back',
+    missingEmail: 'Enter your {{name}} email address to continue.',
   },
 
   dashboardHeader: {

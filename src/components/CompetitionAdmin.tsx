@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { compressImage } from '../utils/imageUpload';
 import { SPONSOR_OPTIONS } from '../lib/sponsors';
-import { ADMIN_BASE, PROMOTIONS_ADMIN_PATH, EMAILS_ADMIN_PATH } from '../lib/adminPath';
+import { ADMIN_BASE, PROMOTIONS_ADMIN_PATH, EMAILS_ADMIN_PATH, PAYOUTS_ADMIN_PATH, PAYOUT_REQUESTS_ADMIN_PATH } from '../lib/adminPath';
 import ItickFeedPanel from './ItickFeedPanel';
 import AdminMetricsPanel from './AdminMetricsPanel';
 
@@ -73,6 +73,8 @@ interface AdminCompetition {
   startAt: number;
   endAt: number;
   registrationEndsAt?: number | null;
+  dailyDrawdownPercent?: number | null;
+  bannerImageUrl?: string | null;
   isPublic: boolean;
   createdAt: number;
   status: 'registration' | 'starting_soon' | 'live' | 'ended';
@@ -81,6 +83,13 @@ interface AdminCompetition {
   cashPrize?: AdminCashPrize | null;
   sponsor?: string | null;
   sponsorReferralUrl?: string | null;
+  seasonId?: string | null;
+}
+
+interface AdminSeason {
+  id: string;
+  nameKey: string;
+  isActive: boolean;
 }
 
 interface PrizeItemDraft {
@@ -111,11 +120,19 @@ interface CompetitionDraft {
   startAt: string;
   registrationEndsAt: string;
   endAt: string;
+  dailyDrawdownPercent: string;
+  bannerImageUrl: string;
   isPublic: boolean;
   sponsor: string;
   sponsorReferralUrl: string;
+  seasonId: string;
   prize: PrizeDraft;
 }
+
+const SEASON_ADMIN_LABELS: Record<string, string> = {
+  'summer-2026': 'Summer Season 2026',
+  'autumn-2026': 'Autumn Season 2026',
+};
 
 const EMPTY_DRAFT: CompetitionDraft = {
   title: '',
@@ -124,9 +141,12 @@ const EMPTY_DRAFT: CompetitionDraft = {
   startAt: '',
   registrationEndsAt: '',
   endAt: '',
+  dailyDrawdownPercent: '',
+  bannerImageUrl: '',
   isPublic: true,
   sponsor: '',
   sponsorReferralUrl: '',
+  seasonId: '',
   prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '', description: '', items: [] },
 };
 
@@ -236,6 +256,7 @@ export default function CompetitionAdmin() {
   const [info, setInfo] = useState('');
 
   const [competitions, setCompetitions] = useState<AdminCompetition[]>([]);
+  const [seasons, setSeasons] = useState<AdminSeason[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [createDraft, setCreateDraft] = useState<CompetitionDraft>(EMPTY_DRAFT);
   const [creating, setCreating] = useState(false);
@@ -268,6 +289,10 @@ export default function CompetitionAdmin() {
       }
       const data = await res.json();
       setCompetitions(data.competitions || []);
+      const nextSeasons = (data.seasons as AdminSeason[]) || [];
+      setSeasons(nextSeasons);
+      const activeSeason = nextSeasons.find((s) => s.isActive)?.id || nextSeasons[0]?.id || '';
+      setCreateDraft((prev) => (prev.seasonId ? prev : { ...prev, seasonId: activeSeason }));
     } catch (err: any) {
       setError(err.message || 'Chargement impossible');
     } finally {
@@ -375,6 +400,21 @@ export default function CompetitionAdmin() {
     return String(data.imageUrl || '');
   }
 
+  // Bannière d'arène : visuel paysage (on garde un grand côté pour la pleine
+  // largeur du leaderboard). Compression client puis upload, comme les lots.
+  async function uploadArenaBanner(file: File): Promise<string> {
+    const compressed = await compressImage(file, { maxSide: 1600, quality: 0.85 });
+    const formData = new FormData();
+    formData.append('image', compressed, file.name.replace(/\.\w+$/, '.jpg'));
+    const res = await adminFetch('/api/admin/arena-banner', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Upload de la bannière impossible');
+    return String(data.imageUrl || '');
+  }
+
   async function loginAdmin(e: React.FormEvent) {
     e.preventDefault();
     setLoginError('');
@@ -437,9 +477,12 @@ export default function CompetitionAdmin() {
           startAt: startMs,
           registrationEndsAt: registrationEndMs,
           endAt: endMs,
+          dailyDrawdownPercent: createDraft.dailyDrawdownPercent.trim() === '' ? null : Number(createDraft.dailyDrawdownPercent),
+          bannerImageUrl: createDraft.bannerImageUrl.trim() || null,
           isPublic: createDraft.isPublic,
           sponsor: createDraft.sponsor || null,
           sponsorReferralUrl: createDraft.sponsor ? (createDraft.sponsorReferralUrl.trim() || null) : null,
+          seasonId: createDraft.seasonId || null,
           cashPrize,
         }),
       });
@@ -466,9 +509,12 @@ export default function CompetitionAdmin() {
       startAt: toLocalInput(competition.startAt),
       registrationEndsAt: toLocalInput(competition.registrationEndsAt ?? competition.startAt),
       endAt: toLocalInput(competition.endAt),
+      dailyDrawdownPercent: competition.dailyDrawdownPercent != null ? String(competition.dailyDrawdownPercent) : '',
+      bannerImageUrl: competition.bannerImageUrl || '',
       isPublic: competition.isPublic,
       sponsor: competition.sponsor || '',
       sponsorReferralUrl: competition.sponsorReferralUrl || '',
+      seasonId: competition.seasonId || seasons.find((s) => s.isActive)?.id || '',
       prize: {
         currency: competition.cashPrize?.currency || 'USD',
         total: competition.cashPrize?.total ? String(competition.cashPrize.total) : '',
@@ -520,9 +566,12 @@ export default function CompetitionAdmin() {
           startAt: startMs,
           registrationEndsAt: registrationEndMs,
           endAt: endMs,
+          dailyDrawdownPercent: editDraft.dailyDrawdownPercent.trim() === '' ? null : Number(editDraft.dailyDrawdownPercent),
+          bannerImageUrl: editDraft.bannerImageUrl.trim() || null,
           isPublic: editDraft.isPublic,
           sponsor: editDraft.sponsor || null,
           sponsorReferralUrl: editDraft.sponsor ? (editDraft.sponsorReferralUrl.trim() || null) : null,
+          seasonId: editDraft.seasonId || null,
           cashPrize,
         }),
       });
@@ -623,6 +672,8 @@ export default function CompetitionAdmin() {
                 <span aria-hidden>←</span> BTF Arena
               </Link>
               <Link to={PROMOTIONS_ADMIN_PATH} className="text-slate-500 hover:text-amber-200">Admin Promotions</Link>
+              <Link to={PAYOUTS_ADMIN_PATH} className="text-slate-500 hover:text-amber-200">Admin Payouts</Link>
+              <Link to={PAYOUT_REQUESTS_ADMIN_PATH} className="text-slate-500 hover:text-amber-200">Payout Requests</Link>
               <Link to={EMAILS_ADMIN_PATH} className="text-slate-500 hover:text-amber-200">Admin Emails</Link>
             </div>
             <h1 className="font-rajdhani text-3xl font-bold text-white">Admin Arènes</h1>
@@ -707,6 +758,21 @@ export default function CompetitionAdmin() {
                 placeholder="Vide = accès libre"
               />
             </Field>
+            <Field label="Saison (leaderboard global)">
+              <select
+                value={createDraft.seasonId}
+                onChange={(e) => setCreateDraft({ ...createDraft, seasonId: e.target.value })}
+                className="admin-input"
+              >
+                <option value="">Auto (saison active)</option>
+                {seasons.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {SEASON_ADMIN_LABELS[s.id] || s.id}
+                    {s.isActive ? ' · active' : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Début trading">
               <DateTimePicker
                 value={createDraft.startAt}
@@ -729,6 +795,21 @@ export default function CompetitionAdmin() {
                 placeholder="Choisir date et heure de fin"
                 required
               />
+            </Field>
+            <Field label="Drawdown journalier (%)">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={createDraft.dailyDrawdownPercent}
+                onChange={(e) => setCreateDraft({ ...createDraft, dailyDrawdownPercent: e.target.value })}
+                className="admin-input"
+                placeholder="Vide = aucune règle (ex. 5)"
+              />
+              <p className="mt-1 text-[11px] leading-snug text-slate-500">
+                Élimine un joueur dès que son équité perd ce % depuis son solde de début de journée (reset minuit UTC).
+              </p>
             </Field>
             <Field label="Mode">
               <select
@@ -773,6 +854,15 @@ export default function CompetitionAdmin() {
                 />
               </Field>
             )}
+
+            <div className="md:col-span-2">
+              <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Bannière (leaderboard)</label>
+              <BannerUpload
+                value={createDraft.bannerImageUrl}
+                onChange={(url) => setCreateDraft({ ...createDraft, bannerImageUrl: url })}
+                onUpload={uploadArenaBanner}
+              />
+            </div>
 
             <PrizeFields
               draft={createDraft.prize}
@@ -920,6 +1010,18 @@ export default function CompetitionAdmin() {
                               placeholder="Choisir date et heure de fin"
                             />
                           </Field>
+                          <Field label="Drawdown journalier (%)">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={editDraft.dailyDrawdownPercent}
+                              onChange={(e) => setEditDraft({ ...editDraft, dailyDrawdownPercent: e.target.value })}
+                              className="admin-input"
+                              placeholder="Vide = aucune règle (ex. 5)"
+                            />
+                          </Field>
                           <Field label="Mode">
                             <select
                               value={editDraft.executionMode}
@@ -963,6 +1065,14 @@ export default function CompetitionAdmin() {
                               />
                             </Field>
                           )}
+                          <div className="md:col-span-2">
+                            <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Bannière (leaderboard)</label>
+                            <BannerUpload
+                              value={editDraft.bannerImageUrl}
+                              onChange={(url) => setEditDraft({ ...editDraft, bannerImageUrl: url })}
+                              onUpload={uploadArenaBanner}
+                            />
+                          </div>
                           <PrizeFields
                             draft={editDraft.prize}
                             onChange={(prize) => setEditDraft({ ...editDraft, prize })}
@@ -1112,6 +1222,90 @@ function PrizePhotoUpload({
         }}
       />
       {uploadError && <p className="mt-1 text-[10px] text-rose-300">{uploadError}</p>}
+    </div>
+  );
+}
+
+/**
+ * Upload d'une bannière d'arène (paysage). Gère son propre état d'upload/erreur,
+ * preview 16:9, et permet de retirer la bannière. `onUpload` renvoie l'URL DB.
+ */
+function BannerUpload({
+  value,
+  onChange,
+  onUpload,
+}: {
+  value: string;
+  onChange: (url: string) => void;
+  onUpload: (file: File) => Promise<string>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleFile(file: File) {
+    setError('');
+    setUploading(true);
+    try {
+      const url = await onUpload(file);
+      onChange(url);
+    } catch (err: any) {
+      setError(err?.message || 'Upload impossible');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="relative aspect-[16/6] w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+        {value ? (
+          <img src={value} alt="Bannière de l'arène" className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-600">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="9" cy="9" r="2" />
+              <path d="m21 15-3.5-3.5L9 20" />
+            </svg>
+            <span className="text-[11px] uppercase tracking-[0.14em]">Aucune bannière</span>
+          </div>
+        )}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+          className="flex cursor-pointer items-center justify-center rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-200 transition-colors hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {uploading ? 'Upload...' : value ? 'Changer la bannière' : 'Ajouter une bannière'}
+        </button>
+        {value && !uploading && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="cursor-pointer rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 transition-colors hover:text-rose-300"
+          >
+            Retirer
+          </button>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleFile(file);
+          e.currentTarget.value = '';
+        }}
+      />
+      <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
+        Visuel paysage mis en avant en haut du leaderboard (idéal pour une CUP). Format large recommandé.
+      </p>
+      {error && <p className="mt-1 text-[11px] text-rose-300">{error}</p>}
     </div>
   );
 }

@@ -9,6 +9,9 @@
  * Pour ajouter un sponsor : ajouter une entrée ici ET la clé correspondante
  * dans SPONSOR_DEFS côté serveur.
  */
+export type SponsorAccountIdType = 'publicId' | 'email';
+export type SponsorGateFlow = 'standard' | 'intro';
+
 export interface SponsorConfig {
   key: string;
   /** Nom affiché du sponsor (ex. "Kraken"). */
@@ -23,6 +26,12 @@ export interface SponsorConfig {
   referralUrl: string;
   /** Le participant doit-il saisir un identifiant public pour accéder à l'arène ? */
   requiresAccountId: boolean;
+  /** Type d'identifiant attendu (ID public Kraken vs email NinjaTrader). */
+  accountIdType?: SponsorAccountIdType;
+  /** Parcours d'inscription : standard (Kraken) ou intro multi-étapes (NinjaTrader). */
+  gateFlow?: SponsorGateFlow;
+  /** Capture d'écran / visuel de la plateforme sponsor (modale intro). */
+  platformImageUrl?: string;
   /** Exemple d'identifiant affiché en placeholder (pas un vrai compte). */
   accountIdExample?: string;
   /**
@@ -32,25 +41,48 @@ export interface SponsorConfig {
   validateAccountId?: (value: string) => boolean;
 }
 
-/** Forme canonique d'un identifiant (espaces retirés, majuscules). */
+/** Forme canonique d'un identifiant public (espaces retirés, majuscules). */
 export function cleanAccountId(value: string): string {
   return value.replace(/\s+/g, '').toUpperCase();
 }
+
+/** Normalise l'identifiant sponsor avant envoi API. */
+export function normalizeSponsorAccountId(value: string, sponsor: SponsorConfig | null): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (sponsor?.accountIdType === 'email') return trimmed.toLowerCase();
+  return cleanAccountId(trimmed);
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const SPONSORS: Record<string, SponsorConfig> = {
   kraken: {
     key: 'kraken',
     name: 'Kraken',
     logoUrl: '/assets/pictures/kraken-logo-white.webp',
-    // Violet de marque Kraken.
     accent: '#5741d9',
     accentSoft: '#a99bff',
-    // TODO: remplacer par TON lien de parrainage Kraken réel.
     referralUrl: 'https://www.kraken.com/sign-up',
     requiresAccountId: true,
-    // Exemple générique (pas un vrai compte) : 16 caractères alphanumériques.
+    accountIdType: 'publicId',
+    gateFlow: 'standard',
     accountIdExample: 'AA38 N84G TUDE DOOA',
     validateAccountId: (value) => /^[A-Z0-9]{16}$/.test(cleanAccountId(value)),
+  },
+  ninjatrader: {
+    key: 'ninjatrader',
+    name: 'NinjaTrader',
+    logoUrl: '/assets/pictures/ninjatrader-logo.webp',
+    accent: '#e85d04',
+    accentSoft: '#ffb366',
+    referralUrl: 'https://ninjatrader.com/GetStarted',
+    requiresAccountId: true,
+    accountIdType: 'email',
+    gateFlow: 'intro',
+    platformImageUrl: '/assets/pictures/ninjatrader-platform.webp',
+    accountIdExample: 'trader@email.com',
+    validateAccountId: (value) => EMAIL_PATTERN.test(value.trim().toLowerCase()),
   },
 };
 

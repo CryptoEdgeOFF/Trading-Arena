@@ -1,0 +1,131 @@
+{
+  "start": "2026-06-04T15:43:07",
+  "end": "2026-06-04T16:43:19",
+  "mode": "1v1v1v1",
+  "teamA": "Équipe A",
+  "teamB": "Équipe B",
+  "balance": "100000",
+  "players": [
+    {
+      "id": "792fad15-2a8f-4838-bc09-4c32f2168b09",
+      "name": "Benjamin Mauger",
+      "color": "#f90101",
+      "avatar": "/api/roster/avatars/792fad15-2a8f-4838-bc09-4c32f2168b09?v=1780255362822",
+      "team": "A"
+    },
+    {
+      "id": "05178e0b-397d-448d-bcbd-a09b33a12409",
+      "name": "Corentin Trading",
+      "color": "#22c55e",
+      "avatar": "/api/roster/avatars/05178e0b-397d-448d-bcbd-a09b33a12409?v=1780255423235",
+      "team": "B"
+    },
+    {
+      "id": "736a8d26-2616-446b-8a0e-2a63806f7dfd",
+      "name": "NadaFX",
+      "color": "#ff4b0f",
+      "avatar": "/api/roster/avatars/736a8d26-2616-446b-8a0e-2a63806f7dfd?v=1781190509227",
+      "team": "A"
+    },
+    {
+      "id": "50ad00a1-2082-41ab-8416-bbc6786c2a37",
+      "name": "Romain Bailleul",
+      "color": "#0011ff",
+      "avatar": "/api/roster/avatars/50ad00a1-2082-41ab-8416-bbc6786c2a37?v=1780255335247",
+      "team": "B"
+    }
+  ],
+  "trades": [
+    {
+      "id": "tr-nada-1",
+      "playerId": "736a8d26-2616-446b-8a0e-2a63806f7dfd",
+      "pair": "NAS100/USD",
+      "side": "short",
+      "entry": "2026-06-04T16:01:04",
+      "entryPrice": "30204.88",
+      "size": "0.10",
+      "leverage": "10",
+      "exit": "2026-06-04T16:05:43",
+      "exitPrice": "30138.68",
+      "finalPnl": "129.78"
+    },
+    {
+      "id": "tr-bailleul-1",
+      "playerId": "50ad00a1-2082-41ab-8416-bbc6786c2a37",
+      "pair": "NAS100/USD",
+      "side": "long",
+      "entry": "2026-06-04T16:07:01",
+      "entryPrice": "30125.73",
+      "size": "0.5",
+      "leverage": "10",
+      "exit": "2026-06-04T16:11:57",
+      "exitPrice": "30230.18",
+      "finalPnl": "1044.49"
+    },
+    {
+      "id": "tr-benjamin-1",
+      "playerId": "792fad15-2a8f-4838-bc09-4c32f2168b09",
+      "pair": "US30/USD",
+      "side": "long",
+      "entry": "2026-06-04T15:44:39",
+      "entryPrice": "51290",
+      "size": "1.29",
+      "leverage": "10",
+      "exit": "2026-06-04T15:44:54",
+      "exitPrice": "51303",
+      "finalPnl": "77.85"
+    },
+    {
+      "id": "tr-benjamin-2",
+      "playerId": "792fad15-2a8f-4838-bc09-4c32f2168b09",
+      "pair": "NAS100/USD",
+      "side": "long",
+      "entry": "2026-06-04T15:52:55",
+      "entryPrice": "30215",
+      "size": "0.17",
+      "leverage": "10",
+      "exit": "2026-06-04T15:54:11",
+      "exitPrice": "30224.31",
+      "finalPnl": "48.63"
+    },
+    {
+      "id": "tr-benjamin-3",
+      "playerId": "792fad15-2a8f-4838-bc09-4c32f2168b09",
+      "pair": "NAS100/USD",
+      "side": "short",
+      "entry": "2026-06-04T16:09:56",
+      "entryPrice": "30198",
+      "size": "0.24",
+      "leverage": "10",
+      "exit": "2026-06-04T16:18:55",
+      "exitPrice": "30225",
+      "finalPnl": "-139.59"
+    },
+    {
+      "id": "tr-benjamin-4",
+      "playerId": "792fad15-2a8f-4838-bc09-4c32f2168b09",
+      "pair": "US30/USD",
+      "side": "long",
+      "entry": "2026-06-04T16:12:23",
+      "entryPrice": "51422",
+      "size": "0.51",
+      "leverage": "10",
+      "exit": "2026-06-04T16:13:46",
+      "exitPrice": "51441.78",
+      "finalPnl": "50.44"
+    },
+    {
+      "id": "tr-benjamin-5",
+      "playerId": "792fad15-2a8f-4838-bc09-4c32f2168b09",
+      "pair": "NAS100/USD",
+      "side": "short",
+      "entry": "2026-06-04T16:14:12",
+      "entryPrice": "30258",
+      "size": "0.29",
+      "leverage": "10",
+      "exit": "2026-06-04T16:18:50",
+      "exitPrice": "30230",
+      "finalPnl": "175.55"
+    }
+  ]
+}

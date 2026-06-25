@@ -101,10 +101,43 @@ function CopyCodeButton({ code, accent, partner }: { code: string; accent: strin
   );
 }
 
+function summarizeHighlightBadge(highlight: string): string | null {
+  const text = highlight.trim();
+  if (!text) return null;
+  const percent = text.match(/-?\d+%/);
+  if (percent) return percent[0];
+  const dollar = text.match(/\$\d+/);
+  if (dollar) return dollar[0];
+  if (/^free\b/i.test(text)) return 'Free';
+  return null;
+}
+
+function HighlightCornerBadge({ shortLabel, accent, featured = false }: { shortLabel: string; accent: string; featured?: boolean }) {
+  return (
+    <div
+      className="absolute right-3 top-3 z-10 rounded-lg border px-2.5 py-1 shadow-lg sm:right-4 sm:top-4"
+      style={{
+        borderColor: `${accent}55`,
+        backgroundColor: `${accent}18`,
+        boxShadow: `0 10px 28px -12px ${accent}aa`,
+      }}
+    >
+      <span
+        className={`num block font-bold leading-none tracking-tight text-white ${
+          featured ? 'text-xl sm:text-2xl' : 'text-lg sm:text-xl'
+        }`}
+      >
+        {shortLabel}
+      </span>
+    </div>
+  );
+}
+
 function PartnerCard({ partner, index, featured = false }: { partner: Partner; index: number; featured?: boolean }) {
   const { t } = useTranslation();
   const live = isPartnerLive(partner);
   const categoryLabel = t(`bonus.categories.${partner.category}`);
+  const highlightBadge = partner.highlight ? summarizeHighlightBadge(partner.highlight) : null;
 
   return (
     <motion.article
@@ -115,6 +148,10 @@ function PartnerCard({ partner, index, featured = false }: { partner: Partner; i
       className="group relative flex flex-col overflow-hidden rounded-2xl border border-[#1c1c24] bg-[#0b0b0f] p-5 transition-colors hover:border-[color:var(--p-accent)]/50 sm:p-6"
       style={{ '--p-accent': partner.accent } as React.CSSProperties}
     >
+      {highlightBadge && (
+        <HighlightCornerBadge shortLabel={highlightBadge} accent={partner.accent} featured={featured} />
+      )}
+
       <div
         className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full opacity-60 blur-3xl transition-opacity duration-300 group-hover:opacity-100"
         style={{ backgroundColor: `${partner.accent}1f` }}
@@ -122,7 +159,7 @@ function PartnerCard({ partner, index, featured = false }: { partner: Partner; i
 
       <div className="relative flex items-start gap-3">
         <PartnerLogo partner={partner} size={featured ? 'lg' : 'md'} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 pr-14 sm:pr-16">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="display truncate text-lg font-bold text-white sm:text-xl">{partner.name}</h3>
             <span

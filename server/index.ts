@@ -22,10 +22,10 @@ import * as itickCandles from './itickCandles.js';
 import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair, registerItickCrypto, cryptoCodes as itickCryptoCodes } from './itickInstruments.js';
 import { startItickToPaperBridge } from './itickToPaperBridge.js';
 import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine.js';
-import { CompetitionManager } from './competitionManager.js';
+import { CompetitionManager, inferSeasonStatus } from './competitionManager.js';
 import { CompetitionNotifier } from './competitionNotifications.js';
 import { computeTradeStats, type TradeStats } from './tradeStats.js';
-import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail } from './mailer.js';
+import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail, sendPayoutRequestSubmittedEmail, sendPayoutRequestAdminEmail, sendPayoutApprovedEmail, PRIZE_CONTACT_EMAIL, isEmailTestFilterActive } from './mailer.js';
 import {
   getEmailSettings,
   updateEmailSettings,
@@ -590,11 +590,31 @@ async function refreshCompetitionStoreIfServerless(): Promise<void> {
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
   const player = manager.getPlayerById(playerId);
   if (!player) return;
-  competitionManager.updatePaperResultByPlayerId(player.id, {
+  const breach = competitionManager.updatePaperResultByPlayerId(player.id, {
     pnlUsd: player.pnl,
     pnlPercent: player.pnlPercent,
     tradesCount: player.tradeCount,
+    equity: player.currentBalance,
   });
+  // Drawdown journalier atteint → on élimine le joueur : annulation des ordres,
+  // clôture de toutes les positions (PnL figé) et déconnexion. Il ne pourra
+  // plus trader (cf. assertCompetitionTraderCanTrade + canTrade côté client).
+  if (breach?.newlyBreached) {
+    try {
+      await manager.finalizeCompetitionPaperPlayer(player.id);
+      const after = manager.getPlayerById(player.id);
+      if (after) {
+        competitionManager.updatePaperResultByPlayerId(after.id, {
+          pnlUsd: after.pnl,
+          pnlPercent: after.pnlPercent,
+          tradesCount: after.tradeCount,
+          equity: after.currentBalance,
+        });
+      }
+    } catch (err) {
+      console.error('[drawdown] breach finalize failed:', (err as Error)?.message);
+    }
+  }
   if (IS_SERVERLESS) {
     await competitionManager.persist();
   } else {
@@ -618,6 +638,20 @@ async function finalizeEndedCompetitions(): Promise<void> {
       competitionManager.markCompetitionFinalized(competition.competitionId);
       await competitionManager.persist();
     }
+
+    // Génère automatiquement les payouts des gagnants (prize table) pour toute
+    // arène terminée dont les payouts n'ont pas encore été émis — y compris
+    // celles finalisées avant l'introduction des payouts auto.
+    const needPayouts = competitionManager.getCompetitionsNeedingPayouts();
+    if (needPayouts.length > 0) {
+      let total = 0;
+      for (const competitionId of needPayouts) {
+        const created = competitionManager.generateCompetitionPayouts(competitionId);
+        total += created.length;
+      }
+      await competitionManager.persist();
+      if (total > 0) console.log(`[payouts] auto-generated ${total} payout(s) for ${needPayouts.length} ended arena(s)`);
+    }
   })();
 
   try {
@@ -640,12 +674,16 @@ async function getCompetitionIdForTraderToken(token: string | null): Promise<str
   return info?.competitionId || null;
 }
 
-async function assertCompetitionTraderCanTrade(token: string | null): Promise<string | null> {
+async function assertCompetitionTraderCanTrade(token: string | null, playerId?: string): Promise<string | null> {
   const competitionId = await getCompetitionIdForTraderToken(token);
   if (!competitionId) return null;
   if (IS_SERVERLESS) await competitionManager.refresh();
   await finalizeEndedCompetitions();
   competitionManager.assertCompetitionTradingOpen(competitionId);
+  // Élimination par drawdown journalier : aucun ordre/clôture/modif possible.
+  if (playerId && competitionManager.isPaperPlayerBreached(competitionId, playerId)) {
+    throw new Error('Compte éliminé : limite de drawdown journalier atteinte.');
+  }
   return competitionId;
 }
 
@@ -1759,6 +1797,7 @@ app.get('/api/paper/me', async (req, res) => {
     competitionPayload = ctx || { id: competitionId };
   }
   const competitionStatus = competitionId ? competitionManager.getCompetitionStatus(competitionId) : null;
+  const breached = competitionId ? competitionManager.isPaperPlayerBreached(competitionId, player.id) : false;
   const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
 
   res.json({
@@ -1770,7 +1809,7 @@ app.get('/api/paper/me', async (req, res) => {
     marketDataSource: manager.getMarketDataSource(),
     eventStarted: manager.isStarted(),
     eventEndTime: manager.getEventEndTime(),
-    canTrade: isCompetition ? competitionStatus === 'live' : manager.canTradeLiveEvent(),
+    canTrade: isCompetition ? (competitionStatus === 'live' && !breached) : manager.canTradeLiveEvent(),
     competition: competitionPayload,
   });
 });
@@ -1789,7 +1828,7 @@ app.post('/api/paper/order', async (req, res) => {
     return;
   }
   try {
-    const competitionId = await assertCompetitionTraderCanTrade(token);
+    const competitionId = await assertCompetitionTraderCanTrade(token, player.id);
     const handler = competitionId
       ? manager.placeCompetitionPaperOrder.bind(manager)
       : manager.placePaperOrder.bind(manager);
@@ -1820,7 +1859,7 @@ app.post('/api/paper/order/limit', async (req, res) => {
 
   const { orderId, limitPrice } = req.body || {};
   try {
-    const competitionId = await assertCompetitionTraderCanTrade(token);
+    const competitionId = await assertCompetitionTraderCanTrade(token, player.id);
     const oid = String(orderId || '');
     const price = Number(limitPrice);
     if (competitionId) {
@@ -1849,7 +1888,7 @@ app.post('/api/paper/cancel', async (req, res) => {
   }
 
   try {
-    const competitionId = await assertCompetitionTraderCanTrade(token);
+    const competitionId = await assertCompetitionTraderCanTrade(token, player.id);
     const orderId = String(req.body?.orderId || '');
     if (competitionId) {
       const result = await manager.cancelCompetitionPaperOrder(player.id, orderId);
@@ -1879,7 +1918,7 @@ app.post('/api/paper/close', async (req, res) => {
   }
 
   try {
-    const competitionId = await assertCompetitionTraderCanTrade(token);
+    const competitionId = await assertCompetitionTraderCanTrade(token, player.id);
     const rawSize = req.body?.size;
     const rawPercent = req.body?.percent;
     const positionRef = String(req.body?.positionId || req.body?.pair || '');
@@ -1935,7 +1974,7 @@ app.post('/api/paper/risk', async (req, res) => {
 
   const { pair, positionId, orderId, stopLoss, takeProfit, stopLossSize, takeProfitSize } = req.body || {};
   try {
-    const competitionId = await assertCompetitionTraderCanTrade(token);
+    const competitionId = await assertCompetitionTraderCanTrade(token, player.id);
     const isCompetition = Boolean(competitionId);
     const options = {
       stopLossSize: stopLossSize == null || stopLossSize === '' ? null : Number(stopLossSize),
@@ -2258,6 +2297,36 @@ app.post('/api/admin/promotion-image', requireAdmin, upload.single('image'), asy
   }
 });
 
+// Bannière d'arène (visuel paysage mis en avant sur le leaderboard, ex. "CUP").
+// On NE détoure PAS le blanc (c'est une photo, pas un logo) et on garde un
+// grand côté pour un rendu net en pleine largeur. Stockée dans la même table
+// que les lots, servie via /api/prize-images/:id.
+app.post('/api/admin/arena-banner', requireAdmin, upload.single('image'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 1600, quality: 82 });
+    const id = crypto.randomUUID();
+    await competitionManager.putPrizeImage(id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`prize:${id}`);
+    res.json({ imageUrl: `/api/prize-images/${id}?v=${Date.now()}` });
+  } catch (error: any) {
+    console.error('[arena-banner] upload failed:', error?.message);
+    res.status(500).json({ error: error.message || 'Upload impossible' });
+  }
+});
+
 app.get('/api/prize-images/:id', async (req, res) => {
   const id = String(req.params.id);
   try {
@@ -2521,8 +2590,7 @@ app.get('/api/competition/my-trades', async (req, res) => {
     }
   }
   trades.sort((a, b) => a.time - b.time);
-  // Cap large : suffisant pour une courbe d'équité complète sans payload géant.
-  res.json({ trades: trades.slice(-2000) });
+  res.json({ trades });
 });
 
 /**
@@ -2540,30 +2608,91 @@ app.get('/api/competition/player/:userId', async (req, res) => {
   res.json({ ...rest, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
 });
 
-app.get('/api/competition/global-leaderboard', async (_req, res) => {
+app.get('/api/competition/global-leaderboard', async (req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
-  const participations = competitionManager.listUserParticipations();
-  const rows = participations.map((p) => {
-    const stats = aggregateStatsForPlayerIds(p.paperPlayerIds);
-    return {
-      userId: p.userId,
-      name: p.name,
-      avatarUrl: p.avatarUrl,
-      badges: p.badges,
-      pnlUsd: p.pnlUsd,
-      arenas: p.arenas,
-      stats,
-    };
+  const scope = String(req.query.scope || '').trim();
+
+  const buildRows = (participations: ReturnType<typeof competitionManager.listUserParticipations>) => {
+    const rows = participations.map((p) => {
+      const stats = aggregateStatsForPlayerIds(p.paperPlayerIds);
+      return {
+        userId: p.userId,
+        name: p.name,
+        avatarUrl: p.avatarUrl,
+        badges: p.badges,
+        pnlUsd: p.pnlUsd,
+        arenas: p.arenas,
+        stats,
+      };
+    });
+    rows.sort((a, b) => {
+      const aActive = a.stats.closedTrades > 0 ? 1 : 0;
+      const bActive = b.stats.closedTrades > 0 ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+      return b.pnlUsd - a.pnlUsd;
+    });
+    return rows;
+  };
+
+  // Classement all-time : toutes les arènes (hors qualifications), toutes saisons.
+  if (scope === 'all') {
+    res.json({ scope: 'all', rows: buildRows(competitionManager.listUserParticipations()) });
+    return;
+  }
+
+  const seasonParam = String(req.query.season || '').trim();
+  const activeSeason = competitionManager.getActiveSeason();
+  const season = seasonParam
+    ? competitionManager.getSeason(seasonParam)
+    : activeSeason;
+  if (!season) {
+    res.status(404).json({ error: 'Saison introuvable' });
+    return;
+  }
+  res.json({
+    scope: 'season',
+    season: {
+      id: season.id,
+      slug: season.slug,
+      nameKey: season.nameKey,
+      startAt: season.startAt,
+      endAt: season.endAt,
+      isActive: season.isActive,
+      theme: season.theme,
+      championBadge: season.championBadge,
+      rewardEyebrowKey: season.rewardEyebrowKey,
+      rewardTitleKey: season.rewardTitleKey,
+      rewardDescKey: season.rewardDescKey,
+      bannerImage: season.bannerImage ?? null,
+      shirtImage: season.shirtImage ?? null,
+      arenaImage: season.arenaImage ?? null,
+      status: inferSeasonStatus(season),
+    },
+    rows: buildRows(competitionManager.listUserParticipations({ seasonId: season.id })),
   });
-  // On classe par PnL total décroissant ; les profils sans aucun trade fermé
-  // passent en bas.
-  rows.sort((a, b) => {
-    const aActive = a.stats.closedTrades > 0 ? 1 : 0;
-    const bActive = b.stats.closedTrades > 0 ? 1 : 0;
-    if (aActive !== bActive) return bActive - aActive;
-    return b.pnlUsd - a.pnlUsd;
-  });
-  res.json({ rows });
+});
+
+app.get('/api/competition/seasons', async (_req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const seasons = competitionManager.listSeasons().map((season) => ({
+    id: season.id,
+    slug: season.slug,
+    nameKey: season.nameKey,
+    startAt: season.startAt,
+    endAt: season.endAt,
+    isActive: season.isActive,
+    theme: season.theme,
+    championBadge: season.championBadge,
+    rewardEyebrowKey: season.rewardEyebrowKey,
+    rewardTitleKey: season.rewardTitleKey,
+    rewardDescKey: season.rewardDescKey,
+    bannerImage: season.bannerImage ?? null,
+    shirtImage: season.shirtImage ?? null,
+    arenaImage: season.arenaImage ?? null,
+    homeBannerImage: season.homeBannerImage ?? null,
+    status: inferSeasonStatus(season),
+  }));
+  res.json({ seasons, activeSeasonId: competitionManager.getActiveSeason()?.id ?? null });
 });
 
 app.get('/api/competition/bootstrap', async (req, res) => {
@@ -2685,6 +2814,7 @@ app.post('/api/competition/trade/session', async (req, res) => {
     // can render the terminal immediately on mount, with no extra round
     // trip and no flash of the "Acces requis" placeholder.
     const competitionStatus = competitionManager.getCompetitionStatus(competition.id);
+    const breached = competitionManager.isPaperPlayerBreached(competition.id, player.id);
     const competitionContext = competitionManager.getCompetitionContextForPaperPlayer(competition.id, player.id) || {
       id: competition.id,
       title: competition.title,
@@ -2694,7 +2824,7 @@ app.post('/api/competition/trade/session', async (req, res) => {
     res.json({
       token,
       player: publicPlayer,
-      canTrade: competitionStatus === 'live',
+      canTrade: competitionStatus === 'live' && !breached,
       competition: competitionContext,
     });
   } catch (error: any) {
@@ -2741,11 +2871,14 @@ app.post('/api/competition/arena-config', requireAdmin, async (req, res) => {
 
 app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
   await syncAllCompetitionResults();
-  res.json({ competitions: competitionManager.listAdminCompetitions() });
+  res.json({
+    competitions: competitionManager.listAdminCompetitions(),
+    seasons: competitionManager.listSeasons(),
+  });
 });
 
 app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, isPublic, cashPrize, sponsor, sponsorReferralUrl } = req.body || {};
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, isPublic, cashPrize, sponsor, sponsorReferralUrl, seasonId } = req.body || {};
   try {
     const competition = competitionManager.createCompetition({
       title: String(title || ''),
@@ -2754,10 +2887,13 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       startAt: Number(startAt),
       endAt: Number(endAt),
       registrationEndsAt,
+      dailyDrawdownPercent,
+      bannerImageUrl,
       isPublic: Boolean(isPublic),
       cashPrize,
       sponsor,
       sponsorReferralUrl,
+      seasonId,
     });
     await competitionManager.persist();
     res.json({ ok: true, competition });
@@ -2768,7 +2904,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, isPublic, cashPrize, sponsor, sponsorReferralUrl } = body;
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, isPublic, cashPrize, sponsor, sponsorReferralUrl, seasonId } = body;
   try {
     const patch: Record<string, unknown> = {};
     if (title !== undefined) patch.title = String(title);
@@ -2781,10 +2917,13 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
         ? null
         : Number(registrationEndsAt);
     }
+    if ('dailyDrawdownPercent' in body) patch.dailyDrawdownPercent = dailyDrawdownPercent;
+    if ('bannerImageUrl' in body) patch.bannerImageUrl = bannerImageUrl;
     if (isPublic !== undefined) patch.isPublic = Boolean(isPublic);
     if ('cashPrize' in body) patch.cashPrize = cashPrize;
     if ('sponsor' in body) patch.sponsor = sponsor;
     if ('sponsorReferralUrl' in body) patch.sponsorReferralUrl = sponsorReferralUrl;
+    if ('seasonId' in body) patch.seasonId = seasonId;
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);
     await competitionManager.persist();
@@ -2807,6 +2946,137 @@ app.delete('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Suppression competition impossible' });
+  }
+});
+
+// --- Payouts (certificats de gains) ---------------------------------------
+
+app.get('/api/admin/payout-users', requireAdmin, async (req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const q = String(req.query.q || '');
+  res.json({ users: competitionManager.searchUsers(q) });
+});
+
+app.get('/api/admin/payouts', requireAdmin, async (_req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  res.json({ payouts: competitionManager.listAllPayouts() });
+});
+
+app.post('/api/admin/payouts', requireAdmin, async (req, res) => {
+  const { userId, amount, currency, paidAt } = req.body || {};
+  try {
+    const payout = competitionManager.createPayout({
+      userId: String(userId || ''),
+      amount: Number(amount),
+      currency: currency ? String(currency) : undefined,
+      paidAt: paidAt == null || paidAt === '' ? undefined : Number(paidAt),
+    });
+    await competitionManager.persist();
+    res.json({ ok: true, payout });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Creation payout impossible' });
+  }
+});
+
+app.delete('/api/admin/payouts/:id', requireAdmin, async (req, res) => {
+  try {
+    const ok = competitionManager.deletePayout(String(req.params.id || ''));
+    if (!ok) {
+      res.status(404).json({ error: 'Payout introuvable' });
+      return;
+    }
+    await competitionManager.persist();
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression payout impossible' });
+  }
+});
+
+function payoutRankLabel(rank?: number | null): string {
+  const r = Number(rank);
+  if (r === 1) return '1er';
+  if (r === 2) return '2e';
+  if (r === 3) return '3e';
+  if (Number.isFinite(r) && r > 0) return `#${r}`;
+  return '—';
+}
+
+function payoutAmountLabel(amount: number, currency: string): string {
+  const cur = String(currency || 'USD').toUpperCase();
+  const sym = cur === 'EUR' ? '€' : cur === 'GBP' ? '£' : '$';
+  return `${sym}${Number(amount).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}`;
+}
+
+app.get('/api/competition/my-payouts', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  res.json({ payouts: competitionManager.listPayoutsForUserDetailed(user.id) });
+});
+
+app.post('/api/competition/payouts/:id/request', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  const { erc20Address } = req.body || {};
+  try {
+    if (IS_SERVERLESS) await competitionManager.refresh();
+    const payout = competitionManager.requestPayout(String(req.params.id || ''), user.id, String(erc20Address || ''));
+    await competitionManager.persist();
+    const detailed = competitionManager.listPayoutsForUserDetailed(user.id).find((p) => p.id === payout.id);
+    const arenaTitle = detailed?.arenaTitle || 'Arène';
+    const rankLabel = payoutRankLabel(payout.rank);
+    const amountLabel = payoutAmountLabel(payout.amount, payout.currency);
+    const emailOpts = {
+      recipientName: user.name,
+      arenaTitle,
+      rankLabel,
+      amountLabel,
+      erc20Address: payout.erc20Address || undefined,
+    };
+    await sendPayoutRequestSubmittedEmail(user.email, emailOpts).catch((err) => {
+      console.warn('[payout] submitted email failed:', err?.message || err);
+    });
+    await sendPayoutRequestAdminEmail(PRIZE_CONTACT_EMAIL, { ...emailOpts, userEmail: user.email }).catch((err) => {
+      console.warn('[payout] admin notify email failed:', err?.message || err);
+    });
+    res.json({ ok: true, payout: detailed || payout });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Demande de payout impossible' });
+  }
+});
+
+app.get('/api/admin/payout-requests', requireAdmin, async (_req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  res.json({ requests: competitionManager.listPayoutRequests() });
+});
+
+app.patch('/api/admin/payout-requests/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    if (IS_SERVERLESS) await competitionManager.refresh();
+    const approved = competitionManager.approvePayout(String(req.params.id || ''));
+    await competitionManager.persist();
+    if (approved.userEmail) {
+      const rankLabel = payoutRankLabel(approved.rank);
+      const amountLabel = payoutAmountLabel(approved.amount, approved.currency);
+      await sendPayoutApprovedEmail(approved.userEmail, {
+        recipientName: approved.userName,
+        arenaTitle: approved.arenaTitle || 'Arène',
+        rankLabel,
+        amountLabel,
+        erc20Address: approved.erc20Address || undefined,
+      }).catch((err) => {
+        console.warn('[payout] approved email failed:', err?.message || err);
+      });
+    }
+    res.json({ ok: true, request: approved });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Approbation impossible' });
   }
 });
 
@@ -2850,6 +3120,13 @@ const serverReady = Promise.all([
   // Pousse la balance des arènes online (persistée côté compétition) dans le
   // PlayerManager pour qu'elle soit indépendante de l'événement LIVE.
   manager.setCompetitionStartingBalance(competitionManager.getCompetitionStartingBalance());
+  if (isEmailTestFilterActive()) {
+    const skipped = competitionManager.skipPendingHistoricalArenaNotifications();
+    if (skipped > 0) {
+      console.log(`[notifier] ${skipped} notification(s) d'arène historique(s) marquée(s) sans envoi (mode test filtré).`);
+      await competitionManager.persist();
+    }
+  }
   await manager.ensurePublicMarketFeed();
   // PnL compétition live : recalcul à chaque GET /api/competition/leaderboard/:id
   // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes

@@ -15,12 +15,10 @@ import {
   buildTeams,
   computeFrame,
   PriceIndex,
-  REPLAY_ENGINE_VERSION,
   REPLAY_PACKAGE_KEY,
   resolveTrades,
   tradeToSpotlight,
   type ReplayPackage,
-  type ResolvedTrade,
 } from '../lib/replay';
 import { ADMIN_BASE } from '../lib/adminPath';
 
@@ -46,6 +44,7 @@ export default function ReplayViewer() {
   const [simTime, setSimTime] = useState(0);
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [hoverControls, setHoverControls] = useState(false);
 
   const updateState = useGameStore((s) => s.updateState);
   const applyStatePatch = useGameStore((s) => s.applyStatePatch);
@@ -289,52 +288,39 @@ export default function ReplayViewer() {
 
   const progress = (simTime - pkg.config.startMs) / Math.max(1, pkg.config.endMs - pkg.config.startMs);
 
-  const debugRows = prepared
-    ? prepared.resolved.map((r) => {
-        const t = simTime;
-        const branch = r.exitPrice != null && r.exitTime != null ? 'GLIDE' : 'ANCRE';
-        const open = r.input.entryTime <= t && !(r.exitTime != null && r.exitTime <= t);
-        // Mark attendu (calculé ICI, indépendamment de computeFrame) pour comparer.
-        let expectedMark: number | null = null;
-        if (open && r.exitPrice != null && r.exitTime != null) {
-          const span = r.exitTime - r.input.entryTime;
-          const u = span > 0 ? Math.max(0, Math.min(1, (t - r.input.entryTime) / span)) : 1;
-          expectedMark = r.entryPrice + (r.exitPrice - r.entryPrice) * u;
-        }
-        const expectedPnl = expectedMark != null
-          ? (r.input.side === 'long' ? expectedMark - r.entryPrice : r.entryPrice - expectedMark) * r.engineSize
-          : null;
-        return {
-          id: r.input.id,
-          pair: r.input.pair,
-          engineSize: r.engineSize,
-          entryPrice: r.entryPrice,
-          exitPrice: r.exitPrice,
-          hasExitTime: r.exitTime != null,
-          open,
-          branch,
-          expectedPnl,
-        };
-      })
-    : [];
+  // Une fois la partie lancée, la barre se cache. On la fait réapparaître en
+  // survolant le petit onglet en bas à gauche (ou la barre elle-même).
+  const controlsVisible = !started || hoverControls;
 
   return (
     <div className="relative">
       <Dashboard replay />
 
-      {/* DEBUG TEMPORAIRE */}
-      <div className="fixed left-2 top-2 z-[400] max-w-[460px] rounded-lg border border-emerald-500/40 bg-black/85 p-2 font-mono text-[10px] leading-tight text-emerald-200 backdrop-blur">
-        <div className="mb-1 font-bold text-emerald-400">MOTEUR {REPLAY_ENGINE_VERSION} · t={formatClock(simTime)}</div>
-        {debugRows.map((row) => (
-          <div key={row.id} className={row.open ? 'text-amber-300' : 'text-slate-400'}>
-            {row.pair} sz={row.engineSize} entry={row.entryPrice} exit={row.exitPrice ?? '—'} → {row.branch}
-            {row.open && ` [OUVERT] PnL attendu=${row.expectedPnl != null ? row.expectedPnl.toFixed(1) : '?'}$`}
-          </div>
-        ))}
-      </div>
+      {/* Onglet déclencheur (bas gauche) — visible seulement quand la barre est cachée */}
+      <button
+        type="button"
+        aria-label="Afficher les contrôles du replay"
+        onMouseEnter={() => setHoverControls(true)}
+        onFocus={() => setHoverControls(true)}
+        onClick={() => setHoverControls(true)}
+        className={`fixed bottom-3 left-3 z-[310] flex h-9 w-9 items-center justify-center rounded-full border border-red-500/40 bg-black/80 text-red-300 shadow-lg backdrop-blur-md transition-all duration-200 hover:bg-red-500/20 hover:text-white ${
+          controlsVisible ? 'pointer-events-none opacity-0' : 'opacity-100'
+        }`}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12h14M12 5v14" transform="rotate(45 12 12)" />
+          <path d="M8 10l4 4 4-4" />
+        </svg>
+      </button>
 
-      {/* Barre de contrôle replay */}
-      <div className="fixed bottom-0 left-0 right-0 z-[300] border-t border-red-500/20 bg-black/90 px-4 py-2.5 backdrop-blur-md">
+      {/* Barre de contrôle replay (escamotable) */}
+      <div
+        onMouseEnter={() => setHoverControls(true)}
+        onMouseLeave={() => setHoverControls(false)}
+        className={`fixed bottom-0 left-0 right-0 z-[300] border-t border-red-500/20 bg-black/90 px-4 py-2.5 backdrop-blur-md transition-transform duration-300 ease-out ${
+          controlsVisible ? 'translate-y-0' : 'translate-y-full'
+        }`}
+      >
         <div className="mx-auto flex max-w-6xl items-center gap-4">
           <span className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-red-300">
             Replay

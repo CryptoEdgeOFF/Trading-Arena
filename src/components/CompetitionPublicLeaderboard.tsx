@@ -16,6 +16,8 @@ import { NameBadges, type UserBadge } from './playerBadges';
 import { getSponsor } from '../lib/sponsors';
 import ShareCardModal from './ShareCardModal';
 import type { ShareCardData } from '../lib/shareCard';
+import Seo, { SITE_URL } from './Seo';
+import { buildArenaEventJsonLd } from '../lib/structuredData';
 
 const REFRESH_MS = 2000;
 const SESSION_KEY = 'btf-comp-session';
@@ -30,6 +32,7 @@ interface LeaderboardRow {
   pnlUsd: number;
   tradesCount: number;
   updatedAt: number;
+  breached?: boolean;
 }
 
 interface CashPrizeItem {
@@ -60,6 +63,7 @@ interface LeaderboardResponse {
     participants: number;
     cashPrize?: CashPrize | null;
     sponsor?: string | null;
+    bannerImageUrl?: string | null;
   };
   leaderboard: LeaderboardRow[];
 }
@@ -200,9 +204,11 @@ export default function CompetitionPublicLeaderboard() {
       .catch(() => undefined);
   }, []);
 
-  // Podium + classement : rank > 0 uniquement. Inscrits sans trade (rank 0) : liste séparée.
+  // Podium + classement : rank > 0 uniquement (jamais les comptes éliminés).
+  // Comptes éliminés (drawdown atteint) : section dédiée. Inscrits sans trade : liste séparée.
   const ranked = useMemo(() => (data ? data.leaderboard.filter((row) => row.rank > 0) : []), [data]);
-  const notTraded = useMemo(() => (data ? data.leaderboard.filter((row) => row.rank === 0) : []), [data]);
+  const breachedRows = useMemo(() => (data ? data.leaderboard.filter((row) => row.breached) : []), [data]);
+  const notTraded = useMemo(() => (data ? data.leaderboard.filter((row) => row.rank === 0 && !row.breached) : []), [data]);
   const top3 = useMemo(() => ranked.slice(0, 3), [ranked]);
   const rest = useMemo(() => ranked.slice(3), [ranked]);
   const myRow = useMemo(() => (
@@ -232,6 +238,31 @@ export default function CompetitionPublicLeaderboard() {
 
   return (
     <div className="compete min-h-dvh-safe bg-[#050507]">
+      {data && (
+        <Seo
+          title={data.competition.title}
+          description={t('seo.arenaDesc', { title: data.competition.title })}
+          path={`/compete/leaderboard/${data.competition.id}`}
+          image={
+            data.competition.bannerImageUrl
+              ? (data.competition.bannerImageUrl.startsWith('http')
+                  ? data.competition.bannerImageUrl
+                  : `${SITE_URL}${data.competition.bannerImageUrl}`)
+              : undefined
+          }
+          jsonLd={buildArenaEventJsonLd({
+            id: data.competition.id,
+            title: data.competition.title,
+            startAt: data.competition.startAt,
+            endAt: data.competition.endAt,
+            status: data.competition.status,
+            bannerImageUrl: data.competition.bannerImageUrl ?? null,
+            prizeLabel: hasPrize(data.competition.cashPrize)
+              ? (data.competition.cashPrize?.label || undefined)
+              : null,
+          })}
+        />
+      )}
       <header
         className="compete-header sticky top-0 z-40 border-b border-[#1a1a20] bg-[rgba(5,5,7,0.92)] backdrop-blur-xl"
         style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
@@ -264,6 +295,23 @@ export default function CompetitionPublicLeaderboard() {
 
           {data && (
             <>
+              {/* BANNER (mise en avant, ex. CUP) — image entière, hauteur plafonnée */}
+              {data.competition.bannerImageUrl && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                  className="mb-6 overflow-hidden rounded-2xl border border-[#232329] bg-[#0c0c10] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.85)]"
+                >
+                  <img
+                    src={data.competition.bannerImageUrl}
+                    alt={data.competition.title}
+                    className="h-[110px] w-full object-cover object-center sm:h-[170px] lg:h-[200px]"
+                    loading="lazy"
+                  />
+                </motion.div>
+              )}
+
               {/* HERO */}
               <section className="grid gap-6 lg:grid-cols-[1.4fr_1fr] lg:items-end">
                 <div>
@@ -436,6 +484,31 @@ export default function CompetitionPublicLeaderboard() {
                     ) : (
                       <div className="glass-card mt-6 px-5 py-6 text-center text-sm text-[#71717a]">
                         {t('leaderboard.noRankedYet')}
+                      </div>
+                    )}
+
+                    {breachedRows.length > 0 && (
+                      <div className="mt-10">
+                        <div className="border-b border-[#ef4444]/20 pb-4">
+                          <div className="micro text-[10px] text-[#ef4444]/80">{t('leaderboard.breachedList')}</div>
+                          <h3 className="display mt-1 text-xl font-bold text-[#fca5a5] md:text-2xl">{t('leaderboard.breachedSectionTitle')}</h3>
+                          <p className="mt-2 text-sm text-[#71717a]">{t('leaderboard.breachedSectionHint')}</p>
+                        </div>
+                        <div className="glass-card mt-5 overflow-hidden border border-[#ef4444]/20">
+                          <div className="grid grid-cols-[40px_1.7fr_1fr_0.9fr_0.5fr] items-center gap-2 border-b border-[#232329] bg-[#0c0c10] px-3 py-3 text-[9px] uppercase tracking-[0.16em] text-[#71717a] sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 sm:text-[10px] md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr]">
+                            <div>{t('leaderboard.thRank')}</div>
+                            <div>{t('leaderboard.thTrader')}</div>
+                            <div className="text-right">{t('leaderboard.thPnlPct')}</div>
+                            <div className="text-right">{t('leaderboard.thPnlUsd')}</div>
+                            <div className="text-right">{t('leaderboard.thTrades')}</div>
+                            <div className="hidden text-right md:block">{t('leaderboard.thLastUpdate')}</div>
+                          </div>
+                          <div className="divide-y divide-[#1a1a20]">
+                            {breachedRows.map((row, idx) => (
+                              <RankRow key={row.userId} row={row} index={idx} isMe={row.userId === currentUserId} />
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -662,6 +735,17 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
       >
         <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
         <NameBadges badges={row.badges} />
+        {row.breached && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#ef4444]/45 bg-[#ef4444]/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em] text-[#fca5a5]"
+            title={t('leaderboard.breachedTitle')}
+          >
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+            {t('leaderboard.breached')}
+          </span>
+        )}
       </Link>
       <div
         className={`metric-value mt-2 justify-center ${pos ? 'is-pos' : 'is-neg'}`}
@@ -687,7 +771,7 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
 
 function RankRow({ row, index, isMe = false, compact = false }: { row: LeaderboardRow; index: number; isMe?: boolean; compact?: boolean }) {
   const { t } = useTranslation();
-  const noTrade = row.rank === 0;
+  const noTrade = row.rank === 0 && !row.breached;
   const pos = row.pnlPercent >= 0;
   const tier = row.rank === 1 ? 'gold' : row.rank === 2 ? 'silver' : row.rank === 3 ? 'bronze' : '';
   return (
@@ -724,6 +808,18 @@ function RankRow({ row, index, isMe = false, compact = false }: { row: Leaderboa
         <span className="display flex min-w-0 items-center gap-1 text-sm font-semibold text-white sm:gap-2 sm:text-base">
           <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
           <NameBadges badges={row.badges} compact />
+          {row.breached && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-[#ef4444]/45 bg-[#ef4444]/15 px-1 py-0.5 text-[9px] font-bold uppercase text-[#fca5a5] sm:rounded-md sm:px-1.5 sm:tracking-[0.1em]"
+              title={t('leaderboard.breachedTitle')}
+              aria-label={t('leaderboard.breachedTitle')}
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+              <span className="hidden sm:inline">{t('leaderboard.breached')}</span>
+            </span>
+          )}
           {isMe && (
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#dc2626]/45 bg-[#dc2626]/18 text-[#fca5a5]" title={t('leaderboard.yourRanking')} aria-label={t('leaderboard.yourRanking')}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -780,6 +876,18 @@ function EnrolledRow({ row, index, isMe = false }: { row: LeaderboardRow; index:
         <span className="display flex min-w-0 items-center gap-1 text-sm font-semibold text-white sm:gap-2 sm:text-base">
           <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
           <NameBadges badges={row.badges} compact />
+          {row.breached && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-[#ef4444]/45 bg-[#ef4444]/15 px-1 py-0.5 text-[9px] font-bold uppercase text-[#fca5a5] sm:rounded-md sm:px-1.5 sm:tracking-[0.1em]"
+              title={t('leaderboard.breachedTitle')}
+              aria-label={t('leaderboard.breachedTitle')}
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+              <span className="hidden sm:inline">{t('leaderboard.breached')}</span>
+            </span>
+          )}
           {isMe && (
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#dc2626]/45 bg-[#dc2626]/18 text-[#fca5a5]" title={t('leaderboard.yourRanking')} aria-label={t('leaderboard.yourRanking')}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

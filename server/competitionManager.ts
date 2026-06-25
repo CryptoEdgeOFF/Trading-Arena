@@ -29,6 +29,48 @@ export interface CompetitionUser {
   createdAt: number;
 }
 
+/**
+ * Payout (versement de gains) attribué manuellement par un admin à un joueur.
+ * Sert à générer un certificat de payout affiché sur le profil public.
+ * `amount` est en unités de la devise (`currency`), `paidAt` est la date du
+ * versement (timestamp ms).
+ */
+export type PayoutStatus = 'available' | 'pending' | 'approved';
+
+export interface PlayerPayout {
+  id: string;
+  userId: string;
+  amount: number;
+  currency: string;
+  paidAt: number;
+  createdAt: number;
+  /** Arène d'origine si le payout a été généré automatiquement à la clôture. */
+  competitionId?: string | null;
+  /** Place récompensée (1 = 1er) pour les payouts auto. */
+  rank?: number | null;
+  /** Origine : 'auto' (généré à la clôture via le prize table) ou 'manual' (admin). */
+  source?: 'auto' | 'manual';
+  /** Cycle de demande de versement : available → pending → approved. */
+  status?: PayoutStatus;
+  erc20Address?: string | null;
+  requestedAt?: number | null;
+  approvedAt?: number | null;
+}
+
+function normalizePayout(p: PlayerPayout): PlayerPayout {
+  return {
+    ...p,
+    status: p.status || 'available',
+    erc20Address: p.erc20Address ?? null,
+    requestedAt: p.requestedAt ?? null,
+    approvedAt: p.approvedAt ?? null,
+  };
+}
+
+export function isValidErc20Address(addr: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(addr || '').trim());
+}
+
 export interface CompetitionEntry {
   userId: string;
   joinedAt: number;
@@ -43,6 +85,18 @@ export interface CompetitionEntry {
    * au moment du join quand le sponsor de l'arène l'exige.
    */
   sponsorAccountId?: string | null;
+  /**
+   * Règle de drawdown journalier (si l'arène en définit une).
+   * - `dailyBaselineDayKey` : jour UTC ('YYYY-MM-DD') pour lequel la baseline
+   *   ci-dessous est valable. La baseline est recapturée au premier calcul
+   *   d'équité de chaque nouveau jour UTC.
+   * - `dailyBaselineEquity` : équité (mark-to-market) de début de journée.
+   * - `breachedAt` : timestamp d'élimination (drawdown atteint). Une fois posé,
+   *   le joueur est éliminé DÉFINITIVEMENT de l'arène et ne peut plus trader.
+   */
+  dailyBaselineDayKey?: string | null;
+  dailyBaselineEquity?: number | null;
+  breachedAt?: number | null;
 }
 
 export interface CashPrizeBreakdownEntry {
@@ -98,9 +152,89 @@ function isQualificationCompetition(title: string | undefined | null): boolean {
  * - 'btf2026'         : a participé à une arène de qualification BTF (événement physique Paris 2026).
  * - 'champion'        : a terminé 1er d'au moins une arène terminée.
  * - 'paris-champion'  : vainqueur de la finale amateur physique BTF à Paris (4-5 juin 2026).
- *                       Attribué manuellement à une liste fixe de gagnants.
+ * - 'summer-champion'  : leader du leaderboard global Summer Season (en fin de saison).
+ * - 'autumn-champion'  : idem Autumn Season.
  */
-export type UserBadge = 'btf2026' | 'champion' | 'paris-champion';
+export type UserBadge =
+  | 'btf2026'
+  | 'champion'
+  | 'paris-champion'
+  | 'summer-champion'
+  | 'autumn-champion';
+
+export type SeasonTheme = 'summer' | 'autumn' | 'winter' | 'spring';
+
+/** Saison du leaderboard global (Summer, Autumn, …). */
+export interface LeaderboardSeason {
+  id: string;
+  slug: string;
+  /** Clé i18n du nom affiché, ex. seasons.summer2026.name */
+  nameKey: string;
+  startAt: number;
+  endAt: number;
+  /** Saison affichée par défaut sur le leaderboard global. */
+  isActive: boolean;
+  championBadge: UserBadge;
+  rewardEyebrowKey: string;
+  rewardTitleKey: string;
+  rewardDescKey: string;
+  theme: SeasonTheme;
+  /** Bannière affichée en haut du leaderboard de la saison (URL publique). */
+  bannerImage?: string | null;
+  /** Maillot officiel remporté par le #1 (invitation BTF physique). */
+  shirtImage?: string | null;
+  /** Visuel de l'arène physique BTF 2027 (lot du #1). */
+  arenaImage?: string | null;
+  /** Bannière promotionnelle affichée sur la page d'accueil quand la saison est active. */
+  homeBannerImage?: string | null;
+}
+
+function buildDefaultSeasons(): LeaderboardSeason[] {
+  return [
+    {
+      id: 'summer-2026',
+      slug: 'summer-2026',
+      nameKey: 'seasons.summer2026.name',
+      startAt: Date.parse('2026-06-21T00:00:00+02:00'),
+      endAt: Date.parse('2026-09-22T23:59:59.999+02:00'),
+      isActive: true,
+      championBadge: 'summer-champion',
+      rewardEyebrowKey: 'seasons.summer2026.rewardEyebrow',
+      rewardTitleKey: 'seasons.summer2026.rewardTitle',
+      rewardDescKey: 'seasons.summer2026.rewardDesc',
+      theme: 'summer',
+      bannerImage: '/assets/Seasons/Summer Season BTF Arena.png',
+      shirtImage: '/assets/badges/Summer Season Shirt BTF Arena.png',
+      arenaImage: '/assets/pictures/arena3d.png',
+      homeBannerImage: '/assets/pictures/SummerSeasonBannerHomeBTfarena.png',
+    },
+    {
+      id: 'autumn-2026',
+      slug: 'autumn-2026',
+      nameKey: 'seasons.autumn2026.name',
+      startAt: Date.parse('2026-09-23T00:00:00+02:00'),
+      endAt: Date.parse('2026-12-21T23:59:59.999+01:00'),
+      isActive: false,
+      championBadge: 'autumn-champion',
+      rewardEyebrowKey: 'seasons.autumn2026.rewardEyebrow',
+      rewardTitleKey: 'seasons.autumn2026.rewardTitle',
+      rewardDescKey: 'seasons.autumn2026.rewardDesc',
+      theme: 'autumn',
+      bannerImage: null,
+      shirtImage: null,
+      arenaImage: '/assets/pictures/arena3d.png',
+      homeBannerImage: null,
+    },
+  ];
+}
+
+export type SeasonStatus = 'upcoming' | 'active' | 'ended';
+
+export function inferSeasonStatus(season: Pick<LeaderboardSeason, 'startAt' | 'endAt'>, now = Date.now()): SeasonStatus {
+  if (now < season.startAt) return 'upcoming';
+  if (now > season.endAt) return 'ended';
+  return 'active';
+}
 
 /**
  * Vainqueurs de la compétition amateur en présentiel (Paris, 4-5 juin 2026).
@@ -156,11 +290,27 @@ export interface Competition {
    * inscriptions avant le départ.
    */
   registrationEndsAt?: number | null;
+  /**
+   * Limite de drawdown JOURNALIER en pourcentage (ex. 5 = 5%). Si l'équité d'un
+   * joueur descend de plus de ce % sous son équité de début de journée (UTC),
+   * il est éliminé définitivement de l'arène. `null`/absent = pas de règle.
+   */
+  dailyDrawdownPercent?: number | null;
+  /**
+   * Bannière visuelle (URL `/api/prize-images/:id`) mise en avant sur le
+   * leaderboard de l'arène, ex. pour annoncer une CUP. `null`/absent = aucune.
+   */
+  bannerImageUrl?: string | null;
   isPublic: boolean;
   createdAt: number;
   entries: CompetitionEntry[];
   cashPrize?: CashPrize | null;
   finalizedAt?: number | null;
+  /**
+   * Timestamp de génération automatique des payouts des gagnants (prize table).
+   * Garde d'idempotence : une arène ne génère ses payouts qu'une seule fois.
+   */
+  payoutsGeneratedAt?: number | null;
   /**
    * Clé du sponsor de l'arène (ex. 'kraken'). null = arène standard BTF.
    * Détermine le thème (couleurs + logo) et la condition d'accès (saisie d'un
@@ -179,6 +329,8 @@ export interface Competition {
   notifiedEndedAt?: number | null;
   /** Timestamp d'envoi de l'email « nouvelle arène disponible » (anti-doublon). */
   notifiedNewArenaAt?: number | null;
+  /** Saison du leaderboard global à laquelle cette arène contribue. */
+  seasonId?: string | null;
 }
 
 export type CompetitionStatus = 'registration' | 'starting_soon' | 'live' | 'ended';
@@ -188,10 +340,19 @@ export type CompetitionStatus = 'registration' | 'starting_soon' | 'live' | 'end
  * imposent la saisie d'un identifiant public au join. Le thème (couleurs,
  * logo, lien de parrainage) vit côté client dans src/lib/sponsors.ts.
  */
-const SPONSOR_DEFS: Record<string, { requiresAccountId: boolean; accountIdPattern?: RegExp }> = {
+const SPONSOR_DEFS: Record<
+  string,
+  { requiresAccountId: boolean; accountIdPattern?: RegExp; accountIdNormalize?: 'uppercase' | 'lowercase' }
+> = {
   // Un identifiant public Kraken ressemble à « AA38 N84G TUDE DOOA » :
   // 16 caractères alphanumériques, regroupés par 4. On ignore les espaces.
-  kraken: { requiresAccountId: true, accountIdPattern: /^[A-Z0-9]{16}$/ },
+  kraken: { requiresAccountId: true, accountIdPattern: /^[A-Z0-9]{16}$/, accountIdNormalize: 'uppercase' },
+  // NinjaTrader : l'email du compte est vérifié côté sponsor.
+  ninjatrader: {
+    requiresAccountId: true,
+    accountIdPattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/i,
+    accountIdNormalize: 'lowercase',
+  },
 };
 
 function normalizeSponsor(input: unknown): string | null {
@@ -212,6 +373,10 @@ function normalizeSponsorReferralUrl(input: unknown): string | null {
 interface CompetitionStore {
   users: CompetitionUser[];
   competitions: Competition[];
+  /** Saisons du leaderboard global (Summer, Autumn, …). */
+  seasons?: LeaderboardSeason[];
+  /** Payouts (certificats de gains) attribués manuellement aux joueurs. */
+  payouts?: PlayerPayout[];
   /**
    * Balance de départ (paper) des joueurs des arènes online. Indépendante de
    * la config de l'événement LIVE (`PlayerManager.paperStartingBalance`) pour
@@ -305,26 +470,55 @@ function canTradeCompetition(competition: CompetitionTiming, now = Date.now()): 
   return now >= competition.startAt && now <= competition.endAt;
 }
 
+/** Clé de jour UTC ('YYYY-MM-DD') pour le reset journalier du drawdown. */
+function utcDayKey(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+
+/**
+ * Normalise une limite de drawdown journalier en %.
+ * Retourne `null` si absente/invalide/<=0. Bornée à 100 max.
+ */
+function normalizeDrawdownPercent(input: unknown): number | null {
+  if (input === null || input === undefined || input === '') return null;
+  const value = Number(input);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.min(100, Math.round(value * 100) / 100);
+}
+
+/** Normalise l'URL de bannière d'arène (string bornée, `null` si vide). */
+function normalizeBannerImageUrl(input: unknown): string | null {
+  if (input === null || input === undefined) return null;
+  const value = String(input).trim().slice(0, 5000);
+  return value || null;
+}
+
 /**
  * Trie et classe un leaderboard. Les participants qui n'ont pas encore tradé
  * (tradesCount === 0) ne sont jamais classés : ils reçoivent `rank = 0` et sont
  * relégués en bas (sous les traders classés). Évite qu'un compte à 0 % (pas de
  * trade) se retrouve sur le podium devant un trader en perte.
  */
-function sortAndRankLeaderboard<T extends { pnlPercent: number; pnlUsd: number; tradesCount: number }>(
+function sortAndRankLeaderboard<T extends { pnlPercent: number; pnlUsd: number; tradesCount: number; breached?: boolean; breachedAt?: number | null }>(
   rows: T[],
 ): Array<T & { rank: number }> {
-  // Traders classés en premier (PnL % puis $) ; les inscrits sans trade
-  // (tradesCount === 0) restent en bas avec rank = 0 et ne figurent pas au podium.
+  // Trois paliers, dans cet ordre :
+  //   2 = trader actif (a tradé et NON éliminé) → seul à être classé (rank ≥ 1)
+  //   1 = compte éliminé (drawdown atteint) → relégué, jamais classé ni au podium
+  //   0 = inscrit sans trade → relégué en bas
+  const tier = (row: T): number => {
+    if (row.breached || row.breachedAt) return 1;
+    return row.tradesCount > 0 ? 2 : 0;
+  };
   const sorted = rows.slice().sort((a, b) => {
-    const aTraded = a.tradesCount > 0 ? 1 : 0;
-    const bTraded = b.tradesCount > 0 ? 1 : 0;
-    if (aTraded !== bTraded) return bTraded - aTraded;
+    const ta = tier(a);
+    const tb = tier(b);
+    if (ta !== tb) return tb - ta;
     return b.pnlPercent - a.pnlPercent || b.pnlUsd - a.pnlUsd;
   });
   let rank = 0;
   return sorted.map((row) => {
-    if (row.tradesCount <= 0) {
+    if (tier(row) !== 2) {
       return { ...row, rank: 0 };
     }
     rank += 1;
@@ -438,6 +632,8 @@ function generateOtp(): string {
 export class CompetitionManager {
   private users = new Map<string, CompetitionUser>();
   private competitions = new Map<string, Competition>();
+  private seasons = new Map<string, LeaderboardSeason>();
+  private payouts = new Map<string, PlayerPayout>();
   // In serverless, sessions/OTPs/trader-sessions use dedicated Postgres
   // tables (one row per token/email). The maps below are only used as a
   // local fallback when no Postgres pool is configured (development mode).
@@ -829,11 +1025,27 @@ export class CompetitionManager {
   private applyStore(parsed: CompetitionStore): void {
     this.users.clear();
     this.competitions.clear();
+    this.seasons.clear();
+    this.payouts.clear();
     if (Number.isFinite(parsed.competitionStartingBalance) && (parsed.competitionStartingBalance as number) > 0) {
       this.competitionStartingBalance = parsed.competitionStartingBalance as number;
     }
+    // La config des saisons (bannière, badges, dates, récompenses, thème) est
+    // définie dans le code : on l'applique toujours par-dessus le store persisté.
+    const defaults = buildDefaultSeasons();
+    const defaultsById = new Map(defaults.map((s) => [s.id, s]));
+    const hadNoSeasonsInStore = !parsed.seasons?.length;
+    for (const season of defaults) this.seasons.set(season.id, season);
+    for (const season of parsed.seasons || []) {
+      if (!season?.id) continue;
+      const def = defaultsById.get(season.id);
+      this.seasons.set(season.id, def ? { ...season, ...def } : season);
+    }
     for (const user of parsed.users || []) {
       this.users.set(user.id, user);
+    }
+    for (const payout of parsed.payouts || []) {
+      if (payout && payout.id && payout.userId) this.payouts.set(payout.id, normalizePayout(payout));
     }
     for (const competition of parsed.competitions || []) {
       this.competitions.set(competition.id, {
@@ -841,6 +1053,8 @@ export class CompetitionManager {
         executionMode: competition.executionMode === 'real' ? 'real' : 'paper',
       });
     }
+    this.migrateCompetitionSeasonIds();
+    if (hadNoSeasonsInStore) this.save();
     // En mode local (sans Postgres), on hydrate les sessions/OTPs/traders
     // depuis le blob. En mode Postgres elles vivent dans leurs propres tables.
     if (!this.pool) {
@@ -870,6 +1084,8 @@ export class CompetitionManager {
     const payload: CompetitionStore = {
       users: Array.from(this.users.values()),
       competitions: Array.from(this.competitions.values()),
+      seasons: Array.from(this.seasons.values()),
+      payouts: Array.from(this.payouts.values()),
       competitionStartingBalance: this.competitionStartingBalance,
     };
     if (!this.pool) {
@@ -1393,10 +1609,13 @@ export class CompetitionManager {
     startAt: number;
     endAt: number;
     registrationEndsAt?: unknown;
+    dailyDrawdownPercent?: unknown;
+    bannerImageUrl?: unknown;
     isPublic: boolean;
     cashPrize?: unknown;
     sponsor?: unknown;
     sponsorReferralUrl?: unknown;
+    seasonId?: unknown;
   }): Competition {
     const title = String(input.title || '').trim();
     const code = normalizeCode(input.code);
@@ -1412,6 +1631,14 @@ export class CompetitionManager {
     const cashPrize = normalizeCashPrize(input.cashPrize);
     const sponsor = normalizeSponsor(input.sponsor);
     const sponsorReferralUrl = normalizeSponsorReferralUrl(input.sponsorReferralUrl);
+    const dailyDrawdownPercent = normalizeDrawdownPercent(input.dailyDrawdownPercent);
+    const bannerImageUrl = normalizeBannerImageUrl(input.bannerImageUrl);
+    const seasonIdRaw = input.seasonId != null && String(input.seasonId).trim()
+      ? String(input.seasonId).trim()
+      : null;
+    const seasonId = seasonIdRaw && this.seasons.has(seasonIdRaw)
+      ? seasonIdRaw
+      : this.getActiveSeason(startAt)?.id ?? this.inferSeasonIdForTimestamp(startAt) ?? null;
 
     if (!title) throw new Error('Titre requis');
     // Code optionnel : une arène sans code est accessible librement (pas de
@@ -1442,12 +1669,15 @@ export class CompetitionManager {
       startAt,
       endAt,
       registrationEndsAt: effectiveRegistrationEndsAt,
+      dailyDrawdownPercent,
+      bannerImageUrl,
       isPublic,
       createdAt: Date.now(),
       entries: [],
       cashPrize,
       sponsor,
       sponsorReferralUrl,
+      seasonId,
     };
 
     this.competitions.set(competition.id, competition);
@@ -1477,6 +1707,7 @@ export class CompetitionManager {
     startAt: number;
     endAt: number;
     registrationEndsAt: number;
+    dailyDrawdownPercent: number | null;
     isPublic: boolean;
     participants: number;
     status: CompetitionStatus;
@@ -1485,6 +1716,7 @@ export class CompetitionManager {
     cashPrize: CashPrize | null;
     sponsor: string | null;
     sponsorReferralUrl: string | null;
+    bannerImageUrl: string | null;
   }> {
     const now = Date.now();
     return Array.from(this.competitions.values())
@@ -1498,6 +1730,7 @@ export class CompetitionManager {
         startAt: competition.startAt,
         endAt: competition.endAt,
         registrationEndsAt: getRegistrationEndsAt(competition),
+        dailyDrawdownPercent: competition.dailyDrawdownPercent ?? null,
         isPublic: competition.isPublic,
         participants: competition.entries.length,
         status: inferCompetitionStatus(competition, now),
@@ -1506,6 +1739,7 @@ export class CompetitionManager {
         cashPrize: competition.cashPrize ?? null,
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
+        bannerImageUrl: competition.bannerImageUrl ?? null,
       }));
   }
 
@@ -1530,9 +1764,11 @@ export class CompetitionManager {
     const sponsorDef = competition.sponsor ? SPONSOR_DEFS[competition.sponsor] : null;
     let sponsorAccountId: string | null = null;
     if (sponsorDef?.requiresAccountId) {
-      // Canonicalisation : on enlève les espaces et on passe en majuscules
-      // pour stocker une forme stable et valider le format.
-      const cleaned = String(sponsorAccountIdInput ?? '').replace(/\s+/g, '').toUpperCase().slice(0, 64);
+      const raw = String(sponsorAccountIdInput ?? '').trim();
+      const cleaned =
+        sponsorDef.accountIdNormalize === 'lowercase'
+          ? raw.toLowerCase().slice(0, 128)
+          : String(raw).replace(/\s+/g, '').toUpperCase().slice(0, 64);
       if (!cleaned) throw new Error('Identifiant sponsor requis');
       if (sponsorDef.accountIdPattern && !sponsorDef.accountIdPattern.test(cleaned)) {
         throw new Error('Identifiant sponsor invalide');
@@ -1642,26 +1878,22 @@ export class CompetitionManager {
   }
 
   /**
-   * Regroupe toutes les participations par utilisateur pour le leaderboard
-   * global : nom, avatar, total PnL (somme des entries), nombre d'arènes et
-   * la liste des paperPlayerId (pour calculer winrate / RR / profit factor à
-   * partir des trades dans index.ts).
+   * Agrégation PnL / arènes sans résolution des badges (évite la récursion
+   * avec getAllUserBadges).
    */
-  listUserParticipations(): Array<{
+  private listUserParticipationsCore(options?: { seasonId?: string | null }): Array<{
     userId: string;
     name: string;
     avatarUrl: string | null;
-    badges: UserBadge[];
     pnlUsd: number;
     arenas: number;
     paperPlayerIds: string[];
   }> {
+    const seasonId = options?.seasonId ?? null;
     const byUser = new Map<string, { pnlUsd: number; arenas: number; paperPlayerIds: string[] }>();
     for (const competition of this.competitions.values()) {
-      // Les arènes de qualification (ex. "BTF QUALIFICATIONS") ne comptent pas
-      // dans le classement global : elles servent à se qualifier, pas à
-      // cumuler des stats globales.
       if (isQualificationCompetition(competition.title)) continue;
+      if (seasonId && competition.seasonId !== seasonId) continue;
       for (const entry of competition.entries) {
         let rec = byUser.get(entry.userId);
         if (!rec) {
@@ -1673,19 +1905,97 @@ export class CompetitionManager {
         if (entry.paperPlayerId) rec.paperPlayerIds.push(entry.paperPlayerId);
       }
     }
-    const badges = this.getAllUserBadges();
     return Array.from(byUser.entries()).map(([userId, rec]) => {
       const user = this.users.get(userId);
       return {
         userId,
         name: user?.name || 'Participant',
         avatarUrl: user?.avatarUrl || null,
-        badges: badges.get(userId) ?? [],
         pnlUsd: rec.pnlUsd,
         arenas: rec.arenas,
         paperPlayerIds: rec.paperPlayerIds,
       };
     });
+  }
+
+  /**
+   * Regroupe toutes les participations par utilisateur pour le leaderboard
+   * global : nom, avatar, total PnL (somme des entries), nombre d'arènes et
+   * la liste des paperPlayerId (pour calculer winrate / RR / profit factor à
+   * partir des trades dans index.ts).
+   * Si `seasonId` est fourni, seules les arènes de cette saison comptent.
+   */
+  listUserParticipations(options?: { seasonId?: string | null }): Array<{
+    userId: string;
+    name: string;
+    avatarUrl: string | null;
+    badges: UserBadge[];
+    pnlUsd: number;
+    arenas: number;
+    paperPlayerIds: string[];
+  }> {
+    const badges = this.getAllUserBadges();
+    return this.listUserParticipationsCore(options).map((row) => ({
+      ...row,
+      badges: badges.get(row.userId) ?? [],
+    }));
+  }
+
+  /** Saisons du leaderboard global, de la plus récente à la plus ancienne. */
+  listSeasons(): LeaderboardSeason[] {
+    return Array.from(this.seasons.values()).sort((a, b) => b.startAt - a.startAt);
+  }
+
+  getSeason(id: string): LeaderboardSeason | null {
+    return this.seasons.get(String(id || '')) || null;
+  }
+
+  /** Saison marquée active, sinon celle dont la fenêtre contient `now`. */
+  getActiveSeason(now = Date.now()): LeaderboardSeason | null {
+    const flagged = this.listSeasons().find((s) => s.isActive);
+    if (flagged) return flagged;
+    return this.listSeasons().find((s) => now >= s.startAt && now <= s.endAt) || null;
+  }
+
+  /** Déduit la saison d'une arène à partir de sa date de début de trading. */
+  inferSeasonIdForTimestamp(ts: number): string | null {
+    if (!Number.isFinite(ts)) return null;
+    for (const season of this.listSeasons()) {
+      if (ts >= season.startAt && ts <= season.endAt) return season.id;
+    }
+    return null;
+  }
+
+  /** Attribue `seasonId` aux arènes existantes qui n'en ont pas encore. */
+  private migrateCompetitionSeasonIds(): void {
+    let dirty = false;
+    for (const competition of this.competitions.values()) {
+      if (competition.seasonId) continue;
+      const inferred = this.inferSeasonIdForTimestamp(competition.startAt);
+      if (!inferred) continue;
+      competition.seasonId = inferred;
+      this.competitions.set(competition.id, competition);
+      dirty = true;
+    }
+    if (dirty) this.save();
+  }
+
+  private pushBadge(map: Map<string, UserBadge[]>, userId: string, badge: UserBadge): void {
+    const list = map.get(userId);
+    if (list) {
+      if (!list.includes(badge)) list.push(badge);
+    } else {
+      map.set(userId, [badge]);
+    }
+  }
+
+  private applySeasonLeaderboardBadges(map: Map<string, UserBadge[]>, season: LeaderboardSeason): void {
+    // Les badges de saison ne sont décernés qu'une fois la saison terminée.
+    if (inferSeasonStatus(season) !== 'ended') return;
+    const ranked = this.listUserParticipationsCore({ seasonId: season.id })
+      .filter((row) => row.arenas > 0)
+      .sort((a, b) => b.pnlUsd - a.pnlUsd);
+    if (ranked[0]) this.pushBadge(map, ranked[0].userId, season.championBadge);
   }
 
   private badgesCacheAt = 0;
@@ -1724,6 +2034,9 @@ export class CompetitionManager {
       const list = map.get(userId);
       if (list) list.push('btf2026');
       else map.set(userId, ['btf2026']);
+    }
+    for (const season of this.listSeasons()) {
+      this.applySeasonLeaderboardBadges(map, season);
     }
     this.badgesCache = map;
     this.badgesCacheAt = now;
@@ -1840,9 +2153,11 @@ export class CompetitionManager {
 
   updatePaperResultByPlayerId(
     paperPlayerId: string,
-    result: { pnlUsd: number; pnlPercent: number; tradesCount: number },
-  ): void {
+    result: { pnlUsd: number; pnlPercent: number; tradesCount: number; equity?: number },
+  ): { newlyBreached: boolean; competitionId: string } | null {
     let changed = false;
+    let breachResult: { newlyBreached: boolean; competitionId: string } | null = null;
+    const now = Date.now();
     for (const competition of this.competitions.values()) {
       if (competition.finalizedAt) continue;
       const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
@@ -1851,11 +2166,40 @@ export class CompetitionManager {
       entry.pnlUsd = Number(result.pnlUsd) || 0;
       entry.pnlPercent = Number(result.pnlPercent) || 0;
       entry.tradesCount = Math.max(0, Math.floor(Number(result.tradesCount) || 0));
-      entry.updatedAt = Date.now();
+      entry.updatedAt = now;
       changed = true;
+
+      // Règle de drawdown journalier : on n'évalue que pendant le live, avec
+      // une équité finie. La baseline se recapture au 1er échantillon du jour UTC.
+      const ddPercent = competition.dailyDrawdownPercent;
+      const equity = Number(result.equity);
+      if (ddPercent && ddPercent > 0 && Number.isFinite(equity)
+        && inferCompetitionStatus(competition, now) === 'live') {
+        const dayKey = utcDayKey(now);
+        if (entry.dailyBaselineDayKey !== dayKey || entry.dailyBaselineEquity == null) {
+          entry.dailyBaselineDayKey = dayKey;
+          entry.dailyBaselineEquity = equity;
+        }
+        if (!entry.breachedAt && entry.dailyBaselineEquity != null) {
+          const limit = entry.dailyBaselineEquity * (1 - ddPercent / 100);
+          if (equity <= limit) {
+            entry.breachedAt = now;
+            breachResult = { newlyBreached: true, competitionId: competition.id };
+          }
+        }
+      }
     }
 
     if (changed) this.save();
+    return breachResult;
+  }
+
+  /** Le joueur (paperPlayerId) est-il éliminé (drawdown atteint) sur cette arène ? */
+  isPaperPlayerBreached(competitionId: string, paperPlayerId: string): boolean {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return false;
+    const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
+    return Boolean(entry?.breachedAt);
   }
 
   listUserCompetitions(userId: string): Array<{
@@ -1867,14 +2211,17 @@ export class CompetitionManager {
     endAt: number;
     status: CompetitionStatus;
     registrationEndsAt: number;
+    dailyDrawdownPercent: number | null;
     canJoin: boolean;
     canTrade: boolean;
     myEntry: CompetitionEntry;
+    breached: boolean;
     cashPrize: CashPrize | null;
     participants: number;
     rank: number | null;
     sponsor: string | null;
     sponsorReferralUrl: string | null;
+    bannerImageUrl: string | null;
   }> {
     return Array.from(this.competitions.values())
       .filter((competition) => competition.entries.some((entry) => entry.userId === userId))
@@ -1891,19 +2238,239 @@ export class CompetitionManager {
           startAt: competition.startAt,
           endAt: competition.endAt,
           registrationEndsAt: getRegistrationEndsAt(competition),
+          dailyDrawdownPercent: competition.dailyDrawdownPercent ?? null,
           status: inferCompetitionStatus(competition, now),
           canJoin: canJoinCompetition(competition, now),
           canTrade: canTradeCompetition(competition, now),
           myEntry,
+          breached: Boolean(myEntry.breachedAt),
           cashPrize: competition.cashPrize ?? null,
           participants: competition.entries.length,
           // rank 0 = pas classé (aucun trade) → null côté client.
           rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
           sponsor: competition.sponsor ?? null,
           sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
+          bannerImageUrl: competition.bannerImageUrl ?? null,
         };
       })
       .sort((a, b) => b.startAt - a.startAt);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Payouts (certificats de gains, gérés par l'admin)
+  // ---------------------------------------------------------------------------
+
+  /** Recherche de joueurs (admin) par nom ou email, pour attribuer un payout. */
+  searchUsers(query: string, limit = 20): Array<{ id: string; name: string; email: string; avatarUrl: string | null }> {
+    const q = String(query || '').trim().toLowerCase();
+    const all = Array.from(this.users.values());
+    const matched = q
+      ? all.filter(
+          (u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.id.toLowerCase() === q,
+        )
+      : all;
+    return matched
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, Math.max(1, Math.min(100, limit)))
+      .map((u) => ({ id: u.id, name: u.name, email: u.email, avatarUrl: u.avatarUrl || null }));
+  }
+
+  /** Payouts d'un joueur, du plus récent au plus ancien. */
+  listPayoutsForUser(userId: string): PlayerPayout[] {
+    return Array.from(this.payouts.values())
+      .filter((p) => p.userId === userId)
+      .map(normalizePayout)
+      .sort((a, b) => b.paidAt - a.paidAt);
+  }
+
+  /** Payouts d'un joueur enrichis du titre d'arène. */
+  listPayoutsForUserDetailed(userId: string): Array<PlayerPayout & { arenaTitle: string | null }> {
+    return this.listPayoutsForUser(userId).map((p) => {
+      const arena = p.competitionId ? this.competitions.get(p.competitionId) : null;
+      return { ...p, arenaTitle: arena?.title || null };
+    });
+  }
+
+  getPayoutById(id: string): PlayerPayout | null {
+    const payout = this.payouts.get(String(id || ''));
+    return payout ? normalizePayout(payout) : null;
+  }
+
+  requestPayout(payoutId: string, userId: string, erc20Address: string): PlayerPayout {
+    const payout = this.payouts.get(String(payoutId || ''));
+    if (!payout) throw new Error('Payout introuvable');
+    if (payout.userId !== userId) throw new Error('Accès refusé');
+    const status = payout.status || 'available';
+    if (status !== 'available') throw new Error('Cette demande a déjà été soumise');
+    const addr = String(erc20Address || '').trim();
+    if (!isValidErc20Address(addr)) throw new Error('Adresse ERC20 invalide (format 0x… requis)');
+    const updated: PlayerPayout = {
+      ...normalizePayout(payout),
+      status: 'pending',
+      erc20Address: addr,
+      requestedAt: Date.now(),
+    };
+    this.payouts.set(updated.id, updated);
+    this.save();
+    return updated;
+  }
+
+  approvePayout(payoutId: string): PlayerPayout & { userName: string; userEmail: string; arenaTitle: string | null } {
+    const payout = this.payouts.get(String(payoutId || ''));
+    if (!payout) throw new Error('Payout introuvable');
+    const status = payout.status || 'available';
+    if (status !== 'pending') throw new Error('Seules les demandes en attente peuvent être approuvées');
+    const updated: PlayerPayout = {
+      ...normalizePayout(payout),
+      status: 'approved',
+      approvedAt: Date.now(),
+    };
+    this.payouts.set(updated.id, updated);
+    this.save();
+    const user = this.users.get(updated.userId);
+    const arena = updated.competitionId ? this.competitions.get(updated.competitionId) : null;
+    return {
+      ...updated,
+      userName: user?.name || '—',
+      userEmail: user?.email || '',
+      arenaTitle: arena?.title || null,
+    };
+  }
+
+  /** Demandes de payout soumises (pending ou approved), pour l'admin. */
+  listPayoutRequests(): Array<PlayerPayout & { userName: string; userEmail: string; arenaTitle: string | null }> {
+    return Array.from(this.payouts.values())
+      .map(normalizePayout)
+      .filter((p) => p.status === 'pending' || p.status === 'approved')
+      .sort((a, b) => {
+        const pendingFirst = (s: PayoutStatus | undefined) => (s === 'pending' ? 0 : 1);
+        const byStatus = pendingFirst(a.status) - pendingFirst(b.status);
+        if (byStatus !== 0) return byStatus;
+        return (b.requestedAt || 0) - (a.requestedAt || 0);
+      })
+      .map((p) => {
+        const user = this.users.get(p.userId);
+        const arena = p.competitionId ? this.competitions.get(p.competitionId) : null;
+        return {
+          ...p,
+          userName: user?.name || '—',
+          userEmail: user?.email || '',
+          arenaTitle: arena?.title || null,
+        };
+      });
+  }
+
+  /** Tous les payouts (admin), enrichis du nom/email du joueur et de l'arène. */
+  listAllPayouts(): Array<PlayerPayout & { userName: string; userEmail: string; arenaTitle: string | null }> {
+    return Array.from(this.payouts.values())
+      .sort((a, b) => b.paidAt - a.paidAt)
+      .map((p) => {
+        const user = this.users.get(p.userId);
+        const arena = p.competitionId ? this.competitions.get(p.competitionId) : null;
+        return {
+          ...p,
+          userName: user?.name || '—',
+          userEmail: user?.email || '',
+          arenaTitle: arena?.title || null,
+        };
+      });
+  }
+
+  createPayout(input: { userId: string; amount: number; currency?: string; paidAt?: number }): PlayerPayout {
+    const user = this.users.get(String(input.userId || ''));
+    if (!user) throw new Error('Joueur introuvable');
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('Montant invalide');
+    const currency = String(input.currency || 'USD').trim().toUpperCase().slice(0, 6) || 'USD';
+    const paidAt = Number.isFinite(input.paidAt) && (input.paidAt as number) > 0 ? (input.paidAt as number) : Date.now();
+    const payout: PlayerPayout = {
+      id: crypto.randomUUID(),
+      userId: user.id,
+      amount: Math.round(amount * 100) / 100,
+      currency,
+      paidAt,
+      createdAt: Date.now(),
+      source: 'manual',
+      status: 'available',
+    };
+    this.payouts.set(payout.id, payout);
+    this.save();
+    return payout;
+  }
+
+  deletePayout(id: string): boolean {
+    const existed = this.payouts.delete(String(id || ''));
+    if (existed) this.save();
+    return existed;
+  }
+
+  /**
+   * Arènes terminées dont les payouts des gagnants n'ont pas encore été
+   * générés (couvre aussi celles finalisées avant l'arrivée de cette feature).
+   */
+  getCompetitionsNeedingPayouts(now = Date.now()): string[] {
+    const ids: string[] = [];
+    for (const competition of this.competitions.values()) {
+      if (competition.payoutsGeneratedAt) continue;
+      if (inferCompetitionStatus(competition, now) !== 'ended') continue;
+      ids.push(competition.id);
+    }
+    return ids;
+  }
+
+  /**
+   * Génère automatiquement les payouts des gagnants d'une arène terminée à
+   * partir du prize table (`cashPrize.breakdown`). Le gagnant de chaque place
+   * récompensée reçoit un certificat. Idempotent via `payoutsGeneratedAt`.
+   * À défaut de breakdown, un total seul récompense le 1er.
+   */
+  generateCompetitionPayouts(competitionId: string): PlayerPayout[] {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return [];
+    if (competition.payoutsGeneratedAt) return [];
+    if (inferCompetitionStatus(competition) !== 'ended') return [];
+
+    const currency = competition.cashPrize?.currency || 'USD';
+    const paidAt = competition.endAt || Date.now();
+    const created: PlayerPayout[] = [];
+
+    // Prix par place : breakdown explicite, sinon repli sur le total → 1er.
+    const breakdown = competition.cashPrize?.breakdown;
+    const tiers: CashPrizeBreakdownEntry[] =
+      breakdown && breakdown.length > 0
+        ? breakdown
+        : competition.cashPrize && competition.cashPrize.total > 0
+          ? [{ rank: 1, amount: competition.cashPrize.total }]
+          : [];
+
+    if (tiers.length > 0) {
+      const ranked = sortAndRankLeaderboard(competition.entries.slice());
+      for (const { rank, amount } of tiers) {
+        if (!Number.isFinite(amount) || amount <= 0) continue;
+        // Seuls les joueurs réellement classés (ont tradé, non éliminés) gagnent.
+        const winner = ranked.find((entry) => entry.rank === rank);
+        if (!winner) continue;
+        const payout: PlayerPayout = {
+          id: crypto.randomUUID(),
+          userId: winner.userId,
+          amount: Math.round(amount * 100) / 100,
+          currency,
+          paidAt,
+          createdAt: Date.now(),
+          competitionId: competition.id,
+          rank,
+          source: 'auto',
+          status: 'available',
+        };
+        this.payouts.set(payout.id, payout);
+        created.push(payout);
+      }
+    }
+
+    competition.payoutsGeneratedAt = Date.now();
+    this.competitions.set(competition.id, competition);
+    this.save();
+    return created;
   }
 
   /**
@@ -1922,6 +2489,7 @@ export class CompetitionManager {
     badges: UserBadge[];
     totalPnlUsd: number;
     paperPlayerIds: string[];
+    payouts: Array<{ id: string; amount: number; currency: string; paidAt: number }>;
     arenas: Array<{
       id: string;
       title: string;
@@ -1995,6 +2563,12 @@ export class CompetitionManager {
       badges: this.getUserBadges(userId),
       totalPnlUsd,
       paperPlayerIds,
+      payouts: this.listPayoutsForUser(userId).map((p) => ({
+        id: p.id,
+        amount: p.amount,
+        currency: p.currency,
+        paidAt: p.paidAt,
+      })),
       arenas,
     };
   }
@@ -2017,10 +2591,13 @@ export class CompetitionManager {
     startAt: number;
     endAt: number;
     registrationEndsAt: number | null;
+    dailyDrawdownPercent: number | null;
+    bannerImageUrl: unknown;
     isPublic: boolean;
     cashPrize: unknown;
     sponsor: unknown;
     sponsorReferralUrl: unknown;
+    seasonId: unknown;
   }>): Competition {
     const competition = this.competitions.get(id);
     if (!competition) throw new Error('Competition introuvable');
@@ -2068,6 +2645,14 @@ export class CompetitionManager {
     competition.endAt = nextEnd;
     competition.registrationEndsAt = nextRegistrationEndsAt;
 
+    if (patch.dailyDrawdownPercent !== undefined) {
+      competition.dailyDrawdownPercent = normalizeDrawdownPercent(patch.dailyDrawdownPercent);
+    }
+
+    if (patch.bannerImageUrl !== undefined) {
+      competition.bannerImageUrl = normalizeBannerImageUrl(patch.bannerImageUrl);
+    }
+
     if (patch.isPublic !== undefined) {
       competition.isPublic = Boolean(patch.isPublic);
     }
@@ -2082,6 +2667,12 @@ export class CompetitionManager {
 
     if (patch.sponsorReferralUrl !== undefined) {
       competition.sponsorReferralUrl = normalizeSponsorReferralUrl(patch.sponsorReferralUrl);
+    }
+
+    if (patch.seasonId !== undefined) {
+      const raw = patch.seasonId == null || patch.seasonId === '' ? null : String(patch.seasonId).trim();
+      if (raw && !this.seasons.has(raw)) throw new Error('Saison introuvable');
+      competition.seasonId = raw;
     }
 
     this.competitions.set(competition.id, competition);
@@ -2142,18 +2733,29 @@ export class CompetitionManager {
       canTrade: boolean;
       participants: number;
       cashPrize: CashPrize | null;
+      dailyDrawdownPercent: number | null;
     };
     rank: number | null;
     userId: string | null;
     pnlPercent: number;
     pnlUsd: number;
     tradesCount: number;
+    breached: boolean;
+    breachedAt: number | null;
+    dailyBaselineEquity: number | null;
+    dailyLimitEquity: number | null;
   } | null {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
 
     const ranked = sortAndRankLeaderboard(competition.entries.slice());
     const myEntry = ranked.find((entry) => entry.paperPlayerId === paperPlayerId) ?? null;
+
+    const ddPercent = competition.dailyDrawdownPercent ?? null;
+    const baseline = myEntry?.dailyBaselineEquity ?? null;
+    const dailyLimitEquity = ddPercent && baseline != null
+      ? baseline * (1 - ddPercent / 100)
+      : null;
 
     const now = Date.now();
     return {
@@ -2170,6 +2772,7 @@ export class CompetitionManager {
         canTrade: canTradeCompetition(competition, now),
         participants: competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
+        dailyDrawdownPercent: ddPercent,
       },
       // rank null = pas (encore) classé (aucun trade).
       rank: myEntry && myEntry.rank > 0 ? myEntry.rank : null,
@@ -2177,6 +2780,10 @@ export class CompetitionManager {
       pnlPercent: myEntry?.pnlPercent ?? 0,
       pnlUsd: myEntry?.pnlUsd ?? 0,
       tradesCount: myEntry?.tradesCount ?? 0,
+      breached: Boolean(myEntry?.breachedAt),
+      breachedAt: myEntry?.breachedAt ?? null,
+      dailyBaselineEquity: baseline,
+      dailyLimitEquity,
     };
   }
 
@@ -2226,6 +2833,37 @@ export class CompetitionManager {
     else competition.notifiedNewArenaAt = Date.now();
     this.competitions.set(competition.id, competition);
     this.save();
+  }
+
+  /**
+   * Marque sans envoyer les notifications d'arène encore en attente (arènes
+   * déjà terminées / live). Évite de rejouer un blast historique au redémarrage
+   * quand on réactive les emails en mode test filtré.
+   */
+  skipPendingHistoricalArenaNotifications(now = Date.now()): number {
+    let skipped = 0;
+    for (const competition of this.competitions.values()) {
+      const status = inferCompetitionStatus(competition, now);
+      let dirty = false;
+
+      if (!competition.notifiedEndedAt && status === 'ended') {
+        competition.notifiedEndedAt = now;
+        dirty = true;
+        skipped += 1;
+      }
+      if (!competition.notifiedStartSoonAt && (status === 'live' || status === 'ended')) {
+        competition.notifiedStartSoonAt = now;
+        dirty = true;
+      }
+      if (!competition.notifiedNewArenaAt && status === 'ended') {
+        competition.notifiedNewArenaAt = now;
+        dirty = true;
+      }
+
+      if (dirty) this.competitions.set(competition.id, competition);
+    }
+    if (skipped > 0) this.save();
+    return skipped;
   }
 
   /**
@@ -2332,6 +2970,7 @@ export class CompetitionManager {
       cashPrize: CashPrize | null;
       sponsor: string | null;
       sponsorReferralUrl: string | null;
+      bannerImageUrl: string | null;
     };
     leaderboard: Array<{
       rank: number;
@@ -2343,6 +2982,7 @@ export class CompetitionManager {
       pnlUsd: number;
       tradesCount: number;
       updatedAt: number;
+      breached: boolean;
     }>;
   } {
     const competition = this.competitions.get(competitionId);
@@ -2361,6 +3001,7 @@ export class CompetitionManager {
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
           updatedAt: entry.updatedAt,
+          breached: Boolean(entry.breachedAt),
         };
       }),
     );
@@ -2380,6 +3021,7 @@ export class CompetitionManager {
         cashPrize: competition.cashPrize ?? null,
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
+        bannerImageUrl: competition.bannerImageUrl ?? null,
       },
       leaderboard,
     };
@@ -2414,6 +3056,7 @@ export class CompetitionManager {
       pnlUsd: number;
       tradesCount: number;
       updatedAt: number;
+      breached: boolean;
     }>;
   } | null {
     const competition = this.competitions.get(competitionId);
@@ -2432,6 +3075,7 @@ export class CompetitionManager {
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
           updatedAt: entry.updatedAt,
+          breached: Boolean(entry.breachedAt),
         };
       }),
     );

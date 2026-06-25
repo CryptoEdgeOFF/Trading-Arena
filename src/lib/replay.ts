@@ -66,6 +66,13 @@ export interface ReplayTradeInput {
   exitTime?: number | null;
   /** Prix de sortie réel si connu — sinon interpolé. */
   exitPrice?: number | null;
+  /**
+   * PnL final imposé (USD, **net**, frais déjà déduits) pour ce trade. Quand
+   * fourni, le PnL affiché tombe EXACTEMENT sur cette valeur — aucun frais
+   * supplémentaire n'est soustrait. Le prix de sortie est rétro-calculé pour
+   * un glissement cohérent. Idéal pour recoller au PnL exact d'une vidéo.
+   */
+  finalPnl?: number | null;
 }
 
 export interface ReplayConfig {
@@ -93,7 +100,7 @@ export interface ReplayFrame {
 export const REPLAY_PACKAGE_KEY = 'btf-replay-package';
 
 /** Marqueur de version du moteur replay (diagnostic de chargement HMR/cache). */
-export const REPLAY_ENGINE_VERSION = 'v4-glide-anchor';
+export const REPLAY_ENGINE_VERSION = 'v6-forced-pnl-realpath';
 if (typeof console !== 'undefined') {
   console.info(`[replay] moteur ${REPLAY_ENGINE_VERSION} chargé`);
 }
@@ -102,8 +109,25 @@ if (typeof console !== 'undefined') {
 /*                          Constantes (miroir serveur)                       */
 /* -------------------------------------------------------------------------- */
 
-/** Miroir de TAKER_FEE_RATE dans exchangePaperEngine.ts. */
-const TAKER_FEE_RATE = 0.00005 / 3;
+/** Miroir de TAKER_FEE_RATE dans exchangePaperEngine.ts (crypto). */
+const TAKER_FEE_RATE = 0.0004 / 3;
+const FOREX_FEE_RATE = 0.00003;
+const COMMODITY_FEE_RATE = 0.00003;
+const INDEX_FEE_RATE = 0.00002;
+
+function resolveFeeRate(pair: string): number {
+  const p = pair.toUpperCase();
+  if (p.startsWith('EUR/') || p.startsWith('GBP/') || p.startsWith('USD/JPY') || p.startsWith('USD/CHF')) {
+    return FOREX_FEE_RATE;
+  }
+  if (p.startsWith('GOLD/') || p.startsWith('SILVER/') || p.startsWith('WTI/')) {
+    return COMMODITY_FEE_RATE;
+  }
+  if (p.startsWith('NAS100/') || p.startsWith('SP500/') || p.startsWith('US30/')) {
+    return INDEX_FEE_RATE;
+  }
+  return TAKER_FEE_RATE;
+}
 
 /** Miroir de BADGE_DEFS (server/types.ts) — uniquement le nécessaire au front. */
 const BADGE_DEFS: Record<string, Omit<Badge, 'awardedAt'>> = {
@@ -281,6 +305,44 @@ export interface ResolvedTrade {
   pricesProvided: boolean;
 }
 
+/** Devise de cotation d'une paire (ex. "USD" pour NAS100/USD). */
+function quoteOf(pair: string): string {
+  return (pair.split('/')[1] || '').toUpperCase();
+}
+
+/**
+ * Rétro-calcule le prix de sortie qui produit EXACTEMENT `targetPnl` (USD) pour
+ * la position donnée. Permet de forcer le PnL final d'un trade tout en gardant
+ * un glissement de mark cohérent (entrée → sortie synthétique → PnL imposé).
+ * Retourne null si non résoluble (dénominateur ~0 / prix négatif).
+ */
+function solveExitPriceForPnl(
+  pair: string,
+  side: 'long' | 'short',
+  entryPrice: number,
+  engineSize: number,
+  targetPnl: number,
+): number | null {
+  if (engineSize <= 0 || entryPrice <= 0) return null;
+  const quote = quoteOf(pair);
+  const usdQuote = !quote || quote === 'USD';
+
+  let exitPrice: number;
+  if (usdQuote) {
+    // targetPnl = ±(exit - entry) × size
+    exitPrice = side === 'long'
+      ? entryPrice + targetPnl / engineSize
+      : entryPrice - targetPnl / engineSize;
+  } else {
+    // targetPnl = ±(exit - entry) × size / exit   (conversion quote → USD)
+    const denom = side === 'long' ? engineSize - targetPnl : engineSize + targetPnl;
+    if (Math.abs(denom) < 1e-9) return null;
+    exitPrice = (engineSize * entryPrice) / denom;
+  }
+  if (!Number.isFinite(exitPrice) || exitPrice <= 0) return null;
+  return exitPrice;
+}
+
 /**
  * Résout les prix manquants (interpolation) et précalcule frais + PnL réalisé.
  * Les trades dont la paire n'a pas de bougies sont ignorés (signalés).
@@ -307,27 +369,53 @@ export function resolveTrades(
       continue;
     }
 
-    const hasExit = input.exitTime != null && Number.isFinite(input.exitTime);
-    const exitTime = hasExit ? Math.min(input.exitTime as number, config.endMs) : null;
-    let exitPrice: number | null = null;
-    let exitProvided = false;
-    if (exitTime != null) {
-      exitProvided = Boolean(input.exitPrice && input.exitPrice > 0);
-      exitPrice = exitProvided
-        ? (input.exitPrice as number)
-        : prices.priceAt(pair, exitTime);
-    }
-
     // La taille saisie est en LOTS pour les paires TradFi (US30, NAS100…),
     // en unités natives pour la crypto. On convertit en unités moteur comme
     // le terminal live (engineSizeFromInput), sinon le PnL est faux d'un
     // facteur = contract size (US30 = ×5).
     const engineSize = engineSizeFromInput(pair, input.size);
 
-    const feeOpen = entryPrice * engineSize * TAKER_FEE_RATE;
-    const feeClose = exitPrice != null ? exitPrice * engineSize * TAKER_FEE_RATE : 0;
+    // PnL final imposé : le trade tombe pile sur cette valeur, peu importe les
+    // prix/spread/frais. Si aucune heure de sortie n'est saisie, on clôture à
+    // la fin de la partie (sinon le PnL "final" n'aurait pas de sens).
+    const forcedPnl = input.finalPnl != null && Number.isFinite(input.finalPnl)
+      ? (input.finalPnl as number)
+      : null;
+
+    const hasExit = input.exitTime != null && Number.isFinite(input.exitTime);
+    const exitTime = hasExit
+      ? Math.min(input.exitTime as number, config.endMs)
+      : (forcedPnl != null ? config.endMs : null);
+
+    let exitPrice: number | null = null;
+    let exitProvided = false;
+    if (exitTime != null) {
+      if (forcedPnl != null) {
+        // Prix de sortie rétro-calculé pour atterrir exactement sur le PnL
+        // imposé (glissement de mark cohérent). Fallback : prix saisi/interpolé.
+        const solved = solveExitPriceForPnl(pair, input.side, entryPrice, engineSize, forcedPnl);
+        exitPrice = solved
+          ?? (input.exitPrice && input.exitPrice > 0 ? (input.exitPrice as number) : prices.priceAt(pair, exitTime));
+        exitProvided = true;
+      } else {
+        exitProvided = Boolean(input.exitPrice && input.exitPrice > 0);
+        exitPrice = exitProvided
+          ? (input.exitPrice as number)
+          : prices.priceAt(pair, exitTime);
+      }
+    }
+
+    const feeRate = resolveFeeRate(pair);
+    // PnL forcé = net (frais déjà inclus dans la valeur saisie) → pas de double
+    // déduction dans computeFrame (equity = realized − feesPaid).
+    const feesIncluded = forcedPnl != null && exitTime != null;
+    const feeOpen = feesIncluded ? 0 : entryPrice * engineSize * feeRate;
+    const feeClose = feesIncluded || exitPrice == null ? 0 : exitPrice * engineSize * feeRate;
     let realizedPnl = 0;
-    if (exitPrice != null) {
+    if (forcedPnl != null && exitTime != null) {
+      // PnL net exact imposé (priorité absolue sur le calcul par prix).
+      realizedPnl = forcedPnl;
+    } else if (exitPrice != null) {
       const raw = input.side === 'long'
         ? (exitPrice - entryPrice) * engineSize
         : (entryPrice - exitPrice) * engineSize;
@@ -459,28 +547,36 @@ export function computeFrame(
       if (trade.realizedPnl > player.biggestTradePnl) player.biggestTradePnl = trade.realizedPnl;
     } else {
       // --- Encore ouvert à t : position vivante ---
-      // Trade fermé (heure + prix de sortie connus, saisis OU interpolés) : on
-      // fait glisser le mark linéairement d'entrée → sortie sur la durée de la
-      // position. Le PnL latent part de ~0 et converge proprement vers le PnL
-      // réalisé, sans pic fictif lié au high/low de la bougie ni chute brutale
-      // à la clôture. Sinon (position gardée jusqu'à la fin) : on suit le
-      // mouvement réel des bougies ANCRÉ au prix d'entrée (latent depuis 0).
-      let mark: number;
-      if (trade.exitPrice != null && trade.exitTime != null) {
+      // On suit TOUJOURS le mouvement réel des bougies, ancré au prix d'entrée
+      // (vrais hauts/bas, retournements, mèches…). Le mark = entrée + variation
+      // réelle du marché depuis l'entrée.
+      const markRaw = prices.priceAt(trade.input.pair, t) ?? trade.entryPrice;
+      const anchor = prices.priceAt(trade.input.pair, trade.input.entryTime) ?? trade.entryPrice;
+      const mark = trade.entryPrice + (markRaw - anchor);
+      const raw = trade.input.side === 'long'
+        ? (mark - trade.entryPrice) * trade.engineSize
+        : (trade.entryPrice - mark) * trade.engineSize;
+      let pnl = pnlToAccountCcy(trade.input.pair, raw, mark);
+
+      // PnL final imposé : on garde la FORME réelle des bougies, mais on ajoute
+      // une dérive linéaire pour que le latent converge EXACTEMENT vers la cible
+      // au moment du close (au lieu d'un glissement plat sans retournement).
+      const forced = trade.input.finalPnl;
+      if (forced != null && Number.isFinite(forced) && trade.exitTime != null) {
+        const exitRaw = prices.priceAt(trade.input.pair, trade.exitTime) ?? trade.entryPrice;
+        const markExit = trade.entryPrice + (exitRaw - anchor);
+        const rawExit = trade.input.side === 'long'
+          ? (markExit - trade.entryPrice) * trade.engineSize
+          : (trade.entryPrice - markExit) * trade.engineSize;
+        const latentExit = pnlToAccountCcy(trade.input.pair, rawExit, markExit);
         const span = trade.exitTime - trade.input.entryTime;
         const u = span > 0
           ? Math.max(0, Math.min(1, (t - trade.input.entryTime) / span))
           : 1;
-        mark = trade.entryPrice + (trade.exitPrice - trade.entryPrice) * u;
-      } else {
-        const markRaw = prices.priceAt(trade.input.pair, t) ?? trade.entryPrice;
-        const anchor = prices.priceAt(trade.input.pair, trade.input.entryTime) ?? trade.entryPrice;
-        mark = trade.entryPrice + (markRaw - anchor);
+        // À u=0 → 0 ; à u=1 → latentExit + (cible − latentExit) = cible.
+        pnl = pnl + (forced - latentExit) * u;
       }
-      const raw = trade.input.side === 'long'
-        ? (mark - trade.entryPrice) * trade.engineSize
-        : (trade.entryPrice - mark) * trade.engineSize;
-      const pnl = pnlToAccountCcy(trade.input.pair, raw, mark);
+
       const margin = (trade.entryPrice * trade.engineSize) / Math.max(1, trade.input.leverage);
       const position: Position = {
         id: trade.input.id,

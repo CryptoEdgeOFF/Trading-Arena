@@ -10,8 +10,11 @@ import TradeLiveBonus from './components/TradeLiveBonus';
 import CompetitionTradeJournal from './components/CompetitionTradeJournal';
 import CompetitionPlayerProfile from './components/CompetitionPlayerProfile';
 import CompetitionSettings from './components/CompetitionSettings';
+import CompetitionPayouts from './components/CompetitionPayouts';
 import CompetitionAdmin from './components/CompetitionAdmin';
 import PromotionsAdmin from './components/PromotionsAdmin';
+import PayoutsAdmin from './components/PayoutsAdmin';
+import PayoutRequestsAdmin from './components/PayoutRequestsAdmin';
 import EmailAdminPage from './components/EmailAdminPage';
 import AdminPanel from './components/AdminPanel';
 import ReplayViewer from './components/ReplayViewer';
@@ -80,6 +83,8 @@ function AppRoutes() {
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}`} element={<AdminPanel />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/arenes`} element={<CompetitionAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/promotions`} element={<PromotionsAdmin />} />}
+        {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/payouts`} element={<PayoutsAdmin />} />}
+        {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/payout-requests`} element={<PayoutRequestsAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/emails`} element={<EmailAdminPage />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay`} element={<ReplayViewer />} />}
         <Route path="/feed-test" element={<FeedTest />} />
@@ -89,6 +94,7 @@ function AppRoutes() {
         <Route path="/trade" element={<TradeTerminalRoute />} />
         <Route path="/compete" element={<CompetitionPlatform />} />
         <Route path="/compete/settings" element={<CompetitionSettings />} />
+        <Route path="/compete/payouts" element={<CompetitionPayouts />} />
         <Route path="/compete/leaderboard/:id" element={<CompetitionPublicLeaderboard />} />
         <Route path="/compete/global-leaderboard" element={<CompetitionGlobalLeaderboard />} />
         <Route path="/compete/bonus" element={<TradeLiveBonus />} />

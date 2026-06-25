@@ -152,6 +152,10 @@ interface CompetitionContext {
   rank?: number | null;
   participants?: number;
   pnlPercent?: number;
+  dailyDrawdownPercent?: number | null;
+  breached?: boolean;
+  dailyBaselineEquity?: number | null;
+  dailyLimitEquity?: number | null;
 }
 
 interface LeaderboardRow {
@@ -578,6 +582,9 @@ interface OrderFormProps {
   busy: boolean;
   eventStarted: boolean;
   eventEnded?: boolean;
+  breached?: boolean;
+  dailyDrawdownPercent?: number | null;
+  dailyLimitEquity?: number | null;
   error: string;
   onSubmit: (extras?: { stopLoss: number | null; takeProfit: number | null }) => void;
   onPreviewChange: (preview: ChartOrderPreview | null) => void;
@@ -899,7 +906,9 @@ function OrderForm(props: OrderFormProps) {
     side, setSide, orderType, setOrderType,
     size, setSize, limitPrice, setLimitPrice,
     leverage, setLeverage: _setLeverage, ticker, player,
-    busy, eventStarted, eventEnded = false, error, onSubmit, onPreviewChange,
+    busy, eventStarted, eventEnded = false, breached = false,
+    dailyDrawdownPercent = null, dailyLimitEquity = null,
+    error, onSubmit, onPreviewChange,
     tpSlEnabled, setTpSlEnabled,
     takeProfitInput, setTakeProfitInput,
     stopLossInput, setStopLossInput,
@@ -950,7 +959,7 @@ function OrderForm(props: OrderFormProps) {
   const sizeLabel = lotBased ? t('terminal.sizeLots') : t('terminal.sizeQty');
   const sizeUnit = sizeUnitLabel(selectedPair, base);
   const sizeStep = inputSizeStep(selectedPair);
-  const canSubmit = eventStarted && marketOpen && Number.isFinite(qty) && qty > 0;
+  const canSubmit = eventStarted && !breached && marketOpen && Number.isFinite(qty) && qty > 0;
 
   useEffect(() => {
     setAccountPercent(Math.round(usedRatio * 100));
@@ -1362,7 +1371,9 @@ function OrderForm(props: OrderFormProps) {
           className={`btn-primary-shadow ${!isSell ? 'is-buy' : ''} mt-3 flex h-12 w-full cursor-pointer items-center justify-center rounded-2xl text-[20px] font-bold tracking-tight text-[#0b1b12] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50`}
           style={{ background: isSell ? SELL : '#67dd88' }}
         >
-          {eventEnded
+          {breached
+            ? t('terminal.breachedBtn')
+            : eventEnded
             ? t('terminal.btnEventEnded')
             : !eventStarted
             ? t('terminal.btnWaitingEvent')
@@ -1400,6 +1411,24 @@ function OrderForm(props: OrderFormProps) {
             <span className="text-[#9498a4]">{t('terminal.marginUsed')}</span>
             <span className="text-[#e0e2ea]">{fmt(margin, 2)} USD</span>
           </div>
+          {dailyDrawdownPercent != null && dailyDrawdownPercent > 0 && (
+            <div className="mt-1.5 rounded-lg border border-[#ef4444]/25 bg-[#ef4444]/8 px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[#fca5a5]">
+                  {t('terminal.dailyDrawdownLabel', { percent: dailyDrawdownPercent })}
+                </span>
+                {dailyLimitEquity != null && (
+                  <span className="num text-[#fca5a5]">{t('terminal.dailyDrawdownValue', { amount: fmt(dailyLimitEquity, 2) })}</span>
+                )}
+              </div>
+              <p className="mt-0.5 text-[9.5px] leading-snug text-[#9498a4]">{t('terminal.dailyDrawdownHint')}</p>
+            </div>
+          )}
+          {breached && (
+            <div className="mt-1.5 rounded-lg border border-[#ef4444]/55 bg-[#ef4444]/15 px-2 py-1.5 text-[10px] font-semibold leading-snug text-[#fca5a5]">
+              {t('terminal.breachedBanner')}
+            </div>
+          )}
         </div>
       </div>
       <div className="hidden">{pairs.length}{selectedPair}</div>
@@ -3516,6 +3545,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       participants: extracted.participants ?? prev?.participants,
       rank: extracted.rank ?? prev?.rank ?? null,
       pnlPercent: extracted.pnlPercent ?? prev?.pnlPercent,
+      dailyDrawdownPercent: extracted.dailyDrawdownPercent ?? prev?.dailyDrawdownPercent ?? null,
+      breached: extracted.breached ?? prev?.breached ?? false,
+      dailyBaselineEquity: extracted.dailyBaselineEquity ?? prev?.dailyBaselineEquity ?? null,
+      dailyLimitEquity: extracted.dailyLimitEquity ?? prev?.dailyLimitEquity ?? null,
     }));
   }
 
@@ -4332,6 +4365,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       busy={busy}
       eventStarted={canTradeNow}
       eventEnded={eventEnded}
+      breached={Boolean(competitionContext?.breached)}
+      dailyDrawdownPercent={competitionContext?.dailyDrawdownPercent ?? null}
+      dailyLimitEquity={competitionContext?.dailyLimitEquity ?? null}
       error={error}
       onSubmit={submitOrder}
       onPreviewChange={setOrderPreview}

@@ -189,7 +189,6 @@ export class PaperTradingEngine {
       action: 'open',
     };
     player.trades.push(trade);
-    player.trades = player.trades.slice(-50);
 
     return {
       trade,
@@ -251,7 +250,6 @@ export class PaperTradingEngine {
     }
     player.winStreak = existing.pnl > 0 ? player.winStreak + 1 : 0;
     player.trades.push(trade);
-    player.trades = player.trades.slice(-50);
     player.openPositions = player.openPositions.filter((position) => position !== existing);
     this.updatePlayerEquity(player);
 

@@ -8,7 +8,12 @@ import confetti from 'canvas-confetti';
  * - 'champion' : a terminé 1er d'au moins une arène terminée.
  * - 'btf2026'  : a participé aux qualifications BTF 2026 (événement physique Paris).
  */
-export type UserBadge = 'btf2026' | 'champion' | 'paris-champion';
+export type UserBadge =
+  | 'btf2026'
+  | 'champion'
+  | 'paris-champion'
+  | 'summer-champion'
+  | 'autumn-champion';
 
 type BadgeDef = {
   src: string;
@@ -38,6 +43,22 @@ const BADGE_DEFS: Record<UserBadge, BadgeDef> = {
     glow: '#dc2626',
     particles: ['#ef4444', '#dc2626', '#f87171', '#ffffff'],
   },
+  'summer-champion': {
+    src: '/assets/badges/Summer Season BTF Arena Badge.png',
+    nameKey: 'badges.summerChampion',
+    descKey: 'badges.summerChampionDesc',
+    longDescKey: 'badges.summerChampionLong',
+    glow: '#f59e0b',
+    particles: ['#fbbf24', '#f59e0b', '#fde68a', '#ffffff'],
+  },
+  'autumn-champion': {
+    src: '/assets/badges/Automn Season BTF Arena Badge.png',
+    nameKey: 'badges.autumnChampion',
+    descKey: 'badges.autumnChampionDesc',
+    longDescKey: 'badges.autumnChampionLong',
+    glow: '#ea580c',
+    particles: ['#f97316', '#ea580c', '#fdba74', '#ffffff'],
+  },
   btf2026: {
     src: '/assets/badges/btf2026.webp',
     nameKey: 'badges.btf2026',
@@ -49,7 +70,12 @@ const BADGE_DEFS: Record<UserBadge, BadgeDef> = {
 };
 
 /** Ordre d'affichage : le plus prestigieux d'abord. */
-const BADGE_ORDER: UserBadge[] = ['paris-champion', 'champion', 'btf2026'];
+const BADGE_ORDER: UserBadge[] = [
+  'paris-champion',
+  'summer-champion',
+  'champion',
+  'btf2026',
+];
 
 function sortBadges(badges: UserBadge[]): UserBadge[] {
   return BADGE_ORDER.filter((badge) => badges.includes(badge));
@@ -58,9 +84,17 @@ function sortBadges(badges: UserBadge[]): UserBadge[] {
 /** Couleurs des chips inline (assorties à la DA de chaque badge). */
 const CHIP_STYLES: Record<UserBadge, string> = {
   'paris-champion': 'border-yellow-400/50 bg-yellow-400/12 text-yellow-200',
+  'summer-champion': 'border-orange-400/50 bg-orange-400/12 text-orange-200',
+  'autumn-champion': 'border-orange-500/50 bg-orange-500/12 text-orange-200',
   champion: 'border-amber-400/40 bg-amber-400/10 text-amber-200',
   btf2026: 'border-purple-400/40 bg-purple-400/12 text-purple-200',
 };
+
+/** Visuel d'un badge (image encodée + couleur de halo) pour l'affichage en grand. */
+export function getBadgeVisual(badge: UserBadge): { src: string; glow: string } {
+  const def = BADGE_DEFS[badge];
+  return { src: encodeURI(def.src), glow: def.glow };
+}
 
 /**
  * Badges inline sous forme de chips texte lisibles, à afficher juste après un
@@ -82,7 +116,7 @@ export function NameBadges({ badges, compact = false }: { badges?: UserBadge[] |
           return (
             <img
               key={badge}
-              src={def.src}
+              src={encodeURI(def.src)}
               alt={t(def.nameKey)}
               title={`${t(def.nameKey)} — ${t(def.descKey)}`}
               loading="lazy"
@@ -125,7 +159,7 @@ export function BadgeCollection({ badges }: { badges: UserBadge[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {BADGE_ORDER.map((badge) => {
           const def = BADGE_DEFS[badge];
           const earned = badges.includes(badge);
@@ -141,9 +175,9 @@ export function BadgeCollection({ badges }: { badges: UserBadge[] }) {
               }`}
             >
               <img
-                src={def.src}
+                src={encodeURI(def.src)}
                 alt={t(def.nameKey)}
-                className={`h-24 w-auto select-none transition-transform duration-200 group-hover:scale-105 ${
+                className={`h-20 w-auto select-none transition-transform duration-200 group-hover:scale-105 sm:h-24 ${
                   earned ? 'drop-shadow-[0_0_14px_rgba(255,255,255,0.12)]' : 'opacity-30 grayscale'
                 }`}
                 draggable={false}
@@ -322,7 +356,7 @@ function BadgeShowcaseContent({
 
           {/* Badge */}
           <motion.img
-            src={def.src}
+            src={encodeURI(def.src)}
             alt={t(def.nameKey)}
             draggable={false}
             className={`relative z-10 h-44 w-auto select-none sm:h-72 ${earned ? '' : 'opacity-40 grayscale'}`}

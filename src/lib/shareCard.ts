@@ -11,7 +11,12 @@
  * dataURL (pour la prévisualisation <img>).
  */
 
-export type ShareCardBadge = 'champion' | 'btf2026' | 'paris-champion';
+export type ShareCardBadge =
+  | 'champion'
+  | 'btf2026'
+  | 'paris-champion'
+  | 'summer-champion'
+  | 'autumn-champion';
 
 export interface ShareRankCard {
   kind: 'rank';

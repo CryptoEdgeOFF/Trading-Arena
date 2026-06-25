@@ -62,6 +62,7 @@ interface DraftTrade {
   leverage: string;
   exit: string;        // datetime-local optionnel
   exitPrice: string;   // optionnel
+  finalPnl: string;    // PnL final imposé (USD) — optionnel
 }
 
 interface Draft {
@@ -295,6 +296,7 @@ export default function ReplayAdmin({
         leverage: '10',
         exit: '',
         exitPrice: '',
+        finalPnl: '',
       }],
     });
   };
@@ -354,6 +356,13 @@ export default function ReplayAdmin({
       if (exitTime != null && exitTime <= entryTime) return { error: `${label} : la sortie doit être après l'entrée.` };
       const entryPrice = trade.entryPrice ? Number(trade.entryPrice) : null;
       const exitPrice = trade.exitPrice ? Number(trade.exitPrice) : null;
+      const finalPnlRaw = trade.finalPnl != null ? String(trade.finalPnl).trim() : '';
+      let finalPnl: number | null = null;
+      if (finalPnlRaw !== '') {
+        const parsed = Number(finalPnlRaw);
+        if (!Number.isFinite(parsed)) return { error: `${label} : PnL final invalide.` };
+        finalPnl = parsed;
+      }
       trades.push({
         id: trade.id,
         playerId: trade.playerId,
@@ -365,6 +374,7 @@ export default function ReplayAdmin({
         leverage: Math.max(1, Math.min(50, leverage)),
         exitTime,
         exitPrice: exitPrice && exitPrice > 0 ? exitPrice : null,
+        finalPnl,
       });
     }
     if (trades.length === 0) return { error: 'Ajoute au moins un trade.' };
@@ -648,6 +658,18 @@ export default function ReplayAdmin({
                   <span className="mb-1 block text-[11px] text-slate-500">Prix sortie (optionnel)</span>
                   <input type="number" min={0} step="any" value={trade.exitPrice} onChange={(event) => updateTrade(trade.id, { exitPrice: event.target.value })} placeholder="auto" className={`${inputClass} w-full font-mono`} />
                 </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] text-amber-400/80">PnL final $ net (frais inclus)</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={trade.finalPnl ?? ''}
+                    onChange={(event) => updateTrade(trade.id, { finalPnl: event.target.value })}
+                    placeholder="auto (prix)"
+                    className={`${inputClass} w-full border-amber-500/30 font-mono`}
+                    title="PnL net affiché à l'écran (frais déjà déduits). Le replay tombe exactement sur cette valeur."
+                  />
+                </label>
                 <div className="flex items-end justify-end">
                   <button type="button" onClick={() => removeTrade(trade.id)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-400 hover:border-rose-500/40 hover:text-rose-300">
                     Supprimer
@@ -698,6 +720,11 @@ export default function ReplayAdmin({
         <p className="mt-4 text-xs text-slate-500">
           Les prix d'entrée/sortie laissés en « auto » sont interpolés depuis les bougies 1m du marché.
           Le PnL affiché évolue seconde par seconde (parcours intra-bougie simulé, reproductible au seek — pas le vrai tick historique).
+        </p>
+        <p className="mt-2 text-xs text-amber-400/70">
+          <span className="font-semibold">PnL final :</span> renseigne le PnL <span className="font-semibold">net</span> tel qu'affiché à l'écran (frais déjà déduits).
+          Le replay tombe exactement sur cette valeur — pas de double soustraction de frais.
+          Laisse vide pour un calcul automatique via les prix.
         </p>
       </div>
     </div>

@@ -1,12 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import CompeteHeader from './CompeteHeader';
 import { AvatarImage } from './OptimizedImage';
 import { BadgeCollection, NameBadges, type UserBadge } from './playerBadges';
 import { formatCompactSigned } from './competeMetrics';
+import PayoutCertificate, { type PayoutCertificateHandle } from './PayoutCertificate';
+
+interface PlayerPayout {
+  id: string;
+  amount: number;
+  currency: string;
+  paidAt: number;
+}
 
 interface PlayerStats {
   closedTrades: number;
@@ -44,6 +53,7 @@ interface PlayerProfile {
   badges: UserBadge[];
   totalPnlUsd: number;
   arenas: PlayerArena[];
+  payouts?: PlayerPayout[];
   stats: PlayerStats;
 }
 
@@ -145,12 +155,93 @@ function StatTile({ label, value, tone = 'neutral' }: { label: string; value: st
   );
 }
 
+function PayoutViewerModal({
+  payout,
+  playerName,
+  onClose,
+}: {
+  payout: PlayerPayout | null;
+  playerName: string;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const certRef = useRef<PayoutCertificateHandle>(null);
+  useEffect(() => {
+    if (!payout) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [payout, onClose]);
+
+  return createPortal(
+    <AnimatePresence>
+      {payout && (
+        <motion.div
+          className="compete fixed inset-0 z-[130] flex items-center justify-center bg-black/85 p-4 backdrop-blur-md"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          role="dialog"
+          aria-modal="true"
+        >
+          <motion.div
+            className="relative w-full max-w-[520px]"
+            initial={{ opacity: 0, scale: 0.94 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.94 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              aria-label={t('common.close')}
+              onClick={onClose}
+              className="absolute -top-3 -right-3 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-[#2a2a32] bg-[#0a0a0d] text-lg text-white shadow-lg transition-colors hover:bg-[#16161c]"
+            >
+              ×
+            </button>
+            <PayoutCertificate
+              ref={certRef}
+              data={{ name: playerName, amount: payout.amount, currency: payout.currency, paidAt: payout.paidAt }}
+              className="overflow-hidden rounded-2xl border border-[#232329] shadow-[0_30px_90px_-30px_rgba(0,0,0,0.9)]"
+            />
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => certRef.current?.download()}
+                className="inline-flex items-center gap-2 rounded-full border border-[#ee4326]/40 bg-[#ee4326]/10 px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.16em] text-[#ff8a6b] transition-colors hover:bg-[#ee4326]/20"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                {t('payouts.download')}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
 export default function CompetitionPlayerProfile() {
   const { t } = useTranslation();
   const { userId } = useParams();
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [activePayout, setActivePayout] = useState<PlayerPayout | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -279,10 +370,40 @@ export default function CompetitionPlayerProfile() {
                 className="mt-8"
               >
                 <div className="micro mb-3 text-[10px] text-[#71717a]">{t('badges.title')}</div>
-                <div className="mx-auto max-w-md sm:mx-0">
-                  <BadgeCollection badges={profile.badges} />
-                </div>
+                <BadgeCollection badges={profile.badges} />
               </motion.section>
+
+              {profile.payouts && profile.payouts.length > 0 && (
+                <motion.section
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+                  className="mt-8"
+                >
+                  <div className="micro mb-3 text-[10px] text-[#71717a]">{t('payouts.title')}</div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {profile.payouts.map((payout) => (
+                      <button
+                        key={payout.id}
+                        type="button"
+                        onClick={() => setActivePayout(payout)}
+                        className="group relative overflow-hidden rounded-xl border border-[#1a1a20] bg-[#0a0a0d] transition-transform duration-200 hover:-translate-y-0.5 hover:border-[#3a2a28] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ee4326]/60"
+                        aria-label={t('payouts.viewCertificate')}
+                      >
+                        <PayoutCertificate
+                          data={{
+                            name: profile.user.name,
+                            amount: payout.amount,
+                            currency: payout.currency,
+                            paidAt: payout.paidAt,
+                          }}
+                        />
+                        <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+                      </button>
+                    ))}
+                  </div>
+                </motion.section>
+              )}
 
               <motion.section
                 initial={{ opacity: 0, y: 14 }}
@@ -368,6 +489,11 @@ export default function CompetitionPlayerProfile() {
           )}
         </main>
       </div>
+      <PayoutViewerModal
+        payout={activePayout}
+        playerName={profile?.user.name || ''}
+        onClose={() => setActivePayout(null)}
+      />
     </div>
   );
 }

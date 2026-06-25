@@ -43,6 +43,12 @@ const SETTINGS_ICON = (
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
   </svg>
 );
+const PAYOUT_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="2" y="5" width="20" height="14" rx="2" />
+    <path d="M2 10h20M7 15h.01M11 15h2" />
+  </svg>
+);
 const LOGOUT_ICON = (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
@@ -304,6 +310,15 @@ export default function CompeteHeader({
                     {SETTINGS_ICON}
                     {t('header.settings')}
                   </Link>
+                  <Link
+                    to="/compete/payouts"
+                    onClick={() => setMenuOpen(false)}
+                    role="menuitem"
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    {PAYOUT_ICON}
+                    {t('header.payouts')}
+                  </Link>
                   <button
                     type="button"
                     onClick={handleLogout}
@@ -394,6 +409,14 @@ export default function CompeteHeader({
                   >
                     <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04] text-[#a5a5b0]">{SETTINGS_ICON}</span>
                     {t('header.settings')}
+                  </Link>
+                  <Link
+                    to="/compete/payouts"
+                    onClick={() => setMobileOpen(false)}
+                    className="flex items-center gap-3 rounded-xl px-3 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04] text-[#a5a5b0]">{PAYOUT_ICON}</span>
+                    {t('header.payouts')}
                   </Link>
                   <button
                     type="button"

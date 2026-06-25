@@ -27,6 +27,11 @@ export type PaperCompetitionContext = {
   userId?: string | null;
   rank?: number | null;
   pnlPercent?: number;
+  dailyDrawdownPercent?: number | null;
+  breached?: boolean;
+  breachedAt?: number | null;
+  dailyBaselineEquity?: number | null;
+  dailyLimitEquity?: number | null;
 };
 
 /** Normalise les deux formes renvoyées par l'API (`/me` vs `/trade/session`). */
@@ -38,12 +43,16 @@ export function extractPaperCompetitionContext(
   const raw = payload.competition;
   if (!raw || typeof raw !== 'object') return null;
 
-  const nested = (raw as { competition?: { id?: string; title?: string; executionMode?: string; startAt?: number; endAt?: number; status?: string; participants?: number } }).competition;
+  const nested = (raw as { competition?: { id?: string; title?: string; executionMode?: string; startAt?: number; endAt?: number; status?: string; participants?: number; dailyDrawdownPercent?: number | null } }).competition;
   if (nested?.id) {
     const top = raw as {
       userId?: string | null;
       rank?: number | null;
       pnlPercent?: number;
+      breached?: boolean;
+      breachedAt?: number | null;
+      dailyBaselineEquity?: number | null;
+      dailyLimitEquity?: number | null;
     };
     return {
       id: nested.id,
@@ -56,6 +65,11 @@ export function extractPaperCompetitionContext(
       userId: top.userId ?? null,
       rank: top.rank ?? null,
       pnlPercent: top.pnlPercent,
+      dailyDrawdownPercent: nested.dailyDrawdownPercent ?? null,
+      breached: Boolean(top.breached),
+      breachedAt: top.breachedAt ?? null,
+      dailyBaselineEquity: top.dailyBaselineEquity ?? null,
+      dailyLimitEquity: top.dailyLimitEquity ?? null,
     };
   }
 

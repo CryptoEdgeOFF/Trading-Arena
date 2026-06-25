@@ -14,11 +14,17 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'BTF Trade <onboarding@resend.dev>';
 const APP_NAME = process.env.APP_NAME || 'BTF Trade';
 
-// Mode test : si défini, TOUS les emails (OTP + notifications) sont redirigés
-// vers cette seule adresse au lieu du vrai destinataire. On garde le
-// destinataire d'origine dans le sujet ([TEST → ...]) pour le debug.
-// Vider cette variable (ou la retirer du .env) pour repasser en envoi réel.
+// Mode test filtré : si défini, seuls les emails destinés aux comptes listés
+// dans MAIL_TEST_ONLY_RECIPIENTS (défaut : artemtest987@test.local) sont
+// relayés vers cette adresse. Tous les autres destinataires sont bloqués.
+// Vider cette variable pour repasser en envoi réel à tous les users.
 const TEST_REDIRECT_EMAIL = (process.env.MAIL_TEST_REDIRECT || '').trim();
+const TEST_FILTER_RECIPIENTS = new Set(
+  (process.env.MAIL_TEST_ONLY_RECIPIENTS || 'artemtest987@test.local')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 // Bannière BTF Arena intégrée en pièce jointe inline (CID) en haut de TOUS les
 // emails. On l'embarque en CID plutôt qu'en URL pour qu'elle s'affiche même
@@ -74,8 +80,26 @@ if (!client) {
 
 if (TEST_REDIRECT_EMAIL) {
   console.warn(
-    `[mailer] MODE TEST : tous les emails sont redirigés vers ${TEST_REDIRECT_EMAIL} (les vrais destinataires ne reçoivent rien).`,
+    `[mailer] MODE TEST FILTRÉ : seuls [${[...TEST_FILTER_RECIPIENTS].join(', ')}] sont relayés vers ${TEST_REDIRECT_EMAIL}. Les autres emails sont bloqués.`,
   );
+}
+
+/** Vrai quand MAIL_TEST_REDIRECT active le filtre dev (pas d'envoi aux vrais users). */
+export function isEmailTestFilterActive(): boolean {
+  return Boolean(TEST_REDIRECT_EMAIL);
+}
+
+function normalizeEmailAddr(addr: string): string {
+  return String(addr || '').trim().toLowerCase();
+}
+
+/** Emails admin/contact livrés tels quels ; comptes de test relayés. */
+function shouldDeliverInTestFilter(to: string): boolean {
+  const n = normalizeEmailAddr(to);
+  if (TEST_REDIRECT_EMAIL && n === normalizeEmailAddr(TEST_REDIRECT_EMAIL)) return true;
+  const prizeContact = normalizeEmailAddr(process.env.PRIZE_CONTACT_EMAIL || 'contact.cryptoedge@gmail.com');
+  if (prizeContact && n === prizeContact) return true;
+  return TEST_FILTER_RECIPIENTS.has(n);
 }
 
 export interface SendOtpResult {
@@ -121,19 +145,36 @@ async function dispatch(p: DispatchParams): Promise<SendOtpResult> {
     return { delivered: false, error: 'blocked' };
   }
 
-  const wantRedirect = settings.globalTest || kindSetting.mode === 'test';
-  const testAddr = (settings.testRedirect || TEST_REDIRECT_EMAIL || '').trim();
+  const testFilterActive = Boolean(TEST_REDIRECT_EMAIL);
+  const wantAdminRedirect = !testFilterActive && (settings.globalTest || kindSetting.mode === 'test');
+  const adminTestAddr = (settings.testRedirect || '').trim();
   let rcpt = p.to;
   let subj = p.subject;
   let redirectedTo: string | undefined;
 
-  if (wantRedirect) {
-    if (!testAddr) {
+  if (testFilterActive) {
+    if (!shouldDeliverInTestFilter(p.to)) {
+      await logEmail({
+        kind: p.kind,
+        to: p.to,
+        subject: p.subject,
+        status: 'blocked',
+        error: 'hors filtre test (MAIL_TEST_ONLY_RECIPIENTS)',
+      });
+      return { delivered: false, error: 'blocked-test-filter' };
+    }
+    if (normalizeEmailAddr(p.to) !== normalizeEmailAddr(TEST_REDIRECT_EMAIL)) {
+      rcpt = TEST_REDIRECT_EMAIL;
+      redirectedTo = TEST_REDIRECT_EMAIL;
+      subj = `[TEST → ${p.to}] ${p.subject}`;
+    }
+  } else if (wantAdminRedirect) {
+    if (!adminTestAddr) {
       await logEmail({ kind: p.kind, to: p.to, subject: p.subject, status: 'blocked', error: 'mode test sans adresse de redirection' });
       return { delivered: false, error: 'test-no-address' };
     }
-    rcpt = testAddr;
-    redirectedTo = testAddr;
+    rcpt = adminTestAddr;
+    redirectedTo = adminTestAddr;
     subj = `[TEST → ${p.to}] ${p.subject}`;
   }
 
@@ -197,7 +238,9 @@ export function isMailerConfigured(): boolean {
 }
 
 // Adresse de contact pour la remise des lots (réponses des gagnants).
-const PRIZE_CONTACT_EMAIL = (process.env.PRIZE_CONTACT_EMAIL || 'breakout.pro.tv@gmail.com').trim();
+export const PRIZE_CONTACT_EMAIL = (process.env.PRIZE_CONTACT_EMAIL || 'contact.cryptoedge@gmail.com').trim();
+const APP_PUBLIC_URL = (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim().replace(/\/$/, '');
+const PAYOUT_PAGE_URL = `${APP_PUBLIC_URL}/compete/payouts`;
 
 export interface PrizeWinnerEmailOptions {
   recipientName: string;
@@ -255,7 +298,7 @@ function renderPrizeWinnerText(o: PrizeWinnerEmailOptions, texts: PrizeTexts): s
   lines.push('');
   lines.push(`${texts.claimTitle.toUpperCase()} :`);
   lines.push(texts.claimText);
-  lines.push(`(${PRIZE_CONTACT_EMAIL})`);
+  lines.push(PAYOUT_PAGE_URL);
   lines.push('');
   lines.push(texts.warning);
   return lines.join('\n');
@@ -284,9 +327,7 @@ function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions, texts: PrizeTexts): s
       </tr>`)
     .join('');
 
-  const mailtoSubject = encodeURIComponent(`Mon lot - ${o.competitionTitle} (${o.rankLabel})`);
-  const mailtoBody = encodeURIComponent('Bonjour,\n\nVoici mon adresse de reception ERC20 (reseau Ethereum) pour recevoir mon lot :\n\nAdresse ERC20 : \n\nMerci !');
-  const mailtoUrl = `mailto:${PRIZE_CONTACT_EMAIL}?subject=${mailtoSubject}&body=${mailtoBody}`;
+  const ctaUrl = PAYOUT_PAGE_URL;
 
   return `<!doctype html>
 <html lang="fr">
@@ -320,7 +361,7 @@ function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions, texts: PrizeTexts): s
             <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:${C.text};">${escapeHtml(texts.claimText)}</p>
             <table role="presentation" cellpadding="0" cellspacing="0" align="left" style="margin:2px 0 6px;">
               <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
-                <a href="${mailtoUrl}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">${escapeHtml(texts.buttonLabel)}</a>
+                <a href="${ctaUrl}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">${escapeHtml(texts.buttonLabel)}</a>
               </td></tr>
             </table>
             <div style="clear:both;"></div>
@@ -661,4 +702,86 @@ function renderOtpHtml(code: string, headline: string, sub: string, expiryNote: 
     </table>
   </body>
 </html>`;
+}
+
+export interface PayoutRequestEmailOptions {
+  recipientName: string;
+  arenaTitle: string;
+  rankLabel: string;
+  amountLabel: string;
+  erc20Address?: string;
+}
+
+/** Confirmation joueur après soumission d'une demande de payout. */
+export async function sendPayoutRequestSubmittedEmail(
+  to: string,
+  options: PayoutRequestEmailOptions,
+): Promise<SendOtpResult> {
+  return sendNotificationEmail(
+    to,
+    `Demande de payout reçue — ${options.arenaTitle}`,
+    {
+      eyebrow: 'BTF Arena · Payout',
+      heading: 'Ta demande de payout a bien été enregistrée',
+      bodyLines: [
+        `Salut ${options.recipientName},`,
+        `Nous avons bien reçu ta demande de versement pour l'arène « ${options.arenaTitle} » (${options.rankLabel}, ${options.amountLabel}).`,
+        'Notre équipe va traiter ta demande sous 48 h ouvrées. Tu recevras un email de confirmation dès que le virement sera effectué.',
+        'En cas de question, réponds à cet email ou contacte-nous.',
+      ],
+      highlight: `${options.rankLabel} · ${options.amountLabel}`,
+      ctaLabel: 'Voir mes payouts',
+      ctaUrl: PAYOUT_PAGE_URL,
+    },
+    'payout_request_submitted',
+  );
+}
+
+/** Notification admin : nouvelle demande de payout à traiter. */
+export async function sendPayoutRequestAdminEmail(
+  to: string,
+  options: PayoutRequestEmailOptions & { userEmail: string },
+): Promise<SendOtpResult> {
+  return sendNotificationEmail(
+    to,
+    `[Payout] ${options.recipientName} — ${options.amountLabel}`,
+    {
+      eyebrow: 'Nouvelle demande de payout',
+      heading: `${options.recipientName} demande un versement`,
+      bodyLines: [
+        `Joueur : ${options.recipientName} (${options.userEmail})`,
+        `Arène : ${options.arenaTitle}`,
+        `Place : ${options.rankLabel}`,
+        `Montant : ${options.amountLabel}`,
+        `Adresse ERC20 : ${options.erc20Address || '—'}`,
+        'Connecte-toi à l’admin pour valider le virement une fois effectué.',
+      ],
+      highlight: options.erc20Address || '—',
+    },
+    'payout_request_admin',
+  );
+}
+
+/** Confirmation joueur après approbation admin du virement. */
+export async function sendPayoutApprovedEmail(
+  to: string,
+  options: PayoutRequestEmailOptions,
+): Promise<SendOtpResult> {
+  return sendNotificationEmail(
+    to,
+    `Payout confirmé — ${options.arenaTitle}`,
+    {
+      eyebrow: 'BTF Arena · Payout',
+      heading: 'Ton payout a été envoyé',
+      bodyLines: [
+        `Salut ${options.recipientName},`,
+        `Bonne nouvelle : le versement de ${options.amountLabel} pour l'arène « ${options.arenaTitle} » (${options.rankLabel}) a été effectué vers ton adresse ERC20.`,
+        'Le délai d’apparition on-chain peut varier selon le réseau. Merci d’avoir participé à BTF Arena !',
+      ],
+      highlight: `${options.rankLabel} · ${options.amountLabel}`,
+      ctaLabel: 'Voir mes payouts',
+      ctaUrl: PAYOUT_PAGE_URL,
+    },
+    'payout_approved',
+  );
 }

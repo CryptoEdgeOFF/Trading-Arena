@@ -30,6 +30,12 @@ export const PROMOTIONS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/promotions`
 /** Route d'admin des emails (suivi & configuration), ex. `/ctrl-…/emails`. */
 export const EMAILS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/emails` : '/compete';
 
+/** Route d'admin des payouts (certificats de gains), ex. `/ctrl-…/payouts`. */
+export const PAYOUTS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/payouts` : '/compete';
+
+/** Route d'admin des demandes de payout, ex. `/ctrl-…/payout-requests`. */
+export const PAYOUT_REQUESTS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/payout-requests` : '/compete';
+
 /** Version échappée pour insertion dans une RegExp. */
 export const ADMIN_PATH_REGEX = ADMIN_PATH
   ? ADMIN_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

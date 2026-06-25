@@ -297,9 +297,7 @@ function isRestingLimitTriggered(
   return markPrice <= limitPrice;
 }
 
-/** Nombre max d'entrées conservées dans `player.trades` (journal d'affichage). */
-const MAX_TRADE_HISTORY = 50;
-
+/** Historique complet conservé dans `player.trades` (journal + stats multi‑années). */
 function getRealizedPnl(player: Player): number {
   const archived = player.realizedPnlArchived || 0;
   const inJournal = player.trades
@@ -1093,7 +1091,7 @@ export class PaperTradingEngine {
     if (!isPartial) {
       player.winStreak = trade.pnl > 0 ? player.winStreak + 1 : 0;
     }
-    this.appendTradeCapped(player, trade);
+    this.appendTrade(player, trade);
 
     if (isPartial) {
       existing.size = existing.size - sizeToClose;
@@ -1926,7 +1924,7 @@ export class PaperTradingEngine {
     if (!isPartial) {
       player.winStreak = trade.pnl > 0 ? player.winStreak + 1 : 0;
     }
-    this.appendTradeCapped(player, trade);
+    this.appendTrade(player, trade);
 
     if (isPartial) {
       existing.size = existing.size - sizeToClose;
@@ -2021,7 +2019,7 @@ export class PaperTradingEngine {
       time: openedAt,
       action: 'open',
     };
-    this.appendTradeCapped(player, trade);
+    this.appendTrade(player, trade);
     this.updatePlayerEquity(player);
 
     return {
@@ -2048,25 +2046,9 @@ export class PaperTradingEngine {
       : entryPrice * (1 + maintenance);
   }
 
-  /**
-   * Ajoute un trade au journal en respectant le plafond de 50 entrées. Le PnL
-   * réalisé des clôtures évincées est cumulé dans `realizedPnlArchived` pour ne
-   * jamais être perdu du calcul d'équité (le journal sert uniquement à
-   * l'affichage). Tout passage de trade par le journal DOIT utiliser ce helper.
-   */
-  private appendTradeCapped(player: Player, trade: Trade): void {
+  /** Ajoute un trade au journal (historique complet, sans plafond). */
+  private appendTrade(player: Player, trade: Trade): void {
     player.trades.push(trade);
-    const overflow = player.trades.length - MAX_TRADE_HISTORY;
-    if (overflow > 0) {
-      const dropped = player.trades.splice(0, overflow);
-      let archived = 0;
-      for (const old of dropped) {
-        if (old.action === 'close') archived += old.pnl || 0;
-      }
-      if (archived !== 0) {
-        player.realizedPnlArchived = (player.realizedPnlArchived || 0) + archived;
-      }
-    }
   }
 
   private updatePlayerEquity(player: Player): void {

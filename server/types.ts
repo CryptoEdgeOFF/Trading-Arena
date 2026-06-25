@@ -30,13 +30,13 @@ export interface Player {
   connected: boolean;
   /**
    * Crédit/débit PnL administratif (compensation), en USD. Ajouté à l'équité
-   * indépendamment du journal de trades (qui est plafonné à 50 entrées).
+   * indépendamment du journal de trades.
    */
   pnlAdjustment?: number;
   /**
-   * PnL réalisé cumulé des clôtures déjà évincées du journal `trades` (plafonné
-   * à 50 entrées). Sans ce compteur, le réalisé des anciens trades disparaîtrait
-   * du calcul d'équité dès qu'un joueur dépasse 50 trades.
+   * PnL réalisé cumulé des clôtures évincées avant la suppression du plafond
+   * à 50 entrées (legacy). Conservé pour ne pas perdre l'équité des joueurs
+   * ayant tradé avant la migration vers l'historique complet.
    */
   realizedPnlArchived?: number;
   /**

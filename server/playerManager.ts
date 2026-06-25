@@ -1910,8 +1910,8 @@ export class PlayerManager {
 
   /**
    * Crédit/débit PnL admin (compensation) sans toucher aux positions/ordres
-   * ouverts. Utilise le champ `pnlAdjustment` (hors journal de trades, donc
-   * insensible au plafond de 50 entrées). `mode` : 'increment' (défaut) ajoute
+   * ouverts. Utilise le champ `pnlAdjustment` (hors journal de trades).
+   * `mode` : 'increment' (défaut) ajoute
    * au cumul existant, 'set' remplace la valeur.
    */
   async applyCompetitionPnlCompensation(
@@ -2443,7 +2443,6 @@ export class PlayerManager {
         }
       }
 
-      player.trades = player.trades.slice(-50);
       player.openPositions = nextPositions;
       player.openOrders = [];
       player.usedMargin = nextPositions.reduce((total, position) => total + position.margin, 0);

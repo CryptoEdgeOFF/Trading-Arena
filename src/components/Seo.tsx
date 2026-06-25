@@ -16,9 +16,11 @@ type SeoProps = {
   /** Override the og:type (default "website"). */
   type?: string;
   keywords?: string;
+  /** Optional schema.org JSON-LD (single object or array) injected as <script>. */
+  jsonLd?: Record<string, unknown> | Array<Record<string, unknown>>;
 };
 
-const BRAND = 'BTF Trading Arena';
+const BRAND = 'BTF Arena';
 
 export default function Seo({
   title,
@@ -28,6 +30,7 @@ export default function Seo({
   noindex = false,
   type = 'website',
   keywords,
+  jsonLd,
 }: SeoProps) {
   const { i18n } = useTranslation();
   const lang = i18n.language?.startsWith('fr') ? 'fr' : 'en';
@@ -66,6 +69,11 @@ export default function Seo({
       <meta name="twitter:title" content={fullTitle} />
       <meta name="twitter:description" content={description} />
       <meta name="twitter:image" content={image} />
+
+      {/* Structured data (schema.org JSON-LD) */}
+      {jsonLd ? (
+        <script type="application/ld+json">{JSON.stringify(jsonLd)}</script>
+      ) : null}
     </Helmet>
   );
 }
