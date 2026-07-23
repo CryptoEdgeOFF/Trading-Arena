@@ -392,19 +392,38 @@ export class CompetitionNotifier {
         continue;
       }
 
-      const onPodium = entry.rank <= PODIUM_SIZE && entry.tradesCount > 0;
-      const heading = onPodium
-        ? `Félicitations, tu finis #${entry.rank} !`
-        : `L'arène est terminée — tu finis #${entry.rank}`;
+      // rank === 0 → non classé : soit éliminé (drawdown atteint), soit aucun trade.
+      const isRanked = entry.rank >= 1;
+      const onPodium = isRanked && entry.rank <= PODIUM_SIZE;
+      let heading: string;
+      let closingLine: string;
+      let highlight: string;
+      if (onPodium) {
+        heading = `Félicitations, tu finis #${entry.rank} !`;
+        closingLine = 'Merci d\u2019avoir participé — le classement complet est disponible sur la plateforme.';
+        highlight = `#${entry.rank} / ${total} · ${formatPnl(entry.pnlUsd, entry.pnlPercent)}`;
+      } else if (isRanked) {
+        heading = `L'arène est terminée — tu finis #${entry.rank}`;
+        closingLine = 'Merci d\u2019avoir participé — le classement complet est disponible sur la plateforme.';
+        highlight = `#${entry.rank} / ${total} · ${formatPnl(entry.pnlUsd, entry.pnlPercent)}`;
+      } else if (entry.breached) {
+        heading = "L'arène est terminée";
+        closingLine = 'Ton compte a atteint la limite de drawdown : tu es hors classement pour cette arène. On se retrouve sur la prochaine !';
+        highlight = `Éliminé (drawdown) · ${formatPnl(entry.pnlUsd, entry.pnlPercent)}`;
+      } else {
+        heading = "L'arène est terminée";
+        closingLine = 'Tu n\u2019as pas passé de trade sur cette arène, tu n\u2019apparais donc pas au classement. À bientôt dans l\u2019arène !';
+        highlight = 'Non classé';
+      }
       await this.send(entry.email, `Résultats — ${title}`, {
         eyebrow: title,
         heading,
         bodyLines: [
           `Salut ${entry.name},`,
           `L'arène « ${title} » est terminée. Voici ton résultat final sur ${total} participant${total > 1 ? 's' : ''}.`,
-          'Merci d\u2019avoir participé — le classement complet est disponible sur la plateforme.',
+          closingLine,
         ],
-        highlight: `#${entry.rank} / ${total} · ${formatPnl(entry.pnlUsd, entry.pnlPercent)}`,
+        highlight,
         ctaLabel: 'Voir le classement',
         ctaUrl: arenaUrl(competitionId),
       }, 'arena_results');

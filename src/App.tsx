@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Navigate, Routes, Route, useLocation } from 'react-router-dom';
 import ExchangeTerminal from './components/ExchangeTerminal';
+import ExchangeTerminalRedesign from './components/ExchangeTerminalRedesign';
+import DemoTradingPage from './components/DemoTradingPage';
 import Dashboard from './components/Dashboard';
 import LiveAccessGate from './components/LiveAccessGate';
 import CompetitionPlatform from './components/CompetitionPlatform';
@@ -25,12 +27,17 @@ import { ADMIN_ENABLED, ADMIN_PATH, ADMIN_PATH_REGEX } from './lib/adminPath';
 import { trackPageView } from './lib/analytics';
 
 const ADMIN_SEG = ADMIN_PATH_REGEX ? `|${ADMIN_PATH_REGEX}` : '';
-const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
-const HIDE_FOOTER_PATTERN = new RegExp(`^/(trade|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
+const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
+const HIDE_FOOTER_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
 
 function TradeTerminalRoute() {
   const location = useLocation();
   return <ExchangeTerminal key={location.search} />;
+}
+
+function TradeTerminalRedesignRoute() {
+  const location = useLocation();
+  return <ExchangeTerminalRedesign key={location.search} />;
 }
 
 function AppRoutes() {
@@ -92,6 +99,8 @@ function AppRoutes() {
         <Route path="/live-dashboard" element={<Dashboard />} />
         <Route path="/trader" element={<LiveAccessGate />} />
         <Route path="/trade" element={<TradeTerminalRoute />} />
+        <Route path="/trade-v2" element={<TradeTerminalRedesignRoute />} />
+        <Route path="/trade-demo" element={<DemoTradingPage />} />
         <Route path="/compete" element={<CompetitionPlatform />} />
         <Route path="/compete/settings" element={<CompetitionSettings />} />
         <Route path="/compete/payouts" element={<CompetitionPayouts />} />

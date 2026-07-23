@@ -2938,6 +2938,7 @@ export class CompetitionManager {
     pnlUsd: number;
     pnlPercent: number;
     tradesCount: number;
+    breached: boolean;
   }> {
     const competition = this.competitions.get(competitionId);
     if (!competition) return [];
@@ -2951,6 +2952,8 @@ export class CompetitionManager {
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
+          breached: Boolean(entry.breachedAt),
+          breachedAt: entry.breachedAt ?? null,
         };
       }),
     );
