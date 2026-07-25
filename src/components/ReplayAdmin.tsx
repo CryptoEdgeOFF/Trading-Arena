@@ -65,6 +65,9 @@ interface DraftTrade {
   finalPnl: string;    // PnL final imposé (USD) — optionnel
 }
 
+/** Fuseau dans lequel les horaires saisis (datetime-local) sont interprétés. */
+type TimezoneMode = 'local' | 'utc';
+
 interface Draft {
   start: string;
   end: string;
@@ -72,6 +75,7 @@ interface Draft {
   teamA: string;
   teamB: string;
   balance: string;
+  timezone: TimezoneMode;
   players: DraftPlayer[];
   trades: DraftTrade[];
 }
@@ -83,6 +87,7 @@ const EMPTY_DRAFT: Draft = {
   teamA: 'Équipe A',
   teamB: 'Équipe B',
   balance: '10000',
+  timezone: 'local',
   players: [],
   trades: [],
 };
@@ -91,10 +96,19 @@ function newId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-/** datetime-local (heure de Paris affichée par le navigateur) → ms epoch. */
-function localToMs(value: string): number | null {
+/**
+ * datetime-local (« mur d'horloge » sans fuseau) → ms epoch.
+ *   - 'local' : interprété dans le fuseau du navigateur (heure de Paris).
+ *   - 'utc'   : interprété en UTC (les charts de la compète étaient en UTC).
+ */
+function localToMs(value: string, tz: TimezoneMode = 'local'): number | null {
   if (!value) return null;
-  const ms = new Date(value).getTime();
+  // Un input datetime-local renvoie « 2026-06-04T16:05:43 » (sans suffixe).
+  // En mode UTC on force l'interprétation en ajoutant « Z ».
+  const normalized = tz === 'utc' && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+    ? `${value}Z`
+    : value;
+  const ms = new Date(normalized).getTime();
   return Number.isFinite(ms) ? ms : null;
 }
 
@@ -312,8 +326,9 @@ export default function ReplayAdmin({
   /* --------------------------- Validation/config ------------------------ */
 
   const buildConfig = useCallback((): { config?: ReplayConfig; error?: string } => {
-    const startMs = localToMs(draft.start);
-    const endMs = localToMs(draft.end);
+    const tz = draft.timezone;
+    const startMs = localToMs(draft.start, tz);
+    const endMs = localToMs(draft.end, tz);
     if (!startMs || !endMs) return { error: 'Renseigne le début et la fin de la partie.' };
     if (endMs <= startMs) return { error: 'La fin doit être après le début.' };
     if (endMs - startMs > 24 * 60 * 60 * 1000) return { error: 'Fenêtre limitée à 24h.' };
@@ -346,13 +361,13 @@ export default function ReplayAdmin({
       if (!trade.playerId || !players.some((player) => player.id === trade.playerId)) {
         return { error: `${label} : joueur invalide.` };
       }
-      const entryTime = localToMs(trade.entry);
+      const entryTime = localToMs(trade.entry, tz);
       if (!entryTime) return { error: `${label} : heure d'entrée manquante.` };
       if (entryTime < startMs || entryTime > endMs) return { error: `${label} : entrée hors de la fenêtre du match.` };
       const size = Number(trade.size);
       if (!Number.isFinite(size) || size <= 0) return { error: `${label} : taille invalide.` };
       const leverage = Number(trade.leverage) || 1;
-      const exitTime = localToMs(trade.exit);
+      const exitTime = localToMs(trade.exit, tz);
       if (exitTime != null && exitTime <= entryTime) return { error: `${label} : la sortie doit être après l'entrée.` };
       const entryPrice = trade.entryPrice ? Number(trade.entryPrice) : null;
       const exitPrice = trade.exitPrice ? Number(trade.exitPrice) : null;
@@ -487,6 +502,24 @@ export default function ReplayAdmin({
               <option value="4v4">Équipes (4v4)</option>
             </select>
           </label>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="block text-xs font-semibold text-slate-300">Fuseau horaire des horaires saisis</span>
+            <span className="mt-0.5 block text-[11px] text-slate-500">
+              {draft.timezone === 'utc'
+                ? 'Les heures ci-dessus (début/fin + trades) sont lues en UTC — comme les charts de la compète.'
+                : 'Les heures ci-dessus sont lues dans le fuseau de cet ordinateur (heure locale).'}
+            </span>
+          </div>
+          <select
+            value={draft.timezone}
+            onChange={(event) => patch({ timezone: event.target.value as TimezoneMode })}
+            className={`${inputClass} w-full sm:w-56`}
+          >
+            <option value="local">Heure locale (ce PC)</option>
+            <option value="utc">UTC (charts de la compète)</option>
+          </select>
         </div>
         {draft.mode === '4v4' && (
           <div className="mt-4 grid gap-4 md:grid-cols-2">
