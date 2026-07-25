@@ -172,11 +172,15 @@ export default function Dashboard({ replay = false }: { replay?: boolean }) {
               <div className="relative h-full w-full rounded-[24px] border border-white/[0.06] bg-black/30 px-3 py-3 xl:px-5 xl:py-4 backdrop-blur-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]">
                 <div className="h-full w-full max-w-[1720px] mx-auto flex flex-col">
                   <div className="min-h-0 flex-1 pt-1 xl:pt-2">
+                    {/* La disposition suit le nombre réel de joueurs dans
+                        l'arène (le 4v4 en équipes reste piloté par le mode).
+                        Évite qu'un 1v1v1v1 avec seulement 3 joueurs présents
+                        affiche 2 en haut + 1 en bas au lieu de 3 côte à côte. */}
                     {eventMode === '4v4' && teams ? (
                       <Layout4v4 players={arenaPlayers} teams={teams} />
-                    ) : eventMode === '1v1v1v1' || (eventMode !== '4v4' && arenaPlayers.length >= 4) ? (
+                    ) : arenaPlayers.length >= 4 ? (
                       <Layout1v1v1v1 players={arenaPlayers} />
-                    ) : eventMode === '1v1v1' || arenaPlayers.length === 3 ? (
+                    ) : arenaPlayers.length === 3 ? (
                       <Layout1v1v1 players={arenaPlayers} />
                     ) : (
                       <Layout1v1 players={arenaPlayers} />
