@@ -95,6 +95,7 @@ function AppRoutes() {
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/payout-requests`} element={<PayoutRequestsAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/emails`} element={<EmailAdminPage />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay`} element={<ReplayViewer />} />}
+        {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay-standings`} element={<ReplayViewer standingsOnly />} />}
         <Route path="/feed-test" element={<FeedTest />} />
         {import.meta.env.DEV && <Route path="/replay-lb-preview" element={<ReplayLeaderboardPreview />} />}
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />

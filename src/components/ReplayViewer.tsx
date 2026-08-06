@@ -37,7 +37,7 @@ function formatDuration(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export default function ReplayViewer() {
+export default function ReplayViewer({ standingsOnly = false }: { standingsOnly?: boolean }) {
   const [pkg, setPkg] = useState<ReplayPackage | null>(null);
   const [loadError, setLoadError] = useState('');
   const [playing, setPlaying] = useState(false);
@@ -46,7 +46,6 @@ export default function ReplayViewer() {
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
   const [hoverControls, setHoverControls] = useState(false);
-  const [showLeaderboardWindow, setShowLeaderboardWindow] = useState(false);
 
   const updateState = useGameStore((s) => s.updateState);
   const applyStatePatch = useGameStore((s) => s.applyStatePatch);
@@ -296,11 +295,25 @@ export default function ReplayViewer() {
 
   return (
     <div className="relative">
-      <Dashboard replay />
+      {standingsOnly ? (
+        // Page dédiée « classement seul » : fond plein, rien derrière le verre.
+        <div className="fixed inset-0 bg-[#0a0305]">
+          <div
+            aria-hidden
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(80% 60% at 50% 0%, rgba(220,38,38,0.22), transparent 65%), linear-gradient(160deg, #140406 0%, #0a0305 55%, #1a0508 100%)',
+            }}
+          />
+        </div>
+      ) : (
+        <Dashboard replay />
+      )}
 
-      {showLeaderboardWindow && (
+      {standingsOnly && (
         <ReplayLeaderboardWindow
-          onClose={() => setShowLeaderboardWindow(false)}
+          onClose={() => undefined}
           remainingMs={pkg.config.endMs - simTime}
         />
       )}
@@ -389,17 +402,16 @@ export default function ReplayViewer() {
             <span className="text-red-300">-{formatDuration(pkg.config.endMs - simTime)}</span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowLeaderboardWindow((value) => !value)}
-            className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-              showLeaderboardWindow
-                ? 'border-red-500/50 bg-red-500/15 text-red-200'
-                : 'border-slate-700 text-slate-300 hover:border-red-500/40 hover:text-white'
-            }`}
-          >
-            {showLeaderboardWindow ? 'Masquer classement' : 'Classement grand écran'}
-          </button>
+          {!standingsOnly && (
+            <a
+              href={`${ADMIN_BASE}/replay-standings`}
+              target="_blank"
+              rel="noreferrer"
+              className="shrink-0 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 transition-colors hover:border-red-400 hover:bg-red-500/20 hover:text-white"
+            >
+              Classement grand écran ↗
+            </a>
+          )}
 
           <a
             href={ADMIN_BASE}
