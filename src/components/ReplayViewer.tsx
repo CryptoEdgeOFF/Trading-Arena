@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGameStore, type StatePatch, type Badge, type Trade } from '../stores/useGameStore';
 import Dashboard from './Dashboard';
+import ReplayLeaderboardWindow from './ReplayLeaderboardWindow';
 import {
   buildTeams,
   computeFrame,
@@ -45,6 +46,7 @@ export default function ReplayViewer() {
   const [started, setStarted] = useState(false);
   const [finished, setFinished] = useState(false);
   const [hoverControls, setHoverControls] = useState(false);
+  const [showLeaderboardWindow, setShowLeaderboardWindow] = useState(false);
 
   const updateState = useGameStore((s) => s.updateState);
   const applyStatePatch = useGameStore((s) => s.applyStatePatch);
@@ -296,6 +298,13 @@ export default function ReplayViewer() {
     <div className="relative">
       <Dashboard replay />
 
+      {showLeaderboardWindow && (
+        <ReplayLeaderboardWindow
+          onClose={() => setShowLeaderboardWindow(false)}
+          remainingMs={pkg.config.endMs - simTime}
+        />
+      )}
+
       {/* Onglet déclencheur (bas gauche) — visible seulement quand la barre est cachée */}
       <button
         type="button"
@@ -379,6 +388,18 @@ export default function ReplayViewer() {
             <span className="mx-1.5 text-zinc-600">·</span>
             <span className="text-red-300">-{formatDuration(pkg.config.endMs - simTime)}</span>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowLeaderboardWindow((value) => !value)}
+            className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+              showLeaderboardWindow
+                ? 'border-red-500/50 bg-red-500/15 text-red-200'
+                : 'border-slate-700 text-slate-300 hover:border-red-500/40 hover:text-white'
+            }`}
+          >
+            {showLeaderboardWindow ? 'Masquer classement' : 'Classement grand écran'}
+          </button>
 
           <a
             href={ADMIN_BASE}

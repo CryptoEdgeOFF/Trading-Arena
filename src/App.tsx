@@ -20,6 +20,7 @@ import PayoutRequestsAdmin from './components/PayoutRequestsAdmin';
 import EmailAdminPage from './components/EmailAdminPage';
 import AdminPanel from './components/AdminPanel';
 import ReplayViewer from './components/ReplayViewer';
+import ReplayLeaderboardPreview from './components/ReplayLeaderboardPreview';
 import FeedTest from './components/FeedTest';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
@@ -27,8 +28,8 @@ import { ADMIN_ENABLED, ADMIN_PATH, ADMIN_PATH_REGEX } from './lib/adminPath';
 import { trackPageView } from './lib/analytics';
 
 const ADMIN_SEG = ADMIN_PATH_REGEX ? `|${ADMIN_PATH_REGEX}` : '';
-const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
-const HIDE_FOOTER_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test${ADMIN_SEG})(/|$)`);
+const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
+const HIDE_FOOTER_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
 
 function TradeTerminalRoute() {
   const location = useLocation();
@@ -95,6 +96,7 @@ function AppRoutes() {
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/emails`} element={<EmailAdminPage />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay`} element={<ReplayViewer />} />}
         <Route path="/feed-test" element={<FeedTest />} />
+        {import.meta.env.DEV && <Route path="/replay-lb-preview" element={<ReplayLeaderboardPreview />} />}
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />
         <Route path="/live-dashboard" element={<Dashboard />} />
         <Route path="/trader" element={<LiveAccessGate />} />
