@@ -1,0 +1,100 @@
+.mobile-terminal { display: grid; gap: 12px; margin: -30px -20px 0; padding-bottom: 12px; }
+.terminal-head { padding: 0 20px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.terminal-head > div:first-child { display: grid; gap: 4px; }
+.terminal-head span { color: var(--red-bright); font-size: 8px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.terminal-head strong { font: 700 17px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.terminal-head__right { display: flex; align-items: center; gap: 11px; }
+.terminal-head__right > button { min-height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.03); color: #77727b; font-size: 8px; font-weight: 700; text-transform: uppercase; }
+.terminal-rank { display: grid; justify-items: end; gap: 3px; }
+.terminal-rank small { color: #716c75; font-size: 7px; letter-spacing: .14em; }
+.terminal-rank strong { font-size: 24px; color: #fff; }
+
+.terminal-balance { margin: 0 20px; padding: 15px 16px; display: flex; justify-content: space-between; border: 1px solid var(--line); border-radius: 11px; background: linear-gradient(120deg, rgba(255,255,255,.055), rgba(255,255,255,.015)); }
+.terminal-balance > div { display: grid; gap: 4px; }
+.terminal-balance > div:last-child { justify-items: end; }
+.terminal-balance small { color: #77727b; font-size: 8px; font-weight: 700; letter-spacing: .12em; }
+.terminal-balance strong { font: 700 22px/1 'Barlow Condensed', sans-serif; }
+.terminal-balance strong i { color: #77727b; font-size: 10px; font-style: normal; }
+.terminal-balance span { font-size: 9px; font-weight: 700; }
+.is-profit { color: #38df8a !important; }
+.is-loss { color: #ff5066 !important; }
+
+.pair-strip { padding: 0 20px 4px; display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; }
+.pair-strip::-webkit-scrollbar { display: none; }
+.pair-strip button { flex: 0 0 auto; min-width: 76px; min-height: 50px; padding: 8px 11px; display: grid; gap: 3px; text-align: left; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); color: #aaa5ad; }
+.pair-strip button.is-active { border-color: rgba(255,80,102,.55); background: rgba(238,36,60,.09); color: #fff; }
+.pair-strip strong { font: 700 13px 'Barlow Condensed', sans-serif; }
+.pair-strip small { font-size: 8px; font-weight: 700; }
+
+.quote-card { position: relative; min-height: 220px; margin: 0 20px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(14,13,16,.82); }
+.quote-card::before { content: ''; position: absolute; inset: 0; opacity: .3; background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px); background-size: 100% 36px, 50px 100%; }
+.quote-card__heading { position: relative; z-index: 2; padding: 17px; display: flex; justify-content: space-between; }
+.quote-card__heading > div { display: grid; gap: 3px; }
+.quote-card__heading > div:last-child { justify-items: end; }
+.quote-card__heading small { color: #716c75; font-size: 8px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.quote-card__heading h2 { margin: 0; font: 700 23px/1 'Barlow Condensed', sans-serif; }
+.quote-card__heading strong { font: 700 21px/1 'Barlow Condensed', sans-serif; }
+.quote-card__heading span { font-size: 9px; font-weight: 700; }
+.trade-chart { position: absolute; left: 0; right: 0; bottom: 31px; width: 100%; height: 120px; overflow: visible; }
+.tradingview-card { height: 455px; min-height: 455px; background: #0b0a0d; }
+.tradingview-card::before { display: none; }
+.tradingview-mobile-chart { width: 100%; height: calc(100% - 34px); background: #0b0a0d; }
+.tradingview-mobile-chart iframe { display: block; width: 100% !important; height: 100% !important; }
+.quote-bidask { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; height: 34px; padding: 0 15px; display: flex; align-items: center; gap: 20px; border-top: 1px solid var(--line); background: rgba(7,7,9,.82); }
+.quote-bidask span { color: #6f6a73; font-size: 7px; font-weight: 700; letter-spacing: .1em; }
+.quote-bidask strong { margin-left: 5px; color: #cfcbd1; font-size: 9px; }
+
+.order-ticket { margin: 0 20px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); }
+.ticket-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.ticket-toggle button { height: 45px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.025); color: #77727b; font: 700 13px 'Barlow Condensed', sans-serif; letter-spacing: .05em; }
+.ticket-toggle button.is-buy { border-color: rgba(56,223,138,.45); background: rgba(56,223,138,.12); color: #47e496; }
+.ticket-toggle button.is-sell { border-color: rgba(255,80,102,.48); background: rgba(255,80,102,.12); color: #ff667a; }
+.order-type { margin: 14px 0; display: flex; gap: 20px; border-bottom: 1px solid var(--line); }
+.order-type button { min-height: 36px; padding: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #716c75; font-size: 10px; font-weight: 700; }
+.order-type button.is-active { border-bottom-color: var(--red-bright); color: #fff; }
+.ticket-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ticket-grid label { display: grid; gap: 6px; color: #77727b; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+.ticket-grid input { min-width: 0; width: 100%; height: 44px; padding: 0 11px; border: 1px solid var(--line); border-radius: 6px; outline: none; background: rgba(0,0,0,.18); color: #fff; font: 600 14px 'Manrope', sans-serif; }
+.ticket-grid input:focus { border-color: rgba(255,80,102,.55); }
+.leverage-row { margin-top: 15px; display: grid; gap: 9px; }
+.leverage-row span { display: flex; justify-content: space-between; color: #77727b; font-size: 9px; text-transform: uppercase; }
+.leverage-row strong { color: #fff; font-size: 12px; }
+.leverage-row input { width: 100%; accent-color: var(--red-bright); }
+.order-summary { margin-top: 12px; padding: 11px 0; display: flex; justify-content: space-between; border-block: 1px solid var(--line); }
+.order-summary span { display: grid; gap: 4px; color: #716c75; font-size: 8px; text-transform: uppercase; letter-spacing: .06em; }
+.order-summary span:last-child { text-align: right; }
+.order-summary strong { color: #d8d4da; font-size: 10px; }
+.place-order { width: 100%; min-height: 50px; margin-top: 14px; border: 0; border-radius: 7px; color: #fff; font: 700 14px 'Barlow Condensed', sans-serif; letter-spacing: .06em; }
+.place-order.buy { background: #17a861; box-shadow: 0 10px 28px rgba(23,168,97,.14); }
+.place-order.sell { background: #e2354b; box-shadow: 0 10px 28px rgba(226,53,75,.16); }
+.place-order:disabled { opacity: .35; box-shadow: none; }
+.terminal-error, .terminal-warning { margin-top: 11px; padding: 10px; border: 1px solid rgba(255,80,102,.25); border-radius: 6px; background: rgba(255,80,102,.07); color: #ff8b9a; font-size: 9px; line-height: 1.5; }
+.terminal-warning { border-color: rgba(255,186,65,.24); background: rgba(255,186,65,.06); color: #eab85f; }
+
+.portfolio-panel { margin: 0 20px; padding-bottom: 10px; }
+.portfolio-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); }
+.portfolio-tabs button { min-height: 41px; padding: 0; display: flex; align-items: center; gap: 7px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #716c75; font-size: 10px; font-weight: 700; }
+.portfolio-tabs button.is-active { border-bottom-color: var(--red-bright); color: #fff; }
+.portfolio-tabs i { min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; border-radius: 99px; background: rgba(255,255,255,.07); font-size: 8px; font-style: normal; }
+.position-row { min-height: 90px; padding: 14px 2px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
+.position-row > div { display: grid; gap: 4px; }
+.position-row > div:last-child { justify-items: end; }
+.position-row span { font-size: 8px; font-weight: 700; }
+.position-row strong { font: 700 15px 'Barlow Condensed', sans-serif; }
+.position-row small { color: #716c75; font-size: 8px; }
+.position-row button { min-width: 62px; min-height: 32px; margin-top: 4px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.035); color: #bbb6be; font-size: 9px; }
+.portfolio-empty { min-height: 120px; display: grid; place-items: center; color: #69646d; font-size: 10px; }
+
+.terminal-loader, .terminal-gate { min-height: 520px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.terminal-loader i { width: 30px; height: 30px; margin-bottom: 15px; border: 2px solid #2d292f; border-top-color: var(--red-bright); border-radius: 50%; animation: terminal-spin .8s linear infinite; }
+.terminal-loader span { color: #7c7680; font-size: 10px; }
+@keyframes terminal-spin { to { transform: rotate(360deg); } }
+.terminal-gate { padding: 30px 20px; }
+.terminal-gate > span { color: var(--red-bright); font-size: 9px; font-weight: 700; letter-spacing: .18em; }
+.terminal-gate h2 { margin: 8px 0 0; font: 800 46px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.terminal-gate > p { max-width: 330px; margin: 12px 0 25px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.terminal-gate label { width: 100%; display: grid; gap: 8px; text-align: left; color: #817b84; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.terminal-gate select { width: 100%; height: 52px; padding: 0 13px; border: 1px solid var(--line); border-radius: 7px; background: #141317; color: #fff; font-size: 14px; }
+.terminal-gate > button { width: 100%; min-height: 52px; margin-top: 13px; border: 0; border-radius: 7px; background: var(--red); color: #fff; font-weight: 700; }
+.terminal-gate > button:disabled { opacity: .4; }
+.terminal-empty { padding: 18px; border: 1px solid var(--line); border-radius: 8px; color: #77717b; font-size: 11px; }

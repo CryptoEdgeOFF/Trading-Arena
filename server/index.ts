@@ -285,9 +285,10 @@ if (!ADMIN_CODE) {
 }
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const MOBILE_STAGING_TEST_MODE = process.env.MOBILE_STAGING_TEST_MODE === 'true';
 // Le compte de test (ARTEMTEST987) bypasse l'OTP : il ne doit JAMAIS être
 // actif en production sauf activation explicite via ALLOW_TEST_LOGIN=true.
-const ALLOW_TEST_LOGIN = process.env.ALLOW_TEST_LOGIN === 'true' || !IS_PRODUCTION;
+const ALLOW_TEST_LOGIN = MOBILE_STAGING_TEST_MODE || process.env.ALLOW_TEST_LOGIN === 'true' || !IS_PRODUCTION;
 // Les codes OTP de secours (devCode/devSmsCode) ne sont renvoyés au client
 // qu'en dehors de la production.
 const EXPOSE_DEV_OTP = !IS_PRODUCTION;
@@ -2028,7 +2029,39 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
   try {
     await refreshCompetitionStoreIfServerless();
     const result = await competitionManager.loginTestAccount(String(username || ''));
-    res.json(result);
+    let testCompetitionId: string | null = null;
+    if (MOBILE_STAGING_TEST_MODE) {
+      const title = 'MOBILE STAGING - TRADING TEST';
+      let competition = competitionManager
+        .listAdminCompetitions()
+        .find((item) => item.title === title && item.status === 'live');
+      if (!competition) {
+        const now = Date.now();
+        competition = {
+          ...competitionManager.createCompetition({
+            title,
+            code: '',
+            executionMode: 'paper',
+            startAt: now - 5 * 60_000,
+            endAt: now + 30 * 24 * 60 * 60_000,
+            registrationEndsAt: now - 5 * 60_000,
+            dailyDrawdownPercent: 10,
+            isPublic: true,
+          }),
+          status: 'live',
+          participants: 0,
+          entriesDetailed: [],
+        };
+      }
+      testCompetitionId = competition.id;
+      try {
+        competitionManager.joinCompetition(result.user.id, '', undefined, competition.id);
+      } catch (joinError: any) {
+        if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
+      }
+      await competitionManager.persist();
+    }
+    res.json({ ...result, testCompetitionId });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Connexion test impossible' });
   }
