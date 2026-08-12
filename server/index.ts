@@ -746,8 +746,9 @@ function buildPaperUpdatePayload(playerId: string, competitionId: string | null)
   let canTrade = manager.canTradeLiveEvent();
   if (competitionId) {
     const status = competitionManager.getCompetitionStatus(competitionId);
-    canTrade = status === 'live';
-    competitionPayload = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id) || { id: competitionId };
+    const context = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id);
+    canTrade = status === 'live' && !context?.breached;
+    competitionPayload = context || { id: competitionId };
   }
 
   return {
@@ -1621,7 +1622,12 @@ app.get('/api/paper/candles', async (req, res) => {
       // Crypto : store Postgres persistant (cryptoCandlesStore) avec backfill
       // à la demande au scroll. L'historique survit aux redémarrages et les
       // scrolls suivants sont servis depuis la DB sans retaper l'upstream.
-      candles = await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
+      // Comme le datafeed web n'envoie pas `from` au premier rendu, on sert
+      // immédiatement son cache rapide. Le scroll historique (avec `from`)
+      // continue d'utiliser le store Postgres profond.
+      candles = candleOpts.from == null
+        ? await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts)
+        : await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
       source = 'binance';
       if (candles.length === 0) {
         // Repli : si le store n'a encore rien (ex. backfill upstream KO),

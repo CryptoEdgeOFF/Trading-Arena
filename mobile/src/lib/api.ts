@@ -166,9 +166,13 @@ export type Position = {
   pnl: number
   leverage: number
   margin: number
+  feesPaid?: number
+  openedAt?: number
   liquidationPrice: number | null
   stopLoss: number | null
   takeProfit: number | null
+  stopLossSize?: number | null
+  takeProfitSize?: number | null
 }
 
 export type PaperOrder = {
@@ -179,9 +183,25 @@ export type PaperOrder = {
   orderType: 'market' | 'limit'
   status: 'open' | 'filled' | 'cancelled'
   limitPrice: number | null
+  stopLoss?: number | null
+  takeProfit?: number | null
   leverage: number
   marginReserved: number
+  feeEstimate?: number
   createdAt: number
+}
+
+export type PaperTrade = {
+  id: string
+  pair: string
+  side: 'long' | 'short'
+  size: number
+  price: number
+  fee: number
+  leverage: number
+  pnl: number
+  time: number
+  action: 'open' | 'close' | 'update'
 }
 
 export type PaperPlayer = {
@@ -193,6 +213,8 @@ export type PaperPlayer = {
   pnl: number
   pnlPercent: number
   tradeCount: number
+  feesPaid?: number
+  trades?: PaperTrade[]
   openPositions: Position[]
   openOrders: PaperOrder[]
   rank: number
@@ -388,6 +410,36 @@ export function cancelPaperOrder(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ orderId }),
+  }, paperToken)
+}
+
+export function updatePaperRisk(
+  paperToken: string,
+  input: {
+    positionId?: string
+    orderId?: string
+    stopLoss: number | null
+    takeProfit: number | null
+    stopLossSize?: number | null
+    takeProfitSize?: number | null
+  },
+): Promise<{ ok: true; alreadyClosed?: boolean }> {
+  return apiFetch('/api/paper/risk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }, paperToken)
+}
+
+export function updatePaperOrderLimit(
+  paperToken: string,
+  orderId: string,
+  limitPrice: number,
+): Promise<{ ok: true; alreadyClosed?: boolean }> {
+  return apiFetch('/api/paper/order/limit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId, limitPrice }),
   }, paperToken)
 }
 

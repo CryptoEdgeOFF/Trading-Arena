@@ -8,16 +8,20 @@ import {
   getPaperMeta,
   getPaperState,
   placePaperOrder,
+  updatePaperOrderLimit,
+  updatePaperRisk,
   type MyCompetition,
+  type PaperOrder,
   type PaperMeta,
   type PaperState,
+  type Position,
 } from '../lib/api'
 import {
   clearPaperSessionToken,
   readPaperSessionToken,
   writePaperSessionToken,
 } from '../lib/session'
-import { TradingViewChart } from './TradingViewChart'
+import { TradingViewChart, type MobileOrderPreview } from './TradingViewChart'
 import './TradingTerminal.css'
 
 const CONTRACT_SIZE: Record<string, number> = {
@@ -58,6 +62,22 @@ function positionPnl(pair: string, side: 'long' | 'short', size: number, entry: 
   return pair === 'USD/JPY' || pair === 'USD/CHF' ? raw / Math.max(mark, 1e-9) : raw
 }
 
+function riskValidationError(
+  side: 'long' | 'short',
+  referencePrice: number,
+  nextStopLoss: number | null,
+  nextTakeProfit: number | null,
+) {
+  if (!Number.isFinite(referencePrice) || referencePrice <= 0) return ''
+  if (nextStopLoss != null && (!Number.isFinite(nextStopLoss) || nextStopLoss <= 0)) return 'Stop loss invalide'
+  if (nextTakeProfit != null && (!Number.isFinite(nextTakeProfit) || nextTakeProfit <= 0)) return 'Take profit invalide'
+  if (side === 'long' && nextStopLoss != null && nextStopLoss >= referencePrice) return 'Le stop loss doit être sous le prix actuel'
+  if (side === 'long' && nextTakeProfit != null && nextTakeProfit <= referencePrice) return 'Le take profit doit être au-dessus du prix actuel'
+  if (side === 'short' && nextStopLoss != null && nextStopLoss <= referencePrice) return 'Le stop loss doit être au-dessus du prix actuel'
+  if (side === 'short' && nextTakeProfit != null && nextTakeProfit >= referencePrice) return 'Le take profit doit être sous le prix actuel'
+  return ''
+}
+
 export function TradingTerminal({
   accountToken,
   competitions,
@@ -77,7 +97,20 @@ export function TradingTerminal({
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
   const [leverage, setLeverage] = useState(1)
-  const [panel, setPanel] = useState<'positions' | 'orders'>('positions')
+  const [panel, setPanel] = useState<'positions' | 'orders' | 'history'>('positions')
+  const [riskEditor, setRiskEditor] = useState<{
+    positionId: string
+    stopLoss: string
+    takeProfit: string
+    stopLossPercent: number
+    takeProfitPercent: number
+  } | null>(null)
+  const [orderEditor, setOrderEditor] = useState<{
+    orderId: string
+    limitPrice: string
+    stopLoss: string
+    takeProfit: string
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -205,9 +238,28 @@ export function TradingTerminal({
   const referencePrice = orderType === 'limit' ? Number(limitPrice) : ticker?.markPrice || 0
   const notional = engineSize * referencePrice
   const marginEstimate = leverage > 0 ? notional / leverage : 0
+  const orderPreview: MobileOrderPreview | null = selectedPair && engineSize > 0 && referencePrice > 0
+    ? {
+        pair: selectedPair,
+        side,
+        orderType,
+        entryPrice: referencePrice,
+        size: engineSize,
+        stopLoss: stopLoss && Number(stopLoss) > 0 ? Number(stopLoss) : null,
+        takeProfit: takeProfit && Number(takeProfit) > 0 ? Number(takeProfit) : null,
+      }
+    : null
   const activeCompetition = competitionSummary(state?.competition ?? null)
   const accountBreached = isBreached(state?.competition ?? null)
   const canTradeNow = Boolean(state?.canTrade) && !accountBreached && ticker?.marketOpen !== false
+
+  function applyAccountPercent(percent: number) {
+    if (!state || !referencePrice || referencePrice <= 0 || leverage <= 0) return
+    const targetMargin = state.player.availableMargin * (percent / 100)
+    const nextEngineSize = (targetMargin * leverage) / referencePrice
+    const nextInputSize = nextEngineSize / contract
+    setSize(nextInputSize.toFixed(contract > 1 ? 2 : 5))
+  }
 
   async function openCompetition() {
     if (!competitionId) return
@@ -227,6 +279,13 @@ export function TradingTerminal({
 
   async function submitOrder() {
     if (!paperToken || !selectedPair || engineSize <= 0) return
+    const nextStopLoss = stopLoss ? Number(stopLoss) : null
+    const nextTakeProfit = takeProfit ? Number(takeProfit) : null
+    const validationError = riskValidationError(side, referencePrice, nextStopLoss, nextTakeProfit)
+    if (validationError) {
+      setError(validationError)
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -237,8 +296,8 @@ export function TradingTerminal({
         orderType,
         limitPrice: orderType === 'limit' ? Number(limitPrice) : null,
         leverage,
-        stopLoss: stopLoss ? Number(stopLoss) : null,
-        takeProfit: takeProfit ? Number(takeProfit) : null,
+        stopLoss: nextStopLoss,
+        takeProfit: nextTakeProfit,
       })
       setSize('')
       if (orderType === 'limit') setLimitPrice('')
@@ -251,17 +310,21 @@ export function TradingTerminal({
     }
   }
 
-  async function closePosition(positionId: string) {
+  async function closePosition(positionId: string, partialSize?: number) {
     if (!paperToken) return
     setBusy(true)
     setError('')
-    pendingClosedPositions.current.set(positionId, Date.now() + 4000)
+    const position = state?.player.openPositions.find((item) => item.id === positionId)
+    const isPartial = Boolean(position && partialSize != null && partialSize < position.size)
+    if (!isPartial) pendingClosedPositions.current.set(positionId, Date.now() + 4000)
     try {
-      await closePaperPosition(paperToken, positionId)
-      setState((current) => current ? {
-        ...current,
-        player: { ...current.player, openPositions: current.player.openPositions.filter((item) => item.id !== positionId) },
-      } : current)
+      await closePaperPosition(paperToken, positionId, partialSize)
+      if (!isPartial) {
+        setState((current) => current ? {
+          ...current,
+          player: { ...current.player, openPositions: current.player.openPositions.filter((item) => item.id !== positionId) },
+        } : current)
+      }
       await refresh(paperToken)
     } catch (nextError) {
       pendingClosedPositions.current.delete(positionId)
@@ -269,6 +332,136 @@ export function TradingTerminal({
     } finally {
       setBusy(false)
     }
+  }
+
+  async function updatePositionRisk(
+    positionId: string,
+    nextStopLoss: number | null,
+    nextTakeProfit: number | null,
+    sizes?: { stopLossSize?: number | null; takeProfitSize?: number | null },
+  ) {
+    if (!paperToken) return false
+    const position = state?.player.openPositions.find((item) => item.id === positionId)
+    if (position) {
+      const validationError = riskValidationError(position.side, position.markPrice, nextStopLoss, nextTakeProfit)
+      if (validationError) {
+        setError(validationError)
+        return false
+      }
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await updatePaperRisk(paperToken, {
+        positionId,
+        stopLoss: nextStopLoss,
+        takeProfit: nextTakeProfit,
+        ...sizes,
+      })
+      await refresh(paperToken)
+      return true
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Modification SL/TP refusée')
+      await refresh(paperToken).catch(() => undefined)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function updateOrderRisk(
+    orderId: string,
+    nextStopLoss: number | null,
+    nextTakeProfit: number | null,
+    referencePriceOverride?: number,
+  ) {
+    if (!paperToken) return false
+    const order = state?.player.openOrders.find((item) => item.id === orderId)
+    const riskReference = referencePriceOverride || order?.limitPrice
+    if (order && riskReference) {
+      const validationError = riskValidationError(order.side, riskReference, nextStopLoss, nextTakeProfit)
+      if (validationError) {
+        setError(validationError)
+        return false
+      }
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await updatePaperRisk(paperToken, {
+        orderId,
+        stopLoss: nextStopLoss,
+        takeProfit: nextTakeProfit,
+      })
+      await refresh(paperToken)
+      return true
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Modification SL/TP refusée')
+      await refresh(paperToken).catch(() => undefined)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function updateOrderLimit(orderId: string, nextPrice: number) {
+    if (!paperToken || !Number.isFinite(nextPrice) || nextPrice <= 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await updatePaperOrderLimit(paperToken, orderId, nextPrice)
+      await refresh(paperToken)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Modification du prix refusée')
+      await refresh(paperToken).catch(() => undefined)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function editPosition(position: Position) {
+    setRiskEditor({
+      positionId: position.id,
+      stopLoss: position.stopLoss == null ? '' : String(position.stopLoss),
+      takeProfit: position.takeProfit == null ? '' : String(position.takeProfit),
+      stopLossPercent: position.stopLossSize ? Math.round((position.stopLossSize / position.size) * 100) : 100,
+      takeProfitPercent: position.takeProfitSize ? Math.round((position.takeProfitSize / position.size) * 100) : 100,
+    })
+  }
+
+  async function savePositionRisk(position: Position) {
+    if (!riskEditor || riskEditor.positionId !== position.id) return
+    const nextStopLoss = riskEditor.stopLoss ? Number(riskEditor.stopLoss) : null
+    const nextTakeProfit = riskEditor.takeProfit ? Number(riskEditor.takeProfit) : null
+    const saved = await updatePositionRisk(position.id, nextStopLoss, nextTakeProfit, {
+      stopLossSize: nextStopLoss == null ? null : position.size * (riskEditor.stopLossPercent / 100),
+      takeProfitSize: nextTakeProfit == null ? null : position.size * (riskEditor.takeProfitPercent / 100),
+    })
+    if (saved) setRiskEditor(null)
+  }
+
+  function editOrder(order: PaperOrder) {
+    setOrderEditor({
+      orderId: order.id,
+      limitPrice: order.limitPrice == null ? '' : String(order.limitPrice),
+      stopLoss: order.stopLoss == null ? '' : String(order.stopLoss),
+      takeProfit: order.takeProfit == null ? '' : String(order.takeProfit),
+    })
+  }
+
+  async function saveOrder(order: PaperOrder) {
+    if (!orderEditor || orderEditor.orderId !== order.id) return
+    const nextLimit = Number(orderEditor.limitPrice)
+    if (order.limitPrice != null && Number.isFinite(nextLimit) && nextLimit > 0 && nextLimit !== order.limitPrice) {
+      await updateOrderLimit(order.id, nextLimit)
+    }
+    const saved = await updateOrderRisk(
+      order.id,
+      orderEditor.stopLoss ? Number(orderEditor.stopLoss) : null,
+      orderEditor.takeProfit ? Number(orderEditor.takeProfit) : null,
+      nextLimit,
+    )
+    if (saved) setOrderEditor(null)
   }
 
   async function cancelOrder(orderId: string) {
@@ -339,6 +532,17 @@ export function TradingTerminal({
         <div className={state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}><small>PNL</small><strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)} $</strong><span>{state.player.pnlPercent.toFixed(2)}%</span></div>
       </section>
 
+      <label className="asset-selector">
+        <span>ACTIF À TRADER</span>
+        <select value={selectedPair} onChange={(event) => setSelectedPair(event.target.value)}>
+          {(state.pairs.length ? state.pairs : Object.keys(state.market)).map((pairName) => (
+            <option key={pairName} value={pairName}>
+              {meta?.marketMetadata?.[pairName]?.name || pairName} · {price(state.market[pairName]?.markPrice)}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <div className="pair-strip">
         {(state.pairs.length ? state.pairs : Object.keys(state.market)).map((pairName) => (
           <button key={pairName} type="button" className={pairName === selectedPair ? 'is-active' : ''}
@@ -357,7 +561,30 @@ export function TradingTerminal({
           pairs={state.pairs}
           market={state.market}
           metadata={meta?.marketMetadata}
+          positions={state.player.openPositions}
+          orders={state.player.openOrders}
+          orderPreview={orderPreview}
           onPairChange={setSelectedPair}
+          onUpdatePositionRisk={(positionId, nextStopLoss, nextTakeProfit) => {
+            void updatePositionRisk(positionId, nextStopLoss, nextTakeProfit)
+          }}
+          onUpdateOrderRisk={(orderId, nextStopLoss, nextTakeProfit) => {
+            void updateOrderRisk(orderId, nextStopLoss, nextTakeProfit)
+          }}
+          onUpdateOrderLimit={(orderId, nextPrice) => {
+            void updateOrderLimit(orderId, nextPrice)
+          }}
+          onCancelOrder={(orderId) => {
+            void cancelOrder(orderId)
+          }}
+          onClosePosition={(positionId) => {
+            void closePosition(positionId)
+          }}
+          onPreviewEntryChange={(nextPrice) => setLimitPrice(String(nextPrice))}
+          onPreviewRiskChange={(patch) => {
+            if ('stopLoss' in patch) setStopLoss(patch.stopLoss == null ? '' : String(patch.stopLoss))
+            if ('takeProfit' in patch) setTakeProfit(patch.takeProfit == null ? '' : String(patch.takeProfit))
+          }}
         />
         <div className="quote-bidask"><span>BID <strong>{price(ticker?.bidPrice)}</strong></span><span>ASK <strong>{price(ticker?.askPrice)}</strong></span></div>
       </section>
@@ -379,8 +606,19 @@ export function TradingTerminal({
           <label>Stop loss<input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} inputMode="decimal" placeholder="Optionnel" /></label>
           <label>Take profit<input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} inputMode="decimal" placeholder="Optionnel" /></label>
         </div>
+        <div className="size-presets">
+          <span>Utiliser la marge disponible</span>
+          {[25, 50, 75, 100].map((percent) => (
+            <button key={percent} type="button" onClick={() => applyAccountPercent(percent)}>{percent}%</button>
+          ))}
+        </div>
         <div className="leverage-row"><span>Levier <strong>×{leverage}</strong></span><input type="range" min={meta?.fees.minLeverage || 1} max={meta?.fees.maxLeverage || 20} value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} /></div>
-        <div className="order-summary"><span>Notionnel <strong>{money(notional)} $</strong></span><span>Marge estimée <strong>{money(marginEstimate)} $</strong></span></div>
+        <div className="order-summary">
+          <span>Notionnel <strong>{money(notional)} $</strong></span>
+          <span>Marge estimée <strong>{money(marginEstimate)} $</strong></span>
+          <span>Disponible <strong>{money(state.player.availableMargin)} $</strong></span>
+          <span>Utilisée <strong>{money(state.player.usedMargin)} $</strong></span>
+        </div>
         {error && <div className="terminal-error">{error}</div>}
         {!canTradeNow && (
           <div className="terminal-warning">
@@ -402,23 +640,115 @@ export function TradingTerminal({
         <div className="portfolio-tabs">
           <button type="button" className={panel === 'positions' ? 'is-active' : ''} onClick={() => setPanel('positions')}>Positions <i>{state.player.openPositions.length}</i></button>
           <button type="button" className={panel === 'orders' ? 'is-active' : ''} onClick={() => setPanel('orders')}>Ordres <i>{state.player.openOrders.length}</i></button>
+          <button type="button" className={panel === 'history' ? 'is-active' : ''} onClick={() => setPanel('history')}>Historique <i>{state.player.trades?.length || 0}</i></button>
         </div>
         <AnimatePresence mode="wait">
           <motion.div key={panel} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             {panel === 'positions' ? (
               state.player.openPositions.length ? state.player.openPositions.map((position) => (
-                <article className="position-row" key={position.id}>
-                  <div><span className={position.side === 'long' ? 'is-profit' : 'is-loss'}>{position.side === 'long' ? 'LONG' : 'SHORT'} · ×{position.leverage}</span><strong>{position.pair}</strong><small>{displaySize(position.pair, position.size)} · entrée {price(position.entryPrice)}</small></div>
-                  <div><strong className={position.pnl >= 0 ? 'is-profit' : 'is-loss'}>{position.pnl >= 0 ? '+' : ''}{money(position.pnl)} $</strong><small>{price(position.markPrice)}</small><button type="button" disabled={busy} onClick={() => void closePosition(position.id)}>Fermer</button></div>
+                <article className="position-card" key={position.id}>
+                  <div className="position-row">
+                    <button className="position-main" type="button" onClick={() => setSelectedPair(position.pair)}>
+                      <span className={position.side === 'long' ? 'is-profit' : 'is-loss'}>{position.side === 'long' ? 'LONG' : 'SHORT'} · ×{position.leverage}</span>
+                      <strong>{position.pair}</strong>
+                      <small>{displaySize(position.pair, position.size)} · PE {price(position.entryPrice)}</small>
+                      <small>SL {price(position.stopLoss)} · TP {price(position.takeProfit)}</small>
+                      <small>Marge {money(position.margin)} $ · Liquidation {price(position.liquidationPrice)} · Frais {money(position.feesPaid || 0)} $</small>
+                    </button>
+                    <div>
+                      <strong className={position.pnl >= 0 ? 'is-profit' : 'is-loss'}>{position.pnl >= 0 ? '+' : ''}{money(position.pnl)} $</strong>
+                      <small>{price(position.markPrice)}</small>
+                      <button type="button" disabled={busy} onClick={() => {
+                        if (riskEditor?.positionId === position.id) setRiskEditor(null)
+                        else editPosition(position)
+                      }}>
+                        {riskEditor?.positionId === position.id ? 'Masquer' : 'SL / TP'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="partial-actions">
+                    <span>CLÔTURE PARTIELLE</span>
+                    {[25, 50, 75, 100].map((percent) => (
+                      <button key={percent} type="button" disabled={busy} onClick={() => {
+                        const partialSize = percent === 100 ? undefined : position.size * (percent / 100)
+                        void closePosition(position.id, partialSize)
+                      }}>{percent}%</button>
+                    ))}
+                  </div>
+                  {riskEditor?.positionId === position.id && (
+                    <div className="risk-editor">
+                      <label>Stop loss
+                        <input inputMode="decimal" value={riskEditor.stopLoss} placeholder="Désactivé"
+                          onChange={(event) => setRiskEditor({ ...riskEditor, stopLoss: event.target.value })} />
+                      </label>
+                      <label>Quantité SL
+                        <select value={riskEditor.stopLossPercent}
+                          onChange={(event) => setRiskEditor({ ...riskEditor, stopLossPercent: Number(event.target.value) })}>
+                          {[25, 50, 75, 100].map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+                        </select>
+                      </label>
+                      <label>Take profit
+                        <input inputMode="decimal" value={riskEditor.takeProfit} placeholder="Désactivé"
+                          onChange={(event) => setRiskEditor({ ...riskEditor, takeProfit: event.target.value })} />
+                      </label>
+                      <label>Quantité TP
+                        <select value={riskEditor.takeProfitPercent}
+                          onChange={(event) => setRiskEditor({ ...riskEditor, takeProfitPercent: Number(event.target.value) })}>
+                          {[25, 50, 75, 100].map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+                        </select>
+                      </label>
+                      <button type="button" disabled={busy} onClick={() => void savePositionRisk(position)}>Enregistrer</button>
+                      <button className="danger" type="button" disabled={busy} onClick={() => void closePosition(position.id)}>Tout fermer</button>
+                    </div>
+                  )}
                 </article>
               )) : <div className="portfolio-empty">Aucune position ouverte</div>
-            ) : (
+            ) : panel === 'orders' ? (
               state.player.openOrders.length ? state.player.openOrders.map((order) => (
-                <article className="position-row" key={order.id}>
-                  <div><span className={order.side === 'long' ? 'is-profit' : 'is-loss'}>{order.side === 'long' ? 'ACHAT' : 'VENTE'} LIMITE</span><strong>{order.pair}</strong><small>{displaySize(order.pair, order.size)} · ×{order.leverage}</small></div>
-                  <div><strong>{price(order.limitPrice)}</strong><button type="button" disabled={busy} onClick={() => void cancelOrder(order.id)}>Annuler</button></div>
+                <article className="position-card" key={order.id}>
+                  <div className="position-row">
+                    <button className="position-main" type="button" onClick={() => setSelectedPair(order.pair)}>
+                      <span className={order.side === 'long' ? 'is-profit' : 'is-loss'}>{order.side === 'long' ? 'ACHAT' : 'VENTE'} LIMITE</span>
+                      <strong>{order.pair}</strong>
+                      <small>{displaySize(order.pair, order.size)} · ×{order.leverage}</small>
+                      <small>SL {price(order.stopLoss)} · TP {price(order.takeProfit)}</small>
+                      <small>Marge {money(order.marginReserved)} $ · Frais estimés {money(order.feeEstimate || 0)} $</small>
+                    </button>
+                    <div><strong>{price(order.limitPrice)}</strong><button type="button" disabled={busy} onClick={() => {
+                      if (orderEditor?.orderId === order.id) setOrderEditor(null)
+                      else editOrder(order)
+                    }}>{orderEditor?.orderId === order.id ? 'Masquer' : 'Modifier'}</button></div>
+                  </div>
+                  {orderEditor?.orderId === order.id && (
+                    <div className="risk-editor order-editor">
+                      <label>Prix limite<input inputMode="decimal" value={orderEditor.limitPrice}
+                        onChange={(event) => setOrderEditor({ ...orderEditor, limitPrice: event.target.value })} /></label>
+                      <label>Stop loss<input inputMode="decimal" value={orderEditor.stopLoss} placeholder="Désactivé"
+                        onChange={(event) => setOrderEditor({ ...orderEditor, stopLoss: event.target.value })} /></label>
+                      <label>Take profit<input inputMode="decimal" value={orderEditor.takeProfit} placeholder="Désactivé"
+                        onChange={(event) => setOrderEditor({ ...orderEditor, takeProfit: event.target.value })} /></label>
+                      <button type="button" disabled={busy} onClick={() => void saveOrder(order)}>Enregistrer</button>
+                      <button className="danger" type="button" disabled={busy} onClick={() => void cancelOrder(order.id)}>Annuler l’ordre</button>
+                    </div>
+                  )}
                 </article>
               )) : <div className="portfolio-empty">Aucun ordre en attente</div>
+            ) : (
+              state.player.trades?.length ? state.player.trades.map((trade) => (
+                <article className="history-row" key={trade.id}>
+                  <div>
+                    <span className={trade.side === 'long' ? 'is-profit' : 'is-loss'}>
+                      {trade.action === 'open' ? 'OUVERTURE' : trade.action === 'close' ? 'CLÔTURE' : 'MODIFICATION'} · {trade.side === 'long' ? 'LONG' : 'SHORT'}
+                    </span>
+                    <strong>{trade.pair}</strong>
+                    <small>{new Date(trade.time).toLocaleString('fr-FR')} · {displaySize(trade.pair, trade.size)}</small>
+                  </div>
+                  <div>
+                    <strong className={trade.pnl >= 0 ? 'is-profit' : 'is-loss'}>{trade.pnl >= 0 ? '+' : ''}{money(trade.pnl)} $</strong>
+                    <small>{price(trade.price)} · frais {money(trade.fee)} $</small>
+                  </div>
+                </article>
+              )) : <div className="portfolio-empty">Aucun trade dans l’historique</div>
             )}
           </motion.div>
         </AnimatePresence>
