@@ -1743,7 +1743,13 @@ export class CompetitionManager {
       }));
   }
 
-  joinCompetition(userId: string, codeInput: string, sponsorAccountIdInput?: unknown, competitionIdInput?: unknown): Competition {
+  joinCompetition(
+    userId: string,
+    codeInput: string,
+    sponsorAccountIdInput?: unknown,
+    competitionIdInput?: unknown,
+    bypassRegistrationClosed = false,
+  ): Competition {
     const code = normalizeCode(codeInput);
     let competition: Competition | undefined;
     if (code) {
@@ -1777,7 +1783,7 @@ export class CompetitionManager {
     }
 
     const existing = competition.entries.find((entry) => entry.userId === userId);
-    if (!existing && !canJoinCompetition(competition)) {
+    if (!existing && !bypassRegistrationClosed && !canJoinCompetition(competition)) {
       throw new Error('Les inscriptions sont fermees pour cette arene');
     }
 

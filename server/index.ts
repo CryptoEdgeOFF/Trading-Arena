@@ -2055,7 +2055,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
       }
       testCompetitionId = competition.id;
       try {
-        competitionManager.joinCompetition(result.user.id, '', undefined, competition.id);
+        competitionManager.joinCompetition(result.user.id, '', undefined, competition.id, true);
       } catch (joinError: any) {
         if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
       }
