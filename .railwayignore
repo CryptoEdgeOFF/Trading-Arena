@@ -1,0 +1,12 @@
+node_modules/
+mobile/node_modules/
+dist/
+mobile/dist/
+mobile/ios/App/App/public/
+mobile/android/app/src/main/assets/public/
+src/Desktop/
+charting_library-master/
+data/
+.git/
+.env
+*.log

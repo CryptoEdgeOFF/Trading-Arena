@@ -471,6 +471,7 @@ h1 em { color: var(--red-bright); font-style: normal; }
 }
 
 .bottom-nav button {
+  position: relative;
   min-height: 54px;
   display: flex;
   flex-direction: column;
@@ -485,24 +486,29 @@ h1 em { color: var(--red-bright); font-style: normal; }
   font-weight: 600;
   cursor: pointer;
 }
+.nav-unread-badge { position: absolute; top: 2px; right: 10px; min-width: 20px; height: 17px; padding: 0 4px; display: grid; place-items: center; border: 2px solid #0b0a0d; border-radius: 99px; background: #ee243c; color: #fff; font-size: 7px; font-weight: 900; line-height: 1; box-shadow: 0 3px 10px rgba(238,36,60,.45); }
 .bottom-nav button span { position: relative; display: grid; place-items: center; }
 .bottom-nav button.is-active { color: #fff; }
 .bottom-nav button.is-active span::after { content: ''; position: absolute; bottom: -6px; width: 4px; height: 4px; border-radius: 50%; background: var(--red-bright); box-shadow: 0 0 9px var(--red); }
-.bottom-nav button.is-community {
+.bottom-nav button.is-primary-trade {
   width: 62px;
   min-height: 64px;
   margin-inline: auto;
-  transform: translateY(-14px);
   border: 1px solid rgba(255,115,132,.45);
   border-radius: 20px;
   background: linear-gradient(145deg,#ff344d,#bd1027);
   color: #fff;
   font-weight: 800;
   box-shadow: 0 9px 24px rgba(238,36,60,.38),0 0 0 5px rgba(11,10,13,.86);
+  animation: primary-trade-float 2.8s ease-in-out infinite;
 }
-.bottom-nav button.is-community span { transform: translateY(1px); }
-.bottom-nav button.is-community.is-active { background: linear-gradient(145deg,#ff5268,#e01834); box-shadow: 0 10px 28px rgba(238,36,60,.55),0 0 0 5px rgba(11,10,13,.9); }
-.bottom-nav button.is-community.is-active span::after { display: none; }
+.bottom-nav button.is-primary-trade span { transform: translateY(1px); }
+.bottom-nav button.is-primary-trade.is-active { background: linear-gradient(145deg,#ff5268,#e01834); box-shadow: 0 10px 30px rgba(238,36,60,.62),0 0 0 5px rgba(11,10,13,.9); }
+.bottom-nav button.is-primary-trade.is-active span::after { display: none; }
+@keyframes primary-trade-float {
+  0%,100% { transform: translateY(-14px) scale(1); }
+  50% { transform: translateY(-18px) scale(1.035); box-shadow: 0 13px 30px rgba(238,36,60,.5),0 0 0 5px rgba(11,10,13,.86); }
+}
 
 @media (min-width: 700px) {
   body { background: #111015; }

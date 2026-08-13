@@ -160,6 +160,15 @@ const RESOLUTION_MINUTES: Record<string, number> = {
 }
 
 const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D']
+const TIMEFRAME_OPTIONS = [
+  { value: '1', label: '1 min', short: '1m' },
+  { value: '5', label: '5 min', short: '5m' },
+  { value: '15', label: '15 min', short: '15m' },
+  { value: '30', label: '30 min', short: '30m' },
+  { value: '60', label: '1 heure', short: '1h' },
+  { value: '240', label: '4 heures', short: '4h' },
+  { value: '1D', label: '1 jour', short: '1D' },
+]
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js'
 let scriptPromise: Promise<void> | null = null
 
@@ -438,6 +447,8 @@ export function TradingViewChart({
   const [candlesReady, setCandlesReady] = useState(false)
   const [candlesError, setCandlesError] = useState('')
   const [resolution, setResolution] = useState('5')
+  const [timeframeOpen, setTimeframeOpen] = useState(false)
+  const timeframeMenuRef = useRef<HTMLDivElement>(null)
   const propsRef = useRef({
     pair,
     pairs,
@@ -1285,23 +1296,39 @@ export function TradingViewChart({
 
   const changeResolution = useCallback((nextResolution: string) => {
     setResolution(nextResolution)
+    setTimeframeOpen(false)
     widgetRef.current?.activeChart().setResolution(nextResolution)
   }, [])
+
+  useEffect(() => {
+    if (!timeframeOpen) return
+    const close = (event: PointerEvent) => {
+      if (!timeframeMenuRef.current?.contains(event.target as Node)) setTimeframeOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [timeframeOpen])
 
   return (
     <div ref={wrapRef} className="tradingview-mobile-wrap">
       <div className="tradingview-mobile-toolbar">
         <div className="tradingview-mobile-toolbar__leading">{toolbarLeading}</div>
-        <div className="tradingview-mobile-timeframes">
-          {[
-            ['1', '1m'],
-            ['5', '5m'],
-            ['15', '15m'],
-            ['60', '1h'],
-          ].map(([value, label]) => (
-            <button key={value} type="button" className={resolution === value ? 'is-active' : ''}
-              onClick={() => changeResolution(value)}>{label}</button>
-          ))}
+        <div className="timeframe-selector" ref={timeframeMenuRef}>
+          <button className="timeframe-selector-trigger" type="button" onClick={() => setTimeframeOpen((current) => !current)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />
+            </svg>
+            <span>{TIMEFRAME_OPTIONS.find((option) => option.value === resolution)?.short || resolution}</span>
+            <i>{timeframeOpen ? '⌃' : '⌄'}</i>
+          </button>
+          {timeframeOpen && <div className="timeframe-selector-dropdown" role="listbox" aria-label="Choisir le timeframe">
+            {TIMEFRAME_OPTIONS.map((option) => (
+              <button key={option.value} type="button" role="option" aria-selected={resolution === option.value}
+                className={resolution === option.value ? 'is-active' : ''} onClick={() => changeResolution(option.value)}>
+                <strong>{option.short}</strong><span>{option.label}</span>{resolution === option.value && <b>✓</b>}
+              </button>
+            ))}
+          </div>}
         </div>
       </div>
       <div id={containerId.current} className="tradingview-mobile-chart" />

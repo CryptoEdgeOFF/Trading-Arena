@@ -84,6 +84,8 @@ export type Promotion = {
 }
 
 let promotionsCache: Promotion[] | null = null
+let promotionsRequest: Promise<Promotion[]> | null = null
+const PROMOTIONS_CACHE_KEY = 'btf.promotions.v1'
 
 export type MyCompetition = PublicCompetition & {
   breached?: boolean
@@ -114,6 +116,13 @@ export type GlobalChatMessage = {
   avatarUrl?: string | null
   body: string
   createdAt: number
+  clientId?: string
+  replyTo?: {
+    id: string
+    userId: string
+    name: string
+    body: string
+  } | null
 }
 
 export type GlobalLeaderboardStats = UserStats & {
@@ -399,15 +408,45 @@ export function getBootstrap(token?: string | null): Promise<BootstrapData> {
 
 export async function getPromotions(): Promise<Promotion[]> {
   if (promotionsCache) return promotionsCache
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(PROMOTIONS_CACHE_KEY) || 'null') as {
+        promotions?: Promotion[]
+      } | null
+      if (Array.isArray(cached?.promotions) && cached.promotions.length > 0) {
+        promotionsCache = cached.promotions
+        void refreshPromotions()
+        return promotionsCache
+      }
+    } catch {
+      window.localStorage.removeItem(PROMOTIONS_CACHE_KEY)
+    }
+  }
+  return refreshPromotions()
+}
+
+function refreshPromotions(): Promise<Promotion[]> {
+  if (promotionsRequest) return promotionsRequest
   const productionBase = API_BASE_URL.includes('btfarena.com') ? API_BASE_URL : 'https://btfarena.com'
-  const response = await fetch(`${productionBase}/api/promotions?lang=fr`)
-  if (!response.ok) return []
-  const production = await response.json() as { promotions?: Promotion[] }
-  promotionsCache = (Array.isArray(production.promotions) ? production.promotions : []).map((promotion) => ({
-    ...promotion,
-    photoUrl: promotion.photoUrl?.startsWith('/') ? `${productionBase}${promotion.photoUrl}` : promotion.photoUrl,
-  }))
-  return promotionsCache
+  promotionsRequest = fetch(`${productionBase}/api/promotions?lang=fr`)
+    .then(async (response) => {
+      if (!response.ok) return promotionsCache || []
+      const production = await response.json() as { promotions?: Promotion[] }
+      const next = (Array.isArray(production.promotions) ? production.promotions : []).map((promotion) => ({
+        ...promotion,
+        photoUrl: promotion.photoUrl?.startsWith('/') ? `${productionBase}${promotion.photoUrl}` : promotion.photoUrl,
+      }))
+      if (next.length > 0) {
+        promotionsCache = next
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(PROMOTIONS_CACHE_KEY, JSON.stringify({ promotions: next, storedAt: Date.now() }))
+        }
+      }
+      return promotionsCache || []
+    })
+    .catch(() => promotionsCache || [])
+    .finally(() => { promotionsRequest = null })
+  return promotionsRequest
 }
 
 export function requestAuthCode(input: {
@@ -518,11 +557,11 @@ export async function getGlobalChatMessages(token: string, before?: number): Pro
   return Array.isArray(data.messages) ? data.messages : []
 }
 
-export async function sendGlobalChatMessage(token: string, body: string): Promise<GlobalChatMessage> {
+export async function sendGlobalChatMessage(token: string, body: string, replyToId?: string): Promise<GlobalChatMessage> {
   const data = await apiFetch<{ message: GlobalChatMessage }>('/api/competition/chat/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body }),
+    body: JSON.stringify({ body, replyToId }),
   }, token)
   return data.message
 }

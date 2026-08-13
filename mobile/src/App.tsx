@@ -10,6 +10,8 @@ import {
   checkApiHealth,
   getBootstrap,
   getCompetitionLeaderboard,
+  getGlobalChatMessages,
+  getPromotions,
   logoutSession,
   registerPushDevice,
   unregisterPushDevice,
@@ -232,6 +234,7 @@ function App() {
   const [playerBackTab, setPlayerBackTab] = useState<'leaderboard' | 'global-leaderboard' | 'community'>('leaderboard')
   const [leaderboardCompetitionId, setLeaderboardCompetitionId] = useState('')
   const [leaderboardBackTab, setLeaderboardBackTab] = useState<Exclude<Tab, 'leaderboard'>>('home')
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -251,13 +254,57 @@ function App() {
     setLoading(false)
   }, [])
 
+  const markChatSeen = useCallback((timestamp: number) => {
+    const userId = dashboard?.user?.id
+    if (!userId) return
+    const key = `btf.chat.lastSeen.${userId}`
+    const previous = Number(window.localStorage.getItem(key) || 0)
+    if (timestamp > previous) window.localStorage.setItem(key, String(timestamp))
+    setUnreadChatCount(0)
+  }, [dashboard?.user?.id])
+
   useEffect(() => {
     void load()
+    void getPromotions()
     if (Capacitor.isNativePlatform()) {
       void StatusBar.setStyle({ style: Style.Dark })
       void StatusBar.setBackgroundColor({ color: '#050507' }).catch(() => undefined)
     }
   }, [load])
+
+  useEffect(() => {
+    const userId = dashboard?.user?.id
+    if (!token || !userId) {
+      setUnreadChatCount(0)
+      return
+    }
+    let active = true
+    const refreshUnread = async () => {
+      const messages = await getGlobalChatMessages(token).catch(() => [])
+      if (!active || !messages.length) return
+      window.localStorage.setItem(`btf.chat.messages.${userId}`, JSON.stringify(messages.slice(-150)))
+      const latest = messages.at(-1)!.createdAt
+      if (tab === 'community') {
+        markChatSeen(latest)
+        return
+      }
+      const seenKey = `btf.chat.lastSeen.${userId}`
+      const storedSeenAt = window.localStorage.getItem(seenKey)
+      if (!storedSeenAt) {
+        window.localStorage.setItem(seenKey, String(latest))
+        setUnreadChatCount(0)
+        return
+      }
+      const seenAt = Number(storedSeenAt)
+      setUnreadChatCount(Math.min(99, messages.filter((message) => message.createdAt > seenAt && message.userId !== userId).length))
+    }
+    void refreshUnread()
+    const timer = window.setInterval(() => void refreshUnread(), 12_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [dashboard?.user?.id, markChatSeen, tab, token])
 
   function selectTab(nextTab: Tab) {
     setTab(nextTab)
@@ -296,6 +343,10 @@ function App() {
         }
         if (data?.kind === 'rank_change') {
           selectTab('global-leaderboard')
+          return
+        }
+        if (data?.kind === 'chat_reply') {
+          selectTab('community')
           return
         }
         if (data?.kind === 'order_filled' || data?.kind === 'stop_loss' || data?.kind === 'take_profit' || data?.kind === 'arena_open') {
@@ -351,8 +402,8 @@ function App() {
 
   const navItems: Array<{ id: Tab; label: string }> = [
     { id: 'home', label: 'Accueil' },
-    { id: 'trade', label: 'Trader' },
     { id: 'community', label: 'Chat' },
+    { id: 'trade', label: 'Trader' },
     { id: 'deals', label: 'Deals' },
     { id: 'profile', label: 'Profil' },
   ]
@@ -405,7 +456,7 @@ function App() {
 
           {tab === 'community' && (
             token && dashboard?.user ? (
-              <GlobalChat token={token} user={dashboard.user} onOpenPlayer={(userId) => {
+              <GlobalChat token={token} user={dashboard.user} onLatestSeen={markChatSeen} onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
                 setPlayerBackTab('community')
                 selectTab('player')
@@ -502,9 +553,10 @@ function App() {
 
       <nav className="bottom-nav" aria-label="Navigation principale">
         {navItems.map((item) => (
-          <button key={item.id} type="button" className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'community' ? 'is-community' : ''}`}
+          <button key={item.id} type="button" className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-primary-trade' : ''}`}
             onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
             <span><Icon name={item.id} size={22} /></span>{item.label}
+            {item.id === 'community' && unreadChatCount > 0 && <b className="nav-unread-badge">+{unreadChatCount}</b>}
           </button>
         ))}
       </nav>

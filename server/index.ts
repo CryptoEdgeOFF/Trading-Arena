@@ -287,15 +287,54 @@ chatWss.on('connection', (ws, req) => {
     }
     chatClients.add(ws);
     ws.send(JSON.stringify({ type: 'chat:ready', data: { userId: user.id } }));
+    const sentAt: number[] = [];
+    ws.on('message', (raw) => {
+      let payload: { type?: string; data?: { body?: unknown; replyToId?: unknown; clientId?: unknown } };
+      try {
+        payload = JSON.parse(String(raw));
+      } catch {
+        return;
+      }
+      if (payload.type !== 'chat:send') return;
+      const now = Date.now();
+      while (sentAt.length && now - sentAt[0] > 60_000) sentAt.shift();
+      const clientId = String(payload.data?.clientId || '').slice(0, 100);
+      if (sentAt.length >= 20) {
+        ws.send(JSON.stringify({ type: 'chat:error', data: { clientId, error: 'Trop de messages, attends quelques secondes.' } }));
+        return;
+      }
+      sentAt.push(now);
+      void createGlobalChatMessage(user, payload.data?.body, payload.data?.replyToId).then((message) => {
+        broadcastGlobalChatMessage(message, clientId);
+        notifyGlobalChatReply(user, message);
+      }).catch((error) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'chat:error', data: { clientId, error: (error as Error).message || 'Message invalide' } }));
+        }
+      });
+    });
   }).catch(() => ws.close(1011, 'Authentification impossible'));
   ws.on('close', () => chatClients.delete(ws));
 });
 
-function broadcastGlobalChatMessage(message: Awaited<ReturnType<typeof createGlobalChatMessage>>): void {
-  const payload = JSON.stringify({ type: 'chat:message', data: message });
+function broadcastGlobalChatMessage(message: Awaited<ReturnType<typeof createGlobalChatMessage>>, clientId?: string): void {
+  const payload = JSON.stringify({ type: 'chat:message', data: { ...message, ...(clientId ? { clientId } : {}) } });
   for (const ws of chatClients) {
     if (ws.readyState === WebSocket.OPEN) ws.send(payload);
   }
+}
+
+function notifyGlobalChatReply(
+  user: NonNullable<Awaited<ReturnType<typeof competitionManager.getUserFromToken>>>,
+  message: Awaited<ReturnType<typeof createGlobalChatMessage>>,
+): void {
+  if (!message.replyTo || message.replyTo.userId === user.id) return;
+  void sendPushToUser(message.replyTo.userId, {
+    title: `${user.name} t’a répondu`,
+    body: message.body.length > 110 ? `${message.body.slice(0, 107)}…` : message.body,
+    kind: 'chat_reply',
+    data: { messageId: message.id, replyToId: message.replyTo.id },
+  });
 }
 let finalizingEndedCompetitions: Promise<void> | null = null;
 const paperClients = new Map<WebSocket, { token: string; playerId: string; competitionId: string | null }>();
@@ -2323,8 +2362,9 @@ app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20
     return;
   }
   try {
-    const message = await createGlobalChatMessage(user, req.body?.body);
+    const message = await createGlobalChatMessage(user, req.body?.body, req.body?.replyToId);
     broadcastGlobalChatMessage(message);
+    notifyGlobalChatReply(user, message);
     res.status(201).json({ message });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message || 'Message invalide' });

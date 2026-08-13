@@ -4,7 +4,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { Pool } from 'pg';
 import type { CompetitionManager } from './competitionManager.js';
 
-export type PushKind = 'order_filled' | 'stop_loss' | 'take_profit' | 'rank_change' | 'arena_open';
+export type PushKind = 'order_filled' | 'stop_loss' | 'take_profit' | 'rank_change' | 'arena_open' | 'chat_reply';
 export type PushEnvironment = 'sandbox' | 'production' | 'auto';
 export type PushPlatform = 'ios' | 'android';
 
