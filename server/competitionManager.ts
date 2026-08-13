@@ -1871,6 +1871,24 @@ export class CompetitionManager {
       .filter((playerId): playerId is string => Boolean(playerId));
   }
 
+  getPushContextForPaperPlayer(paperPlayerId: string): {
+    userId: string;
+    competitionId: string;
+    competitionTitle: string;
+  } | null {
+    for (const competition of this.competitions.values()) {
+      const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
+      if (entry) {
+        return {
+          userId: entry.userId,
+          competitionId: competition.id,
+          competitionTitle: competition.title,
+        };
+      }
+    }
+    return null;
+  }
+
   getCompetitionStartingBalance(): number {
     return this.competitionStartingBalance;
   }

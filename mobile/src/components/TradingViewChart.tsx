@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -402,6 +403,7 @@ export function TradingViewChart({
   onClosePosition,
   onPreviewEntryChange,
   onPreviewRiskChange,
+  toolbarLeading,
 }: {
   pair: string
   pairs: string[]
@@ -418,6 +420,7 @@ export function TradingViewChart({
   onClosePosition: (positionId: string) => void
   onPreviewEntryChange: (price: number) => void
   onPreviewRiskChange: (patch: { stopLoss?: number | null; takeProfit?: number | null }) => void
+  toolbarLeading?: ReactNode
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const containerId = useRef(`tv-mobile-${Math.random().toString(36).slice(2)}`)
@@ -434,6 +437,7 @@ export function TradingViewChart({
   const [chartReady, setChartReady] = useState(false)
   const [candlesReady, setCandlesReady] = useState(false)
   const [candlesError, setCandlesError] = useState('')
+  const [resolution, setResolution] = useState('5')
   const propsRef = useRef({
     pair,
     pairs,
@@ -510,11 +514,21 @@ export function TradingViewChart({
         ],
         disabled_features: [
           'left_toolbar',
+          'header_widget',
+          'header_symbol_search',
           'header_compare',
           'header_screenshot',
+          'symbol_search_hot_key',
+          'timeframes_toolbar',
           'go_to_date',
           'popup_hints',
         ],
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false,
+        },
         overrides: {
           'paneProperties.background': '#0b0a0d',
           'paneProperties.backgroundType': 'solid',
@@ -1269,8 +1283,27 @@ export function TradingViewChart({
     }
   }, [roundedOverlayPrice])
 
+  const changeResolution = useCallback((nextResolution: string) => {
+    setResolution(nextResolution)
+    widgetRef.current?.activeChart().setResolution(nextResolution)
+  }, [])
+
   return (
     <div ref={wrapRef} className="tradingview-mobile-wrap">
+      <div className="tradingview-mobile-toolbar">
+        <div className="tradingview-mobile-toolbar__leading">{toolbarLeading}</div>
+        <div className="tradingview-mobile-timeframes">
+          {[
+            ['1', '1m'],
+            ['5', '5m'],
+            ['15', '15m'],
+            ['60', '1h'],
+          ].map(([value, label]) => (
+            <button key={value} type="button" className={resolution === value ? 'is-active' : ''}
+              onClick={() => changeResolution(value)}>{label}</button>
+          ))}
+        </div>
+      </div>
       <div id={containerId.current} className="tradingview-mobile-chart" />
       <div className="chart-trade-overlay">
         {candlesReady && overlayLines.map((line) => {
@@ -1294,13 +1327,16 @@ export function TradingViewChart({
               <strong>{line.label}</strong>
               <span className="chart-trade-chip__price">{displayedPrice.toLocaleString('en-US', { maximumFractionDigits: 6 })}</span>
               {(line.kind === 'pe' || line.kind === 'order') && (
-                <span className="chart-trade-chip__risk">
-                  {!hasStop && <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => addRiskFromEntry(line, 'sl')}>+ SL</button>}
-                  {!hasTakeProfit && <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => addRiskFromEntry(line, 'tp')}>+ TP</button>}
+                <span className="chart-trade-chip__risk-stack">
+                  {!hasStop && <button className={line.side === 'long' ? 'is-below is-sl' : 'is-above is-sl'} type="button"
+                    onPointerDown={(event) => event.stopPropagation()} onClick={() => addRiskFromEntry(line, 'sl')}>+ SL</button>}
+                  {!hasTakeProfit && <button className={line.side === 'long' ? 'is-above is-tp' : 'is-below is-tp'} type="button"
+                    onPointerDown={(event) => event.stopPropagation()} onClick={() => addRiskFromEntry(line, 'tp')}>+ TP</button>}
                 </span>
               )}
-              {(line.kind === 'sl' || line.kind === 'tp' || (!line.preview && line.kind === 'order')) && (
+              {(line.kind === 'sl' || line.kind === 'tp' || (!line.preview && line.kind === 'order') || (line.kind === 'pe' && Boolean(line.positionId))) && (
                 <button className="chart-trade-chip__close" type="button"
+                  aria-label={line.kind === 'pe' ? 'Fermer la position' : 'Supprimer'}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => removeOverlayLine(line)}>×</button>
               )}
@@ -1318,12 +1354,6 @@ export function TradingViewChart({
               widgetRef.current?.activeChart().resetData?.()
             }}>Réessayer</button>
           )}
-        </div>
-      )}
-      {candlesReady && (
-        <div className="chart-lines-legend">
-          <span className="entry">PE</span><span className="profit">TP</span><span className="loss">SL</span>
-          <small>Maintiens puis déplace TP/SL</small>
         </div>
       )}
     </div>

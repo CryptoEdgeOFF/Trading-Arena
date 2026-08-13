@@ -1914,6 +1914,7 @@ export class PaperTradingEngine {
       pnl: realizedPnl,
       time: Date.now(),
       action: 'close',
+      closeReason: reason,
     };
 
     const tradeReturn = (trade.pnl / (existing.entryPrice * sizeToClose)) * 100;

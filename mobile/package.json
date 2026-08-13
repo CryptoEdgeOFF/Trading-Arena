@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:staging": "tsc -b && vite build --mode staging",
     "lint": "oxlint",
     "preview": "vite preview",
     "native:sync": "npm run build && cap sync",
+    "native:sync:staging": "npm run build:staging && cap sync",
     "ios": "npm run native:sync && cap open ios",
     "android": "npm run native:sync && cap open android"
   },
@@ -20,6 +22,7 @@
     "@capacitor/ios": "^8.5.0",
     "@capacitor/keyboard": "^8.0.5",
     "@capacitor/preferences": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.2",
     "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.3",
     "framer-motion": "^13.1.0",

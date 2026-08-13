@@ -1,0 +1,18 @@
+.join-arena-layer { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; justify-content: center; }
+.join-arena-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0,0,0,.78); backdrop-filter: blur(7px); }
+.join-arena-sheet { position: relative; z-index: 1; width: min(100%,540px); padding: 20px 20px calc(22px + env(safe-area-inset-bottom)); display: grid; gap: 15px; border: 1px solid #312a39; border-bottom: 0; border-radius: 22px 22px 0 0; background: #0d0b10; box-shadow: 0 -30px 90px rgba(0,0,0,.65); }
+.join-arena-sheet header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.join-arena-sheet header span { color: var(--red-bright); font-size: 8px; font-weight: 700; letter-spacing: .16em; }
+.join-arena-sheet h3 { margin: 4px 0 0; font: 800 27px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.join-arena-sheet header button { width: 36px; height: 36px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: #aaa3ad; font-size: 22px; }
+.join-arena-details { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+.join-arena-details > div { min-width: 0; padding: 11px 8px; display: grid; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
+.join-arena-details small { color: #77717a; font-size: 7px; text-transform: uppercase; }
+.join-arena-details strong { overflow: hidden; font: 700 14px 'Barlow Condensed', sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.join-arena-sheet > label { display: grid; gap: 6px; color: #aaa4ad; font-size: 9px; font-weight: 700; }
+.join-arena-sheet > label small { color: #716b74; font-size: 7px; font-weight: 400; }
+.join-arena-sheet input { width: 100%; height: 47px; padding: 0 12px; border: 1px solid #302a35; border-radius: 7px; outline: none; background: #151219; color: #fff; font-size: 14px; }
+.join-arena-sheet input:focus { border-color: rgba(255,70,92,.6); }
+.join-arena-sheet > p { margin: 0; padding: 10px; border: 1px solid rgba(255,70,92,.24); border-radius: 7px; background: rgba(255,70,92,.07); color: #ff8998; font-size: 9px; }
+.join-arena-submit { min-height: 51px; border: 1px solid rgba(255,90,110,.45); border-radius: 7px; background: var(--red); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.join-arena-submit:disabled { opacity: .45; }

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   API_WS_URL,
@@ -78,25 +79,196 @@ function riskValidationError(
   return ''
 }
 
+type MarketCategory = 'crypto' | 'actions' | 'indices' | 'commodities' | 'forex'
+
+const MARKET_CATEGORIES: Array<{ id: MarketCategory; label: string }> = [
+  { id: 'crypto', label: 'Crypto' },
+  { id: 'actions', label: 'Actions' },
+  { id: 'indices', label: 'Indices' },
+  { id: 'commodities', label: 'Matières premières' },
+  { id: 'forex', label: 'Forex' },
+]
+
+const PAIR_COLORS: Record<string, string> = {
+  'BTC/USD': '#f7931a',
+  'ETH/USD': '#627eea',
+  'SOL/USD': '#9945ff',
+  'XRP/USD': '#23292f',
+}
+
+function PairIcon({
+  pair,
+  imageUrl,
+  compact = false,
+}: {
+  pair: string
+  imageUrl?: string | null
+  compact?: boolean
+}) {
+  const base = pair.split('/')[0] || pair
+  if (imageUrl) {
+    return <img className={`market-pair-icon ${compact ? 'is-compact' : ''}`} src={imageUrl} alt={base} loading="lazy" />
+  }
+  return (
+    <span className={`market-pair-icon market-pair-icon--fallback ${compact ? 'is-compact' : ''}`}
+      style={{ background: PAIR_COLORS[pair] || '#2c2638' }}>
+      {base.slice(0, 1)}
+    </span>
+  )
+}
+
+function PairSelectorMenu({
+  selectedPair,
+  pairs,
+  metadata,
+  market,
+  onChange,
+}: {
+  selectedPair: string
+  pairs: string[]
+  metadata: PaperMeta['marketMetadata']
+  market: PaperState['market']
+  onChange: (pair: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const selectedCategory = (metadata?.[selectedPair]?.category || 'crypto') as MarketCategory
+  const [activeCategory, setActiveCategory] = useState<MarketCategory>(selectedCategory)
+
+  useEffect(() => setActiveCategory(selectedCategory), [selectedCategory])
+
+  const availableCategories = useMemo(
+    () => MARKET_CATEGORIES.filter((category) =>
+      pairs.some((pairName) => (metadata?.[pairName]?.category || 'crypto') === category.id)),
+    [metadata, pairs],
+  )
+
+  const filteredPairs = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    const compactQuery = query.replace(/[\s/_-]/g, '')
+    return pairs.filter((pairName) => {
+      if ((metadata?.[pairName]?.category || 'crypto') !== activeCategory) return false
+      if (!query) return true
+      const base = pairName.split('/')[0] || pairName
+      const fullName = metadata?.[pairName]?.name || ''
+      return [pairName, pairName.replace('/', ''), base, fullName].some((value) => {
+        const normalized = value.toLowerCase()
+        return normalized.includes(query) || normalized.replace(/[\s/_-]/g, '').includes(compactQuery)
+      })
+    })
+  }, [activeCategory, metadata, pairs, search])
+
+  const selectedTicker = market[selectedPair]
+  const trigger = (
+    <button className="market-selector-trigger" type="button" onClick={() => {
+      setOpen(true)
+      setSearch('')
+    }}>
+      <PairIcon pair={selectedPair} imageUrl={metadata?.[selectedPair]?.imageUrl} compact />
+      <span><strong>{selectedPair}</strong><small>{metadata?.[selectedPair]?.name || selectedPair}</small></span>
+      <span className="market-selector-trigger__price">
+        <strong>{price(selectedTicker?.markPrice)}</strong>
+        <small className={(selectedTicker?.change24h ?? 0) >= 0 ? 'is-profit' : 'is-loss'}>
+          {(selectedTicker?.change24h ?? 0) >= 0 ? '+' : ''}{(selectedTicker?.change24h ?? 0).toFixed(2)}%
+        </small>
+      </span>
+      <span className="market-selector-chevron">⌄</span>
+    </button>
+  )
+
+  const modal = open ? createPortal(
+    <div className="market-selector-layer">
+      <button className="market-selector-backdrop" type="button" aria-label="Fermer le menu des marchés"
+        onClick={() => setOpen(false)} />
+      <section className="market-selector-modal" role="dialog" aria-modal="true" aria-label="Sélectionner un marché">
+        <button className="market-selector-close" type="button" onClick={() => setOpen(false)} aria-label="Fermer">×</button>
+        <div className="market-category-tabs">
+          {availableCategories.map((category) => (
+            <button key={category.id} type="button"
+              className={activeCategory === category.id ? 'is-active' : ''}
+              onClick={() => setActiveCategory(category.id)}>
+              {category.label}
+            </button>
+          ))}
+        </div>
+        <label className="market-search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />
+          </svg>
+          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)}
+            placeholder="Rechercher un marché…" autoFocus />
+        </label>
+        <div className="market-list-heading">
+          <span>{MARKET_CATEGORIES.find((item) => item.id === activeCategory)?.label || 'Marchés'}</span>
+          <span>Dernier prix</span>
+        </div>
+        <div className="market-list">
+          {filteredPairs.map((pairName) => {
+            const ticker = market[pairName]
+            const pairMetadata = metadata?.[pairName]
+            const base = pairName.split('/')[0] || pairName
+            const quote = pairName.split('/')[1] || 'USD'
+            const marketOpen = ticker?.marketOpen !== false
+            const change = ticker?.change24h
+            return (
+              <button key={pairName} type="button"
+                className={`${pairName === selectedPair ? 'is-active' : ''} ${!marketOpen ? 'is-closed' : ''}`}
+                onClick={() => {
+                  onChange(pairName)
+                  setOpen(false)
+                  setSearch('')
+                }}>
+                <span className="market-list__identity">
+                  <PairIcon pair={pairName} imageUrl={pairMetadata?.imageUrl} />
+                  <span>
+                    <strong>{base}<i>/{quote}</i></strong>
+                    <small>{pairMetadata?.name || pairName}</small>
+                  </span>
+                </span>
+                <span className="market-list__quote">
+                  <strong>{marketOpen ? `${price(ticker?.markPrice)} ${quote}` : '—'}</strong>
+                  {!marketOpen
+                    ? <small className="is-market-closed">Marché fermé</small>
+                    : change != null && <small className={change >= 0 ? 'is-profit' : 'is-loss'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}%</small>}
+                </span>
+              </button>
+            )
+          })}
+          {!filteredPairs.length && <div className="market-list-empty">Aucun marché trouvé</div>}
+        </div>
+      </section>
+    </div>,
+    document.body,
+  ) : null
+
+  return <div className="market-selector">{trigger}{modal}</div>
+}
+
 export function TradingTerminal({
   accountToken,
   competitions,
+  initialCompetitionId,
+  onOpenLeaderboard,
 }: {
   accountToken: string
   competitions: MyCompetition[]
+  initialCompetitionId?: string
+  onOpenLeaderboard: (competitionId: string) => void
 }) {
   const [paperToken, setPaperToken] = useState<string | null>(null)
   const [state, setState] = useState<PaperState | null>(null)
   const [meta, setMeta] = useState<PaperMeta | null>(null)
   const [selectedPair, setSelectedPair] = useState('')
-  const [competitionId, setCompetitionId] = useState(competitions.find((item) => item.canTrade)?.id || '')
+  const [competitionId, setCompetitionId] = useState(
+    initialCompetitionId || competitions.find((item) => item.canTrade)?.id || '',
+  )
   const [side, setSide] = useState<'long' | 'short'>('long')
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
-  const [size, setSize] = useState('')
+  const [sizePercent, setSizePercent] = useState(10)
   const [limitPrice, setLimitPrice] = useState('')
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
-  const [leverage, setLeverage] = useState(1)
+  const leverage = 10
   const [panel, setPanel] = useState<'positions' | 'orders' | 'history'>('positions')
   const [riskEditor, setRiskEditor] = useState<{
     positionId: string
@@ -233,9 +405,10 @@ export function TradingTerminal({
 
   const ticker = state?.market[selectedPair] || meta?.market[selectedPair]
   const contract = CONTRACT_SIZE[selectedPair] || 1
-  const inputQty = Number(size)
-  const engineSize = Number.isFinite(inputQty) ? inputQty * contract : 0
   const referencePrice = orderType === 'limit' ? Number(limitPrice) : ticker?.markPrice || 0
+  const selectedMargin = (state?.player.availableMargin || 0) * (sizePercent / 100)
+  const engineSize = referencePrice > 0 ? (selectedMargin * leverage) / referencePrice : 0
+  const inputQty = engineSize / contract
   const notional = engineSize * referencePrice
   const marginEstimate = leverage > 0 ? notional / leverage : 0
   const orderPreview: MobileOrderPreview | null = selectedPair && engineSize > 0 && referencePrice > 0
@@ -250,16 +423,13 @@ export function TradingTerminal({
       }
     : null
   const activeCompetition = competitionSummary(state?.competition ?? null)
+  const competitionRank = state?.competition && 'competition' in state.competition
+    ? state.competition.rank
+    : competitions.find((competition) => competition.id === activeCompetition?.id)?.rank
+  const playerRank = state?.player.rank
+  const displayedRank = competitionRank ?? (playerRank != null && playerRank > 0 ? playerRank : null)
   const accountBreached = isBreached(state?.competition ?? null)
   const canTradeNow = Boolean(state?.canTrade) && !accountBreached && ticker?.marketOpen !== false
-
-  function applyAccountPercent(percent: number) {
-    if (!state || !referencePrice || referencePrice <= 0 || leverage <= 0) return
-    const targetMargin = state.player.availableMargin * (percent / 100)
-    const nextEngineSize = (targetMargin * leverage) / referencePrice
-    const nextInputSize = nextEngineSize / contract
-    setSize(nextInputSize.toFixed(contract > 1 ? 2 : 5))
-  }
 
   async function openCompetition() {
     if (!competitionId) return
@@ -299,7 +469,7 @@ export function TradingTerminal({
         stopLoss: nextStopLoss,
         takeProfit: nextTakeProfit,
       })
-      setSize('')
+      setSizePercent(10)
       if (orderType === 'limit') setLimitPrice('')
       await refresh(paperToken)
       setPanel(orderType === 'limit' ? 'orders' : 'positions')
@@ -521,39 +691,16 @@ export function TradingTerminal({
     <div className="mobile-terminal">
       <header className="terminal-head">
         <div><span>{activeCompetition?.title || 'BTF ARENA'}</span><strong>{state.player.name}</strong></div>
+        <div className="terminal-head__metric"><small>ÉQUITÉ</small><strong>{money(state.player.currentBalance)}</strong></div>
+        <div className={`terminal-head__metric ${state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}`}><small>PNL</small><strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)} $</strong><span>{state.player.pnlPercent.toFixed(2)}%</span></div>
         <div className="terminal-head__right">
-          <div className="terminal-rank"><small>RANG</small><strong>#{state.player.rank || '—'}</strong></div>
-          <button type="button" onClick={() => void leaveTerminal()} aria-label="Changer d’arène">Changer</button>
+          <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
+            onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
+            <small>RANG</small><strong>#{displayedRank ?? '—'}</strong><span>Classement</span>
+          </button>
+          <button type="button" onClick={() => void leaveTerminal()} aria-label="Changer d’arène">↺</button>
         </div>
       </header>
-
-      <section className="terminal-balance">
-        <div><small>ÉQUITÉ</small><strong>{money(state.player.currentBalance)} <i>USD</i></strong></div>
-        <div className={state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}><small>PNL</small><strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)} $</strong><span>{state.player.pnlPercent.toFixed(2)}%</span></div>
-      </section>
-
-      <label className="asset-selector">
-        <span>ACTIF À TRADER</span>
-        <select value={selectedPair} onChange={(event) => setSelectedPair(event.target.value)}>
-          {(state.pairs.length ? state.pairs : Object.keys(state.market)).map((pairName) => (
-            <option key={pairName} value={pairName}>
-              {meta?.marketMetadata?.[pairName]?.name || pairName} · {price(state.market[pairName]?.markPrice)}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div className="pair-strip">
-        {(state.pairs.length ? state.pairs : Object.keys(state.market)).map((pairName) => (
-          <button key={pairName} type="button" className={pairName === selectedPair ? 'is-active' : ''}
-            onClick={() => setSelectedPair(pairName)}>
-            <strong>{pairName.replace('/USD', '')}</strong>
-            <small className={(state.market[pairName]?.change24h ?? 0) >= 0 ? 'is-profit' : 'is-loss'}>
-              {(state.market[pairName]?.change24h ?? 0) >= 0 ? '+' : ''}{(state.market[pairName]?.change24h ?? 0).toFixed(2)}%
-            </small>
-          </button>
-        ))}
-      </div>
 
       <section className="quote-card tradingview-card">
         <TradingViewChart
@@ -585,6 +732,15 @@ export function TradingTerminal({
             if ('stopLoss' in patch) setStopLoss(patch.stopLoss == null ? '' : String(patch.stopLoss))
             if ('takeProfit' in patch) setTakeProfit(patch.takeProfit == null ? '' : String(patch.takeProfit))
           }}
+          toolbarLeading={(
+            <PairSelectorMenu
+              selectedPair={selectedPair}
+              pairs={state.pairs.length ? state.pairs : Object.keys(state.market)}
+              metadata={meta?.marketMetadata}
+              market={state.market}
+              onChange={setSelectedPair}
+            />
+          )}
         />
         <div className="quote-bidask"><span>BID <strong>{price(ticker?.bidPrice)}</strong></span><span>ASK <strong>{price(ticker?.askPrice)}</strong></span></div>
       </section>
@@ -599,20 +755,20 @@ export function TradingTerminal({
           <button type="button" className={orderType === 'limit' ? 'is-active' : ''} onClick={() => setOrderType('limit')}>Limite</button>
         </div>
         <div className="ticket-grid">
-          <label>Quantité ({contract > 1 ? 'lots' : selectedPair.split('/')[0]})
-            <input value={size} onChange={(event) => setSize(event.target.value)} inputMode="decimal" placeholder={contract > 1 ? '0.10' : '0.001'} />
-          </label>
           {orderType === 'limit' && <label>Prix limite<input value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} inputMode="decimal" placeholder={price(ticker?.markPrice)} /></label>}
           <label>Stop loss<input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} inputMode="decimal" placeholder="Optionnel" /></label>
           <label>Take profit<input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} inputMode="decimal" placeholder="Optionnel" /></label>
         </div>
-        <div className="size-presets">
-          <span>Utiliser la marge disponible</span>
-          {[25, 50, 75, 100].map((percent) => (
-            <button key={percent} type="button" onClick={() => applyAccountPercent(percent)}>{percent}%</button>
-          ))}
+        <div className="position-size-slider">
+          <div><span>Taille de position</span><strong>{sizePercent}%</strong></div>
+          <input type="range" min="1" max="100" step="1" value={sizePercent}
+            onChange={(event) => setSizePercent(Number(event.target.value))} />
+          <div>
+            <span>{inputQty.toLocaleString('fr-FR', { maximumFractionDigits: contract > 1 ? 2 : 5 })} {contract > 1 ? 'lots' : selectedPair.split('/')[0]}</span>
+            <span>Marge {money(selectedMargin)} $</span>
+            <span>Levier ×10</span>
+          </div>
         </div>
-        <div className="leverage-row"><span>Levier <strong>×{leverage}</strong></span><input type="range" min={meta?.fees.minLeverage || 1} max={meta?.fees.maxLeverage || 20} value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} /></div>
         <div className="order-summary">
           <span>Notionnel <strong>{money(notional)} $</strong></span>
           <span>Marge estimée <strong>{money(marginEstimate)} $</strong></span>

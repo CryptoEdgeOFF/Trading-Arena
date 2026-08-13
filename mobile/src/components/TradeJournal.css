@@ -1,0 +1,39 @@
+.journal-page { margin-top: -18px; }
+.journal-intro { margin: 0 0 18px; color: #8d8791; font-size: 10px; line-height: 1.6; }
+.journal-state { min-height: 190px; padding: 25px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 12px; color: #817b84; text-align: center; font-size: 10px; }
+.journal-state.is-error { color: #ff8998; }
+.journal-filters { margin-bottom: 11px; display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; }
+.journal-filters::-webkit-scrollbar { display: none; }
+.journal-filters button { min-height: 34px; max-width: 180px; padding: 0 11px; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #111014; color: #8d8790; font-size: 8px; font-weight: 700; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.journal-filters button.is-active { border-color: rgba(255,70,92,.4); background: rgba(238,36,60,.12); color: #fff; }
+.journal-curve { padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg,rgba(255,255,255,.04),rgba(255,255,255,.01)); }
+.journal-curve > div { display: flex; align-items: center; justify-content: space-between; }
+.journal-curve span { color: #77717b; font-size: 7px; font-weight: 700; letter-spacing: .12em; }
+.journal-curve strong { font: 700 18px 'Barlow Condensed', sans-serif; }
+.journal-curve svg { width: 100%; height: 145px; margin-top: 7px; overflow: visible; }
+.journal-curve line { stroke: #39343c; stroke-width: 1; stroke-dasharray: 4 5; }
+.journal-curve path { fill: none; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.journal-curve path.positive { stroke: #3dde7f; }
+.journal-curve path.negative { stroke: #ff5e71; }
+.journal-stats { margin-top: 10px; display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+.journal-stats > div { min-width: 0; min-height: 67px; padding: 10px 5px; display: grid; align-content: center; justify-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: #111014; text-align: center; }
+.journal-stats strong { max-width: 100%; overflow: hidden; font: 700 16px 'Barlow Condensed', sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.journal-stats small { color: #706a74; font-size: 6px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.journal-highlights { margin-top: 15px; display: grid; gap: 7px; }
+.journal-highlights article { padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.025); }
+.journal-highlights article > div { min-width: 0; display: grid; gap: 3px; }
+.journal-highlights article > div:last-child { justify-items: end; }
+.journal-highlights small { color: #817b84; font-size: 6px; font-weight: 700; letter-spacing: .11em; }
+.journal-highlights article > div:first-child strong { font: 700 16px 'Barlow Condensed', sans-serif; }
+.journal-highlights span { color: #8b858f; font-size: 7px; }
+.journal-highlights article > div:last-child strong { font-size: 11px; }
+.journal-highlights button, .journal-trades article button { padding: 5px 8px; border: 1px solid rgba(255,70,92,.3); border-radius: 5px; background: rgba(238,36,60,.1); color: #ff98a5; font-size: 7px; font-weight: 700; text-transform: uppercase; }
+.journal-trades { margin-top: 17px; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; }
+.journal-trades > header { min-height: 39px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; background: #0e0d11; color: #77717a; font-size: 7px; font-weight: 700; letter-spacing: .12em; }
+.journal-trades > header strong { color: #aaa5ae; }
+.journal-trades article { min-height: 82px; padding: 11px 12px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border-top: 1px solid var(--line); background: rgba(255,255,255,.018); }
+.journal-trades article > div { min-width: 0; display: grid; gap: 3px; }
+.journal-trades article > div:last-child { justify-items: end; }
+.journal-trades article > div:first-child strong { font: 700 15px 'Barlow Condensed', sans-serif; }
+.journal-trades article span, .journal-trades article small { overflow: hidden; color: #77717b; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.journal-trades article > div:last-child > strong { font-size: 10px; }

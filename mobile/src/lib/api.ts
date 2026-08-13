@@ -4,6 +4,12 @@ const API_BASE_URL = (
 ).replace(/\/$/, '')
 const API_WS_URL = API_BASE_URL.replace(/^http/, 'ws')
 
+export function apiAssetUrl(value?: string | null): string {
+  if (!value) return ''
+  if (/^(https?:|data:|blob:)/i.test(value)) return value
+  return `${API_BASE_URL}${value.startsWith('/') ? value : `/${value}`}`
+}
+
 export type PublicCompetition = {
   id: string
   title: string
@@ -33,6 +39,12 @@ export type SessionUser = {
   phone?: string | null
   phoneVerifiedAt?: number | null
   avatarUrl?: string | null
+  socials?: {
+    x?: string
+    instagram?: string
+    discord?: string
+    website?: string
+  }
 }
 
 export type UserBadge =
@@ -56,6 +68,23 @@ export type UserStats = {
   netPnl: number
 }
 
+export type Promotion = {
+  id: string
+  name: string
+  category: 'exchange' | 'broker' | 'prop' | 'tool' | 'community'
+  accent: string
+  tagline: string
+  highlight: string
+  description?: string
+  perks: string[]
+  promoCode?: string
+  referralUrl?: string
+  photoUrl?: string
+  featured?: boolean
+}
+
+let promotionsCache: Promotion[] | null = null
+
 export type MyCompetition = PublicCompetition & {
   breached?: boolean
   rank?: number | null
@@ -64,6 +93,81 @@ export type MyCompetition = PublicCompetition & {
     pnlPercent: number
     tradesCount: number
   }
+}
+
+export type LeaderboardRow = {
+  rank: number
+  userId: string
+  name: string
+  avatarUrl?: string | null
+  pnlPercent: number
+  pnlUsd: number
+  tradesCount: number
+  updatedAt: number
+  breached?: boolean
+}
+
+export type GlobalChatMessage = {
+  id: string
+  userId: string
+  name: string
+  avatarUrl?: string | null
+  body: string
+  createdAt: number
+}
+
+export type GlobalLeaderboardStats = UserStats & {
+  grossProfit: number
+  grossLoss: number
+  avgWin: number
+  avgLoss: number
+}
+
+export type GlobalLeaderboardRow = {
+  userId: string
+  name: string
+  avatarUrl?: string | null
+  badges?: UserBadge[]
+  pnlUsd: number
+  arenas: number
+  stats: GlobalLeaderboardStats
+}
+
+export type LeaderboardSeason = {
+  id: string
+  slug: string
+  nameKey: string
+  startAt: number
+  endAt: number
+  isActive: boolean
+  theme: 'summer' | 'autumn' | 'winter' | 'spring'
+  championBadge: UserBadge
+  bannerImage?: string | null
+  shirtImage?: string | null
+  arenaImage?: string | null
+  status: 'upcoming' | 'active' | 'ended'
+}
+
+export type PublicPlayerProfile = {
+  user: {
+    id: string
+    name: string
+    avatarUrl?: string | null
+    socials?: SessionUser['socials']
+  }
+  badges: UserBadge[]
+  totalPnlUsd: number
+  arenas: Array<{
+    id: string
+    title: string
+    status: PublicCompetition['status']
+    rank: number | null
+    pnlUsd: number
+    pnlPercent: number
+    tradesCount: number
+  }>
+  payouts?: Array<{ id: string; amount: number; currency: string; paidAt: number }>
+  stats: UserStats & { totalFees?: number }
 }
 
 export type BootstrapData = {
@@ -293,6 +397,19 @@ export function getBootstrap(token?: string | null): Promise<BootstrapData> {
   return apiFetch<BootstrapData>('/api/competition/bootstrap', undefined, token)
 }
 
+export async function getPromotions(): Promise<Promotion[]> {
+  if (promotionsCache) return promotionsCache
+  const productionBase = API_BASE_URL.includes('btfarena.com') ? API_BASE_URL : 'https://btfarena.com'
+  const response = await fetch(`${productionBase}/api/promotions?lang=fr`)
+  if (!response.ok) return []
+  const production = await response.json() as { promotions?: Promotion[] }
+  promotionsCache = (Array.isArray(production.promotions) ? production.promotions : []).map((promotion) => ({
+    ...promotion,
+    photoUrl: promotion.photoUrl?.startsWith('/') ? `${productionBase}${promotion.photoUrl}` : promotion.photoUrl,
+  }))
+  return promotionsCache
+}
+
 export function requestAuthCode(input: {
   email: string
   intent: 'login' | 'signup'
@@ -338,6 +455,50 @@ export function logoutSession(token: string): Promise<{ ok: true }> {
   return apiFetch('/api/competition/auth/logout', { method: 'POST' }, token)
 }
 
+export async function updateUserProfile(token: string, profile: {
+  name: string
+  phone?: string
+  socials: NonNullable<SessionUser['socials']>
+}): Promise<SessionUser> {
+  const data = await apiFetch<{ user: SessionUser }>('/api/competition/me', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile),
+  }, token)
+  return data.user
+}
+
+export async function registerPushDevice(
+  token: string,
+  deviceToken: string,
+  platform: 'ios' | 'android',
+  environment: 'sandbox' | 'production' | 'auto',
+): Promise<void> {
+  await apiFetch('/api/competition/me/push-device', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: deviceToken, platform, environment }),
+  }, token)
+}
+
+export async function unregisterPushDevice(token: string, deviceToken: string): Promise<void> {
+  await apiFetch('/api/competition/me/push-device', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: deviceToken }),
+  }, token)
+}
+
+export async function uploadUserAvatar(token: string, file: File): Promise<SessionUser> {
+  const form = new FormData()
+  form.append('avatar', file, file.name || 'avatar.jpg')
+  const data = await apiFetch<{ user: SessionUser }>('/api/competition/me/avatar', {
+    method: 'POST',
+    body: form,
+  }, token)
+  return data.user
+}
+
 export async function getMyTrades(token: string): Promise<JournalTrade[]> {
   const data = await apiFetch<{ trades?: JournalTrade[] }>(
     '/api/competition/my-trades',
@@ -345,6 +506,29 @@ export async function getMyTrades(token: string): Promise<JournalTrade[]> {
     token,
   )
   return Array.isArray(data.trades) ? data.trades : []
+}
+
+export async function getGlobalChatMessages(token: string, before?: number): Promise<GlobalChatMessage[]> {
+  const query = before ? `?before=${encodeURIComponent(before)}` : ''
+  const data = await apiFetch<{ messages?: GlobalChatMessage[] }>(
+    `/api/competition/chat/messages${query}`,
+    undefined,
+    token,
+  )
+  return Array.isArray(data.messages) ? data.messages : []
+}
+
+export async function sendGlobalChatMessage(token: string, body: string): Promise<GlobalChatMessage> {
+  const data = await apiFetch<{ message: GlobalChatMessage }>('/api/competition/chat/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  }, token)
+  return data.message
+}
+
+export function globalChatWebSocketUrl(token: string): string {
+  return `${API_WS_URL}/chat?token=${encodeURIComponent(token)}`
 }
 
 export function createPaperSession(
@@ -364,6 +548,39 @@ export function getPaperState(paperToken: string): Promise<PaperState> {
 
 export function getPaperMeta(): Promise<PaperMeta> {
   return apiFetch('/api/paper/meta')
+}
+
+export async function getCompetitionLeaderboard(competitionId: string): Promise<LeaderboardRow[]> {
+  const data = await apiFetch<{ leaderboard?: LeaderboardRow[] }>(
+    `/api/competition/leaderboard/${encodeURIComponent(competitionId)}`,
+  )
+  return Array.isArray(data.leaderboard) ? data.leaderboard : []
+}
+
+export async function getLeaderboardSeasons(): Promise<{ seasons: LeaderboardSeason[]; activeSeasonId: string | null }> {
+  return apiFetch('/api/competition/seasons')
+}
+
+export async function getGlobalLeaderboard(seasonId?: string): Promise<GlobalLeaderboardRow[]> {
+  const query = seasonId ? `season=${encodeURIComponent(seasonId)}` : 'scope=all'
+  const data = await apiFetch<{ rows?: GlobalLeaderboardRow[] }>(`/api/competition/global-leaderboard?${query}`)
+  return Array.isArray(data.rows) ? data.rows : []
+}
+
+export function getPublicPlayerProfile(userId: string): Promise<PublicPlayerProfile> {
+  return apiFetch(`/api/competition/player/${encodeURIComponent(userId)}`)
+}
+
+export function joinCompetition(token: string, input: {
+  competitionId: string
+  code?: string
+  sponsorAccountId?: string
+}): Promise<{ ok: true; competitionId: string }> {
+  return apiFetch('/api/competition/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }, token)
 }
 
 export async function getPaperCandles(pair: string): Promise<Candle[]> {

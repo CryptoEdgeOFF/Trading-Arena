@@ -3,6 +3,19 @@ html {
   background: #050507;
   color-scheme: dark;
   -webkit-text-size-adjust: 100%;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+* {
+  scrollbar-width: none;
 }
 
 body {
@@ -18,6 +31,12 @@ body {
 
 button, a {
   -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  font-size: 16px !important;
 }
 
 button:focus-visible {

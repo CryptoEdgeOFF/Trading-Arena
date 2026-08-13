@@ -39,11 +39,19 @@ import {
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
 import { getMarketMetadata, getMarketMetadataPoolStats } from './marketMetadata.js';
 import * as promotionsStore from './promotionsStore.js';
+import {
+  CompetitionPushNotifier,
+  registerPushDevice,
+  sendPushToUser,
+  unregisterPushDevice,
+} from './pushNotifications.js';
 import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
+import { createGlobalChatMessage, listGlobalChatMessages } from './globalChatStore.js';
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 // permessage-deflate compresses every WS frame natively. With state:patch
 // payloads being mostly repetitive JSON keys, gzip typically yields a 3-5x
@@ -64,6 +72,7 @@ const wss = new WebSocketServer({
 // Canal WS isolé pour /feed-test : forward des ticks iTick live aux
 // navigateurs sans toucher au pipeline /ws principal (compétition).
 const itickWss = new WebSocketServer({ noServer: true });
+const chatWss = new WebSocketServer({ noServer: true });
 
 // Dispatcher manuel : ws.js fait un startsWith(path) qui ferait intercepter
 // /ws/itick par le serveur principal /ws. On route nous-mêmes selon le
@@ -78,6 +87,8 @@ server.on('upgrade', (req, socket, head) => {
   }
   if (pathname === '/ws') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } else if (pathname === '/ws/chat') {
+    chatWss.handleUpgrade(req, socket, head, (ws) => chatWss.emit('connection', ws, req));
   } else if (pathname === '/ws/itick') {
     itickWss.handleUpgrade(req, socket, head, (ws) => itickWss.emit('connection', ws, req));
   } else {
@@ -85,6 +96,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 const itickClients = new Set<WebSocket>();
+const chatClients = new Set<WebSocket>();
 itickWss.on('connection', (ws) => {
   itickClients.add(ws);
   (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
@@ -259,6 +271,32 @@ app.get('/uploads/:filename', (req, res) => {
 
 const clients = new Set<WebSocket>();
 const competitionManager = new CompetitionManager();
+const pushRuntimeStartedAt = Date.now();
+const pushedTradeIds = new Set<string>();
+chatWss.on('connection', (ws, req) => {
+  (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  ws.on('pong', () => {
+    (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  });
+  const url = new URL(req.url || '/ws/chat', `http://${req.headers.host || 'localhost'}`);
+  const token = url.searchParams.get('token') || '';
+  void competitionManager.getUserFromToken(token).then((user) => {
+    if (!user || ws.readyState !== WebSocket.OPEN) {
+      ws.close(1008, 'Session invalide');
+      return;
+    }
+    chatClients.add(ws);
+    ws.send(JSON.stringify({ type: 'chat:ready', data: { userId: user.id } }));
+  }).catch(() => ws.close(1011, 'Authentification impossible'));
+  ws.on('close', () => chatClients.delete(ws));
+});
+
+function broadcastGlobalChatMessage(message: Awaited<ReturnType<typeof createGlobalChatMessage>>): void {
+  const payload = JSON.stringify({ type: 'chat:message', data: message });
+  for (const ws of chatClients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+  }
+}
 let finalizingEndedCompetitions: Promise<void> | null = null;
 const paperClients = new Map<WebSocket, { token: string; playerId: string; competitionId: string | null }>();
 // Per-competition shard: every paperClient is also tracked under its
@@ -340,12 +378,43 @@ const manager = new PlayerManager((patch: StatePatch) => {
       pnlPercent: player.pnlPercent,
       tradesCount: player.tradeCount,
     });
+    void sendTradingPushNotifications(player);
   }
   broadcastPaperUpdates();
 });
 
 manager.setMarketTickBroadcaster((pairs) => broadcastMarketTicks(pairs));
 manager.setTradingUnlockHandler(() => broadcastPaperUpdates());
+
+async function sendTradingPushNotifications(player: NonNullable<ReturnType<typeof manager.getPlayerById>>): Promise<void> {
+  const context = competitionManager.getPushContextForPaperPlayer(player.id);
+  if (!context) return;
+  const recentTrades = (player.trades || []).slice(-12);
+  for (const trade of recentTrades) {
+    if (trade.time < pushRuntimeStartedAt - 5_000 || pushedTradeIds.has(trade.id)) continue;
+    if (trade.action !== 'open' && trade.closeReason !== 'stop-loss' && trade.closeReason !== 'take-profit') continue;
+    pushedTradeIds.add(trade.id);
+    if (trade.action === 'open') {
+      await sendPushToUser(context.userId, {
+        title: 'Ordre exécuté',
+        body: `${trade.side === 'long' ? 'Achat' : 'Vente'} ${trade.pair} exécuté à ${trade.price.toLocaleString('fr-FR')}.`,
+        kind: 'order_filled',
+        competitionId: context.competitionId,
+        data: { pair: trade.pair, price: trade.price, side: trade.side },
+      });
+      continue;
+    }
+    const isTakeProfit = trade.closeReason === 'take-profit';
+    await sendPushToUser(context.userId, {
+      title: isTakeProfit ? 'Take Profit touché' : 'Stop Loss touché',
+      body: `${trade.pair} clôturé à ${trade.price.toLocaleString('fr-FR')} · PnL ${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)} $.`,
+      kind: isTakeProfit ? 'take_profit' : 'stop_loss',
+      competitionId: context.competitionId,
+      data: { pair: trade.pair, price: trade.price, pnl: trade.pnl },
+    });
+  }
+  if (pushedTradeIds.size > 20_000) pushedTradeIds.clear();
+}
 
 function broadcastMarketTicks(pairs: string[]): void {
   if (pairs.length === 0 || clients.size === 0) return;
@@ -980,6 +1049,19 @@ if (!IS_SERVERLESS) {
         ws.ping();
       } catch {
         // noop : le close handler nettoiera les Sets/Maps
+      }
+    });
+    chatWss.clients.forEach((ws) => {
+      const sock = ws as WebSocket & { isAlive?: boolean };
+      if (sock.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      sock.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // Le close handler nettoiera chatClients.
       }
     });
   }, WS_HEARTBEAT_MS);
@@ -2196,6 +2278,59 @@ app.get('/api/competition/me', async (req, res) => {
   res.json({ user });
 });
 
+app.post('/api/competition/me/push-device', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session requise' });
+    return;
+  }
+  try {
+    await registerPushDevice(user.id, req.body?.token, req.body?.platform, req.body?.environment);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Token push invalide' });
+  }
+});
+
+app.delete('/api/competition/me/push-device', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session requise' });
+    return;
+  }
+  await unregisterPushDevice(user.id, req.body?.token);
+  res.json({ ok: true });
+});
+
+app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120, key: 'global-chat-read' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  const beforeValue = Number(String(req.query.before || ''));
+  const messages = await listGlobalChatMessages({
+    before: Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : undefined,
+    limit: 80,
+  });
+  res.json({ messages });
+});
+
+app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20, key: 'global-chat-send' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  try {
+    const message = await createGlobalChatMessage(user, req.body?.body);
+    broadcastGlobalChatMessage(message);
+    res.status(201).json({ message });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Message invalide' });
+  }
+});
+
 app.patch('/api/competition/me', async (req, res) => {
   const user = await getCompetitionUser(req);
   if (!user) {
@@ -2448,6 +2583,7 @@ async function maybeFinalizeEndedCompetitions(): Promise<void> {
 // finalise d'abord les arènes terminées pour que les emails de résultats
 // partent avec des classements définitifs.
 const competitionNotifier = new CompetitionNotifier(competitionManager);
+const competitionPushNotifier = new CompetitionPushNotifier(competitionManager);
 if (!IS_SERVERLESS) {
   const notifierTimer = setInterval(() => {
     void (async () => {
@@ -2458,6 +2594,14 @@ if (!IS_SERVERLESS) {
     });
   }, 60_000);
   if (typeof notifierTimer.unref === 'function') notifierTimer.unref();
+
+  const pushNotifierTimer = setInterval(() => {
+    void competitionPushNotifier.tick().catch((error) => {
+      console.error('[push notifier] loop error:', (error as Error)?.message);
+    });
+  }, 15_000);
+  if (typeof pushNotifierTimer.unref === 'function') pushNotifierTimer.unref();
+  setTimeout(() => void competitionPushNotifier.tick().catch(() => undefined), 2_000).unref?.();
 }
 
 // Envoi MANUEL de l'annonce « nouvelle arène » à tous les utilisateurs non
