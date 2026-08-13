@@ -54,6 +54,25 @@ export type UserBadge =
   | 'summer-champion'
   | 'autumn-champion'
 
+export type PlayerProgression = {
+  totalXp: number
+  level: number
+  levelStartXp: number
+  nextLevelXp: number
+  xpIntoLevel: number
+  xpForNextLevel: number
+  progressPercent: number
+  title: { id: string; label: string; rarity: 'common' | 'rare' | 'epic' | 'legendary' }
+  frame: { id: string; label: string; tier: number }
+  recentEvents: Array<{
+    id: string
+    eventType: 'account.created' | 'arena.join' | 'arena.first_trade' | 'arena.completed' | 'arena.podium' | 'arena.streak' | 'badge.unlocked'
+    amount: number
+    label: string
+    createdAt: number
+  }>
+}
+
 export type UserStats = {
   closedTrades: number
   wins: number
@@ -83,9 +102,22 @@ export type Promotion = {
   featured?: boolean
 }
 
+export type NewsArticle = {
+  id: string
+  title: string
+  summary: string
+  body: string
+  coverUrl: string
+  featured: boolean
+  publishedAt: number
+  createdAt: number
+  updatedAt: number
+}
+
 let promotionsCache: Promotion[] | null = null
 let promotionsRequest: Promise<Promotion[]> | null = null
 const PROMOTIONS_CACHE_KEY = 'btf.promotions.v1'
+const NEWS_CACHE_KEY = 'btf.news.v1'
 
 export type MyCompetition = PublicCompetition & {
   breached?: boolean
@@ -177,6 +209,7 @@ export type PublicPlayerProfile = {
   }>
   payouts?: Array<{ id: string; amount: number; currency: string; paidAt: number }>
   stats: UserStats & { totalFees?: number }
+  progression?: PlayerProgression | null
 }
 
 export type BootstrapData = {
@@ -185,6 +218,7 @@ export type BootstrapData = {
   myCompetitions: MyCompetition[]
   myStats: UserStats | null
   myBadges: UserBadge[]
+  myProgression?: PlayerProgression | null
 }
 
 export type AuthRequestResult = {
@@ -423,6 +457,36 @@ export async function getPromotions(): Promise<Promotion[]> {
     }
   }
   return refreshPromotions()
+}
+
+export async function getNewsPage(before?: number, limit = 20, force = false): Promise<{ news: NewsArticle[]; hasMore: boolean }> {
+  if (!before && !force && typeof window !== 'undefined') {
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(NEWS_CACHE_KEY) || 'null') as { news?: NewsArticle[] } | null
+      if (cached?.news?.length) {
+        void refreshNewsPage(undefined, limit)
+        return { news: cached.news, hasMore: cached.news.length >= limit }
+      }
+    } catch {
+      window.localStorage.removeItem(NEWS_CACHE_KEY)
+    }
+  }
+  return refreshNewsPage(before, limit)
+}
+
+async function refreshNewsPage(before?: number, limit = 20): Promise<{ news: NewsArticle[]; hasMore: boolean }> {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (before) query.set('before', String(before))
+  const result = await apiFetch<{ news?: NewsArticle[] }>(`/api/news?${query}`)
+  const news = Array.isArray(result.news) ? result.news : []
+  if (!before && typeof window !== 'undefined') {
+    window.localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify({ news, storedAt: Date.now() }))
+  }
+  return { news, hasMore: news.length >= limit }
+}
+
+export function getNewsArticle(id: string): Promise<NewsArticle> {
+  return apiFetch<{ article: NewsArticle }>(`/api/news/${encodeURIComponent(id)}`).then((result) => result.article)
 }
 
 function refreshPromotions(): Promise<Promotion[]> {

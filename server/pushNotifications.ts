@@ -4,7 +4,7 @@ import { GoogleAuth } from 'google-auth-library';
 import { Pool } from 'pg';
 import type { CompetitionManager } from './competitionManager.js';
 
-export type PushKind = 'order_filled' | 'stop_loss' | 'take_profit' | 'rank_change' | 'arena_open' | 'chat_reply';
+export type PushKind = 'order_filled' | 'stop_loss' | 'take_profit' | 'rank_change' | 'arena_open' | 'chat_reply' | 'news';
 export type PushEnvironment = 'sandbox' | 'production' | 'auto';
 export type PushPlatform = 'ios' | 'android';
 
@@ -124,6 +124,26 @@ async function devicesForUser(userId: string): Promise<PushDevice[]> {
   const result = await db.query<{ device_token: string; platform: string; environment: string }>(
     'select device_token, platform, environment from comp_push_devices where user_id = $1',
     [userId],
+  );
+  return result.rows.map((row) => ({
+    token: row.device_token,
+    platform: normalizePlatform(row.platform),
+    environment: normalizeEnvironment(row.environment),
+  }));
+}
+
+async function allDevices(): Promise<PushDevice[]> {
+  const db = getPool();
+  if (!db) {
+    return Array.from(memoryDevices.entries()).map(([token, device]) => ({
+      token,
+      platform: device.platform,
+      environment: device.environment,
+    }));
+  }
+  await ensureTable();
+  const result = await db.query<{ device_token: string; platform: string; environment: string }>(
+    'select device_token, platform, environment from comp_push_devices',
   );
   return result.rows.map((row) => ({
     token: row.device_token,
@@ -333,6 +353,25 @@ export async function sendPushToUsers(userIds: string[], message: PushMessage): 
   const unique = Array.from(new Set(userIds.filter(Boolean)));
   const sent = await Promise.all(unique.map((userId) => sendPushToUser(userId, message)));
   return sent.reduce((sum, count) => sum + count, 0);
+}
+
+export async function sendPushToAllDevices(message: PushMessage): Promise<number> {
+  if (!isPushConfigured()) return 0;
+  const devices = await allDevices();
+  const apnsConfigured = Boolean(process.env.APNS_TEAM_ID && process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY);
+  const eligible = devices.filter((device) => device.platform === 'android' ? isFirebaseConfigured() : apnsConfigured);
+  let sent = 0;
+  for (let offset = 0; offset < eligible.length; offset += 100) {
+    const batch = eligible.slice(offset, offset + 100);
+    const results = await Promise.allSettled(batch.map((device) => (
+      device.platform === 'android' ? sendFcm(device, message) : sendApns(device, message)
+    )));
+    for (const result of results) {
+      if (result.status === 'fulfilled') sent += 1;
+      else console.warn('[push] news send failed:', result.reason?.message || result.reason);
+    }
+  }
+  return sent;
 }
 
 export class CompetitionPushNotifier {

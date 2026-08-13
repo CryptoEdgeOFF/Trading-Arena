@@ -27,11 +27,14 @@
 .global-chat__messages article.is-mine header { justify-content: flex-end; }
 .global-chat__messages article header button { padding: 0; border: 0; background: none; color: #d9d4dc; font-size: 7px; font-weight: 800; }
 .global-chat__messages article time { color: #55515a; font-size: 6px; }
-.global-chat__reply-quote { width: 100%; min-width: 0; padding: 6px 8px; display: grid; gap: 2px; overflow: hidden; border: 0; border-left: 2px solid #ee243c; border-radius: 5px; background: rgba(255,255,255,.045); color: #aaa4ad; text-align: left; }
-.global-chat__reply-quote strong { color: #ff7b8c; font-size: 7px; }
-.global-chat__reply-quote span { overflow: hidden; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.global-chat__reply-quote { width: 100%; min-width: 0; margin-bottom: -5px; padding: 7px 9px 10px; display: grid; gap: 3px; overflow: hidden; border: 1px solid #302d33; border-bottom: 0; border-left: 3px solid #65616a; border-radius: 9px 9px 0 0; background: #242127; color: #aaa5ad; text-align: left; }
+.global-chat__reply-quote strong { color: #c0bbc3; font-size: 7px; }
+.global-chat__reply-quote span { display: -webkit-box; overflow: hidden; color: #88838c; font-size: 7px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .global-chat__messages article p { width: fit-content; max-width: 100%; margin: 0; padding: 8px 10px; border: 1px solid #26232a; border-radius: 4px 11px 11px; background: #17151a; color: #d8d3db; font-size: 9px; line-height: 1.42; overflow-wrap: anywhere; white-space: pre-wrap; }
+.global-chat__message-content.has-reply p { width: 100%; border-radius: 0 0 11px 11px; }
+.global-chat__messages article.is-mine .global-chat__reply-quote { border-color: #40383d; border-bottom: 0; border-left-color: #77717a; background: #2a262b; }
 .global-chat__messages article.is-mine p { border-color: rgba(238,36,60,.3); border-radius: 11px 4px 11px 11px; background: rgba(238,36,60,.14); color: #fff; }
+.global-chat__messages article.is-mine .global-chat__message-content.has-reply p { border-radius: 0 0 11px 11px; }
 .global-chat__messages article.is-grouped p { border-radius: 8px 11px 11px; }
 .global-chat__messages article.is-mine.is-grouped p { border-radius: 11px 8px 11px 11px; }
 .global-chat__error { padding: 5px 9px; border-top: 1px solid rgba(238,36,60,.16); background: rgba(238,36,60,.08); color: #ff7b8d; font-size: 7px; text-align: center; }

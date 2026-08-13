@@ -247,10 +247,11 @@ export function GlobalChat({
                 {!grouped && <button className="global-chat__avatar" type="button" onClick={() => onOpenPlayer(message.userId)}>
                   {message.avatarUrl ? <img src={apiAssetUrl(message.avatarUrl)} alt="" /> : message.name.slice(0, 2).toUpperCase()}
                 </button>}
-                <div>
+                <div className={`global-chat__message-content ${message.replyTo ? 'has-reply' : ''}`}>
                   {!grouped && <header><button type="button" onClick={() => onOpenPlayer(message.userId)}>{message.name}</button><time>{messageTime(message.createdAt)}</time></header>}
                   {message.replyTo && <button className="global-chat__reply-quote" type="button" onClick={() => scrollToMessage(message.replyTo!.id)}>
-                    <strong>↩ {message.replyTo.name}</strong><span>{message.replyTo.body}</span>
+                    <strong>Réponse à {message.replyTo.name}</strong>
+                    <span>{message.replyTo.body}</span>
                   </button>}
                   <p>{message.body}</p>
                 </div>

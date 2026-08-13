@@ -11,6 +11,7 @@ import {
   getBootstrap,
   getCompetitionLeaderboard,
   getGlobalChatMessages,
+  getNewsPage,
   getPromotions,
   logoutSession,
   registerPushDevice,
@@ -34,14 +35,17 @@ import { DealsScreen } from './components/DealsScreen'
 import { GlobalChat } from './components/GlobalChat'
 import { GlobalLeaderboard } from './components/GlobalLeaderboard'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
+import { NewsScreen } from './components/NewsScreen'
 import { PlayerProfile } from './components/PlayerProfile'
+import { PlayerProgressionBar } from './components/PlayerProgressionBar'
+import { ProfileAvatar } from './components/ProfileAvatar'
 import { ProfileSettings } from './components/ProfileSettings'
 import { ShareRankModal } from './components/ShareRankModal'
 import { TradeJournal } from './components/TradeJournal'
 import { TradingTerminal } from './components/TradingTerminal'
 import './App.css'
 
-type Tab = 'home' | 'deals' | 'trade' | 'community' | 'leaderboard' | 'global-leaderboard' | 'journal' | 'settings' | 'player' | 'profile'
+type Tab = 'home' | 'deals' | 'trade' | 'community' | 'news' | 'leaderboard' | 'global-leaderboard' | 'journal' | 'settings' | 'player' | 'profile'
 type IconName = Tab | 'bell' | 'arrow' | 'refresh' | 'shield'
 
 const icons: Record<IconName, ReactNode> = {
@@ -49,6 +53,7 @@ const icons: Record<IconName, ReactNode> = {
   deals: <path d="M20 12v8H4v-8M2 7h20v5H2V7Zm10 13V7m0 0H7.5A2.5 2.5 0 1 1 12 4.8M12 7h4.5A2.5 2.5 0 1 0 12 4.8" />,
   trade: <path d="M5 19V9m0 0L2.5 11.5M5 9l2.5 2.5M19 5v10m0 0 2.5-2.5M19 15l-2.5-2.5M10 7h4m-4 5h4m-4 5h4" />,
   community: <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12ZM9 11h.01M12 11h.01M15 11h.01" />,
+  news: <path d="M5 4h14v16H5V4Zm3 4h8M8 12h8m-8 4h5" />,
   leaderboard: <path d="M4 20V10h4v10H4Zm6 0V4h4v16h-4Zm6 0v-7h4v7h-4Z" />,
   'global-leaderboard': <path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c2.4 2.5 3.7 5.5 3.7 9S14.4 18.5 12 21m0-18C9.6 5.5 8.3 8.5 8.3 12s1.3 6.5 3.7 9M3 12h18" />,
   journal: <path d="M5 3h14v18H5V3Zm4 5h6m-6 4h6m-6 4h4" />,
@@ -187,10 +192,11 @@ function HomeScreen({
       {user ? (
         <section className="home-profile-card">
           <div className="home-profile-card__identity">
-            <div>{user.avatarUrl ? <img src={apiAssetUrl(user.avatarUrl)} alt="" /> : user.name.slice(0, 2).toUpperCase()}</div>
-            <span><small>TRADER CONNECTÉ</small><strong>{user.name}</strong><p>{user.email}</p></span>
+            <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} progression={dashboard.myProgression} size="sm" />
+            <span><small>TRADER CONNECTÉ</small><strong>{user.name}</strong>{dashboard.myProgression && <em>{dashboard.myProgression.title.label}</em>}<p>{user.email}</p></span>
             <button type="button" onClick={onProfile}>›</button>
           </div>
+          {dashboard.myProgression && <div className="home-profile-xp"><PlayerProgressionBar progression={dashboard.myProgression} variant="compact" /></div>}
           <div className="home-profile-stats">
             <div><small>PNL TOTAL</small><strong className={totalPnl >= 0 ? 'positive' : 'negative'}>{totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)} $</strong></div>
             <div><small>PNL MOYEN</small><strong className={averagePnlPercent >= 0 ? 'positive' : 'negative'}>{averagePnlPercent >= 0 ? '+' : ''}{averagePnlPercent.toFixed(2)}%</strong></div>
@@ -235,6 +241,8 @@ function App() {
   const [leaderboardCompetitionId, setLeaderboardCompetitionId] = useState('')
   const [leaderboardBackTab, setLeaderboardBackTab] = useState<Exclude<Tab, 'leaderboard'>>('home')
   const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const [unreadNewsCount, setUnreadNewsCount] = useState(0)
+  const [initialNewsId, setInitialNewsId] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -263,14 +271,37 @@ function App() {
     setUnreadChatCount(0)
   }, [dashboard?.user?.id])
 
+  const markNewsSeen = useCallback((timestamp: number) => {
+    const previous = Number(window.localStorage.getItem('btf.news.lastSeen') || 0)
+    if (timestamp > previous) window.localStorage.setItem('btf.news.lastSeen', String(timestamp))
+    setUnreadNewsCount(0)
+  }, [])
+
   useEffect(() => {
     void load()
     void getPromotions()
+    void getNewsPage()
     if (Capacitor.isNativePlatform()) {
       void StatusBar.setStyle({ style: Style.Dark })
       void StatusBar.setBackgroundColor({ color: '#050507' }).catch(() => undefined)
     }
   }, [load])
+
+  useEffect(() => {
+    let active = true
+    const refreshNews = async () => {
+      const result = await getNewsPage(undefined, 50, true).catch(() => null)
+      if (!active || !result) return
+      const seenAt = Number(window.localStorage.getItem('btf.news.lastSeen') || 0)
+      setUnreadNewsCount(Math.min(99, result.news.filter((article) => (article.publishedAt || article.createdAt) > seenAt).length))
+    }
+    void refreshNews()
+    const timer = window.setInterval(() => void refreshNews(), 60_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
 
   useEffect(() => {
     const userId = dashboard?.user?.id
@@ -335,8 +366,13 @@ function App() {
         console.warn('[push] registration failed:', registrationError.error)
       }))
       listeners.push(await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-        const data = action.notification.data as { kind?: string; competitionId?: string }
+        const data = action.notification.data as { kind?: string; competitionId?: string; newsId?: string }
         const competitionId = String(data?.competitionId || '')
+        if (data?.kind === 'news') {
+          setInitialNewsId(String(data.newsId || ''))
+          selectTab('news')
+          return
+        }
         if (data?.kind === 'rank_change' && competitionId) {
           openLeaderboard(competitionId, 'home')
           return
@@ -425,7 +461,13 @@ function App() {
             <span className={`api-state ${health.online ? 'is-online' : ''}`}>
               <i /> {health.online ? `${health.latencyMs ?? 0} ms` : 'hors ligne'}
             </span>
-            <button className="icon-button" type="button" aria-label="Notifications"><Icon name="bell" size={20} /></button>
+            <button className="icon-button news-button" type="button" aria-label="Ouvrir les actualités" onClick={() => {
+              setInitialNewsId('')
+              selectTab('news')
+            }}>
+              <Icon name="bell" size={20} />
+              {unreadNewsCount > 0 && <b className="topbar-unread-badge">{unreadNewsCount > 9 ? '9+' : unreadNewsCount}</b>}
+            </button>
           </div>
         </header>
       )}
@@ -453,6 +495,8 @@ function App() {
           )}
 
           {tab === 'deals' && <DealsScreen />}
+
+          {tab === 'news' && <NewsScreen initialArticleId={initialNewsId} onSeen={markNewsSeen} />}
 
           {tab === 'community' && (
             token && dashboard?.user ? (
@@ -737,16 +781,26 @@ function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onSettings, 
   return (
     <div className="profile-screen">
       <div className="profile-identity">
-        <div className="profile-avatar">
-          {user.avatarUrl ? <img src={apiAssetUrl(user.avatarUrl)} alt="" /> : user.name.slice(0, 2).toUpperCase()}
+        <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} progression={dashboard.myProgression} size="lg" />
+        <div><small>COMPTE SYNCHRONISÉ</small><h2>{user.name}</h2>
+          {dashboard.myProgression && <em className={`profile-title rarity-${dashboard.myProgression.title.rarity}`}>{dashboard.myProgression.title.label}</em>}
+          <p>{user.email}</p>
         </div>
-        <div><small>COMPTE SYNCHRONISÉ</small><h2>{user.name}</h2><p>{user.email}</p></div>
       </div>
       <div className="profile-stats">
         <div><small>PnL total</small><strong className={(stats?.netPnl ?? 0) >= 0 ? 'positive' : 'negative'}>{(stats?.netPnl ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $</strong></div>
         <div><small>Win rate</small><strong>{((stats?.winRate ?? 0) * 100).toFixed(1)}%</strong></div>
         <div><small>Trades</small><strong>{stats?.closedTrades ?? 0}</strong></div>
       </div>
+      {dashboard.myProgression && <section className="profile-progression">
+        <header><span>PROGRESSION DU TRADER</span><small>{dashboard.myProgression.frame.label}</small></header>
+        <PlayerProgressionBar progression={dashboard.myProgression} />
+        {dashboard.myProgression.recentEvents.length > 0 && <div className="profile-xp-events">
+          {dashboard.myProgression.recentEvents.slice(0, 5).map((event) => <div key={event.id}>
+            <i>+{event.amount}</i><span><strong>{event.label}</strong><small>{new Date(event.createdAt).toLocaleDateString('fr-FR')}</small></span>
+          </div>)}
+        </div>}
+      </section>}
       <section className="profile-actions">
         <button type="button" onClick={onJournal}><span><Icon name="journal" size={20} /></span><div><strong>Journal de trading</strong><small>Statistiques, historique et partage des PnL</small></div><i>›</i></button>
         <button type="button" onClick={onGlobalLeaderboard}><span><Icon name="global-leaderboard" size={20} /></span><div><strong>Classement global</strong><small>Saisons, classement général et partage du rang</small></div><i>›</i></button>

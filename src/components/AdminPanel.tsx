@@ -6,7 +6,7 @@ import ReplayAdmin from './ReplayAdmin';
 import ItickFeedPanel, { type ItickFeedStatus, type ItickInstrument } from './ItickFeedPanel';
 import type { EventMode, MarketDataSource, PlatformMode, TeamInfo } from '../stores/useGameStore';
 import { TEAM_MODE_LABEL, TEAM_MODE_TOTAL_PLAYERS, TEAM_PLAYERS_PER_SIDE } from '../utils/teamMode';
-import { ARENA_ADMIN_PATH, PROMOTIONS_ADMIN_PATH } from '../lib/adminPath';
+import { ARENA_ADMIN_PATH, NEWS_ADMIN_PATH, PROMOTIONS_ADMIN_PATH } from '../lib/adminPath';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -930,6 +930,7 @@ export default function AdminPanel() {
               Cette page pilote uniquement la room live reliée au dashboard : paper trading événementiel ou lecture de comptes Kraken.
               Les arènes online, les règles d’inscription publiques et les lots se gèrent dans <a href={ARENA_ADMIN_PATH} className="font-semibold text-amber-300 hover:text-amber-200">{ARENA_ADMIN_PATH}</a>.
               Les promotions partenaires (Trade Live Bonus) se gèrent dans <a href={PROMOTIONS_ADMIN_PATH} className="font-semibold text-amber-300 hover:text-amber-200">{PROMOTIONS_ADMIN_PATH}</a>.
+              Les actualités mobiles se publient dans <a href={NEWS_ADMIN_PATH} className="font-semibold text-amber-300 hover:text-amber-200">{NEWS_ADMIN_PATH}</a>.
             </p>
           </div>
         </div>

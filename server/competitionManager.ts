@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
+import type { UserXpFacts } from './xpStore.js';
 
 export interface CompetitionUser {
   id: string;
@@ -2069,6 +2070,39 @@ export class CompetitionManager {
 
   getUserBadges(userId: string): UserBadge[] {
     return this.getAllUserBadges().get(userId) ?? [];
+  }
+
+  getUserXpFacts(userId: string): UserXpFacts {
+    const joined: UserXpFacts['joined'] = [];
+    const traded: UserXpFacts['traded'] = [];
+    const completed: UserXpFacts['completed'] = [];
+    const podiums: UserXpFacts['podiums'] = [];
+    for (const competition of this.competitions.values()) {
+      const entry = competition.entries.find((item) => item.userId === userId);
+      if (!entry) continue;
+      const arena = { competitionId: competition.id, title: competition.title || 'Arène BTF' };
+      joined.push(arena);
+      if (entry.tradesCount > 0) traded.push(arena);
+      if (inferCompetitionStatus(competition) !== 'ended' || entry.tradesCount <= 0) continue;
+      completed.push(arena);
+      const ranked = sortAndRankLeaderboard(competition.entries.map((item) => ({
+        userId: item.userId,
+        pnlPercent: item.pnlPercent,
+        pnlUsd: item.pnlUsd,
+        tradesCount: item.tradesCount,
+        updatedAt: item.updatedAt,
+        breached: Boolean(item.breachedAt),
+      })));
+      const rank = ranked.find((item) => item.userId === userId)?.rank || 0;
+      if (rank >= 1 && rank <= 3) podiums.push({ ...arena, rank });
+    }
+    return {
+      joined,
+      traded,
+      completed,
+      podiums,
+      badges: this.getUserBadges(userId),
+    };
   }
 
   /** Total PnL (somme des entries) d'un user, tous arènes confondues. */

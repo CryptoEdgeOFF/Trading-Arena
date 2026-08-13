@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
-  apiAssetUrl,
   getPublicPlayerProfile,
   type PublicPlayerProfile,
   type UserBadge,
 } from '../lib/api'
+import { ProfileAvatar } from './ProfileAvatar'
 import './PlayerProfile.css'
 
 const badgeNames: Record<UserBadge, string> = {
@@ -42,8 +42,11 @@ export function PlayerProfile({ userId, onBack }: { userId: string; onBack: () =
       {error ? <div className="journal-state is-error">{error}</div> : !profile ? <div className="journal-state">Chargement du profil…</div> : (
         <>
           <section className="public-profile-hero">
-            {profile.user.avatarUrl ? <img src={apiAssetUrl(profile.user.avatarUrl)} alt="" /> : <i>{profile.user.name.slice(0, 2).toUpperCase()}</i>}
-            <div><small>TRADER</small><h3>{profile.user.name}</h3><strong className={profile.totalPnlUsd >= 0 ? 'positive' : 'negative'}>{profile.totalPnlUsd >= 0 ? '+' : ''}{profile.totalPnlUsd.toFixed(2)} $</strong></div>
+            <ProfileAvatar avatarUrl={profile.user.avatarUrl} name={profile.user.name} progression={profile.progression} size="lg" />
+            <div className="public-profile-copy"><small>TRADER · NIVEAU {profile.progression?.level || 1}</small><h3>{profile.user.name}</h3>
+              {profile.progression && <em className={`public-profile-title rarity-${profile.progression.title.rarity}`}>{profile.progression.title.label}</em>}
+              <strong className={profile.totalPnlUsd >= 0 ? 'positive' : 'negative'}>{profile.totalPnlUsd >= 0 ? '+' : ''}{profile.totalPnlUsd.toFixed(2)} $</strong>
+            </div>
           </section>
           {profile.user.socials && (
             <section className="public-socials">

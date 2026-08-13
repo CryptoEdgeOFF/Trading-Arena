@@ -1,10 +1,13 @@
 .player-profile-page { margin-top: -18px; display: grid; gap: 12px; }
 .public-profile-hero { min-height: 130px; padding: 18px; display: flex; align-items: center; gap: 15px; border: 1px solid rgba(255,70,92,.2); border-radius: 13px; background: radial-gradient(circle at 90% 0,rgba(238,36,60,.22),transparent 48%),rgba(255,255,255,.025); }
-.public-profile-hero > img, .public-profile-hero > i { width: 78px; height: 78px; display: grid; place-items: center; flex: 0 0 auto; border: 2px solid rgba(255,90,110,.35); border-radius: 18px; object-fit: cover; background: linear-gradient(135deg,#dc263e,#711423); color: #fff; font: 800 22px 'Barlow Condensed',sans-serif; font-style: normal; }
-.public-profile-hero > div { min-width: 0; display: grid; gap: 4px; }
+.public-profile-hero > .public-profile-copy { min-width: 0; display: grid; gap: 4px; }
 .public-profile-hero small { color: #ff7d8c; font-size: 7px; font-weight: 700; letter-spacing: .13em; }
 .public-profile-hero h3 { margin: 0; overflow: hidden; font: 800 27px/1 'Barlow Condensed',sans-serif; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .public-profile-hero strong { font-size: 12px; }
+.public-profile-title { width: fit-content; padding: 3px 7px; border: 1px solid #4d4650; border-radius: 99px; color: #bbb4be; font-size: 6px; font-style: normal; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.public-profile-title.rarity-rare { border-color: rgba(210,128,72,.45); color: #d9905f; }
+.public-profile-title.rarity-epic { border-color: rgba(245,190,69,.45); color: #f5c65f; }
+.public-profile-title.rarity-legendary { border-color: rgba(114,221,255,.45); color: #85e3ff; }
 .public-socials { display: flex; flex-wrap: wrap; gap: 7px; }
 .public-socials a, .public-socials span { min-height: 34px; padding: 0 11px; display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.03); color: #c5c0c8; font-size: 8px; font-weight: 700; text-decoration: none; text-transform: uppercase; }
 .public-profile-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; }

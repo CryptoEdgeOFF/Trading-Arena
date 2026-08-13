@@ -39,9 +39,11 @@ import {
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
 import { getMarketMetadata, getMarketMetadataPoolStats } from './marketMetadata.js';
 import * as promotionsStore from './promotionsStore.js';
+import * as newsStore from './newsStore.js';
 import {
   CompetitionPushNotifier,
   registerPushDevice,
+  sendPushToAllDevices,
   sendPushToUser,
   unregisterPushDevice,
 } from './pushNotifications.js';
@@ -49,6 +51,7 @@ import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOpt
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
 import { createGlobalChatMessage, listGlobalChatMessages } from './globalChatStore.js';
+import { syncUserProgression } from './xpStore.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -2511,6 +2514,32 @@ app.post('/api/admin/promotion-image', requireAdmin, upload.single('image'), asy
   }
 });
 
+app.post('/api/admin/news-cover', requireAdmin, upload.single('image'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer?.length) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 1600, quality: 84 });
+    const id = crypto.randomUUID();
+    await competitionManager.putPrizeImage(id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`prize:${id}`);
+    res.json({ imageUrl: `/api/prize-images/${id}?v=${Date.now()}` });
+  } catch (error: any) {
+    console.error('[news-cover] upload failed:', error?.message);
+    res.status(500).json({ error: error.message || 'Upload impossible' });
+  }
+});
+
 // Bannière d'arène (visuel paysage mis en avant sur le leaderboard, ex. "CUP").
 // On NE détoure PAS le blanc (c'est une photo, pas un logo) et on garde un
 // grand côté pour un rendu net en pleine largeur. Stockée dans la même table
@@ -2553,6 +2582,86 @@ app.get('/api/prize-images/:id', async (req, res) => {
   } catch (error: any) {
     console.error(`[prize-image] read failed id=${id}:`, error?.message);
     res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
+});
+
+/* -------------------------------- ACTUALITÉS -------------------------------- */
+
+app.get('/api/news', async (req, res) => {
+  try {
+    const beforeValue = Number(req.query.before);
+    const limitValue = Number(req.query.limit);
+    const news = await newsStore.listPublicNews(
+      Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : Date.now() + 1,
+      Number.isFinite(limitValue) ? limitValue : 20,
+    );
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+    res.json({ news });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture des actualités impossible' });
+  }
+});
+
+app.get('/api/news/:id', async (req, res) => {
+  const article = await newsStore.getNews(String(req.params.id || ''));
+  if (!article) {
+    res.status(404).json({ error: 'Actualité introuvable' });
+    return;
+  }
+  res.json({ article });
+});
+
+app.get('/api/admin/news', requireAdmin, async (_req, res) => {
+  try {
+    res.json({ news: await newsStore.listAdminNews() });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture des actualités impossible' });
+  }
+});
+
+app.post('/api/admin/news', requireAdmin, async (req, res) => {
+  try {
+    const article = await newsStore.createNews(req.body || {});
+    res.status(201).json({ article });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Création impossible' });
+  }
+});
+
+app.patch('/api/admin/news/:id', requireAdmin, async (req, res) => {
+  try {
+    const article = await newsStore.updateNews(String(req.params.id || ''), req.body || {});
+    res.json({ article });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Mise à jour impossible' });
+  }
+});
+
+app.post('/api/admin/news/:id/publish', requireAdmin, async (req, res) => {
+  try {
+    let article = await newsStore.updateNews(String(req.params.id || ''), { published: true });
+    let notified = 0;
+    if (req.body?.notify === true && !article.pushSentAt) {
+      notified = await sendPushToAllDevices({
+        title: article.title,
+        body: article.summary || article.body.slice(0, 140),
+        kind: 'news',
+        data: { newsId: article.id },
+      });
+      article = await newsStore.markPushSent(article.id);
+    }
+    res.json({ article, notified });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Publication impossible' });
+  }
+});
+
+app.delete('/api/admin/news/:id', requireAdmin, async (req, res) => {
+  try {
+    await newsStore.deleteNews(String(req.params.id || ''));
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression impossible' });
   }
 });
 
@@ -2822,13 +2931,15 @@ app.get('/api/competition/my-trades', async (req, res) => {
  */
 app.get('/api/competition/player/:userId', async (req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
-  const profile = competitionManager.getPublicPlayerProfile(String(req.params.userId || ''));
+  const userId = String(req.params.userId || '');
+  const profile = competitionManager.getPublicPlayerProfile(userId);
   if (!profile) {
     res.status(404).json({ error: 'Joueur introuvable' });
     return;
   }
   const { paperPlayerIds, ...rest } = profile;
-  res.json({ ...rest, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
+  const progression = await syncUserProgression(userId, competitionManager.getUserXpFacts(userId));
+  res.json({ ...rest, progression: { ...progression, recentEvents: [] }, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
 });
 
 app.get('/api/competition/global-leaderboard', async (req, res) => {
@@ -2930,12 +3041,16 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     ? aggregateStatsForPlayerIds(competitionManager.getPaperPlayerIdsForUserStats(user.id))
     : null;
   const myBadges = user ? competitionManager.getUserBadges(user.id) : [];
+  const myProgression = user
+    ? await syncUserProgression(user.id, competitionManager.getUserXpFacts(user.id))
+    : null;
   res.json({
     user,
     publicCompetitions,
     myCompetitions,
     myStats,
     myBadges,
+    myProgression,
   });
 });
 
