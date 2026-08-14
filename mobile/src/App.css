@@ -205,6 +205,10 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-dashboard { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .home-dashboard > * { min-width: 0; }
 
+/* Barre du haut : notifications au-dessus de la carte joueur. */
+.home-topbar { margin-bottom: -6px; display: flex; justify-content: flex-end; }
+.home-topbar .news-button { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.04); color: #fff; }
+
 /* --- Carte joueur : photo, PnL, R/R, badge de division, progression ---
    Style « esport » : bordure dégradée aux couleurs de la division, texture
    diagonale, balayage lumineux, badge 3D flottant, barre de rang animée. */

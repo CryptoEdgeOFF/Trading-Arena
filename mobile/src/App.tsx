@@ -10,7 +10,6 @@ import {
   getBootstrap,
   getChampionOfWeek,
   getCompetitionLeaderboard,
-  getGlobalChatMessages,
   getNewsPage,
   getPnlHistory,
   getPromotions,
@@ -432,10 +431,8 @@ function HomeScreen({
   onGlobalLeaderboard,
   onProfile,
   onNews,
-  onChat,
   onRank,
   unreadNews,
-  unreadChat,
 }: {
   loading: boolean
   competitions: PublicCompetition[]
@@ -448,10 +445,8 @@ function HomeScreen({
   onGlobalLeaderboard: () => void
   onProfile: () => void
   onNews: () => void
-  onChat: () => void
   onRank: () => void
   unreadNews: number
-  unreadChat: number
 }) {
   const { t, locale } = useI18n()
   const [showEnded, setShowEnded] = useState(false)
@@ -470,6 +465,13 @@ function HomeScreen({
     <div className="home-dashboard">
       {user ? (
         <>
+          <header className="home-topbar">
+            <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
+              <Icon name="bell" size={19} />
+              {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
+            </button>
+          </header>
+
           <section className={`player-card ${dashboard.myRating ? `is-${dashboard.myRating.division.id}` : ''}`}>
             <i className="player-card__fx" aria-hidden="true" />
             <div className="player-card__identity">
@@ -480,14 +482,6 @@ function HomeScreen({
                 <small>{greeting}</small>
                 <strong>{user.name}</strong>
               </div>
-              <button className="news-button" type="button" onClick={onChat} aria-label={t('home.openChat')}>
-                <Icon name="community" size={19} />
-                {unreadChat > 0 && <b className="news-unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</b>}
-              </button>
-              <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
-                <Icon name="bell" size={19} />
-                {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
-              </button>
             </div>
 
             <div className="player-card__body">
@@ -497,8 +491,8 @@ function HomeScreen({
                   <strong>{totalPnl >= 0 ? '+' : ''}{totalPnl.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong>
                 </button>
                 <button type="button" onClick={onProfile}>
-                  <small>{t('home.avgRR')}</small>
-                  <strong>{dashboard.myStats?.avgRR?.toFixed(2) || '—'}</strong>
+                  <small>{t('home.profitFactor')}</small>
+                  <strong>{dashboard.myStats?.profitFactor == null ? '—' : dashboard.myStats.profitFactor.toFixed(2)}</strong>
                 </button>
                 <button type="button" onClick={onRank}>
                   <small>{t('playerCard.worldRank')}</small>
@@ -597,7 +591,6 @@ function App() {
   const [leaderboardCompetitionId, setLeaderboardCompetitionId] = useState('')
   const [leaderboardBackTab, setLeaderboardBackTab] = useState<Exclude<Tab, 'leaderboard'>>('home')
   const [globalLeaderboardBackTab, setGlobalLeaderboardBackTab] = useState<Exclude<Tab, 'global-leaderboard'>>('home')
-  const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [unreadNewsCount, setUnreadNewsCount] = useState(0)
   const [initialNewsId, setInitialNewsId] = useState('')
 
@@ -621,7 +614,6 @@ function App() {
     const key = `btf.chat.lastSeen.${userId}`
     const previous = Number(window.localStorage.getItem(key) || 0)
     if (timestamp > previous) window.localStorage.setItem(key, String(timestamp))
-    setUnreadChatCount(0)
   }, [dashboard?.user?.id])
 
   const markNewsSeen = useCallback((timestamp: number) => {
@@ -655,40 +647,6 @@ function App() {
       window.clearInterval(timer)
     }
   }, [])
-
-  useEffect(() => {
-    const userId = dashboard?.user?.id
-    if (!token || !userId) {
-      setUnreadChatCount(0)
-      return
-    }
-    let active = true
-    const refreshUnread = async () => {
-      const messages = await getGlobalChatMessages(token).catch(() => [])
-      if (!active || !messages.length) return
-      window.localStorage.setItem(`btf.chat.messages.${userId}`, JSON.stringify(messages.slice(-150)))
-      const latest = messages.at(-1)!.createdAt
-      if (tab === 'community') {
-        markChatSeen(latest)
-        return
-      }
-      const seenKey = `btf.chat.lastSeen.${userId}`
-      const storedSeenAt = window.localStorage.getItem(seenKey)
-      if (!storedSeenAt) {
-        window.localStorage.setItem(seenKey, String(latest))
-        setUnreadChatCount(0)
-        return
-      }
-      const seenAt = Number(storedSeenAt)
-      setUnreadChatCount(Math.min(99, messages.filter((message) => message.createdAt > seenAt && message.userId !== userId).length))
-    }
-    void refreshUnread()
-    const timer = window.setInterval(() => void refreshUnread(), 12_000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [dashboard?.user?.id, markChatSeen, tab, token])
 
   function selectTab(nextTab: Tab) {
     setTab(nextTab)
@@ -833,10 +791,8 @@ function App() {
                 setInitialNewsId('')
                 selectTab('news')
               }}
-              onChat={() => selectTab('community')}
               onRank={() => selectTab('rank')}
               unreadNews={unreadNewsCount}
-              unreadChat={unreadChatCount}
             />
           )}
 
