@@ -7,6 +7,7 @@
 .global-chat__face { width: 22px; height: 22px; margin-right: -6px; display: grid; place-items: center; overflow: hidden; border: 1.5px solid #141218; border-radius: 50%; background: #241f27; color: #d8d2db; font-size: 8px; font-weight: 800; }
 .global-chat__face img { width: 100%; height: 100%; object-fit: cover; }
 .global-chat__notice { padding: 7px 12px; border-bottom: 1px solid #1a181d; background: rgba(255,180,50,.045); color: #958b78; font-size: 9px; line-height: 1.45; text-align: center; }
+.global-chat__guest { min-height: 48px; margin: 8px 10px 12px; border: 1px solid rgba(238,36,60,.35); border-radius: 12px; background: rgba(238,36,60,.12); color: #ff8d9b; font-size: 12px; font-weight: 800; text-transform: uppercase; }
 .global-chat__messages { min-height: 0; padding: 10px 9px 7px; overflow-y: auto; overscroll-behavior: contain; }
 .global-chat__older { margin: 0 auto 12px; padding: 6px 9px; display: block; border: 1px solid #29262e; border-radius: 99px; background: #141218; color: #817b85; font-size: 7px; }
 .global-chat__state { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 5px; color: #706a73; font-size: 8px; text-align: center; }

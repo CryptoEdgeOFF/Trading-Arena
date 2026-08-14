@@ -646,7 +646,7 @@ export async function getMyTrades(token: string): Promise<JournalTrade[]> {
   return Array.isArray(data.trades) ? data.trades : []
 }
 
-export async function getGlobalChatMessages(token: string, before?: number, competitionId?: string): Promise<GlobalChatMessage[]> {
+export async function getGlobalChatMessages(token?: string | null, before?: number, competitionId?: string): Promise<GlobalChatMessage[]> {
   const params = new URLSearchParams()
   if (before) params.set('before', String(before))
   if (competitionId) params.set('competitionId', competitionId)

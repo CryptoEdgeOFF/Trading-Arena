@@ -2361,12 +2361,16 @@ app.delete('/api/competition/me/push-device', async (req, res) => {
 });
 
 app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120, key: 'global-chat-read' }), async (req, res) => {
-  const user = await getCompetitionUser(req);
-  if (!user) {
-    res.status(401).json({ error: 'Connexion requise' });
-    return;
-  }
   const room = String(req.query.competitionId || '').trim() || null;
+  // Lecture ouverte pour les salles d'arène (spectateurs non connectés).
+  // Le chat global reste authentifié.
+  if (!room) {
+    const user = await getCompetitionUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Connexion requise' });
+      return;
+    }
+  }
   const beforeValue = Number(String(req.query.before || ''));
   const messages = await listGlobalChatMessages({
     before: Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : undefined,

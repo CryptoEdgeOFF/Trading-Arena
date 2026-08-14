@@ -54,21 +54,24 @@ export function GlobalChat({
   user,
   onOpenPlayer,
   onLatestSeen,
+  onAuth,
   competitionId,
   title,
   onClose,
 }: {
-  token: string
-  user: SessionUser
+  token?: string | null
+  user?: SessionUser | null
   onOpenPlayer: (userId: string) => void
   onLatestSeen: (timestamp: number) => void
-  /** Si fourni, le chat devient la salle privée de cette arène (participants only). */
+  onAuth?: () => void
+  /** Si fourni, le chat devient la salle de cette arène. */
   competitionId?: string
   title?: string
   onClose?: () => void
 }) {
   const { t } = useI18n()
-  const initialMessagesRef = useRef(cachedMessages(user.id, competitionId))
+  const viewerId = user?.id || 'guest'
+  const initialMessagesRef = useRef(cachedMessages(viewerId, competitionId))
   const [messages, setMessages] = useState<GlobalChatMessage[]>(initialMessagesRef.current)
   const [body, setBody] = useState('')
   const [loading, setLoading] = useState(initialMessagesRef.current.length === 0)
@@ -116,7 +119,7 @@ export function GlobalChat({
     let reconnectTimer = 0
     let reconnectDelay = 1_000
     const connect = () => {
-      if (!active) return
+      if (!active || !token) return
       socket = new WebSocket(globalChatWebSocketUrl(token, competitionId))
       socketRef.current = socket
       socket.onopen = () => { reconnectDelay = 1_000 }
@@ -157,17 +160,17 @@ export function GlobalChat({
     const persisted = messages
       .filter((message) => !message.id.startsWith('temp-') && !message.imageUrl?.startsWith('blob:'))
       .slice(-150)
-    window.localStorage.setItem(cacheKey(user.id, competitionId), JSON.stringify(persisted))
-  }, [messages, user.id, competitionId])
+    window.localStorage.setItem(cacheKey(viewerId, competitionId), JSON.stringify(persisted))
+  }, [messages, viewerId, competitionId])
 
   useEffect(() => {
     if (!messages.length) return
     onLatestSeen(messages.at(-1)!.createdAt)
-    if (!initializedRef.current || messages.at(-1)?.userId === user.id) {
+    if (!initializedRef.current || messages.at(-1)?.userId === viewerId) {
       initializedRef.current = true
       bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }
-  }, [messages, onLatestSeen, user.id])
+  }, [messages, onLatestSeen, viewerId])
 
   async function loadOlder() {
     const before = messages[0]?.createdAt
@@ -214,6 +217,10 @@ export function GlobalChat({
   }
 
   async function send() {
+    if (!token || !user) {
+      onAuth?.()
+      return
+    }
     const value = body.trim()
     const photo = pendingPhoto
     if ((!value && !photo) || sending) return
@@ -345,7 +352,7 @@ export function GlobalChat({
         {loading ? <div className="global-chat__state">{t('chat.loading')}</div>
           : !messages.length ? <div className="global-chat__state"><strong>{t('chat.emptyTitle')}</strong><span>{t('chat.emptyLead')}</span></div>
             : messages.map((message, index) => {
-              const mine = message.userId === user.id
+              const mine = Boolean(user && message.userId === user.id)
               const previous = messages[index - 1]
               const grouped = !message.replyTo && previous?.userId === message.userId && message.createdAt - previous.createdAt < 5 * 60_000
               const imageSrc = message.imageUrl ? apiAssetUrl(message.imageUrl) : ''
@@ -379,6 +386,11 @@ export function GlobalChat({
       </section>
 
       {error && <div className="global-chat__error">{error}</div>}
+      {!token || !user ? (
+        <button className="global-chat__guest" type="button" onClick={() => onAuth?.()}>
+          {t('chat.loginToWrite')}
+        </button>
+      ) : (
       <form className={`global-chat__composer ${replyTo ? 'has-reply' : ''}`} onSubmit={(event) => { event.preventDefault(); void send() }}>
         {replyTo && <div className="global-chat__replying">
           {replyTo.imageUrl && <img src={apiAssetUrl(replyTo.imageUrl)} alt="" />}
@@ -404,6 +416,7 @@ export function GlobalChat({
           }} />
         <button type="submit" disabled={!canSend} aria-label={t('common.send')}>➤</button>
       </form>
+      )}
 
       {pickerOpen && (
         <div className="global-chat__sheet" onClick={() => setPickerOpen(false)}>

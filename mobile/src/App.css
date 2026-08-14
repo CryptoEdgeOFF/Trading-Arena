@@ -378,9 +378,11 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .live-empty p { margin: 0; color: #8d8690; font-size: 10.5px; }
 .live-upcoming { display: grid; gap: 7px; }
 .live-upcoming > header span { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .14em; }
-.live-upcoming > button { min-height: 46px; padding: 8px 13px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); color: inherit; text-align: left; }
-.live-upcoming > button strong { min-width: 0; overflow: hidden; font-size: 11.5px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.live-upcoming > button em { color: #ffb547; font-size: 10.5px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
+.live-upcoming__row { display: flex; align-items: stretch; gap: 7px; }
+.live-upcoming__row > button:first-child { flex: 1; min-height: 46px; padding: 8px 13px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); color: inherit; text-align: left; }
+.live-upcoming__chat { min-width: 62px; border: 1px solid rgba(238,36,60,.35); border-radius: 12px; background: rgba(238,36,60,.1); color: #ff8d9b; font-size: 10px; font-weight: 800; }
+.live-upcoming__row strong { min-width: 0; overflow: hidden; font-size: 11.5px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.live-upcoming__row em { color: #ffb547; font-size: 10.5px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
 .live-upcoming__label { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .live-upcoming__when { display: grid; gap: 1px; justify-items: end; }
 .live-upcoming__when small { color: #8d8690; font-size: 8.5px; font-variant-numeric: tabular-nums; }
@@ -508,7 +510,7 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .auth-overlay {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 120;
   display: flex;
   align-items: flex-end;
   justify-content: center;

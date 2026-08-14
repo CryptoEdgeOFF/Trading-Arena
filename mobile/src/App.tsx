@@ -318,22 +318,65 @@ function NextArenaHero({
   )
 }
 
+function ArenaChatOverlay({
+  competitionId,
+  title,
+  token,
+  user,
+  onClose,
+  onAuth,
+  onOpenPlayer,
+}: {
+  competitionId: string
+  title: string
+  token?: string | null
+  user?: SessionUser | null
+  onClose: () => void
+  onAuth: () => void
+  onOpenPlayer: (userId: string) => void
+}) {
+  return createPortal(
+    <div className="arena-chat-overlay">
+      <GlobalChat
+        token={token}
+        user={user}
+        competitionId={competitionId}
+        title={title}
+        onClose={onClose}
+        onAuth={onAuth}
+        onLatestSeen={() => {}}
+        onOpenPlayer={onOpenPlayer}
+      />
+    </div>,
+    document.body,
+  )
+}
+
 function LiveScreen({
   competitions,
   mineById,
+  token,
+  user,
   onLeaderboard,
   onTrade,
   onGlobalLeaderboard,
+  onAuth,
+  onOpenPlayer,
 }: {
   competitions: PublicCompetition[]
   mineById: Map<string, MyCompetition>
+  token?: string | null
+  user?: SessionUser | null
   onLeaderboard: (competitionId: string) => void
   onTrade: (competitionId: string) => void
   onGlobalLeaderboard: () => void
+  onAuth: () => void
+  onOpenPlayer: (userId: string) => void
 }) {
   const { t, locale } = useI18n()
   const now = useNow()
   const [champion, setChampion] = useState<ChampionOfWeek | null>(null)
+  const [chatArena, setChatArena] = useState<PublicCompetition | null>(null)
   useEffect(() => {
     let cancelled = false
     getChampionOfWeek().then((next) => { if (!cancelled) setChampion(next) }).catch(() => {})
@@ -366,6 +409,7 @@ function LiveScreen({
                 <span><small>{t('live.remaining')}</small><strong>{formatCountdown(arena.endAt - now, t('nextArena.dayUnit'))}</strong></span>
                 <div className="live-card__actions">
                   {mineById.get(arena.id)?.canTrade && <button type="button" onClick={() => onTrade(arena.id)}>{t('arena.trade')}</button>}
+                  <button type="button" onClick={() => setChatArena(arena)}>{t('live.chat')}</button>
                   <button className="is-primary" type="button" onClick={() => onLeaderboard(arena.id)}>{t('live.spectate')}</button>
                 </div>
               </div>
@@ -382,16 +426,19 @@ function LiveScreen({
         <section className="live-upcoming">
           <header><span>{t('live.nextUp')}</span></header>
           {upcoming.map((arena) => (
-            <button key={arena.id} type="button" onClick={() => onLeaderboard(arena.id)}>
-              <span className="live-upcoming__label">
-                <strong>{arena.title || t('arena.fallbackTitle')}</strong>
-                <FormatChip format={arena.format} />
-              </span>
-              <span className="live-upcoming__when">
-                <em>{formatCountdown(arena.startAt - now, t('nextArena.dayUnit'))}</em>
-                <small>{new Date(arena.startAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</small>
-              </span>
-            </button>
+            <div key={arena.id} className="live-upcoming__row">
+              <button type="button" onClick={() => onLeaderboard(arena.id)}>
+                <span className="live-upcoming__label">
+                  <strong>{arena.title || t('arena.fallbackTitle')}</strong>
+                  <FormatChip format={arena.format} />
+                </span>
+                <span className="live-upcoming__when">
+                  <em>{formatCountdown(arena.startAt - now, t('nextArena.dayUnit'))}</em>
+                  <small>{new Date(arena.startAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</small>
+                </span>
+              </button>
+              <button className="live-upcoming__chat" type="button" onClick={() => setChatArena(arena)}>{t('live.chat')}</button>
+            </div>
           ))}
         </section>
       )}
@@ -416,6 +463,20 @@ function LiveScreen({
         <div><strong>{t('live.topTraders')}</strong><small>{t('live.topTradersHint')}</small></div>
         <i>›</i>
       </button>
+      {chatArena && (
+        <ArenaChatOverlay
+          competitionId={chatArena.id}
+          title={chatArena.title || t('chat.arenaTitle')}
+          token={token}
+          user={user}
+          onClose={() => setChatArena(null)}
+          onAuth={onAuth}
+          onOpenPlayer={(userId) => {
+            setChatArena(null)
+            onOpenPlayer(userId)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -802,12 +863,20 @@ function App() {
             <LiveScreen
               competitions={leaderboardCompetitions}
               mineById={new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))}
+              token={token}
+              user={dashboard?.user}
               onLeaderboard={(id) => openLeaderboard(id, 'live')}
               onTrade={(competitionId) => {
                 setTradeCompetitionId(competitionId)
                 selectTab('trade')
               }}
               onGlobalLeaderboard={() => openGlobalLeaderboard('live')}
+              onAuth={() => setShowAuth(true)}
+              onOpenPlayer={(userId) => {
+                setSelectedPlayerId(userId)
+                setPlayerBackTab('leaderboard')
+                selectTab('player')
+              }}
             />
           )}
 
@@ -868,6 +937,7 @@ function App() {
               token={token}
               sessionUser={dashboard?.user}
               onBack={() => selectTab(leaderboardBackTab)}
+              onAuth={() => setShowAuth(true)}
               onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
                 setPlayerBackTab('leaderboard')
@@ -972,6 +1042,7 @@ function LeaderboardScreen({
   token,
   sessionUser,
   onBack,
+  onAuth,
   onOpenPlayer,
 }: {
   competitions: PublicCompetition[]
@@ -980,6 +1051,7 @@ function LeaderboardScreen({
   token?: string | null
   sessionUser?: SessionUser | null
   onBack: () => void
+  onAuth: () => void
   onOpenPlayer: (userId: string) => void
 }) {
   const { t, locale } = useI18n()
@@ -1066,6 +1138,11 @@ function LeaderboardScreen({
           <Icon name="arrow" size={18} />
         </button>
         <div><span>{t('leaderboard.liveKicker')}</span><h2>Leaderboard</h2></div>
+        {competitionId && (
+          <button type="button" onClick={() => setShowChat(true)} aria-label={t('chat.arenaOpen')}>
+            <Icon name="community" size={18} />
+          </button>
+        )}
         <button type="button" onClick={() => void loadLeaderboard()} aria-label={t('common.refresh')}><Icon name="refresh" size={18} /></button>
       </div>
 
@@ -1132,27 +1209,19 @@ function LeaderboardScreen({
       <ShareRankModal row={shareRow} competition={competition?.title || 'BTF Arena'}
         participants={competition?.participants || rows.length} onClose={() => setShareRow(null)} />
 
-      {/* Portal : la bulle et l'overlay échappent au conteneur animé (transform)
-          qui casserait leur position:fixed. */}
-      {token && sessionUser && competitionId && createPortal(
-        <>
-          <button className="arena-chat-fab" type="button" onClick={() => setShowChat(true)} aria-label={t('chat.arenaOpen')}>
-            <Icon name="community" size={22} />
-          </button>
-          {showChat && (
-            <div className="arena-chat-overlay">
-              <GlobalChat token={token} user={sessionUser} competitionId={competitionId}
-                title={competition?.title || t('chat.arenaTitle')}
-                onClose={() => setShowChat(false)}
-                onLatestSeen={() => {}}
-                onOpenPlayer={(userId) => {
-                  setShowChat(false)
-                  onOpenPlayer(userId)
-                }} />
-            </div>
-          )}
-        </>,
-        document.body,
+      {showChat && competitionId && (
+        <ArenaChatOverlay
+          competitionId={competitionId}
+          title={competition?.title || t('chat.arenaTitle')}
+          token={token}
+          user={sessionUser}
+          onClose={() => setShowChat(false)}
+          onAuth={onAuth}
+          onOpenPlayer={(userId) => {
+            setShowChat(false)
+            onOpenPlayer(userId)
+          }}
+        />
       )}
     </div>
   )
