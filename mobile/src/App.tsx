@@ -209,16 +209,6 @@ function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => vo
   )
 }
 
-// Objectifs de compétition : l'état « fait » est détecté via les événements
-// du ledger backend (xpStore), qui reste la source de vérité côté serveur.
-const homeMissions = [
-  { id: 'join', eventType: 'arena.join', labelKey: 'missions.join' },
-  { id: 'finish', eventType: 'arena.completed', labelKey: 'missions.finish' },
-  { id: 'top-half', eventType: 'arena.top_half', labelKey: 'missions.topHalf' },
-  { id: 'capital', eventType: 'trading.achievement', labelKey: 'missions.capital' },
-  { id: 'podium', eventType: 'arena.podium', labelKey: 'missions.podium' },
-] as const
-
 function useNow(intervalMs = 1_000) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -442,7 +432,6 @@ function HomeScreen({
     ? statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlPercent, 0) / statsCompetitions.length
     : 0
   const mineById = new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))
-  const earnedEventTypes = new Set((dashboard?.myProgression?.recentEvents || []).map((event) => event.eventType))
   const active = competitions
     .filter((competition) => competition.status !== 'ended')
     .sort((a, b) => a.startAt - b.startAt)
@@ -537,26 +526,6 @@ function HomeScreen({
       </section>
 
       <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
-
-      {user && (
-        <section className="home-missions" aria-label={t('home.missions')}>
-          <header>
-            <div><small>{t('home.missionsKicker')}</small><strong>{t('home.missions')}</strong></div>
-          </header>
-          <div className="home-missions__carousel">
-            {homeMissions.map((mission) => {
-              const done = earnedEventTypes.has(mission.eventType)
-              return (
-                <div key={mission.id} className={`home-mission ${done ? 'is-done' : ''}`}>
-                  <strong>{t(`${mission.labelKey}.label`)}</strong>
-                  <small>{t(`${mission.labelKey}.hint`)}</small>
-                  {done && <b className="home-mission__check">✓</b>}
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
     </div>
   )
 }

@@ -115,8 +115,6 @@ export const en = {
     trades: 'TRADES',
     avgRR: 'AVG R/R',
     profitFactor: 'PROFIT FACTOR',
-    missionsKicker: 'OBJECTIVES',
-    missions: 'Missions',
     guestEyebrow: 'Trading competition',
     guestTitle: 'Enter the',
     guestTitleEm: 'arena.',
@@ -141,13 +139,6 @@ export const en = {
     lead: 'The season ranking crowns the most consistent trader across every arena.',
     trades: '{{trades}} trades',
     seeFull: 'See the full leaderboard',
-  },
-  missions: {
-    join: { label: 'Join an arena', hint: 'Enter an open competition' },
-    finish: { label: 'Finish your first arena', hint: 'Trade until the arena ends' },
-    topHalf: { label: 'Finish top 50%', hint: 'Beat half the field in an arena' },
-    capital: { label: 'Protect your capital', hint: 'Finish an arena without breaching' },
-    podium: { label: 'Reach the podium', hint: 'Finish in the top 3 of an arena' },
   },
   arena: {
     fallbackTitle: 'BTF Arena',

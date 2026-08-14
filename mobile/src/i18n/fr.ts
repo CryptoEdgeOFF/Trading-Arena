@@ -117,8 +117,6 @@ export const fr: typeof en = {
     trades: 'TRADES',
     avgRR: 'R/R MOYEN',
     profitFactor: 'PROFIT FACTOR',
-    missionsKicker: 'OBJECTIFS',
-    missions: 'Missions',
     guestEyebrow: 'Compétition de trading',
     guestTitle: 'Entre dans',
     guestTitleEm: 'l’arène.',
@@ -143,13 +141,6 @@ export const fr: typeof en = {
     lead: 'Le classement de saison couronne le trader le plus régulier sur toutes les arènes.',
     trades: '{{trades}} trades',
     seeFull: 'Voir le classement complet',
-  },
-  missions: {
-    join: { label: 'Rejoins une arène', hint: 'Inscris-toi à une compétition ouverte' },
-    finish: { label: 'Termine ta première arène', hint: 'Trade jusqu’à la fin de l’arène' },
-    topHalf: { label: 'Finis top 50 %', hint: 'Bats la moitié du plateau d’une arène' },
-    capital: { label: 'Préserve ton capital', hint: 'Termine une arène sans breach' },
-    podium: { label: 'Monte sur le podium', hint: 'Finis dans le top 3 d’une arène' },
   },
   arena: {
     fallbackTitle: 'Arène BTF',
