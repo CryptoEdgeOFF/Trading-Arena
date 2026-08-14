@@ -36,7 +36,7 @@ import {
 } from './lib/session'
 import { AuthSheet } from './components/AuthSheet'
 import { DealsScreen } from './components/DealsScreen'
-import { DivisionCard } from './components/DivisionCard'
+import { DivisionCard, divisionDisplayName } from './components/DivisionCard'
 import { GlobalChat } from './components/GlobalChat'
 import { GlobalLeaderboard } from './components/GlobalLeaderboard'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
@@ -158,56 +158,6 @@ function ArenaCard({
   )
 }
 
-// Données simulées en attendant le classement officiel de la saison.
-const seasonPodium = [
-  { rank: 2, name: 'NOVA QUEEN', pnlPercent: 142.8, trades: 214, level: 21 },
-  { rank: 1, name: 'KRAKEN MIKE', pnlPercent: 187.4, trades: 302, level: 27 },
-  { rank: 3, name: 'DARK PIPS', pnlPercent: 121.6, trades: 178, level: 19 },
-]
-const seasonRunners = [
-  { rank: 4, name: 'ALPHA WOLF', pnlPercent: 98.2 },
-  { rank: 5, name: 'MME CANDLE', pnlPercent: 87.5 },
-  { rank: 6, name: 'ZEN SCALPER', pnlPercent: 79.1 },
-]
-
-function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => void }) {
-  const { t } = useI18n()
-  return (
-    <section className="home-season">
-      <div className="home-season__banner">
-        <img src="/assets/pictures/trader-silhouette.jpg" alt="" />
-        <div className="home-season__banner-text">
-          <span>{t('season.eyebrow')}</span>
-          <h2>{t('season.title')}<br /><em>{t('season.titleEm')}</em></h2>
-          <p>{t('season.lead')}</p>
-        </div>
-      </div>
-      <div className="home-season__podium">
-        {seasonPodium.map((player) => (
-          <button key={player.rank} type="button" className={`home-season__player is-rank-${player.rank}`} onClick={onGlobalLeaderboard}>
-            <i>{player.rank}</i>
-            <span>{player.name.split(' ').map((word) => word[0]).join('').slice(0, 2)}</span>
-            <strong>{player.name}</strong>
-            <em>+{player.pnlPercent.toFixed(1)}%</em>
-            <small>{t('season.tradesLevel', { trades: player.trades, level: player.level })}</small>
-          </button>
-        ))}
-      </div>
-      <div className="home-season__runners">
-        {seasonRunners.map((player) => (
-          <button key={player.rank} type="button" onClick={onGlobalLeaderboard}>
-            <i>#{player.rank}</i>
-            <strong>{player.name}</strong>
-            <em>+{player.pnlPercent.toFixed(1)}%</em>
-          </button>
-        ))}
-        <button className="home-season__more" type="button" onClick={onGlobalLeaderboard}>
-          {t('season.seeFull')} <b>›</b>
-        </button>
-      </div>
-    </section>
-  )
-}
 
 // Missions alignées sur les vraies récompenses XP du backend (xpStore).
 // Orientées compétition (résultat d'arène), pas volume de trades.
@@ -434,7 +384,7 @@ function HomeScreen({
   unreadChat: number
 }) {
   const { t, locale, lang } = useI18n()
-  const [arenaFilter, setArenaFilter] = useState<'open' | 'upcoming' | 'ended'>('open')
+  const [showEnded, setShowEnded] = useState(false)
   const user = dashboard?.user
   const statsCompetitions = (dashboard?.myCompetitions || []).filter((competition) => !/qualif/i.test(competition.title))
   const totalPnl = statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlUsd, 0)
@@ -443,18 +393,12 @@ function HomeScreen({
     : 0
   const mineById = new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))
   const earnedEventTypes = new Set((dashboard?.myProgression?.recentEvents || []).map((event) => event.eventType))
-  const open = competitions.filter((competition) => competition.status === 'live' || competition.status === 'registration')
-  const upcoming = competitions.filter((competition) => competition.status === 'starting_soon')
+  const active = competitions
+    .filter((competition) => competition.status !== 'ended')
+    .sort((a, b) => a.startAt - b.startAt)
   const ended = competitions.filter((competition) => competition.status === 'ended').sort((a, b) => b.endAt - a.endAt)
   const hour = new Date().getHours()
   const greeting = hour >= 18 || hour < 5 ? t('home.greetingEvening') : t('home.greetingMorning')
-
-  const arenaGroups = {
-    open: { list: open, empty: t('home.emptyOpen') },
-    upcoming: { list: upcoming, empty: t('home.emptyUpcoming') },
-    ended: { list: ended, empty: t('home.emptyEnded') },
-  }
-  const visibleArenas = arenaGroups[arenaFilter]
 
   return (
     <div className="home-dashboard">
@@ -481,38 +425,22 @@ function HomeScreen({
           <NextArenaHero competitions={competitions} mineById={mineById} authed
             onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} onAuth={onAuth} />
 
-          <section className={`home-pnl-hero ${totalPnl >= 0 ? 'is-profit' : 'is-loss'}`}>
-            <div className="home-pnl-hero__main">
+          <section className="home-stat-strip">
+            <button type="button" onClick={onProfile} className={totalPnl >= 0 ? 'is-profit' : 'is-loss'}>
               <small>{t('home.pnlGlobal')}</small>
               <strong>{totalPnl >= 0 ? '+' : ''}{totalPnl.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong>
               <span>{t(statsCompetitions.length > 1 ? 'home.avgArenasPlural' : 'home.avgArenas', {
                 avg: `${averagePnlPercent >= 0 ? '+' : ''}${averagePnlPercent.toFixed(2)}`,
                 count: statsCompetitions.length,
               })}</span>
-            </div>
-            {dashboard.myProgression && <div className="home-pnl-hero__xp"><PlayerProgressionBar progression={dashboard.myProgression} variant="compact" /></div>}
-          </section>
-
-          {dashboard.myRating && <DivisionCard rating={dashboard.myRating} onOpen={onRank} />}
-
-          <section className="home-missions" aria-label={t('home.missions')}>
-            <header>
-              <div><small>{t('home.earnXp')}</small><strong>{t('home.missions')}</strong></div>
-              {dashboard.myProgression && <b>{dashboard.myProgression.totalXp.toLocaleString(locale)} XP</b>}
-            </header>
-            <div className="home-missions__carousel">
-              {homeMissions.map((mission) => {
-                const done = earnedEventTypes.has(mission.eventType)
-                return (
-                  <div key={mission.id} className={`home-mission ${done ? 'is-done' : ''}`}>
-                    <span className="home-mission__xp">+{mission.xp} XP</span>
-                    <strong>{t(`${mission.labelKey}.label`)}</strong>
-                    <small>{t(`${mission.labelKey}.hint`)}</small>
-                    {done && <b className="home-mission__check">✓</b>}
-                  </div>
-                )
-              })}
-            </div>
+            </button>
+            {dashboard.myRating && (
+              <button type="button" onClick={onRank} className={`is-division is-${dashboard.myRating.division.id}`}>
+                <small>{t('division.kicker')}</small>
+                <strong>{divisionDisplayName(dashboard.myRating.division)}</strong>
+                <span>{t('division.points', { points: dashboard.myRating.points.toLocaleString(locale) })}</span>
+              </button>
+            )}
           </section>
         </>
       ) : (
@@ -534,28 +462,51 @@ function HomeScreen({
           onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} onAuth={onAuth} />
       )}
 
-      <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
-
       <section className="home-arena-section">
         <div className="section-title">
           <div><span>{t('home.competitions')}</span><h2>{t('home.arenas')}</h2></div>
           <button type="button" onClick={onRefresh} aria-label={t('common.refresh')}><Icon name="refresh" size={18} /></button>
         </div>
-        <div className="home-arena-tabs" role="tablist" aria-label={t('home.filterArenas')}>
-          {([['open', t('home.tabOpen'), open.length], ['upcoming', t('home.tabUpcoming'), upcoming.length], ['ended', t('home.tabEnded'), ended.length]] as const).map(([id, label, count]) => (
-            <button key={id} type="button" role="tab" aria-selected={arenaFilter === id}
-              className={arenaFilter === id ? 'is-active' : ''} onClick={() => setArenaFilter(id)}>
-              {label}{count > 0 && <b>{count}</b>}
-            </button>
-          ))}
-        </div>
-        {loading ? <div className="skeleton-card"><i /><i /><i /></div> : visibleArenas.list.length ? (
-          <div className="arena-list">{visibleArenas.list.map((competition) => (
+        {loading ? <div className="skeleton-card"><i /><i /><i /></div> : active.length ? (
+          <div className="arena-list">{active.map((competition) => (
             <ArenaCard key={competition.id} competition={competition} mine={mineById.get(competition.id)}
               joined={mineById.has(competition.id)} onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} />
           ))}</div>
-        ) : <div className="home-arena-empty">{visibleArenas.empty}</div>}
+        ) : <div className="home-arena-empty">{t('home.emptyOpen')}</div>}
+        {ended.length > 0 && (
+          <button className="home-ended-toggle" type="button" onClick={() => setShowEnded((value) => !value)}>
+            {showEnded ? t('home.hideEnded') : t('home.showEnded', { count: ended.length })}
+          </button>
+        )}
+        {showEnded && (
+          <div className="arena-list">{ended.map((competition) => (
+            <ArenaCard key={competition.id} competition={competition} mine={mineById.get(competition.id)}
+              joined={mineById.has(competition.id)} onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} />
+          ))}</div>
+        )}
       </section>
+
+      {user && (
+        <section className="home-missions" aria-label={t('home.missions')}>
+          <header>
+            <div><small>{t('home.earnXp')}</small><strong>{t('home.missions')}</strong></div>
+            {dashboard?.myProgression && <b>{dashboard.myProgression.totalXp.toLocaleString(locale)} XP</b>}
+          </header>
+          <div className="home-missions__carousel">
+            {homeMissions.map((mission) => {
+              const done = earnedEventTypes.has(mission.eventType)
+              return (
+                <div key={mission.id} className={`home-mission ${done ? 'is-done' : ''}`}>
+                  <span className="home-mission__xp">+{mission.xp} XP</span>
+                  <strong>{t(`${mission.labelKey}.label`)}</strong>
+                  <small>{t(`${mission.labelKey}.hint`)}</small>
+                  {done && <b className="home-mission__check">✓</b>}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

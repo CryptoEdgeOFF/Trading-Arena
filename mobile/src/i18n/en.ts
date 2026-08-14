@@ -131,6 +131,8 @@ export const en = {
     emptyOpen: 'No arena is open right now.',
     emptyUpcoming: 'Upcoming arenas will be announced here.',
     emptyEnded: 'No finished arena yet.',
+    showEnded: 'Show finished arenas ({{count}})',
+    hideEnded: 'Hide finished arenas',
   },
   season: {
     eyebrow: 'SEASON 2026',

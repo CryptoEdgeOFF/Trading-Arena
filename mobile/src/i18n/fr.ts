@@ -133,6 +133,8 @@ export const fr: typeof en = {
     emptyOpen: 'Aucune arène ouverte actuellement.',
     emptyUpcoming: 'Les prochaines arènes seront annoncées ici.',
     emptyEnded: 'Aucune arène terminée pour le moment.',
+    showEnded: 'Voir les arènes terminées ({{count}})',
+    hideEnded: 'Masquer les arènes terminées',
   },
   season: {
     eyebrow: 'SAISON 2026',

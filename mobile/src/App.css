@@ -212,14 +212,18 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-greeting em { width: fit-content; color: #d9a65c; font-size: 8px; font-style: normal; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .home-greeting > button { width: 42px; height: 42px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.04); color: #fff; }
 
-.home-pnl-hero { padding: 18px 17px 16px; border: 1px solid rgba(255,70,92,.22); border-radius: 18px; background: radial-gradient(circle at 88% -10%,rgba(238,36,60,.26),transparent 46%),linear-gradient(135deg,rgba(255,255,255,.05),rgba(255,255,255,.012)); box-shadow: 0 14px 34px rgba(0,0,0,.24); }
-.home-pnl-hero__main { display: grid; gap: 5px; }
-.home-pnl-hero__main small { color: #ff8d9b; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
-.home-pnl-hero__main strong { font: 800 42px/1 'Barlow Condensed',sans-serif; letter-spacing: -.01em; }
-.home-pnl-hero.is-profit .home-pnl-hero__main strong { color: #6ee7a0; }
-.home-pnl-hero.is-loss .home-pnl-hero__main strong { color: #ff7c8c; }
-.home-pnl-hero__main span { color: #99939d; font-size: 11px; }
-.home-pnl-hero__xp { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+/* Bande de stats épurée : PnL global + division sur une seule ligne. */
+.home-stat-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.home-stat-strip > button { min-height: 74px; padding: 11px 13px; display: grid; gap: 3px; align-content: center; text-align: left; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(170deg, rgba(255,255,255,.04), rgba(255,255,255,.012)); color: inherit; }
+.home-stat-strip small { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .15em; }
+.home-stat-strip strong { font: 800 21px/1.05 'Barlow Condensed',sans-serif; letter-spacing: .01em; }
+.home-stat-strip span { color: #99939d; font-size: 9.5px; }
+.home-stat-strip > button.is-profit strong { color: #6ee7a0; }
+.home-stat-strip > button.is-loss strong { color: #ff7c8c; }
+.home-stat-strip > button.is-division { border-color: rgba(255,210,87,.28); background: linear-gradient(170deg, rgba(255,210,87,.07), rgba(255,255,255,.012)); }
+.home-stat-strip > button.is-division strong { color: #ffd257; text-transform: uppercase; }
+
+.home-ended-toggle { margin-top: 9px; width: 100%; min-height: 40px; border: 1px dashed #2e2a33; border-radius: 12px; background: none; color: #8d8690; font-size: 10.5px; font-weight: 700; }
 
 .home-stat-strip { min-width: 0; margin-inline: -16px; padding-inline: 16px; display: flex; gap: 8px; overflow-x: auto; }
 .home-stat-strip > div { flex: 0 0 auto; min-width: 98px; padding: 12px 14px; display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.03); }
@@ -312,45 +316,6 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-mission.is-done { opacity: .55; }
 .home-mission.is-done .home-mission__xp { border-color: rgba(110,231,160,.3); background: rgba(110,231,160,.08); color: #6ee7a0; }
 
-.home-arena-tabs { margin-bottom: 13px; padding: 4px; display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); }
-.home-arena-tabs button { min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 6px; border: none; border-radius: 9px; background: transparent; color: #8d8791; font-size: 11px; font-weight: 700; }
-.home-arena-tabs button.is-active { background: rgba(238,36,60,.14); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,70,92,.3); }
-.home-arena-tabs button b { min-width: 19px; height: 17px; display: grid; place-items: center; padding: 0 4px; border-radius: 9px; background: rgba(255,255,255,.08); font-size: 9px; font-weight: 800; }
-.home-arena-tabs button.is-active b { background: var(--red); }
-
-/* Vitrine de saison : héro + podium */
-.home-season { overflow: hidden; border: 1px solid rgba(255,70,92,.2); border-radius: 18px; background: linear-gradient(180deg,#130a0e,#0b090d 58%); box-shadow: 0 16px 40px rgba(0,0,0,.3); }
-.home-season__banner { position: relative; min-height: 188px; display: flex; align-items: center; }
-.home-season__banner img { position: absolute; top: 0; right: -14px; height: 100%; width: 64%; object-fit: cover; object-position: top center; mix-blend-mode: screen; opacity: .92; -webkit-mask-image: linear-gradient(90deg,transparent,#000 40%); mask-image: linear-gradient(90deg,transparent,#000 40%); pointer-events: none; }
-.home-season__banner-text { position: relative; z-index: 1; max-width: 74%; padding: 20px 18px; }
-.home-season__banner-text span { color: #ff6c7e; font-size: 9px; font-weight: 900; letter-spacing: .2em; }
-.home-season__banner-text h2 { margin: 8px 0 0; font: 800 31px/.95 'Barlow Condensed',sans-serif; text-transform: uppercase; }
-.home-season__banner-text h2 em { color: var(--red-bright); font-style: normal; }
-.home-season__banner-text p { margin: 10px 0 0; max-width: 200px; color: #99939d; font-size: 10px; line-height: 1.5; }
-
-.home-season__podium { padding: 14px 14px 0; display: grid; grid-template-columns: 1fr 1.12fr 1fr; gap: 8px; align-items: end; }
-.home-season__player { --medal: #9a95a0; --hex: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
-  position: relative; min-width: 0; padding: 18px 6px 12px; display: grid; gap: 3px; justify-items: center;
-  border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.03); }
-.home-season__player.is-rank-1 { --medal: #ffd86c; padding: 22px 6px 16px; border-color: rgba(255,216,108,.35); background: linear-gradient(180deg,rgba(255,216,108,.09),rgba(255,255,255,.02)); }
-.home-season__player.is-rank-2 { --medal: #e4e9ef; }
-.home-season__player.is-rank-3 { --medal: #d78a51; }
-.home-season__player i { position: absolute; top: -8px; left: 50%; transform: translateX(-50%); min-width: 20px; height: 20px; display: grid; place-items: center; border: 2px solid #0b090d; border-radius: 50%; background: var(--medal); color: #100d12; font-size: 10px; font-style: normal; font-weight: 900; }
-.home-season__player span { width: 52px; height: 52px; display: grid; place-items: center; clip-path: var(--hex); background: linear-gradient(145deg,color-mix(in srgb,var(--medal) 55%,#1a161d),#16131a 70%); color: #fff; font: 900 16px 'Barlow Condensed',sans-serif; }
-.home-season__player.is-rank-1 span { width: 66px; height: 66px; font-size: 21px; }
-.home-season__player strong { max-width: 100%; overflow: hidden; font: 700 13px/1.1 'Barlow Condensed',sans-serif; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.home-season__player.is-rank-1 strong { font-size: 16px; }
-.home-season__player em { color: #6ee7a0; font-size: 12px; font-style: normal; font-weight: 800; }
-.home-season__player.is-rank-1 em { font-size: 15px; }
-.home-season__player small { color: #716b75; font-size: 7px; }
-
-.home-season__runners { padding: 12px 14px 14px; display: grid; gap: 6px; }
-.home-season__runners > button { min-height: 42px; padding: 0 12px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.025); color: #d9d4dc; }
-.home-season__runners i { color: #8d8791; font-size: 10px; font-style: normal; font-weight: 800; }
-.home-season__runners strong { flex: 1; overflow: hidden; text-align: left; font: 700 14px 'Barlow Condensed',sans-serif; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.home-season__runners em { color: #6ee7a0; font-size: 11px; font-style: normal; font-weight: 800; }
-.home-season__runners .home-season__more { justify-content: center; gap: 7px; border-color: rgba(255,70,92,.25); background: rgba(238,36,60,.07); color: #ff8d9b; font-size: 10px; font-weight: 800; text-transform: uppercase; }
-.home-season__more b { font-size: 14px; }
 .home-guest-hero { position: relative; padding: 22px 18px; border: 1px solid rgba(255,70,92,.18); border-radius: 14px; background: radial-gradient(circle at 90% 0,rgba(238,36,60,.2),transparent 43%),rgba(255,255,255,.02); }
 .home-guest-hero__news { position: absolute; top: 14px; right: 14px; width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.04); color: #fff; }
 .home-guest-hero h1 { font-size: 57px; }
