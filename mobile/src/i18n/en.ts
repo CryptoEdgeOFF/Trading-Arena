@@ -316,6 +316,9 @@ export const en = {
   },
   chat: {
     title: 'Global chat',
+    arenaTitle: 'Arena chat',
+    arenaOpen: 'Open the arena chat',
+    arenaNotice: 'Private room — only traders of this arena can read and post.',
     community: 'Community',
     traders: '{{count}} traders',
     notice: 'Long-press to reply · No message is financial advice.',

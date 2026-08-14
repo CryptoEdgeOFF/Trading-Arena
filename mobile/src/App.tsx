@@ -864,6 +864,9 @@ function App() {
               competitions={leaderboardCompetitions}
               initialCompetitionId={leaderboardCompetitionId}
               currentUserId={dashboard?.user?.id}
+              token={token}
+              sessionUser={dashboard?.user}
+              joinedCompetitionIds={new Set((dashboard?.myCompetitions || []).map((competition) => competition.id))}
               onBack={() => selectTab(leaderboardBackTab)}
               onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
@@ -966,12 +969,18 @@ function LeaderboardScreen({
   competitions,
   initialCompetitionId,
   currentUserId,
+  token,
+  sessionUser,
+  joinedCompetitionIds,
   onBack,
   onOpenPlayer,
 }: {
   competitions: PublicCompetition[]
   initialCompetitionId: string
   currentUserId?: string
+  token?: string | null
+  sessionUser?: SessionUser | null
+  joinedCompetitionIds: Set<string>
   onBack: () => void
   onOpenPlayer: (userId: string) => void
 }) {
@@ -983,6 +992,7 @@ function LeaderboardScreen({
   const [loadingRows, setLoadingRows] = useState(true)
   const [error, setError] = useState('')
   const [shareRow, setShareRow] = useState<LeaderboardRow | null>(null)
+  const [showChat, setShowChat] = useState(false)
   const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[]; moments: PnlMoment[] } | null>(null)
   const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] })
 
@@ -1123,6 +1133,25 @@ function LeaderboardScreen({
       )}
       <ShareRankModal row={shareRow} competition={competition?.title || 'BTF Arena'}
         participants={competition?.participants || rows.length} onClose={() => setShareRow(null)} />
+
+      {token && sessionUser && competitionId && joinedCompetitionIds.has(competitionId) && (
+        <button className="arena-chat-fab" type="button" onClick={() => setShowChat(true)} aria-label={t('chat.arenaOpen')}>
+          <Icon name="community" size={22} />
+        </button>
+      )}
+
+      {showChat && token && sessionUser && (
+        <div className="arena-chat-overlay">
+          <GlobalChat token={token} user={sessionUser} competitionId={competitionId}
+            title={competition?.title || t('chat.arenaTitle')}
+            onClose={() => setShowChat(false)}
+            onLatestSeen={() => {}}
+            onOpenPlayer={(userId) => {
+              setShowChat(false)
+              onOpenPlayer(userId)
+            }} />
+        </div>
+      )}
     </div>
   )
 }

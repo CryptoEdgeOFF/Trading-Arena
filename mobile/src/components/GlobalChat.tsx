@@ -28,9 +28,13 @@ function mergeMessages(current: GlobalChatMessage[], incoming: GlobalChatMessage
   return Array.from(byId.values()).sort((a, b) => a.createdAt - b.createdAt).slice(-300)
 }
 
-function cachedMessages(userId: string): GlobalChatMessage[] {
+function cacheKey(userId: string, competitionId?: string) {
+  return competitionId ? `btf.chat.messages.${userId}.${competitionId}` : `btf.chat.messages.${userId}`
+}
+
+function cachedMessages(userId: string, competitionId?: string): GlobalChatMessage[] {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(`btf.chat.messages.${userId}`) || '[]')
+    const parsed = JSON.parse(window.localStorage.getItem(cacheKey(userId, competitionId)) || '[]')
     return Array.isArray(parsed) ? parsed.slice(-150) : []
   } catch {
     return []
@@ -50,14 +54,21 @@ export function GlobalChat({
   user,
   onOpenPlayer,
   onLatestSeen,
+  competitionId,
+  title,
+  onClose,
 }: {
   token: string
   user: SessionUser
   onOpenPlayer: (userId: string) => void
   onLatestSeen: (timestamp: number) => void
+  /** Si fourni, le chat devient la salle privée de cette arène (participants only). */
+  competitionId?: string
+  title?: string
+  onClose?: () => void
 }) {
   const { t } = useI18n()
-  const initialMessagesRef = useRef(cachedMessages(user.id))
+  const initialMessagesRef = useRef(cachedMessages(user.id, competitionId))
   const [messages, setMessages] = useState<GlobalChatMessage[]>(initialMessagesRef.current)
   const [body, setBody] = useState('')
   const [loading, setLoading] = useState(initialMessagesRef.current.length === 0)
@@ -79,7 +90,7 @@ export function GlobalChat({
 
   const loadLatest = useCallback(async () => {
     try {
-      const next = await getGlobalChatMessages(token)
+      const next = await getGlobalChatMessages(token, undefined, competitionId)
       setMessages((current) => mergeMessages(current, next))
       setError('')
     } catch (nextError) {
@@ -87,7 +98,7 @@ export function GlobalChat({
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [token, competitionId])
 
   useEffect(() => {
     void loadLatest()
@@ -106,7 +117,7 @@ export function GlobalChat({
     let reconnectDelay = 1_000
     const connect = () => {
       if (!active) return
-      socket = new WebSocket(globalChatWebSocketUrl(token))
+      socket = new WebSocket(globalChatWebSocketUrl(token, competitionId))
       socketRef.current = socket
       socket.onopen = () => { reconnectDelay = 1_000 }
       socket.onmessage = (event) => {
@@ -140,14 +151,14 @@ export function GlobalChat({
       window.clearTimeout(reconnectTimer)
       socket?.close()
     }
-  }, [token])
+  }, [token, competitionId])
 
   useEffect(() => {
     const persisted = messages
       .filter((message) => !message.id.startsWith('temp-') && !message.imageUrl?.startsWith('blob:'))
       .slice(-150)
-    window.localStorage.setItem(`btf.chat.messages.${user.id}`, JSON.stringify(persisted))
-  }, [messages, user.id])
+    window.localStorage.setItem(cacheKey(user.id, competitionId), JSON.stringify(persisted))
+  }, [messages, user.id, competitionId])
 
   useEffect(() => {
     if (!messages.length) return
@@ -163,7 +174,7 @@ export function GlobalChat({
     if (!before || loadingOlder) return
     setLoadingOlder(true)
     try {
-      const older = await getGlobalChatMessages(token, before)
+      const older = await getGlobalChatMessages(token, before, competitionId)
       setMessages((current) => mergeMessages(older, current))
     } finally {
       setLoadingOlder(false)
@@ -245,7 +256,7 @@ export function GlobalChat({
           data: { body: value, imageUrl, replyToId, clientId },
         }))
       } else {
-        const message = await sendGlobalChatMessage(token, value, replyToId, imageUrl)
+        const message = await sendGlobalChatMessage(token, value, replyToId, imageUrl, competitionId)
         setMessages((current) => mergeMessages(current.filter((item) => item.clientId !== clientId), [message]))
       }
     } catch (nextError) {
@@ -312,7 +323,8 @@ export function GlobalChat({
   return (
     <div className="global-chat">
       <header className="global-chat__head">
-        <strong>{t('chat.title')}</strong>
+        {onClose && <button className="global-chat__back" type="button" onClick={onClose} aria-label={t('common.close')}>‹</button>}
+        <strong>{title || t('chat.title')}</strong>
         <div className="global-chat__people">
           {traders.length > 0 && (
             <div className="global-chat__faces" aria-hidden="true">
@@ -326,7 +338,7 @@ export function GlobalChat({
           <span>{traders.length ? t('chat.traders', { count: traders.length }) : t('chat.community')}</span>
         </div>
       </header>
-      <div className="global-chat__notice">{t('chat.notice')}</div>
+      <div className="global-chat__notice">{competitionId ? t('chat.arenaNotice') : t('chat.notice')}</div>
 
       <section className="global-chat__messages" aria-live="polite">
         {messages.length > 0 && <button className="global-chat__older" type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? t('common.loading') : t('chat.older')}</button>}

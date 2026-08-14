@@ -103,7 +103,13 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 const itickClients = new Set<WebSocket>();
-const chatClients = new Set<WebSocket>();
+// Clients chat → salle (null = chat global, sinon id d'arène).
+const chatClients = new Map<WebSocket, string | null>();
+
+/** L'utilisateur participe-t-il à cette arène ? (accès au chat du tournoi) */
+function isArenaParticipant(userId: string, competitionId: string): boolean {
+  return competitionManager.listUserCompetitions(userId).some((competition) => competition.id === competitionId);
+}
 itickWss.on('connection', (ws) => {
   itickClients.add(ws);
   (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
@@ -288,12 +294,17 @@ chatWss.on('connection', (ws, req) => {
   });
   const url = new URL(req.url || '/ws/chat', `http://${req.headers.host || 'localhost'}`);
   const token = url.searchParams.get('token') || '';
+  const room = String(url.searchParams.get('competitionId') || '').trim() || null;
   void competitionManager.getUserFromToken(token).then((user) => {
     if (!user || ws.readyState !== WebSocket.OPEN) {
       ws.close(1008, 'Session invalide');
       return;
     }
-    chatClients.add(ws);
+    if (room && !isArenaParticipant(user.id, room)) {
+      ws.close(1008, 'Réservé aux participants de cette arène');
+      return;
+    }
+    chatClients.set(ws, room);
     ws.send(JSON.stringify({ type: 'chat:ready', data: { userId: user.id } }));
     const sentAt: number[] = [];
     ws.on('message', (raw) => {
@@ -316,6 +327,7 @@ chatWss.on('connection', (ws, req) => {
         body: payload.data?.body,
         replyToId: payload.data?.replyToId,
         imageUrl: payload.data?.imageUrl,
+        competitionId: room,
       }).then((message) => {
         broadcastGlobalChatMessage(message, clientId);
         notifyGlobalChatReply(user, message);
@@ -331,8 +343,9 @@ chatWss.on('connection', (ws, req) => {
 
 function broadcastGlobalChatMessage(message: Awaited<ReturnType<typeof createGlobalChatMessage>>, clientId?: string): void {
   const payload = JSON.stringify({ type: 'chat:message', data: { ...message, ...(clientId ? { clientId } : {}) } });
-  for (const ws of chatClients) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+  const room = message.competitionId || null;
+  for (const [ws, clientRoom] of chatClients) {
+    if (clientRoom === room && ws.readyState === WebSocket.OPEN) ws.send(payload);
   }
 }
 
@@ -2361,10 +2374,16 @@ app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120
     res.status(401).json({ error: 'Connexion requise' });
     return;
   }
+  const room = String(req.query.competitionId || '').trim() || null;
+  if (room && !isArenaParticipant(user.id, room)) {
+    res.status(403).json({ error: 'Chat réservé aux participants de cette arène' });
+    return;
+  }
   const beforeValue = Number(String(req.query.before || ''));
   const messages = await listGlobalChatMessages({
     before: Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : undefined,
     limit: 80,
+    competitionId: room,
   });
   res.json({ messages });
 });
@@ -2375,11 +2394,17 @@ app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20
     res.status(401).json({ error: 'Connexion requise' });
     return;
   }
+  const room = String(req.body?.competitionId || '').trim() || null;
+  if (room && !isArenaParticipant(user.id, room)) {
+    res.status(403).json({ error: 'Chat réservé aux participants de cette arène' });
+    return;
+  }
   try {
     const message = await createGlobalChatMessage(user, {
       body: req.body?.body,
       replyToId: req.body?.replyToId,
       imageUrl: req.body?.imageUrl,
+      competitionId: room,
     });
     broadcastGlobalChatMessage(message);
     notifyGlobalChatReply(user, message);

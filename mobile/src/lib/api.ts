@@ -646,8 +646,11 @@ export async function getMyTrades(token: string): Promise<JournalTrade[]> {
   return Array.isArray(data.trades) ? data.trades : []
 }
 
-export async function getGlobalChatMessages(token: string, before?: number): Promise<GlobalChatMessage[]> {
-  const query = before ? `?before=${encodeURIComponent(before)}` : ''
+export async function getGlobalChatMessages(token: string, before?: number, competitionId?: string): Promise<GlobalChatMessage[]> {
+  const params = new URLSearchParams()
+  if (before) params.set('before', String(before))
+  if (competitionId) params.set('competitionId', competitionId)
+  const query = params.size ? `?${params.toString()}` : ''
   const data = await apiFetch<{ messages?: GlobalChatMessage[] }>(
     `/api/competition/chat/messages${query}`,
     undefined,
@@ -661,11 +664,12 @@ export async function sendGlobalChatMessage(
   body: string,
   replyToId?: string,
   imageUrl?: string,
+  competitionId?: string,
 ): Promise<GlobalChatMessage> {
   const data = await apiFetch<{ message: GlobalChatMessage }>('/api/competition/chat/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body, replyToId, imageUrl }),
+    body: JSON.stringify({ body, replyToId, imageUrl, competitionId }),
   }, token)
   return data.message
 }
@@ -681,8 +685,9 @@ export async function uploadChatImage(token: string, file: File): Promise<string
   return data.imageUrl
 }
 
-export function globalChatWebSocketUrl(token: string): string {
-  return `${API_WS_URL}/ws/chat?token=${encodeURIComponent(token)}`
+export function globalChatWebSocketUrl(token: string, competitionId?: string): string {
+  const room = competitionId ? `&competitionId=${encodeURIComponent(competitionId)}` : ''
+  return `${API_WS_URL}/ws/chat?token=${encodeURIComponent(token)}${room}`
 }
 
 export function createPaperSession(

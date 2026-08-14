@@ -9,6 +9,8 @@ export interface GlobalChatMessage {
   body: string;
   imageUrl: string | null;
   createdAt: number;
+  /** Salle : null = chat global, sinon id de l'arène (chat par tournoi). */
+  competitionId?: string | null;
   replyTo?: {
     id: string;
     userId: string;
@@ -16,6 +18,12 @@ export interface GlobalChatMessage {
     body: string;
     imageUrl: string | null;
   } | null;
+}
+
+/** Normalise l'identifiant de salle (null = chat global). */
+function roomOf(competitionId?: string | null): string | null {
+  const value = String(competitionId ?? '').trim();
+  return value ? value : null;
 }
 
 let pool: Pool | null = null;
@@ -55,6 +63,8 @@ async function ensureTable(): Promise<void> {
     `).then(async () => {
       await db.query('alter table comp_global_chat_messages add column if not exists reply_to_id text');
       await db.query('alter table comp_global_chat_messages add column if not exists image_url text');
+      await db.query('alter table comp_global_chat_messages add column if not exists competition_id text');
+      await db.query('create index if not exists idx_comp_global_chat_room on comp_global_chat_messages(competition_id, created_at desc)');
       await db.query(`
         create table if not exists comp_chat_images (
           id text primary key,
@@ -136,12 +146,17 @@ async function assertOwnedChatImage(userId: string, imageUrl: string): Promise<v
   if (!result.rows[0] || result.rows[0].user_id !== userId) throw new Error('Image introuvable');
 }
 
-export async function listGlobalChatMessages(options: { before?: number; limit?: number } = {}): Promise<GlobalChatMessage[]> {
+export async function listGlobalChatMessages(
+  options: { before?: number; limit?: number; competitionId?: string | null } = {},
+): Promise<GlobalChatMessage[]> {
   const before = Number.isFinite(options.before) ? Number(options.before) : Date.now() + 1;
   const limit = Math.min(100, Math.max(1, Math.floor(options.limit || 60)));
+  const room = roomOf(options.competitionId);
   const db = getPool();
   if (!db) {
-    return memoryMessages.filter((message) => message.createdAt < before).slice(-limit);
+    return memoryMessages
+      .filter((message) => message.createdAt < before && roomOf(message.competitionId) === room)
+      .slice(-limit);
   }
   await ensureTable();
   const result = await db.query<{
@@ -162,10 +177,10 @@ export async function listGlobalChatMessages(options: { before?: number; limit?:
       r.user_id as reply_user_id, r.name as reply_name, r.body as reply_body, r.image_url as reply_image_url
     from comp_global_chat_messages m
     left join comp_global_chat_messages r on r.id = m.reply_to_id
-    where m.created_at < $1
+    where m.created_at < $1 and m.competition_id is not distinct from $3
     order by m.created_at desc
     limit $2
-  `, [before, limit]);
+  `, [before, limit, room]);
   return result.rows.reverse().map((row) => ({
     id: row.id,
     userId: row.user_id,
@@ -190,9 +205,10 @@ export async function createGlobalChatMessage(user: {
   id: string;
   name: string;
   avatarUrl?: string | null;
-}, input: { body?: unknown; replyToId?: unknown; imageUrl?: unknown }): Promise<GlobalChatMessage> {
+}, input: { body?: unknown; replyToId?: unknown; imageUrl?: unknown; competitionId?: string | null }): Promise<GlobalChatMessage> {
   const body = sanitizeBody(input.body);
   const imageUrl = sanitizeImageUrl(input.imageUrl);
+  const room = roomOf(input.competitionId);
   if (!body && !imageUrl) throw new Error('Le message est vide');
   if (body.length > 600) throw new Error('Le message dépasse 600 caractères');
   if (imageUrl) await assertOwnedChatImage(user.id, imageUrl);
@@ -201,7 +217,7 @@ export async function createGlobalChatMessage(user: {
   let replyTo: GlobalChatMessage['replyTo'] = null;
   if (replyToId) {
     if (!db) {
-      const referenced = memoryMessages.find((message) => message.id === replyToId);
+      const referenced = memoryMessages.find((message) => message.id === replyToId && roomOf(message.competitionId) === room);
       if (referenced) {
         replyTo = {
           id: referenced.id,
@@ -214,8 +230,8 @@ export async function createGlobalChatMessage(user: {
     } else {
       await ensureTable();
       const referenced = await db.query<{ id: string; user_id: string; name: string; body: string; image_url: string | null }>(
-        'select id, user_id, name, body, image_url from comp_global_chat_messages where id = $1 limit 1',
-        [replyToId],
+        'select id, user_id, name, body, image_url from comp_global_chat_messages where id = $1 and competition_id is not distinct from $2 limit 1',
+        [replyToId, room],
       );
       const row = referenced.rows[0];
       if (row) {
@@ -238,17 +254,18 @@ export async function createGlobalChatMessage(user: {
     body,
     imageUrl,
     createdAt: Date.now(),
+    competitionId: room,
     replyTo,
   };
   if (!db) {
     memoryMessages.push(message);
-    if (memoryMessages.length > 1_000) memoryMessages.splice(0, memoryMessages.length - 1_000);
+    if (memoryMessages.length > 2_000) memoryMessages.splice(0, memoryMessages.length - 2_000);
     return message;
   }
   await ensureTable();
   await db.query(`
-    insert into comp_global_chat_messages (id, user_id, name, avatar_url, body, image_url, created_at, reply_to_id)
-    values ($1, $2, $3, $4, $5, $6, $7, $8)
-  `, [message.id, message.userId, message.name, message.avatarUrl, message.body, message.imageUrl, message.createdAt, replyTo?.id || null]);
+    insert into comp_global_chat_messages (id, user_id, name, avatar_url, body, image_url, created_at, reply_to_id, competition_id)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+  `, [message.id, message.userId, message.name, message.avatarUrl, message.body, message.imageUrl, message.createdAt, replyTo?.id || null, room]);
   return message;
 }
