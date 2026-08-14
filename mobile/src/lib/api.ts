@@ -214,6 +214,7 @@ export type PublicPlayerProfile = {
   payouts?: Array<{ id: string; amount: number; currency: string; paidAt: number }>
   stats: UserStats & { totalFees?: number }
   progression?: PlayerProgression | null
+  rating?: PlayerRating | null
 }
 
 export type RatingDivision = {

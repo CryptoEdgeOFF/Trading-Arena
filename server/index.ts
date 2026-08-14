@@ -3023,7 +3023,8 @@ app.get('/api/competition/player/:userId', async (req, res) => {
   }
   const { paperPlayerIds, ...rest } = profile;
   const progression = await syncUserProgression(userId, getUserXpFacts(userId));
-  res.json({ ...rest, progression: { ...progression, recentEvents: [] }, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
+  const rating = await syncUserRating(userId, competitionManager.getUserArenaResults(userId)).catch(() => null);
+  res.json({ ...rest, progression: { ...progression, recentEvents: [] }, rating, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
 });
 
 app.get('/api/competition/global-leaderboard', async (req, res) => {

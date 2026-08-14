@@ -43,7 +43,6 @@ import { JoinArenaSheet } from './components/JoinArenaSheet'
 import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { NewsScreen } from './components/NewsScreen'
 import { PlayerProfile } from './components/PlayerProfile'
-import { PlayerProgressionBar } from './components/PlayerProgressionBar'
 import { PnlRaceChart } from './components/PnlRaceChart'
 import { ProfileAvatar } from './components/ProfileAvatar'
 import { ProfileSettings } from './components/ProfileSettings'
@@ -51,7 +50,7 @@ import { RankScreen } from './components/RankScreen'
 import { ShareRankModal } from './components/ShareRankModal'
 import { TradeJournal } from './components/TradeJournal'
 import { TradingTerminal } from './components/TradingTerminal'
-import { translateTitle, useI18n } from './i18n'
+import { useI18n } from './i18n'
 import './App.css'
 
 type Tab = 'home' | 'live' | 'rank' | 'deals' | 'trade' | 'community' | 'news' | 'leaderboard' | 'global-leaderboard' | 'journal' | 'settings' | 'player' | 'profile'
@@ -159,14 +158,65 @@ function ArenaCard({
 }
 
 
-// Missions alignées sur les vraies récompenses XP du backend (xpStore).
-// Orientées compétition (résultat d'arène), pas volume de trades.
+// Données simulées en attendant le classement officiel de la saison.
+const seasonPodium = [
+  { rank: 2, name: 'NOVA QUEEN', pnlPercent: 142.8, trades: 214 },
+  { rank: 1, name: 'KRAKEN MIKE', pnlPercent: 187.4, trades: 302 },
+  { rank: 3, name: 'DARK PIPS', pnlPercent: 121.6, trades: 178 },
+]
+const seasonRunners = [
+  { rank: 4, name: 'ALPHA WOLF', pnlPercent: 98.2 },
+  { rank: 5, name: 'MME CANDLE', pnlPercent: 87.5 },
+  { rank: 6, name: 'ZEN SCALPER', pnlPercent: 79.1 },
+]
+
+function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => void }) {
+  const { t } = useI18n()
+  return (
+    <section className="home-season">
+      <div className="home-season__banner">
+        <img src="/assets/pictures/trader-silhouette.jpg" alt="" />
+        <div className="home-season__banner-text">
+          <span>{t('season.eyebrow')}</span>
+          <h2>{t('season.title')}<br /><em>{t('season.titleEm')}</em></h2>
+          <p>{t('season.lead')}</p>
+        </div>
+      </div>
+      <div className="home-season__podium">
+        {seasonPodium.map((player) => (
+          <button key={player.rank} type="button" className={`home-season__player is-rank-${player.rank}`} onClick={onGlobalLeaderboard}>
+            <i>{player.rank}</i>
+            <span>{player.name.split(' ').map((word) => word[0]).join('').slice(0, 2)}</span>
+            <strong>{player.name}</strong>
+            <em>+{player.pnlPercent.toFixed(1)}%</em>
+            <small>{t('season.trades', { trades: player.trades })}</small>
+          </button>
+        ))}
+      </div>
+      <div className="home-season__runners">
+        {seasonRunners.map((player) => (
+          <button key={player.rank} type="button" onClick={onGlobalLeaderboard}>
+            <i>#{player.rank}</i>
+            <strong>{player.name}</strong>
+            <em>+{player.pnlPercent.toFixed(1)}%</em>
+          </button>
+        ))}
+        <button className="home-season__more" type="button" onClick={onGlobalLeaderboard}>
+          {t('season.seeFull')} <b>›</b>
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// Objectifs de compétition : l'état « fait » est détecté via les événements
+// du ledger backend (xpStore), qui reste la source de vérité côté serveur.
 const homeMissions = [
-  { id: 'join', eventType: 'arena.join', xp: 50, labelKey: 'missions.join' },
-  { id: 'finish', eventType: 'arena.completed', xp: 100, labelKey: 'missions.finish' },
-  { id: 'top-half', eventType: 'arena.top_half', xp: 150, labelKey: 'missions.topHalf' },
-  { id: 'capital', eventType: 'trading.achievement', xp: 200, labelKey: 'missions.capital' },
-  { id: 'podium', eventType: 'arena.podium', xp: 500, labelKey: 'missions.podium' },
+  { id: 'join', eventType: 'arena.join', labelKey: 'missions.join' },
+  { id: 'finish', eventType: 'arena.completed', labelKey: 'missions.finish' },
+  { id: 'top-half', eventType: 'arena.top_half', labelKey: 'missions.topHalf' },
+  { id: 'capital', eventType: 'trading.achievement', labelKey: 'missions.capital' },
+  { id: 'podium', eventType: 'arena.podium', labelKey: 'missions.podium' },
 ] as const
 
 function useNow(intervalMs = 1_000) {
@@ -383,7 +433,7 @@ function HomeScreen({
   unreadNews: number
   unreadChat: number
 }) {
-  const { t, locale, lang } = useI18n()
+  const { t, locale } = useI18n()
   const [showEnded, setShowEnded] = useState(false)
   const user = dashboard?.user
   const statsCompetitions = (dashboard?.myCompetitions || []).filter((competition) => !/qualif/i.test(competition.title))
@@ -405,11 +455,11 @@ function HomeScreen({
       {user ? (
         <>
           <header className="home-greeting">
-            <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} progression={dashboard.myProgression} size="sm" />
+            <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} size="sm" />
             <div>
               <small>{greeting}</small>
               <strong>{user.name}</strong>
-              {dashboard.myProgression && <em>{translateTitle(lang, dashboard.myProgression.title.id, dashboard.myProgression.title.label)}</em>}
+              {dashboard.myRating && <em>{divisionDisplayName(dashboard.myRating.division)}</em>}
             </div>
             <button className="news-button" type="button" onClick={onChat} aria-label={t('home.openChat')}>
               <Icon name="community" size={19} />
@@ -486,18 +536,18 @@ function HomeScreen({
         )}
       </section>
 
+      <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
+
       {user && (
         <section className="home-missions" aria-label={t('home.missions')}>
           <header>
-            <div><small>{t('home.earnXp')}</small><strong>{t('home.missions')}</strong></div>
-            {dashboard?.myProgression && <b>{dashboard.myProgression.totalXp.toLocaleString(locale)} XP</b>}
+            <div><small>{t('home.missionsKicker')}</small><strong>{t('home.missions')}</strong></div>
           </header>
           <div className="home-missions__carousel">
             {homeMissions.map((mission) => {
               const done = earnedEventTypes.has(mission.eventType)
               return (
                 <div key={mission.id} className={`home-mission ${done ? 'is-done' : ''}`}>
-                  <span className="home-mission__xp">+{mission.xp} XP</span>
                   <strong>{t(`${mission.labelKey}.label`)}</strong>
                   <small>{t(`${mission.labelKey}.hint`)}</small>
                   {done && <b className="home-mission__check">✓</b>}
@@ -1116,15 +1166,14 @@ function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onRewards, o
   onSettings: () => void
   onLogout: () => void
 }) {
-  const { t, locale, lang } = useI18n()
+  const { t, locale } = useI18n()
   const user = dashboard.user!
   const stats = dashboard.myStats
   return (
     <div className="profile-screen">
       <div className="profile-identity">
-        <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} progression={dashboard.myProgression} size="lg" />
+        <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} size="lg" />
         <div><small>{t('profile.synced')}</small><h2>{user.name}</h2>
-          {dashboard.myProgression && <em className={`profile-title rarity-${dashboard.myProgression.title.rarity}`}>{translateTitle(lang, dashboard.myProgression.title.id, dashboard.myProgression.title.label)}</em>}
           <p>{user.email}</p>
         </div>
       </div>
@@ -1136,15 +1185,6 @@ function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onRewards, o
         <div><small>{t('home.avgRR')}</small><strong>{stats?.avgRR?.toFixed(2) || '—'}</strong></div>
         <div><small>{t('home.profitFactor')}</small><strong>{stats?.profitFactor == null ? '—' : stats.profitFactor.toFixed(2)}</strong></div>
       </div>
-      {dashboard.myProgression && <section className="profile-progression">
-        <header><span>{t('profile.progression')}</span><small>{t(`frames.${dashboard.myProgression.frame.id}`) || dashboard.myProgression.frame.label}</small></header>
-        <PlayerProgressionBar progression={dashboard.myProgression} />
-        {dashboard.myProgression.recentEvents.length > 0 && <div className="profile-xp-events">
-          {dashboard.myProgression.recentEvents.slice(0, 5).map((event) => <div key={event.id}>
-            <i>+{event.amount}</i><span><strong>{event.label}</strong><small>{new Date(event.createdAt).toLocaleDateString(locale)}</small></span>
-          </div>)}
-        </div>}
-      </section>}
       <section className="profile-actions">
         <button type="button" onClick={onJournal}><span><Icon name="journal" size={20} /></span><div><strong>{t('profile.journal')}</strong><small>{t('profile.journalHint')}</small></div><i>›</i></button>
         <button type="button" onClick={onRewards}><span><Icon name="deals" size={20} /></span><div><strong>{t('profile.rewards')}</strong><small>{t('profile.rewardsHint')}</small></div><i>›</i></button>

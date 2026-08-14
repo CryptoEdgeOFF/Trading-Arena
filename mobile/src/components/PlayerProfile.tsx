@@ -5,7 +5,8 @@ import {
   type UserBadge,
 } from '../lib/api'
 import { ProfileAvatar } from './ProfileAvatar'
-import { translateTitle, useI18n } from '../i18n'
+import { divisionDisplayName } from './DivisionCard'
+import { useI18n } from '../i18n'
 import './PlayerProfile.css'
 
 const badgeNames: Record<UserBadge, string> = {
@@ -26,7 +27,7 @@ function socialHref(kind: string, value: string) {
 }
 
 export function PlayerProfile({ userId, onBack }: { userId: string; onBack: () => void }) {
-  const { t, locale, lang } = useI18n()
+  const { t, locale } = useI18n()
   const [profile, setProfile] = useState<PublicPlayerProfile | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -44,9 +45,9 @@ export function PlayerProfile({ userId, onBack }: { userId: string; onBack: () =
       {error ? <div className="journal-state is-error">{error}</div> : !profile ? <div className="journal-state">{t('player.loading')}</div> : (
         <>
           <section className="public-profile-hero">
-            <ProfileAvatar avatarUrl={profile.user.avatarUrl} name={profile.user.name} progression={profile.progression} size="lg" />
-            <div className="public-profile-copy"><small>{t('player.traderLevel', { level: profile.progression?.level || 1 })}</small><h3>{profile.user.name}</h3>
-              {profile.progression && <em className={`public-profile-title rarity-${profile.progression.title.rarity}`}>{translateTitle(lang, profile.progression.title.id, profile.progression.title.label)}</em>}
+            <ProfileAvatar avatarUrl={profile.user.avatarUrl} name={profile.user.name} size="lg" />
+            <div className="public-profile-copy"><small>{t('player.traderLevel')}</small><h3>{profile.user.name}</h3>
+              {profile.rating && <em className={`public-profile-title is-${profile.rating.division.id}`}>{divisionDisplayName(profile.rating.division)} · {profile.rating.points.toLocaleString(locale)} pts</em>}
               <strong className={profile.totalPnlUsd >= 0 ? 'positive' : 'negative'}>{profile.totalPnlUsd >= 0 ? '+' : ''}{profile.totalPnlUsd.toFixed(2)} $</strong>
             </div>
           </section>

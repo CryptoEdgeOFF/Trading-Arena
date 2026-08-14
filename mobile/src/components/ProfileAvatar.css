@@ -45,30 +45,3 @@
 .profile-xp-avatar.is-lg .profile-xp-avatar__image { inset: 4px; font-size: 26px; }
 .profile-xp-avatar__image img { width: 100%; height: 100%; object-fit: cover; }
 
-.profile-xp-avatar > b {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  z-index: 2;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 4px;
-  display: grid;
-  place-items: center;
-  border: 2px solid #0c0a0e;
-  border-radius: 50%;
-  background: linear-gradient(145deg, var(--frame-a), var(--frame-b));
-  color: #fff;
-  font: 900 10px 'Barlow Condensed', sans-serif;
-}
-
-.profile-xp-avatar.frame-bronze { --frame-a: #d78a51; --frame-b: #65351f; }
-.profile-xp-avatar.frame-silver { --frame-a: #e4e9ef; --frame-b: #68717c; }
-.profile-xp-avatar.frame-gold { --frame-a: #ffd86c; --frame-b: #9b5e08; }
-.profile-xp-avatar.frame-platinum { --frame-a: #76f2de; --frame-b: #4169a4; }
-.profile-xp-avatar.frame-diamond { --frame-a: #90eaff; --frame-b: #9b55ff; }
-
-.profile-xp-avatar.frame-gold .profile-xp-avatar__frame,
-.profile-xp-avatar.frame-platinum .profile-xp-avatar__frame,
-.profile-xp-avatar.frame-diamond .profile-xp-avatar__frame { animation: xp-frame-glow 2.4s ease-in-out infinite; }
-@keyframes xp-frame-glow { 50% { filter: brightness(1.35); } }
