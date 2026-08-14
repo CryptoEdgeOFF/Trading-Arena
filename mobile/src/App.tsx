@@ -471,6 +471,7 @@ function HomeScreen({
       {user ? (
         <>
           <section className={`player-card ${dashboard.myRating ? `is-${dashboard.myRating.division.id}` : ''}`}>
+            <i className="player-card__fx" aria-hidden="true" />
             <div className="player-card__identity">
               <button type="button" onClick={onProfile} aria-label={t('home.openProfile')}>
                 <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} size="sm" />
