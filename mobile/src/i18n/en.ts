@@ -108,8 +108,6 @@ export const en = {
     openChat: 'Open chat',
     openProfile: 'Open my profile',
     pnlGlobal: 'GLOBAL PNL',
-    avgArenas: '{{avg}}% average · {{count}} arena',
-    avgArenasPlural: '{{avg}}% average · {{count}} arenas',
     myStats: 'My stats',
     winRate: 'WIN RATE',
     trades: 'TRADES',
@@ -131,6 +129,9 @@ export const en = {
     emptyEnded: 'No finished arena yet.',
     showEnded: 'Show finished arenas ({{count}})',
     hideEnded: 'Hide finished arenas',
+  },
+  playerCard: {
+    worldRank: 'WORLD RANK',
   },
   season: {
     eyebrow: 'SEASON 2026',

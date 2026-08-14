@@ -110,8 +110,6 @@ export const fr: typeof en = {
     openChat: 'Ouvrir le chat',
     openProfile: 'Ouvrir mon profil',
     pnlGlobal: 'PNL GLOBAL',
-    avgArenas: '{{avg}}% en moyenne · {{count}} arène',
-    avgArenasPlural: '{{avg}}% en moyenne · {{count}} arènes',
     myStats: 'Mes statistiques',
     winRate: 'WIN RATE',
     trades: 'TRADES',
@@ -133,6 +131,9 @@ export const fr: typeof en = {
     emptyEnded: 'Aucune arène terminée pour le moment.',
     showEnded: 'Voir les arènes terminées ({{count}})',
     hideEnded: 'Masquer les arènes terminées',
+  },
+  playerCard: {
+    worldRank: 'RANG MONDIAL',
   },
   season: {
     eyebrow: 'SAISON 2026',

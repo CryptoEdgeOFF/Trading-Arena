@@ -21,10 +21,12 @@ import {
   type ChampionOfWeek,
   type LeaderboardRow,
   type MyCompetition,
+  type PlayerRating,
   type PnlHistorySample,
   type PnlHistoryTrader,
   type PnlMoment,
   type PublicCompetition,
+  type RatingDivision,
   type SessionUser,
   type UserBadge,
 } from './lib/api'
@@ -36,7 +38,7 @@ import {
 } from './lib/session'
 import { AuthSheet } from './components/AuthSheet'
 import { DealsScreen } from './components/DealsScreen'
-import { DivisionCard, divisionDisplayName } from './components/DivisionCard'
+import { DIVISION_BOUNDS, DivisionCard, divisionDisplayName } from './components/DivisionCard'
 import { GlobalChat } from './components/GlobalChat'
 import { GlobalLeaderboard } from './components/GlobalLeaderboard'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
@@ -157,6 +159,34 @@ function ArenaCard({
   )
 }
 
+
+/**
+ * Gros badge de division (visuel officiel dans /assets/badges/{Label}.png).
+ * Si l'image n'existe pas encore pour une division, on retombe sur un
+ * emblème texte pour ne rien casser.
+ */
+function DivisionBadge({ division }: { division: RatingDivision }) {
+  const [broken, setBroken] = useState(false)
+  if (broken) {
+    return <span className={`division-badge-fallback is-${division.id}`}>{division.label}</span>
+  }
+  return (
+    <img
+      className="division-badge-image"
+      src={`/assets/badges/${division.label}.png`}
+      alt={division.label}
+      onError={() => setBroken(true)}
+    />
+  )
+}
+
+/** Progression (0-100 %) dans la division courante, vers la division suivante. */
+function divisionProgress(rating: PlayerRating): number {
+  const bounds = DIVISION_BOUNDS[rating.division.id]
+  if (!bounds || !Number.isFinite(bounds[1])) return 100
+  const [floor, ceiling] = bounds
+  return Math.max(3, Math.min(100, ((rating.points - floor) / (ceiling - floor)) * 100))
+}
 
 // Données simulées en attendant le classement officiel de la saison.
 const seasonPodium = [
@@ -428,9 +458,6 @@ function HomeScreen({
   const user = dashboard?.user
   const statsCompetitions = (dashboard?.myCompetitions || []).filter((competition) => !/qualif/i.test(competition.title))
   const totalPnl = statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlUsd, 0)
-  const averagePnlPercent = statsCompetitions.length
-    ? statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlPercent, 0) / statsCompetitions.length
-    : 0
   const mineById = new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))
   const active = competitions
     .filter((competition) => competition.status !== 'ended')
@@ -443,44 +470,68 @@ function HomeScreen({
     <div className="home-dashboard">
       {user ? (
         <>
-          <header className="home-greeting">
-            <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} size="sm" />
-            <div>
-              <small>{greeting}</small>
-              <strong>{user.name}</strong>
-              {dashboard.myRating && <em>{divisionDisplayName(dashboard.myRating.division)}</em>}
+          <section className={`player-card ${dashboard.myRating ? `is-${dashboard.myRating.division.id}` : ''}`}>
+            <div className="player-card__identity">
+              <button type="button" onClick={onProfile} aria-label={t('home.openProfile')}>
+                <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} size="sm" />
+              </button>
+              <div>
+                <small>{greeting}</small>
+                <strong>{user.name}</strong>
+              </div>
+              <button className="news-button" type="button" onClick={onChat} aria-label={t('home.openChat')}>
+                <Icon name="community" size={19} />
+                {unreadChat > 0 && <b className="news-unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</b>}
+              </button>
+              <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
+                <Icon name="bell" size={19} />
+                {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
+              </button>
             </div>
-            <button className="news-button" type="button" onClick={onChat} aria-label={t('home.openChat')}>
-              <Icon name="community" size={19} />
-              {unreadChat > 0 && <b className="news-unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</b>}
-            </button>
-            <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
-              <Icon name="bell" size={19} />
-              {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
-            </button>
-            <button type="button" onClick={onProfile} aria-label={t('home.openProfile')}><Icon name="arrow" size={18} /></button>
-          </header>
 
-          <NextArenaHero competitions={competitions} mineById={mineById} authed
-            onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} onAuth={onAuth} />
+            <div className="player-card__body">
+              <div className="player-card__stats">
+                <button type="button" onClick={onProfile} className={totalPnl >= 0 ? 'is-profit' : 'is-loss'}>
+                  <small>{t('home.pnlGlobal')}</small>
+                  <strong>{totalPnl >= 0 ? '+' : ''}{totalPnl.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong>
+                </button>
+                <button type="button" onClick={onProfile}>
+                  <small>{t('home.avgRR')}</small>
+                  <strong>{dashboard.myStats?.avgRR?.toFixed(2) || '—'}</strong>
+                </button>
+                <button type="button" onClick={onRank}>
+                  <small>{t('playerCard.worldRank')}</small>
+                  <strong>
+                    {dashboard.myRating?.worldRank != null
+                      ? `#${dashboard.myRating.worldRank.toLocaleString(locale)} / ${dashboard.myRating.totalPlayers.toLocaleString(locale)}`
+                      : '—'}
+                  </strong>
+                </button>
+              </div>
+              {dashboard.myRating && (
+                <button className="player-card__badge" type="button" onClick={onRank} aria-label={t('division.kicker')}>
+                  <DivisionBadge division={dashboard.myRating.division} />
+                </button>
+              )}
+            </div>
 
-          <section className="home-stat-strip">
-            <button type="button" onClick={onProfile} className={totalPnl >= 0 ? 'is-profit' : 'is-loss'}>
-              <small>{t('home.pnlGlobal')}</small>
-              <strong>{totalPnl >= 0 ? '+' : ''}{totalPnl.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong>
-              <span>{t(statsCompetitions.length > 1 ? 'home.avgArenasPlural' : 'home.avgArenas', {
-                avg: `${averagePnlPercent >= 0 ? '+' : ''}${averagePnlPercent.toFixed(2)}`,
-                count: statsCompetitions.length,
-              })}</span>
-            </button>
             {dashboard.myRating && (
-              <button type="button" onClick={onRank} className={`is-division is-${dashboard.myRating.division.id}`}>
-                <small>{t('division.kicker')}</small>
-                <strong>{divisionDisplayName(dashboard.myRating.division)}</strong>
-                <span>{t('division.points', { points: dashboard.myRating.points.toLocaleString(locale) })}</span>
+              <button className="player-card__progress" type="button" onClick={onRank}>
+                <span>
+                  <strong>{divisionDisplayName(dashboard.myRating.division)}</strong>
+                  <em>
+                    {dashboard.myRating.next
+                      ? t('division.toNext', { points: dashboard.myRating.next.pointsNeeded.toLocaleString(locale), label: dashboard.myRating.next.label })
+                      : t('division.max')}
+                  </em>
+                </span>
+                <i aria-hidden="true"><b style={{ width: `${divisionProgress(dashboard.myRating)}%` }} /></i>
               </button>
             )}
           </section>
+
+          <NextArenaHero competitions={competitions} mineById={mineById} authed
+            onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} onAuth={onAuth} />
         </>
       ) : (
         <section className="home-guest-hero">
