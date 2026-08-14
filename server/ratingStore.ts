@@ -45,15 +45,21 @@ export interface PlayerRating {
   recentEvents: RatingEvent[];
 }
 
+/**
+ * Paliers volontairement progressifs : les premières divisions se franchissent
+ * en 1-2 bons résultats (une victoire = +100 ≈ Silver direct), puis chaque
+ * division demande ~1,5× plus de points que la précédente. Monter est facile
+ * au début, le sommet se mérite.
+ */
 const DIVISIONS: Array<{ id: string; label: string; floor: number; ceiling: number }> = [
-  { id: 'bronze', label: 'Bronze', floor: 0, ceiling: 200 },
-  { id: 'silver', label: 'Silver', floor: 200, ceiling: 500 },
-  { id: 'gold', label: 'Gold', floor: 500, ceiling: 900 },
-  { id: 'platinum', label: 'Platinum', floor: 900, ceiling: 1_400 },
-  { id: 'diamond', label: 'Diamond', floor: 1_400, ceiling: 2_000 },
-  { id: 'master', label: 'Master', floor: 2_000, ceiling: 2_800 },
-  { id: 'grandmaster', label: 'Grandmaster', floor: 2_800, ceiling: 4_000 },
-  { id: 'legend', label: 'Legend', floor: 4_000, ceiling: Number.POSITIVE_INFINITY },
+  { id: 'bronze', label: 'Bronze', floor: 0, ceiling: 100 },
+  { id: 'silver', label: 'Silver', floor: 100, ceiling: 250 },
+  { id: 'gold', label: 'Gold', floor: 250, ceiling: 500 },
+  { id: 'platinum', label: 'Platinum', floor: 500, ceiling: 900 },
+  { id: 'diamond', label: 'Diamond', floor: 900, ceiling: 1_500 },
+  { id: 'master', label: 'Master', floor: 1_500, ceiling: 2_400 },
+  { id: 'grandmaster', label: 'Grandmaster', floor: 2_400, ceiling: 3_600 },
+  { id: 'legend', label: 'Legend', floor: 3_600, ceiling: Number.POSITIVE_INFINITY },
 ];
 
 const TIER_LABELS: Record<number, string> = { 3: 'III', 2: 'II', 1: 'I' };

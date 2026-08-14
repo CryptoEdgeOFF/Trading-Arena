@@ -7,6 +7,12 @@
 .rank-season-link strong { display: block; font-size: 12px; font-weight: 800; }
 .rank-season-link small { color: #8d8690; font-size: 9.5px; }
 .rank-season-link i { color: #6f6973; font-size: 17px; font-style: normal; }
+.rank-guide-link { padding: 11px 13px; display: flex; align-items: center; gap: 11px; text-align: left; border: 1px solid rgba(255,210,87,.25); border-radius: 13px; background: linear-gradient(180deg, rgba(255,210,87,.06), rgba(255,255,255,.012)); color: inherit; }
+.rank-guide-link > i { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: 1px solid rgba(255,210,87,.45); border-radius: 50%; color: #ffd257; font-size: 13px; font-style: normal; font-weight: 900; }
+.rank-guide-link div { min-width: 0; display: grid; gap: 1px; }
+.rank-guide-link strong { display: block; font-size: 12px; font-weight: 800; }
+.rank-guide-link small { color: #8d8690; font-size: 9.5px; }
+.rank-guide-link em { margin-left: auto; color: #6f6973; font-size: 17px; font-style: normal; }
 .rank-loading { padding: 26px 12px; display: grid; justify-items: center; gap: 9px; color: #8d8690; font-size: 10px; }
 .rank-loading i { width: 18px; height: 18px; border: 2px solid #2c2930; border-top-color: #ff4655; border-radius: 50%; animation: rank-spin 0.9s linear infinite; }
 @keyframes rank-spin { to { transform: rotate(360deg); } }

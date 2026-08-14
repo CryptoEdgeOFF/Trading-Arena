@@ -6,15 +6,16 @@ const TIER_ROMAN = ['', 'I', 'II', 'III']
 
 // Bornes des divisions, dupliquées du serveur (ratingStore) pour calculer la
 // progression visuelle dans le palier sans round-trip supplémentaire.
-const DIVISION_BOUNDS: Record<string, [number, number]> = {
-  bronze: [0, 200],
-  silver: [200, 500],
-  gold: [500, 900],
-  platinum: [900, 1_400],
-  diamond: [1_400, 2_000],
-  master: [2_000, 2_800],
-  grandmaster: [2_800, 4_000],
-  legend: [4_000, Number.POSITIVE_INFINITY],
+// Paliers progressifs : facile de monter au début, exigeant au sommet.
+export const DIVISION_BOUNDS: Record<string, [number, number]> = {
+  bronze: [0, 100],
+  silver: [100, 250],
+  gold: [250, 500],
+  platinum: [500, 900],
+  diamond: [900, 1_500],
+  master: [1_500, 2_400],
+  grandmaster: [2_400, 3_600],
+  legend: [3_600, Number.POSITIVE_INFINITY],
 }
 
 export function divisionDisplayName(division: PlayerRating['division']): string {

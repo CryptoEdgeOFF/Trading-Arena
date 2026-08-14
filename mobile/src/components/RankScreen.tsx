@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import { apiAssetUrl, getRatingLeaderboard, type PlayerRating, type RatingLeaderboardRow } from '../lib/api'
 import { DivisionCard, divisionDisplayName } from './DivisionCard'
+import { RatingGuideSheet } from './RatingGuideSheet'
 import { useI18n } from '../i18n'
 import './RankScreen.css'
 
@@ -19,6 +21,7 @@ export function RankScreen({
   const [rows, setRows] = useState<RatingLeaderboardRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [showGuide, setShowGuide] = useState(false)
 
   const load = useCallback(async () => {
     setError('')
@@ -46,6 +49,12 @@ export function RankScreen({
       </div>
 
       {myRating && <DivisionCard rating={myRating} />}
+
+      <button className="rank-guide-link" type="button" onClick={() => setShowGuide(true)}>
+        <i>?</i>
+        <div><strong>{t('ratingGuide.title')}</strong><small>{t('ratingGuide.linkHint')}</small></div>
+        <em>›</em>
+      </button>
 
       <button className="rank-season-link" type="button" onClick={onSeasonLeaderboard}>
         <div><strong>{t('rank.seasonLink')}</strong><small>{t('rank.seasonLinkHint')}</small></div>
@@ -79,6 +88,10 @@ export function RankScreen({
           <p>{t('rank.emptyLead')}</p>
         </div>
       )}
+
+      <AnimatePresence>
+        {showGuide && <RatingGuideSheet onClose={() => setShowGuide(false)} />}
+      </AnimatePresence>
     </div>
   )
 }
