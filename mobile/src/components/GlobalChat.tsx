@@ -175,7 +175,7 @@ export function GlobalChat({
     setPendingPhoto(null)
   }
 
-  function usePickedFile(file?: File | null) {
+  function acceptPickedFile(file?: File | null) {
     if (!file || !file.type.startsWith('image/')) return
     if (pendingPhoto) URL.revokeObjectURL(pendingPhoto.previewUrl)
     setPendingPhoto({ file, previewUrl: URL.createObjectURL(file) })
@@ -193,7 +193,7 @@ export function GlobalChat({
       })
       if (!photo.webPath) return
       const blob = await (await fetch(photo.webPath)).blob()
-      usePickedFile(new File([blob], `photo.${photo.format || 'jpg'}`, { type: blob.type || 'image/jpeg' }))
+      acceptPickedFile(new File([blob], `photo.${photo.format || 'jpg'}`, { type: blob.type || 'image/jpeg' }))
     } catch (error) {
       const cancelled = /cancel/i.test(String((error as Error)?.message || error))
       if (cancelled) return
@@ -375,11 +375,11 @@ export function GlobalChat({
         </div>}
         <button className="global-chat__attach" type="button" onClick={openPicker} aria-label={t('chat.attach')}>+</button>
         <input ref={galleryInputRef} hidden type="file" accept="image/*" onChange={(event) => {
-          usePickedFile(event.target.files?.[0])
+          acceptPickedFile(event.target.files?.[0])
           event.target.value = ''
         }} />
         <input ref={cameraInputRef} hidden type="file" accept="image/*" capture="environment" onChange={(event) => {
-          usePickedFile(event.target.files?.[0])
+          acceptPickedFile(event.target.files?.[0])
           event.target.value = ''
         }} />
         <textarea value={body} maxLength={600} rows={1} placeholder={t('chat.placeholder')}

@@ -226,6 +226,56 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-stat-strip small { color: #716b75; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
 .home-stat-strip strong { font: 700 19px 'Barlow Condensed',sans-serif; }
 
+/* --- Hero « Next Arena » (Play) --- */
+.next-arena { position: relative; overflow: hidden; padding: 15px 15px 13px; display: grid; gap: 9px; border: 1px solid rgba(238,36,60,.3); border-radius: 16px; background: radial-gradient(120% 130% at 100% 0%, rgba(238,36,60,.2), transparent 55%), linear-gradient(180deg, #141117, #0b0a0d); }
+.next-arena > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.next-arena__kicker { display: inline-flex; align-items: center; gap: 6px; color: var(--red-bright); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.next-arena__kicker i { width: 6px; height: 6px; border-radius: 50%; background: var(--red-bright); box-shadow: 0 0 9px var(--red); }
+.next-arena.is-live .next-arena__kicker i { animation: next-arena-pulse 1.4s ease-in-out infinite; }
+@keyframes next-arena-pulse { 50% { opacity: .3; } }
+.next-arena__players { color: #9b949f; font-size: 9px; font-weight: 700; text-align: right; }
+.next-arena h2 { margin: 0; font: 800 30px/.95 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.next-arena__countdown { display: grid; gap: 2px; }
+.next-arena__countdown small { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.next-arena__countdown strong { color: #fff; font: 800 34px/1 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: .06em; text-shadow: 0 0 26px rgba(238,36,60,.5); }
+.next-arena > footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.next-arena__prize { display: grid; gap: 2px; }
+.next-arena__prize small { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.next-arena__prize strong { font: 700 14px 'Barlow Condensed', sans-serif; }
+.next-arena__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.next-arena__actions button { min-height: 38px; padding: 0 14px; border: 1px solid #34303a; border-radius: 11px; background: #191519; color: #ded9e0; font-size: 10px; font-weight: 800; letter-spacing: .06em; }
+.next-arena__actions button.is-primary { border-color: transparent; background: var(--red); color: #fff; box-shadow: 0 6px 18px rgba(238,36,60,.3); }
+
+/* --- Écran Live --- */
+.live-screen { display: grid; gap: 12px; align-content: start; }
+.live-screen .page-heading { margin-bottom: 2px; }
+.live-screen .page-heading h2 { margin-top: 4px; font-size: 30px; }
+.live-screen .page-heading p { max-width: none; margin: 4px 0 0; font-size: 11px; }
+.live-list { display: grid; gap: 9px; }
+.live-card { padding: 13px 14px; display: grid; gap: 8px; border: 1px solid rgba(238,36,60,.25); border-radius: 15px; background: linear-gradient(160deg, rgba(238,36,60,.08), rgba(255,255,255,.015)); }
+.live-card > header { display: flex; align-items: center; justify-content: space-between; }
+.live-card > header small { color: #9b949f; font-size: 9px; font-weight: 700; }
+.live-card h3 { margin: 0; font: 800 22px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.live-card__meta { display: flex; align-items: flex-end; justify-content: space-between; gap: 9px; }
+.live-card__meta > span { display: grid; gap: 2px; }
+.live-card__meta > span small { color: #8d8690; font-size: 7.5px; font-weight: 800; letter-spacing: .12em; }
+.live-card__meta > span strong { font: 800 20px/1 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; }
+.live-card__actions { display: flex; gap: 7px; }
+.live-card__actions button { min-height: 34px; padding: 0 13px; border: 1px solid #34303a; border-radius: 10px; background: #191519; color: #ded9e0; font-size: 10px; font-weight: 800; }
+.live-card__actions button.is-primary { border-color: transparent; background: var(--red); color: #fff; }
+.live-empty { padding: 30px 16px; display: grid; gap: 5px; border: 1px dashed #2c2930; border-radius: 14px; text-align: center; }
+.live-empty strong { font: 800 19px 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.live-empty p { margin: 0; color: #8d8690; font-size: 10.5px; }
+.live-upcoming { display: grid; gap: 7px; }
+.live-upcoming > header span { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .14em; }
+.live-upcoming > button { min-height: 46px; padding: 8px 13px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); color: inherit; text-align: left; }
+.live-upcoming > button strong { min-width: 0; overflow: hidden; font-size: 11.5px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.live-upcoming > button em { color: #ffb547; font-size: 10.5px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
+.live-top-traders { padding: 12px 13px; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; border: 1px solid #26222a; border-radius: 13px; background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.012)); color: inherit; }
+.live-top-traders strong { display: block; font-size: 12px; font-weight: 800; }
+.live-top-traders small { color: #8d8690; font-size: 9.5px; }
+.live-top-traders i { color: #6f6973; font-size: 17px; font-style: normal; }
+
 .home-missions > header { margin-bottom: 11px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .home-missions > header div { display: grid; gap: 3px; }
 .home-missions > header small { color: #ff6c7e; font-size: 8px; font-weight: 900; letter-spacing: .18em; }

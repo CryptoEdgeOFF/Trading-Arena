@@ -96,7 +96,7 @@ function DealDetails({ deal, onClose }: { deal: Promotion; onClose: () => void }
   )
 }
 
-export function DealsScreen() {
+export function DealsScreen({ onBack }: { onBack?: () => void }) {
   const { t, lang } = useI18n()
   const [deals, setDeals] = useState<Promotion[]>([])
   const [loading, setLoading] = useState(true)
@@ -138,6 +138,7 @@ export function DealsScreen() {
       ) : (
         <>
           <header className="deals-perks-head">
+            {onBack && <button className="deals-back" type="button" onClick={onBack}>‹ {t('common.back')}</button>}
             <span>{t('deals.kicker')}</span>
             <h1>{t('deals.title')}</h1>
             <p>{t('deals.lead')}</p>

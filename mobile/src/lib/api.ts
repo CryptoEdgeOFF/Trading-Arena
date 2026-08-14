@@ -66,7 +66,7 @@ export type PlayerProgression = {
   frame: { id: string; label: string; tier: number }
   recentEvents: Array<{
     id: string
-    eventType: 'account.created' | 'arena.join' | 'arena.first_trade' | 'arena.completed' | 'arena.podium' | 'arena.streak' | 'badge.unlocked' | 'trading.achievement'
+    eventType: 'account.created' | 'arena.join' | 'arena.first_trade' | 'arena.completed' | 'arena.podium' | 'arena.top_half' | 'arena.streak' | 'badge.unlocked' | 'trading.achievement'
     amount: number
     label: string
     createdAt: number
@@ -215,6 +215,31 @@ export type PublicPlayerProfile = {
   progression?: PlayerProgression | null
 }
 
+export type RatingDivision = {
+  id: string
+  label: string
+  /** 3 → 1 (1 = palier haut). 0 = pas de palier (Legend). */
+  tier: number
+}
+
+export type PlayerRating = {
+  points: number
+  division: RatingDivision
+  next: { label: string; pointsNeeded: number } | null
+  worldRank: number | null
+  totalPlayers: number
+  recentEvents: Array<{ id: string; points: number; label: string; createdAt: number }>
+}
+
+export type RatingLeaderboardRow = {
+  rank: number
+  userId: string
+  name: string
+  avatarUrl?: string | null
+  points: number
+  division: RatingDivision
+}
+
 export type BootstrapData = {
   user: SessionUser | null
   publicCompetitions: PublicCompetition[]
@@ -222,6 +247,7 @@ export type BootstrapData = {
   myStats: UserStats | null
   myBadges: UserBadge[]
   myProgression?: PlayerProgression | null
+  myRating?: PlayerRating | null
 }
 
 export type AuthRequestResult = {
@@ -690,6 +716,11 @@ export async function getLeaderboardSeasons(): Promise<{ seasons: LeaderboardSea
 export async function getGlobalLeaderboard(seasonId?: string): Promise<GlobalLeaderboardRow[]> {
   const query = seasonId ? `season=${encodeURIComponent(seasonId)}` : 'scope=all'
   const data = await apiFetch<{ rows?: GlobalLeaderboardRow[] }>(`/api/competition/global-leaderboard?${query}`)
+  return Array.isArray(data.rows) ? data.rows : []
+}
+
+export async function getRatingLeaderboard(): Promise<RatingLeaderboardRow[]> {
+  const data = await apiFetch<{ rows?: RatingLeaderboardRow[] }>('/api/competition/rating-leaderboard')
   return Array.isArray(data.rows) ? data.rows : []
 }
 

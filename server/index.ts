@@ -53,6 +53,7 @@ import { sendImageBlob } from './serveImageBlob.js';
 import { createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatImage } from './globalChatStore.js';
 import { syncUserProgression } from './xpStore.js';
 import { computeTradingAchievements } from './xpTradingAchievements.js';
+import { getRatingLeaderboard, syncUserRating } from './ratingStore.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -3125,6 +3126,9 @@ app.get('/api/competition/bootstrap', async (req, res) => {
   const myProgression = user
     ? await syncUserProgression(user.id, getUserXpFacts(user.id))
     : null;
+  const myRating = user
+    ? await syncUserRating(user.id, competitionManager.getUserArenaResults(user.id))
+    : null;
   res.json({
     user,
     publicCompetitions,
@@ -3132,6 +3136,32 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     myStats,
     myBadges,
     myProgression,
+    myRating,
+  });
+});
+
+/**
+ * Classement mondial BTF Rating (Arena Points). Public : sert l'onglet Rank.
+ * Les identités (nom/avatar) sont résolues via les participations connues.
+ */
+app.get('/api/competition/rating-leaderboard', async (_req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const rows = await getRatingLeaderboard(100);
+  const identities = new Map(
+    competitionManager.listUserParticipations().map((participation) => [participation.userId, participation]),
+  );
+  res.json({
+    rows: rows.map((row, index) => {
+      const identity = identities.get(row.userId);
+      return {
+        rank: index + 1,
+        userId: row.userId,
+        name: identity?.name || 'Trader BTF',
+        avatarUrl: identity?.avatarUrl ?? null,
+        points: row.points,
+        division: row.division,
+      };
+    }),
   });
 });
 

@@ -7,6 +7,7 @@ export type XpEventType =
   | 'arena.first_trade'
   | 'arena.completed'
   | 'arena.podium'
+  | 'arena.top_half'
   | 'arena.streak'
   | 'badge.unlocked'
   | 'trading.achievement';
@@ -37,6 +38,8 @@ export interface UserXpFacts {
   traded: Array<{ competitionId: string; title: string }>;
   completed: Array<{ competitionId: string; title: string }>;
   podiums: Array<{ competitionId: string; title: string; rank: number }>;
+  /** Arènes terminées dans la moitié haute du classement. */
+  topHalf: Array<{ competitionId: string; title: string }>;
   badges: string[];
   tradingAchievements?: Array<{ key: string; amount: number; label: string }>;
 }
@@ -184,6 +187,12 @@ function awardsFromFacts(facts: UserXpFacts): AwardInput[] {
       label: `Podium #${podium.rank} · ${podium.title}`,
     });
   }
+  for (const arena of facts.topHalf || []) awards.push({
+    eventKey: `arena.top_half:${arena.competitionId}`,
+    eventType: 'arena.top_half',
+    amount: 150,
+    label: `Top 50 % · ${arena.title}`,
+  });
   for (const milestone of [3, 5, 10, 20]) {
     if (facts.completed.length >= milestone) awards.push({
       eventKey: `arena.streak:${milestone}`,

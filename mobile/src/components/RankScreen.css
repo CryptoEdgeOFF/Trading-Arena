@@ -1,0 +1,41 @@
+.rank-screen { display: grid; gap: 12px; align-content: start; }
+.rank-screen .page-heading { display: grid; gap: 3px; }
+.rank-screen .page-heading span { color: var(--red-bright, #ff4655); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.rank-screen .page-heading h2 { margin: 0; font: 800 30px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.rank-screen .page-heading p { margin: 2px 0 0; color: #8d8690; font-size: 11px; }
+.rank-season-link { padding: 11px 13px; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; border: 1px solid #26222a; border-radius: 13px; background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.012)); color: inherit; }
+.rank-season-link strong { display: block; font-size: 12px; font-weight: 800; }
+.rank-season-link small { color: #8d8690; font-size: 9.5px; }
+.rank-season-link i { color: #6f6973; font-size: 17px; font-style: normal; }
+.rank-loading { padding: 26px 12px; display: grid; justify-items: center; gap: 9px; color: #8d8690; font-size: 10px; }
+.rank-loading i { width: 18px; height: 18px; border: 2px solid #2c2930; border-top-color: #ff4655; border-radius: 50%; animation: rank-spin 0.9s linear infinite; }
+@keyframes rank-spin { to { transform: rotate(360deg); } }
+.rank-error { padding: 14px; display: grid; gap: 9px; justify-items: center; border: 1px solid rgba(238,36,60,.25); border-radius: 12px; background: rgba(238,36,60,.06); color: #ff8b9a; font-size: 10px; text-align: center; }
+.rank-error button { padding: 7px 13px; border: 1px solid #3a3038; border-radius: 9px; background: #1b171d; color: #ddd; font-size: 10px; }
+.rank-empty { padding: 26px 14px; display: grid; gap: 5px; border: 1px dashed #2c2930; border-radius: 13px; text-align: center; }
+.rank-empty strong { font: 800 17px 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.rank-empty p { margin: 0; color: #8d8690; font-size: 10.5px; }
+.rank-table { overflow: hidden; border: 1px solid #211e25; border-radius: 14px; background: #0d0c10; }
+.rank-table__head { padding: 9px 12px; display: grid; grid-template-columns: 38px minmax(0,1fr) 86px 52px; gap: 8px; border-bottom: 1px solid #1c1a20; color: #6f6973; font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.rank-table__head span:last-child { text-align: right; }
+.rank-table article { padding: 9px 12px; display: grid; grid-template-columns: 38px minmax(0,1fr) 86px 52px; align-items: center; gap: 8px; border-bottom: 1px solid #17151a; }
+.rank-table article:last-child { border-bottom: 0; }
+.rank-table article.is-me { background: rgba(238,36,60,.07); }
+.rank-table article > strong { font: 800 13px 'Barlow Condensed', sans-serif; color: #9b949f; }
+.rank-table article > strong.is-top { color: #e8b93c; }
+.rank-table article > strong.is-top-2 { color: #b9c0cc; }
+.rank-table article > strong.is-top-3 { color: #c07a40; }
+.rank-table article > button { min-width: 0; padding: 0; display: flex; align-items: center; gap: 8px; border: 0; background: none; color: inherit; text-align: left; }
+.rank-table article > button img, .rank-table article > button i { width: 26px; height: 26px; flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #201d23; object-fit: cover; color: #aaa4ad; font-size: 8px; font-style: normal; font-weight: 800; }
+.rank-table article > button span { min-width: 0; overflow: hidden; font-size: 11.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.rank-table article > button small { margin-left: 5px; padding: 1px 5px; border-radius: 5px; background: rgba(238,36,60,.2); color: #ff8b9a; font-size: 7px; font-weight: 800; }
+.rank-division { overflow: hidden; font-size: 9px; font-style: normal; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; text-overflow: ellipsis; }
+.rank-division.is-bronze { color: #c07a40; }
+.rank-division.is-silver { color: #b9c0cc; }
+.rank-division.is-gold { color: #e8b93c; }
+.rank-division.is-platinum { color: #7fd6d2; }
+.rank-division.is-diamond { color: #7fb2ff; }
+.rank-division.is-master { color: #c48bff; }
+.rank-division.is-grandmaster { color: #ff7a5c; }
+.rank-division.is-legend { color: #ff4655; }
+.rank-points { color: #e6e1e8; font-size: 11px; font-weight: 800; text-align: right; }

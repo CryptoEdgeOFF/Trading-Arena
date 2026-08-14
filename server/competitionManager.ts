@@ -2077,6 +2077,7 @@ export class CompetitionManager {
     const traded: UserXpFacts['traded'] = [];
     const completed: UserXpFacts['completed'] = [];
     const podiums: UserXpFacts['podiums'] = [];
+    const topHalf: UserXpFacts['topHalf'] = [];
     for (const competition of this.competitions.values()) {
       const entry = competition.entries.find((item) => item.userId === userId);
       if (!entry) continue;
@@ -2095,14 +2096,56 @@ export class CompetitionManager {
       })));
       const rank = ranked.find((item) => item.userId === userId)?.rank || 0;
       if (rank >= 1 && rank <= 3) podiums.push({ ...arena, rank });
+      const rankedCount = ranked.filter((item) => item.rank > 0).length;
+      if (rank >= 1 && rankedCount >= 2 && rank <= Math.max(1, Math.floor(rankedCount / 2))) {
+        topHalf.push(arena);
+      }
     }
     return {
       joined,
       traded,
       completed,
       podiums,
+      topHalf,
       badges: this.getUserBadges(userId),
     };
+  }
+
+  /**
+   * Résultats finaux d'un user sur les arènes TERMINÉES, pour le BTF Rating :
+   * rang, nombre de participants classés (rank > 0) et breach éventuel.
+   * Les arènes où l'utilisateur n'a pas tradé (rank 0, non breach) sont
+   * renvoyées avec rank 0 — le ratingStore les ignore.
+   */
+  getUserArenaResults(userId: string): Array<{
+    competitionId: string;
+    title: string;
+    rank: number;
+    participants: number;
+    breached: boolean;
+  }> {
+    const results: Array<{ competitionId: string; title: string; rank: number; participants: number; breached: boolean }> = [];
+    for (const competition of this.competitions.values()) {
+      const entry = competition.entries.find((item) => item.userId === userId);
+      if (!entry) continue;
+      if (inferCompetitionStatus(competition) !== 'ended') continue;
+      const ranked = sortAndRankLeaderboard(competition.entries.map((item) => ({
+        userId: item.userId,
+        pnlPercent: item.pnlPercent,
+        pnlUsd: item.pnlUsd,
+        tradesCount: item.tradesCount,
+        updatedAt: item.updatedAt,
+        breached: Boolean(item.breachedAt),
+      })));
+      results.push({
+        competitionId: competition.id,
+        title: competition.title || 'Arène BTF',
+        rank: ranked.find((item) => item.userId === userId)?.rank || 0,
+        participants: ranked.filter((item) => item.rank > 0).length,
+        breached: Boolean(entry.breachedAt),
+      });
+    }
+    return results;
   }
 
   /** Total PnL (somme des entries) d'un user, tous arènes confondues. */

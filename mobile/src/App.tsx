@@ -30,6 +30,7 @@ import {
 } from './lib/session'
 import { AuthSheet } from './components/AuthSheet'
 import { DealsScreen } from './components/DealsScreen'
+import { DivisionCard } from './components/DivisionCard'
 import { GlobalChat } from './components/GlobalChat'
 import { GlobalLeaderboard } from './components/GlobalLeaderboard'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
@@ -39,17 +40,20 @@ import { PlayerProfile } from './components/PlayerProfile'
 import { PlayerProgressionBar } from './components/PlayerProgressionBar'
 import { ProfileAvatar } from './components/ProfileAvatar'
 import { ProfileSettings } from './components/ProfileSettings'
+import { RankScreen } from './components/RankScreen'
 import { ShareRankModal } from './components/ShareRankModal'
 import { TradeJournal } from './components/TradeJournal'
 import { TradingTerminal } from './components/TradingTerminal'
 import { translateTitle, useI18n } from './i18n'
 import './App.css'
 
-type Tab = 'home' | 'deals' | 'trade' | 'community' | 'news' | 'leaderboard' | 'global-leaderboard' | 'journal' | 'settings' | 'player' | 'profile'
+type Tab = 'home' | 'live' | 'rank' | 'deals' | 'trade' | 'community' | 'news' | 'leaderboard' | 'global-leaderboard' | 'journal' | 'settings' | 'player' | 'profile'
 type IconName = Tab | 'bell' | 'arrow' | 'refresh' | 'shield'
 
 const icons: Record<IconName, ReactNode> = {
-  home: <path d="M3 10.8 12 3l9 7.8v9.7a.5.5 0 0 1-.5.5H15v-6H9v6H3.5a.5.5 0 0 1-.5-.5v-9.7Z" />,
+  home: <path d="M7 4.8v14.4a.5.5 0 0 0 .76.43l11.77-7.2a.5.5 0 0 0 0-.86L7.76 4.37A.5.5 0 0 0 7 4.8Z" />,
+  live: <path d="M12 12h.01M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8m12.8-12.8a9 9 0 0 1 0 12.8" />,
+  rank: <path d="M8 21h8m-4-4v4M6 4h12v3a6 6 0 0 1-12 0V4Zm12 1h3a3 3 0 0 1-3 4M6 5H3a3 3 0 0 0 3 4" />,
   deals: <path d="M20 12v8H4v-8M2 7h20v5H2V7Zm10 13V7m0 0H7.5A2.5 2.5 0 1 1 12 4.8M12 7h4.5A2.5 2.5 0 1 0 12 4.8" />,
   trade: <path d="M5 19V9m0 0L2.5 11.5M5 9l2.5 2.5M19 5v10m0 0 2.5-2.5M19 15l-2.5-2.5M10 7h4m-4 5h4m-4 5h4" />,
   community: <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12ZM9 11h.01M12 11h.01M15 11h.01" />,
@@ -187,15 +191,166 @@ function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => vo
   )
 }
 
-// Missions alignées sur les vraies récompenses XP du backend (xpStore/xpTradingAchievements).
+// Missions alignées sur les vraies récompenses XP du backend (xpStore).
+// Orientées compétition (résultat d'arène), pas volume de trades.
 const homeMissions = [
   { id: 'join', eventType: 'arena.join', xp: 50, labelKey: 'missions.join' },
-  { id: 'first-trade', eventType: 'arena.first_trade', xp: 75, labelKey: 'missions.firstTrade' },
-  { id: 'win-streak', eventType: 'trading.achievement', xp: 120, labelKey: 'missions.winStreak' },
+  { id: 'finish', eventType: 'arena.completed', xp: 100, labelKey: 'missions.finish' },
+  { id: 'top-half', eventType: 'arena.top_half', xp: 150, labelKey: 'missions.topHalf' },
   { id: 'capital', eventType: 'trading.achievement', xp: 200, labelKey: 'missions.capital' },
-  { id: 'badge', eventType: 'badge.unlocked', xp: 300, labelKey: 'missions.badge' },
   { id: 'podium', eventType: 'arena.podium', xp: 500, labelKey: 'missions.podium' },
 ] as const
+
+function useNow(intervalMs = 1_000) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs)
+    return () => window.clearInterval(timer)
+  }, [intervalMs])
+  return now
+}
+
+function formatCountdown(ms: number, dayUnit: string) {
+  const total = Math.max(0, Math.floor(ms / 1_000))
+  const days = Math.floor(total / 86_400)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const clock = `${pad(Math.floor((total % 86_400) / 3_600))}:${pad(Math.floor((total % 3_600) / 60))}:${pad(total % 60)}`
+  return days > 0 ? `${days}${dayUnit} ${clock}` : clock
+}
+
+function NextArenaHero({
+  competitions,
+  mineById,
+  authed,
+  onJoin,
+  onTrade,
+  onLeaderboard,
+  onAuth,
+}: {
+  competitions: PublicCompetition[]
+  mineById: Map<string, MyCompetition>
+  authed: boolean
+  onJoin: (competition: PublicCompetition) => void
+  onTrade: (competitionId: string) => void
+  onLeaderboard: (competitionId: string) => void
+  onAuth: () => void
+}) {
+  const { t, locale } = useI18n()
+  const now = useNow()
+  const liveArena = competitions
+    .filter((competition) => competition.status === 'live')
+    .sort((a, b) => a.endAt - b.endAt)[0]
+  const upcomingArena = competitions
+    .filter((competition) => competition.status === 'registration' || competition.status === 'starting_soon')
+    .sort((a, b) => a.startAt - b.startAt)[0]
+  const arena = liveArena || upcomingArena
+  if (!arena) return null
+  const isLive = arena.status === 'live'
+  const mine = mineById.get(arena.id)
+  return (
+    <section className={`next-arena ${isLive ? 'is-live' : ''}`}>
+      <header>
+        <span className="next-arena__kicker"><i />{isLive ? t('nextArena.liveNow') : t('nextArena.kicker')}</span>
+        <span className="next-arena__players">{t('nextArena.registered', { count: (arena.participants ?? 0).toLocaleString(locale) })}</span>
+      </header>
+      <h2>{arena.title || t('arena.fallbackTitle')}</h2>
+      <div className="next-arena__countdown">
+        <small>{isLive ? t('nextArena.endsIn') : t('nextArena.startsIn')}</small>
+        <strong>{formatCountdown((isLive ? arena.endAt : arena.startAt) - now, t('nextArena.dayUnit'))}</strong>
+      </div>
+      <footer>
+        <div className="next-arena__prize">
+          <small>{t('arena.prize')}</small>
+          <strong>
+            {arena.cashPrize?.total
+              ? `${arena.cashPrize.total.toLocaleString(locale)} ${arena.cashPrize.currency || '€'}`
+              : t('arena.toConfirm')}
+          </strong>
+        </div>
+        <div className="next-arena__actions">
+          {mine?.canTrade && <button className="is-primary" type="button" onClick={() => onTrade(arena.id)}>{t('nextArena.trade')}</button>}
+          {!mine && arena.canJoin !== false && (
+            <button className="is-primary" type="button" onClick={() => authed ? onJoin(arena) : onAuth()}>{t('nextArena.join')}</button>
+          )}
+          <button type="button" onClick={() => onLeaderboard(arena.id)}>{isLive ? t('nextArena.watch') : t('arena.leaderboard')}</button>
+        </div>
+      </footer>
+    </section>
+  )
+}
+
+function LiveScreen({
+  competitions,
+  mineById,
+  onLeaderboard,
+  onTrade,
+  onGlobalLeaderboard,
+}: {
+  competitions: PublicCompetition[]
+  mineById: Map<string, MyCompetition>
+  onLeaderboard: (competitionId: string) => void
+  onTrade: (competitionId: string) => void
+  onGlobalLeaderboard: () => void
+}) {
+  const { t, locale } = useI18n()
+  const now = useNow()
+  const liveArenas = competitions
+    .filter((competition) => competition.status === 'live')
+    .sort((a, b) => a.endAt - b.endAt)
+  const upcoming = competitions
+    .filter((competition) => competition.status === 'registration' || competition.status === 'starting_soon')
+    .sort((a, b) => a.startAt - b.startAt)
+    .slice(0, 4)
+  return (
+    <div className="live-screen">
+      <div className="page-heading">
+        <span>{t('live.kicker')}</span>
+        <h2>{t('live.title')}</h2>
+        <p>{t('live.lead')}</p>
+      </div>
+      {liveArenas.length ? (
+        <div className="live-list">
+          {liveArenas.map((arena) => (
+            <motion.article key={arena.id} className="live-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              <header>
+                <span className="live-pill"><i />{t('arena.live')}</span>
+                <small>{t('arena.players', { count: (arena.participants ?? 0).toLocaleString(locale) })}</small>
+              </header>
+              <h3>{arena.title || t('arena.fallbackTitle')}</h3>
+              <div className="live-card__meta">
+                <span><small>{t('live.remaining')}</small><strong>{formatCountdown(arena.endAt - now, t('nextArena.dayUnit'))}</strong></span>
+                <div className="live-card__actions">
+                  {mineById.get(arena.id)?.canTrade && <button type="button" onClick={() => onTrade(arena.id)}>{t('arena.trade')}</button>}
+                  <button className="is-primary" type="button" onClick={() => onLeaderboard(arena.id)}>{t('live.spectate')}</button>
+                </div>
+              </div>
+            </motion.article>
+          ))}
+        </div>
+      ) : (
+        <div className="live-empty">
+          <strong>{t('live.emptyTitle')}</strong>
+          <p>{t('live.emptyLead')}</p>
+        </div>
+      )}
+      {upcoming.length > 0 && (
+        <section className="live-upcoming">
+          <header><span>{t('live.nextUp')}</span></header>
+          {upcoming.map((arena) => (
+            <button key={arena.id} type="button" onClick={() => onLeaderboard(arena.id)}>
+              <strong>{arena.title || t('arena.fallbackTitle')}</strong>
+              <em>{formatCountdown(arena.startAt - now, t('nextArena.dayUnit'))}</em>
+            </button>
+          ))}
+        </section>
+      )}
+      <button className="live-top-traders" type="button" onClick={onGlobalLeaderboard}>
+        <div><strong>{t('live.topTraders')}</strong><small>{t('live.topTradersHint')}</small></div>
+        <i>›</i>
+      </button>
+    </div>
+  )
+}
 
 function HomeScreen({
   loading,
@@ -209,7 +364,10 @@ function HomeScreen({
   onGlobalLeaderboard,
   onProfile,
   onNews,
+  onChat,
+  onRank,
   unreadNews,
+  unreadChat,
 }: {
   loading: boolean
   competitions: PublicCompetition[]
@@ -222,12 +380,14 @@ function HomeScreen({
   onGlobalLeaderboard: () => void
   onProfile: () => void
   onNews: () => void
+  onChat: () => void
+  onRank: () => void
   unreadNews: number
+  unreadChat: number
 }) {
   const { t, locale, lang } = useI18n()
   const [arenaFilter, setArenaFilter] = useState<'open' | 'upcoming' | 'ended'>('open')
   const user = dashboard?.user
-  const stats = dashboard?.myStats
   const statsCompetitions = (dashboard?.myCompetitions || []).filter((competition) => !/qualif/i.test(competition.title))
   const totalPnl = statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlUsd, 0)
   const averagePnlPercent = statsCompetitions.length
@@ -259,12 +419,19 @@ function HomeScreen({
               <strong>{user.name}</strong>
               {dashboard.myProgression && <em>{translateTitle(lang, dashboard.myProgression.title.id, dashboard.myProgression.title.label)}</em>}
             </div>
+            <button className="news-button" type="button" onClick={onChat} aria-label={t('home.openChat')}>
+              <Icon name="community" size={19} />
+              {unreadChat > 0 && <b className="news-unread-badge">{unreadChat > 9 ? '9+' : unreadChat}</b>}
+            </button>
             <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
               <Icon name="bell" size={19} />
               {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
             </button>
             <button type="button" onClick={onProfile} aria-label={t('home.openProfile')}><Icon name="arrow" size={18} /></button>
           </header>
+
+          <NextArenaHero competitions={competitions} mineById={mineById} authed
+            onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} onAuth={onAuth} />
 
           <section className={`home-pnl-hero ${totalPnl >= 0 ? 'is-profit' : 'is-loss'}`}>
             <div className="home-pnl-hero__main">
@@ -278,12 +445,7 @@ function HomeScreen({
             {dashboard.myProgression && <div className="home-pnl-hero__xp"><PlayerProgressionBar progression={dashboard.myProgression} variant="compact" /></div>}
           </section>
 
-          <section className="home-stat-strip" aria-label={t('home.myStats')}>
-            <div><small>{t('home.winRate')}</small><strong>{((stats?.winRate || 0) * 100).toFixed(1)}%</strong></div>
-            <div><small>{t('home.trades')}</small><strong>{stats?.closedTrades ?? 0}</strong></div>
-            <div><small>{t('home.avgRR')}</small><strong>{stats?.avgRR?.toFixed(2) || '—'}</strong></div>
-            <div><small>{t('home.profitFactor')}</small><strong>{stats?.profitFactor == null ? '—' : stats.profitFactor.toFixed(2)}</strong></div>
-          </section>
+          {dashboard.myRating && <DivisionCard rating={dashboard.myRating} onOpen={onRank} />}
 
           <section className="home-missions" aria-label={t('home.missions')}>
             <header>
@@ -317,6 +479,11 @@ function HomeScreen({
           <button type="button" onClick={onAuth}>{t('common.login')} <Icon name="arrow" size={17} /></button>
           <button className="home-global-link" type="button" onClick={onGlobalLeaderboard}>{t('home.guestGlobal')}</button>
         </section>
+      )}
+
+      {!user && (
+        <NextArenaHero competitions={competitions} mineById={mineById} authed={false}
+          onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} onAuth={onAuth} />
       )}
 
       <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
@@ -356,9 +523,10 @@ function App() {
   const [joiningArena, setJoiningArena] = useState<PublicCompetition | null>(null)
   const [tradeCompetitionId, setTradeCompetitionId] = useState('')
   const [selectedPlayerId, setSelectedPlayerId] = useState('')
-  const [playerBackTab, setPlayerBackTab] = useState<'leaderboard' | 'global-leaderboard' | 'community'>('leaderboard')
+  const [playerBackTab, setPlayerBackTab] = useState<'leaderboard' | 'global-leaderboard' | 'community' | 'rank'>('leaderboard')
   const [leaderboardCompetitionId, setLeaderboardCompetitionId] = useState('')
   const [leaderboardBackTab, setLeaderboardBackTab] = useState<Exclude<Tab, 'leaderboard'>>('home')
+  const [globalLeaderboardBackTab, setGlobalLeaderboardBackTab] = useState<Exclude<Tab, 'global-leaderboard'>>('home')
   const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [unreadNewsCount, setUnreadNewsCount] = useState(0)
   const [initialNewsId, setInitialNewsId] = useState('')
@@ -463,6 +631,11 @@ function App() {
     selectTab('leaderboard')
   }
 
+  function openGlobalLeaderboard(from: Exclude<Tab, 'global-leaderboard'>) {
+    setGlobalLeaderboardBackTab(from)
+    selectTab('global-leaderboard')
+  }
+
   useEffect(() => {
     if (!token || !Capacitor.isNativePlatform()) return
     let active = true
@@ -552,10 +725,10 @@ function App() {
   }
 
   const navItems: Array<{ id: Tab; label: string }> = [
-    { id: 'home', label: t('nav.home') },
-    { id: 'community', label: t('nav.chat') },
+    { id: 'home', label: t('nav.play') },
+    { id: 'live', label: t('nav.live') },
     { id: 'trade', label: t('nav.trade') },
-    { id: 'deals', label: t('nav.deals') },
+    { id: 'rank', label: t('nav.rank') },
     { id: 'profile', label: t('nav.profile') },
   ]
   const leaderboardCompetitions = [
@@ -584,17 +757,46 @@ function App() {
                 selectTab('trade')
               }}
               onLeaderboard={(id) => openLeaderboard(id, 'home')}
-              onGlobalLeaderboard={() => selectTab('global-leaderboard')}
+              onGlobalLeaderboard={() => openGlobalLeaderboard('home')}
               onProfile={() => selectTab('profile')}
               onNews={() => {
                 setInitialNewsId('')
                 selectTab('news')
               }}
+              onChat={() => selectTab('community')}
+              onRank={() => selectTab('rank')}
               unreadNews={unreadNewsCount}
+              unreadChat={unreadChatCount}
             />
           )}
 
-          {tab === 'deals' && <DealsScreen />}
+          {tab === 'live' && (
+            <LiveScreen
+              competitions={leaderboardCompetitions}
+              mineById={new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))}
+              onLeaderboard={(id) => openLeaderboard(id, 'live')}
+              onTrade={(competitionId) => {
+                setTradeCompetitionId(competitionId)
+                selectTab('trade')
+              }}
+              onGlobalLeaderboard={() => openGlobalLeaderboard('live')}
+            />
+          )}
+
+          {tab === 'rank' && (
+            <RankScreen
+              currentUserId={dashboard?.user?.id}
+              myRating={dashboard?.myRating}
+              onOpenPlayer={(userId) => {
+                setSelectedPlayerId(userId)
+                setPlayerBackTab('rank')
+                selectTab('player')
+              }}
+              onSeasonLeaderboard={() => openGlobalLeaderboard('rank')}
+            />
+          )}
+
+          {tab === 'deals' && <DealsScreen onBack={() => selectTab('profile')} />}
 
           {tab === 'news' && <NewsScreen initialArticleId={initialNewsId} onSeen={markNewsSeen} onBack={() => selectTab('home')} />}
 
@@ -647,7 +849,7 @@ function App() {
           {tab === 'global-leaderboard' && (
             <GlobalLeaderboard
               currentUserId={dashboard?.user?.id}
-              onBack={() => selectTab('home')}
+              onBack={() => selectTab(globalLeaderboardBackTab)}
               onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
                 setPlayerBackTab('global-leaderboard')
@@ -678,7 +880,9 @@ function App() {
               <ProfileScreen
                 dashboard={dashboard}
                 onJournal={() => selectTab('journal')}
-                onGlobalLeaderboard={() => selectTab('global-leaderboard')}
+                onGlobalLeaderboard={() => openGlobalLeaderboard('profile')}
+                onRewards={() => selectTab('deals')}
+                onRank={() => selectTab('rank')}
                 onSettings={() => selectTab('settings')}
                 onLogout={() => void handleLogout()}
               />
@@ -700,7 +904,6 @@ function App() {
           <button key={item.id} type="button" className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-primary-trade' : ''}`}
             onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
             <span><Icon name={item.id} size={22} /></span>{item.label}
-            {item.id === 'community' && unreadChatCount > 0 && <b className="nav-unread-badge">+{unreadChatCount}</b>}
           </button>
         ))}
       </nav>
@@ -870,10 +1073,12 @@ const badgeLabels: Record<UserBadge, string> = {
   'autumn-champion': 'Champion Autumn',
 }
 
-function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onSettings, onLogout }: {
+function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onRewards, onRank, onSettings, onLogout }: {
   dashboard: BootstrapData
   onJournal: () => void
   onGlobalLeaderboard: () => void
+  onRewards: () => void
+  onRank: () => void
   onSettings: () => void
   onLogout: () => void
 }) {
@@ -889,10 +1094,13 @@ function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onSettings, 
           <p>{user.email}</p>
         </div>
       </div>
+      {dashboard.myRating && <DivisionCard rating={dashboard.myRating} variant="compact" onOpen={onRank} />}
       <div className="profile-stats">
         <div><small>{t('profile.totalPnl')}</small><strong className={(stats?.netPnl ?? 0) >= 0 ? 'positive' : 'negative'}>{(stats?.netPnl ?? 0).toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong></div>
         <div><small>{t('profile.winRate')}</small><strong>{((stats?.winRate ?? 0) * 100).toFixed(1)}%</strong></div>
         <div><small>{t('profile.trades')}</small><strong>{stats?.closedTrades ?? 0}</strong></div>
+        <div><small>{t('home.avgRR')}</small><strong>{stats?.avgRR?.toFixed(2) || '—'}</strong></div>
+        <div><small>{t('home.profitFactor')}</small><strong>{stats?.profitFactor == null ? '—' : stats.profitFactor.toFixed(2)}</strong></div>
       </div>
       {dashboard.myProgression && <section className="profile-progression">
         <header><span>{t('profile.progression')}</span><small>{t(`frames.${dashboard.myProgression.frame.id}`) || dashboard.myProgression.frame.label}</small></header>
@@ -905,6 +1113,7 @@ function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onSettings, 
       </section>}
       <section className="profile-actions">
         <button type="button" onClick={onJournal}><span><Icon name="journal" size={20} /></span><div><strong>{t('profile.journal')}</strong><small>{t('profile.journalHint')}</small></div><i>›</i></button>
+        <button type="button" onClick={onRewards}><span><Icon name="deals" size={20} /></span><div><strong>{t('profile.rewards')}</strong><small>{t('profile.rewardsHint')}</small></div><i>›</i></button>
         <button type="button" onClick={onGlobalLeaderboard}><span><Icon name="global-leaderboard" size={20} /></span><div><strong>{t('profile.global')}</strong><small>{t('profile.globalHint')}</small></div><i>›</i></button>
         <button type="button" onClick={onSettings}><span><Icon name="settings" size={20} /></span><div><strong>{t('profile.edit')}</strong><small>{t('profile.editHint')}</small></div><i>›</i></button>
       </section>

@@ -1,5 +1,6 @@
 .deals-page { margin-top: 0; }
 .deals-perks-head { margin-bottom: 16px; }
+.deals-back { margin: 0 0 10px; padding: 6px 11px 6px 8px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #2c2930; border-radius: 99px; background: #141218; color: #b7b0b8; font-size: 11px; font-weight: 700; }
 .deals-perks-head span, .deals-catalog-head span, .deals-section header span { color: #ff6c7e; font-size: 10px; font-weight: 800; letter-spacing: .15em; }
 .deals-perks-head h1 { margin: 6px 0 0; font: 800 34px/.9 'Barlow Condensed',sans-serif; text-transform: uppercase; }
 .deals-perks-head p { margin: 8px 0 0; color: #99939d; font-size: 12px; line-height: 1.45; }
