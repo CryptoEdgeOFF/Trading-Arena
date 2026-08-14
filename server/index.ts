@@ -54,7 +54,7 @@ import { createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatI
 import { syncUserProgression } from './xpStore.js';
 import { computeTradingAchievements } from './xpTradingAchievements.js';
 import { getRatingLeaderboard, syncUserRating } from './ratingStore.js';
-import { getPnlHistory, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
+import { getPnlHistoryWithLivePoint, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -3305,7 +3305,10 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
     await syncCompetitionResultsForCompetition(competitionId);
     const data = competitionManager.getPublicLeaderboard(competitionId);
     if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
-    const samples = getPnlHistory(competitionId);
+    // Toujours terminer la série par un point « maintenant » issu du
+    // leaderboard courant : la courbe est visible dès les premiers polls
+    // au lieu d'attendre plusieurs échantillons throttlés.
+    const samples = getPnlHistoryWithLivePoint(competitionId, data.leaderboard);
     const tracked = new Set(samples.flatMap((sample) => sample.rows.map((row) => row.userId)));
     res.json({
       status: data.competition.status,
@@ -3345,6 +3348,62 @@ if (!process.env.NETLIFY) {
       }
     })();
   }, 30_000);
+}
+
+// Joueurs simulés (staging uniquement) : peuplent l'arène de test avec des
+// trajectoires PnL en marche aléatoire pour visualiser la course au PnL en
+// mode spectateur. Jamais actif en production : MOBILE_STAGING_TEST_MODE.
+if (MOBILE_STAGING_TEST_MODE && !process.env.NETLIFY) {
+  const SIM_BOTS = [
+    { userId: 'sim-bot-nova', name: 'NovaQuant', drift: 0.06, vol: 0.55 },
+    { userId: 'sim-bot-wolf', name: 'KryptoWolf', drift: 0.03, vol: 0.85 },
+    { userId: 'sim-bot-lisa', name: 'Lisa.eth', drift: 0.02, vol: 0.35 },
+    { userId: 'sim-bot-scalp', name: 'ScalpKing', drift: -0.01, vol: 0.95 },
+    { userId: 'sim-bot-moon', name: 'MoonRider', drift: 0.04, vol: 0.6 },
+    { userId: 'sim-bot-zen', name: 'ZenTrader', drift: 0.01, vol: 0.25 },
+    { userId: 'sim-bot-degen', name: 'DegenMax', drift: -0.03, vol: 1.15 },
+  ];
+  const simState = new Map<string, { pnlPercent: number; tradesCount: number }>();
+
+  const runSimulatedPlayersTick = () => {
+    try {
+      const competition = competitionManager
+        .listAdminCompetitions()
+        .find((item) => item.title === 'MOBILE STAGING - TRADING TEST' && item.status === 'live');
+      if (!competition) return;
+      const liveRows = competitionManager.getPublicLeaderboard(competition.id).leaderboard;
+
+      const updates = SIM_BOTS.map((bot) => {
+        let state = simState.get(bot.userId);
+        if (!state) {
+          // Reprise après redéploiement : on repart du PnL persisté pour
+          // éviter un saut visuel, sinon départ dispersé autour de 0.
+          const existing = liveRows.find((row) => row.userId === bot.userId);
+          state = existing
+            ? { pnlPercent: existing.pnlPercent, tradesCount: Math.max(1, existing.tradesCount) }
+            : { pnlPercent: (Math.random() - 0.35) * 6, tradesCount: 1 + Math.floor(Math.random() * 8) };
+          simState.set(bot.userId, state);
+        }
+        state.pnlPercent = Math.max(-14, Math.min(28, state.pnlPercent + bot.drift + (Math.random() - 0.5) * bot.vol));
+        if (Math.random() < 0.4) state.tradesCount += 1;
+        return {
+          userId: bot.userId,
+          name: bot.name,
+          pnlPercent: Number(state.pnlPercent.toFixed(3)),
+          pnlUsd: Number(((state.pnlPercent / 100) * 10_000).toFixed(2)),
+          tradesCount: state.tradesCount,
+        };
+      });
+
+      competitionManager.applySimulatedResults(competition.id, updates);
+      maybeRecordPnlSample(competition.id, competitionManager.getPublicLeaderboard(competition.id).leaderboard);
+    } catch {
+      // Arène de test absente (ARTEMTEST jamais connecté) : on réessaie au prochain tick.
+    }
+  };
+
+  setTimeout(runSimulatedPlayersTick, 5_000);
+  setInterval(runSimulatedPlayersTick, 20_000);
 }
 
 // --- Admin APIs for competitions ---

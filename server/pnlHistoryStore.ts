@@ -14,7 +14,7 @@ export interface PnlSample {
 }
 
 const MAX_SAMPLES_PER_COMPETITION = 480;
-const MIN_SAMPLE_INTERVAL_MS = 20_000;
+const MIN_SAMPLE_INTERVAL_MS = 15_000;
 const MAX_TRACKED_ROWS = 10;
 
 const histories = new Map<string, PnlSample[]>();
@@ -48,6 +48,28 @@ export function maybeRecordPnlSample(
 
 export function getPnlHistory(competitionId: string): PnlSample[] {
   return histories.get(competitionId) || [];
+}
+
+/**
+ * Renvoie l'historique stocké + un point éphémère « maintenant » construit
+ * depuis le leaderboard courant (non persisté). Le client dispose ainsi
+ * toujours du dernier PnL en bout de courbe, sans attendre le prochain
+ * échantillon throttlé — c'est ce qui rend la courbe visible immédiatement.
+ */
+export function getPnlHistoryWithLivePoint(
+  competitionId: string,
+  leaderboard: Array<{ userId: string; rank: number; pnlPercent: number }>,
+): PnlSample[] {
+  const stored = histories.get(competitionId) || [];
+  const now = Date.now();
+  const last = stored[stored.length - 1];
+  if (last && now - last.t < 2_000) return stored;
+  const rows = leaderboard
+    .filter((row) => row.rank > 0)
+    .slice(0, MAX_TRACKED_ROWS)
+    .map((row) => ({ userId: row.userId, pnlPercent: Number(row.pnlPercent) || 0 }));
+  if (!rows.length) return stored;
+  return [...stored, { t: now, rows }];
 }
 
 /** Libère les arènes qui n'ont plus rien à montrer (appelé opportunément). */

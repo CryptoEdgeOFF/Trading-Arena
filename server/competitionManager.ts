@@ -2295,6 +2295,51 @@ export class CompetitionManager {
     return breachResult;
   }
 
+  /**
+   * Injecte/actualise des participants simulés (bots de staging) sur une
+   * arène : crée l'utilisateur et l'entrée au besoin, puis pose directement
+   * le PnL. Les entrées n'ont pas de paperPlayerId, donc la synchro paper
+   * trading ne les écrase jamais. Réservé aux environnements de test.
+   */
+  applySimulatedResults(
+    competitionId: string,
+    bots: Array<{ userId: string; name: string; pnlUsd: number; pnlPercent: number; tradesCount: number }>,
+  ): void {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) throw new Error('Competition introuvable');
+    const now = Date.now();
+    for (const bot of bots) {
+      if (!this.users.has(bot.userId)) {
+        this.users.set(bot.userId, {
+          id: bot.userId,
+          email: `${bot.userId}@simulated.local`,
+          name: bot.name,
+          phone: null,
+          phoneVerifiedAt: now,
+          createdAt: now,
+        });
+      }
+      let entry = competition.entries.find((item) => item.userId === bot.userId);
+      if (!entry) {
+        entry = {
+          userId: bot.userId,
+          joinedAt: now,
+          pnlUsd: 0,
+          pnlPercent: 0,
+          tradesCount: 0,
+          updatedAt: now,
+        };
+        competition.entries.push(entry);
+      }
+      entry.pnlUsd = Number(bot.pnlUsd) || 0;
+      entry.pnlPercent = Number(bot.pnlPercent) || 0;
+      entry.tradesCount = Math.max(1, Math.floor(Number(bot.tradesCount) || 1));
+      entry.updatedAt = now;
+    }
+    this.competitions.set(competition.id, competition);
+    this.save();
+  }
+
   /** Le joueur (paperPlayerId) est-il éliminé (drawdown atteint) sur cette arène ? */
   isPaperPlayerBreached(competitionId: string, paperPlayerId: string): boolean {
     const competition = this.competitions.get(competitionId);

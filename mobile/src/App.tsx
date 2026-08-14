@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { PushNotifications } from '@capacitor/push-notifications'
@@ -925,6 +925,20 @@ function App() {
   )
 }
 
+/**
+ * Fusionne les échantillons PnL déjà accumulés côté client avec ceux du
+ * serveur : chaque poll (10 s) ajoute le point « live » renvoyé par l'API,
+ * donc la courbe s'allonge en continu sans attendre les échantillons
+ * throttlés côté serveur. Déduplication à la seconde, fenêtre bornée.
+ */
+function mergePnlSamples(previous: PnlHistorySample[], incoming: PnlHistorySample[]): PnlHistorySample[] {
+  const byTime = new Map<number, PnlHistorySample>()
+  for (const sample of [...previous, ...incoming]) {
+    byTime.set(Math.round(sample.t / 1000), sample)
+  }
+  return [...byTime.values()].sort((a, b) => a.t - b.t).slice(-480)
+}
+
 function LeaderboardScreen({
   competitions,
   initialCompetitionId,
@@ -947,6 +961,7 @@ function LeaderboardScreen({
   const [error, setError] = useState('')
   const [shareRow, setShareRow] = useState<LeaderboardRow | null>(null)
   const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[] } | null>(null)
+  const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] })
 
   useEffect(() => {
     if (initialCompetitionId && competitions.some((item) => item.id === initialCompetitionId)) {
@@ -973,7 +988,16 @@ function LeaderboardScreen({
         isLiveCompetition ? getPnlHistory(competitionId).catch(() => null) : Promise.resolve(null),
       ])
       setRows(nextRows.sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent))
-      setPnlHistory(history)
+      if (history) {
+        const buffer = pnlBufferRef.current
+        const merged = buffer.competitionId === competitionId
+          ? mergePnlSamples(buffer.samples, history.samples)
+          : mergePnlSamples([], history.samples)
+        pnlBufferRef.current = { competitionId, samples: merged }
+        setPnlHistory({ samples: merged, traders: history.traders })
+      } else {
+        setPnlHistory(null)
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : t('leaderboard.unavailable'))
     } finally {
