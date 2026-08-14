@@ -54,7 +54,8 @@ import { createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatI
 import { syncUserProgression } from './xpStore.js';
 import { computeTradingAchievements } from './xpTradingAchievements.js';
 import { getRatingLeaderboard, syncUserRating } from './ratingStore.js';
-import { getPnlHistoryWithLivePoint, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
+import { getPnlHistoryWithLivePoint, getPnlMoments, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
+import { ensureScheduledArenas } from './arenaScheduler.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -3313,6 +3314,7 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
     res.json({
       status: data.competition.status,
       samples,
+      moments: getPnlMoments(competitionId),
       traders: data.leaderboard
         .filter((row) => tracked.has(row.userId))
         .map((row) => ({
@@ -3326,6 +3328,16 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
     });
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Historique introuvable' });
+  }
+});
+
+/** Champion of the Week : vainqueur de la dernière Friday Night Arena terminée. */
+app.get('/api/competition/champion-of-week', async (_req, res) => {
+  try {
+    await refreshCompetitionStoreIfServerless();
+    res.json({ champion: competitionManager.getChampionOfTheWeek() });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Champion introuvable' });
   }
 });
 
@@ -3348,6 +3360,20 @@ if (!process.env.NETLIFY) {
       }
     })();
   }, 30_000);
+}
+
+// Scheduler des arènes programmées : Blitz quotidiennes (London/NY/Crypto)
+// et FRIDAY NIGHT ARENA hebdomadaire. Serveur persistant uniquement — la
+// création est idempotente (scheduleKey persistée), donc un redémarrage ou
+// plusieurs instances ne créent pas de doublons.
+if (!process.env.NETLIFY) {
+  const runScheduler = () => {
+    void ensureScheduledArenas(competitionManager).catch((error) => {
+      console.warn('[arenaScheduler] échec de création des arènes programmées :', error?.message || error);
+    });
+  };
+  setTimeout(runScheduler, 10_000);
+  setInterval(runScheduler, 10 * 60_000);
 }
 
 // Joueurs simulés (staging uniquement) : peuplent l'arène de test avec des

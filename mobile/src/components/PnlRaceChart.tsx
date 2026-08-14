@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { apiAssetUrl, type PnlHistorySample, type PnlHistoryTrader } from '../lib/api'
+import { apiAssetUrl, type PnlHistorySample, type PnlHistoryTrader, type PnlMoment } from '../lib/api'
 import { useI18n } from '../i18n'
 import './PnlRaceChart.css'
 
@@ -75,15 +75,24 @@ function buildSeries(samples: PnlHistorySample[], traders: PnlHistoryTrader[]): 
 export function PnlRaceChart({
   samples,
   traders,
+  moments,
   currentUserId,
 }: {
   samples: PnlHistorySample[]
   traders: PnlHistoryTrader[]
+  moments?: PnlMoment[]
   currentUserId?: string
 }) {
   const { t } = useI18n()
   const series = useMemo(() => buildSeries(samples, traders), [samples, traders])
   const leader = traders.filter((trader) => trader.rank > 0).sort((a, b) => a.rank - b.rank)[0]
+  const momentsFeed = useMemo(() => {
+    const names = new Map(traders.map((trader) => [trader.userId, trader.name]))
+    return (moments || [])
+      .slice(-3)
+      .reverse()
+      .map((moment) => ({ ...moment, name: names.get(moment.userId) || 'Trader' }))
+  }, [moments, traders])
 
   if (!series.length) {
     return (
@@ -159,6 +168,17 @@ export function PnlRaceChart({
           </span>
         ))}
       </div>
+
+      {momentsFeed.length > 0 && (
+        <div className="pnl-race__moments">
+          {momentsFeed.map((moment) => (
+            <span key={`${moment.t}-${moment.userId}-${moment.type}`}>
+              {moment.type === 'leader' ? '⚡' : '▲'}{' '}
+              {t(moment.type === 'leader' ? 'spectate.momentLeader' : 'spectate.momentTop3', { name: moment.name })}
+            </span>
+          ))}
+        </div>
+      )}
     </section>
   )
 }

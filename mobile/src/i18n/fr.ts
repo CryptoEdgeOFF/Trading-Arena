@@ -54,12 +54,19 @@ export const fr: typeof en = {
     nextUp: 'À SUIVRE',
     topTraders: 'Top traders',
     topTradersHint: 'Classement de saison et records all-time',
+    championKicker: 'CHAMPION DE LA SEMAINE',
+  },
+  format: {
+    blitz: 'BLITZ · 30 MIN',
+    weekly: 'FRIDAY NIGHT',
   },
   spectate: {
     kicker: 'SPECTATE',
     title: 'Course au PnL',
     dominates: '{{name}} domine',
     collecting: 'Historique PnL en cours de collecte — premières courbes dans quelques minutes.',
+    momentLeader: '{{name}} prend la tête',
+    momentTop3: '{{name}} entre dans le top 3',
   },
   rank: {
     kicker: 'BTF RATING',

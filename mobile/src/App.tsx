@@ -8,6 +8,7 @@ import {
   API_BASE_URL,
   apiAssetUrl,
   getBootstrap,
+  getChampionOfWeek,
   getCompetitionLeaderboard,
   getGlobalChatMessages,
   getNewsPage,
@@ -17,10 +18,12 @@ import {
   registerPushDevice,
   unregisterPushDevice,
   type BootstrapData,
+  type ChampionOfWeek,
   type LeaderboardRow,
   type MyCompetition,
   type PnlHistorySample,
   type PnlHistoryTrader,
+  type PnlMoment,
   type PublicCompetition,
   type SessionUser,
   type UserBadge,
@@ -83,6 +86,16 @@ function Icon({ name, size = 22 }: { name: IconName; size?: number }) {
   )
 }
 
+function FormatChip({ format }: { format?: 'blitz' | 'weekly' | null }) {
+  const { t } = useI18n()
+  if (!format) return null
+  return (
+    <span className={`format-chip is-${format}`}>
+      {format === 'blitz' ? t('format.blitz') : t('format.weekly')}
+    </span>
+  )
+}
+
 function ArenaCard({
   competition,
   onLeaderboard,
@@ -113,6 +126,7 @@ function ArenaCard({
       <div className="arena-card__glow" />
       <div className="arena-card__top">
         <span className="live-pill"><i />{status}</span>
+        <FormatChip format={competition.format} />
         <span className="arena-card__players">{t('arena.players', { count: players })}</span>
       </div>
       <h3>{title}</h3>
@@ -255,6 +269,7 @@ function NextArenaHero({
     <section className={`next-arena ${isLive ? 'is-live' : ''}`}>
       <header>
         <span className="next-arena__kicker"><i />{isLive ? t('nextArena.liveNow') : t('nextArena.kicker')}</span>
+        <FormatChip format={arena.format} />
         <span className="next-arena__players">{t('nextArena.registered', { count: (arena.participants ?? 0).toLocaleString(locale) })}</span>
       </header>
       <h2>{arena.title || t('arena.fallbackTitle')}</h2>
@@ -298,13 +313,19 @@ function LiveScreen({
 }) {
   const { t, locale } = useI18n()
   const now = useNow()
+  const [champion, setChampion] = useState<ChampionOfWeek | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getChampionOfWeek().then((next) => { if (!cancelled) setChampion(next) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
   const liveArenas = competitions
     .filter((competition) => competition.status === 'live')
     .sort((a, b) => a.endAt - b.endAt)
   const upcoming = competitions
     .filter((competition) => competition.status === 'registration' || competition.status === 'starting_soon')
     .sort((a, b) => a.startAt - b.startAt)
-    .slice(0, 4)
+    .slice(0, 5)
   return (
     <div className="live-screen">
       <div className="page-heading">
@@ -342,10 +363,33 @@ function LiveScreen({
           <header><span>{t('live.nextUp')}</span></header>
           {upcoming.map((arena) => (
             <button key={arena.id} type="button" onClick={() => onLeaderboard(arena.id)}>
-              <strong>{arena.title || t('arena.fallbackTitle')}</strong>
-              <em>{formatCountdown(arena.startAt - now, t('nextArena.dayUnit'))}</em>
+              <span className="live-upcoming__label">
+                <strong>{arena.title || t('arena.fallbackTitle')}</strong>
+                <FormatChip format={arena.format} />
+              </span>
+              <span className="live-upcoming__when">
+                <em>{formatCountdown(arena.startAt - now, t('nextArena.dayUnit'))}</em>
+                <small>{new Date(arena.startAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</small>
+              </span>
             </button>
           ))}
+        </section>
+      )}
+      {champion && (
+        <section className="champion-week">
+          <header><span>👑 {t('live.championKicker')}</span></header>
+          <div className="champion-week__body">
+            {champion.winner.avatarUrl
+              ? <img src={apiAssetUrl(champion.winner.avatarUrl)} alt="" />
+              : <i>{champion.winner.name.slice(0, 2).toUpperCase()}</i>}
+            <div>
+              <strong>{champion.winner.name}</strong>
+              <small>{champion.competitionTitle}</small>
+            </div>
+            <em className={champion.winner.pnlPercent >= 0 ? 'positive' : 'negative'}>
+              {champion.winner.pnlPercent >= 0 ? '+' : ''}{champion.winner.pnlPercent.toFixed(2)}%
+            </em>
+          </div>
         </section>
       )}
       <button className="live-top-traders" type="button" onClick={onGlobalLeaderboard}>
@@ -960,7 +1004,7 @@ function LeaderboardScreen({
   const [loadingRows, setLoadingRows] = useState(true)
   const [error, setError] = useState('')
   const [shareRow, setShareRow] = useState<LeaderboardRow | null>(null)
-  const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[] } | null>(null)
+  const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[]; moments: PnlMoment[] } | null>(null)
   const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] })
 
   useEffect(() => {
@@ -994,7 +1038,7 @@ function LeaderboardScreen({
           ? mergePnlSamples(buffer.samples, history.samples)
           : mergePnlSamples([], history.samples)
         pnlBufferRef.current = { competitionId, samples: merged }
-        setPnlHistory({ samples: merged, traders: history.traders })
+        setPnlHistory({ samples: merged, traders: history.traders, moments: history.moments })
       } else {
         setPnlHistory(null)
       }
@@ -1065,7 +1109,7 @@ function LeaderboardScreen({
       ) : (
         <>
           {isLiveCompetition && pnlHistory && (
-            <PnlRaceChart samples={pnlHistory.samples} traders={pnlHistory.traders} currentUserId={currentUserId} />
+            <PnlRaceChart samples={pnlHistory.samples} traders={pnlHistory.traders} moments={pnlHistory.moments} currentUserId={currentUserId} />
           )}
 
           {podium.length > 0 && (

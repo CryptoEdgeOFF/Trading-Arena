@@ -30,6 +30,7 @@ export type PublicCompetition = {
   } | null
   sponsor?: string | null
   bannerImageUrl?: string | null
+  format?: 'blitz' | 'weekly' | null
 }
 
 export type SessionUser = {
@@ -738,17 +739,37 @@ export type PnlHistoryTrader = {
   breached?: boolean
 }
 
+export type PnlMoment = {
+  t: number
+  type: 'leader' | 'top3'
+  userId: string
+}
+
 export async function getPnlHistory(competitionId: string): Promise<{
   samples: PnlHistorySample[]
   traders: PnlHistoryTrader[]
+  moments: PnlMoment[]
 }> {
-  const data = await apiFetch<{ samples?: PnlHistorySample[]; traders?: PnlHistoryTrader[] }>(
+  const data = await apiFetch<{ samples?: PnlHistorySample[]; traders?: PnlHistoryTrader[]; moments?: PnlMoment[] }>(
     `/api/competition/leaderboard/${encodeURIComponent(competitionId)}/pnl-history`,
   )
   return {
     samples: Array.isArray(data.samples) ? data.samples : [],
     traders: Array.isArray(data.traders) ? data.traders : [],
+    moments: Array.isArray(data.moments) ? data.moments : [],
   }
+}
+
+export type ChampionOfWeek = {
+  competitionId: string
+  competitionTitle: string
+  endedAt: number
+  winner: { userId: string; name: string; avatarUrl?: string | null; pnlPercent: number }
+}
+
+export async function getChampionOfWeek(): Promise<ChampionOfWeek | null> {
+  const data = await apiFetch<{ champion?: ChampionOfWeek | null }>('/api/competition/champion-of-week')
+  return data.champion ?? null
 }
 
 export function getPublicPlayerProfile(userId: string): Promise<PublicPlayerProfile> {

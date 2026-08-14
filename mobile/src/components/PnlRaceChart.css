@@ -18,6 +18,10 @@
 .pnl-race__chip em { font-size: 8.5px; font-style: normal; font-weight: 800; }
 .pnl-race__chip .positive { color: #38df8a; }
 .pnl-race__chip .negative { color: #ff5066; }
+.pnl-race__moments { display: grid; gap: 4px; padding-top: 2px; border-top: 1px dashed rgba(255,255,255,.08); }
+.pnl-race__moments span { color: #cfc8d4; font-size: 9px; font-weight: 700; }
+.pnl-race__moments span:first-child { color: #ffd257; }
+
 .pnl-race__collecting { padding: 26px 10px; display: grid; justify-items: center; gap: 8px; color: #8d8690; font-size: 10px; text-align: center; }
 .pnl-race__collecting i { width: 16px; height: 16px; border: 2px solid #2c2930; border-top-color: #ff4655; border-radius: 50%; animation: pnl-race-spin 0.9s linear infinite; }
 @keyframes pnl-race-spin { to { transform: rotate(360deg); } }

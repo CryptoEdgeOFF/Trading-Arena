@@ -52,12 +52,19 @@ export const en = {
     nextUp: 'NEXT UP',
     topTraders: 'Top traders',
     topTradersHint: 'Season leaderboard and all-time bests',
+    championKicker: 'CHAMPION OF THE WEEK',
+  },
+  format: {
+    blitz: 'BLITZ · 30 MIN',
+    weekly: 'FRIDAY NIGHT',
   },
   spectate: {
     kicker: 'SPECTATE',
     title: 'PnL race',
     dominates: '{{name}} dominates',
     collecting: 'Building the live PnL history — first curves in a few minutes.',
+    momentLeader: '{{name}} takes the lead',
+    momentTop3: '{{name}} breaks into the top 3',
   },
   rank: {
     kicker: 'BTF RATING',

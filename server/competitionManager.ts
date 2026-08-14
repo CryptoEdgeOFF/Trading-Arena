@@ -332,6 +332,16 @@ export interface Competition {
   notifiedNewArenaAt?: number | null;
   /** Saison du leaderboard global à laquelle cette arène contribue. */
   seasonId?: string | null;
+  /**
+   * Format d'arène programmée : 'blitz' (session quotidienne courte) ou
+   * 'weekly' (Friday Night Arena). null/absent = arène classique.
+   */
+  format?: 'blitz' | 'weekly' | null;
+  /**
+   * Clé d'occurrence du scheduler (ex. 'blitz-ny:2026-08-14'). Garde
+   * d'idempotence : une occurrence programmée n'est créée qu'une seule fois.
+   */
+  scheduleKey?: string | null;
 }
 
 export type CompetitionStatus = 'registration' | 'starting_soon' | 'live' | 'ended';
@@ -1617,6 +1627,8 @@ export class CompetitionManager {
     sponsor?: unknown;
     sponsorReferralUrl?: unknown;
     seasonId?: unknown;
+    format?: unknown;
+    scheduleKey?: unknown;
   }): Competition {
     const title = String(input.title || '').trim();
     const code = normalizeCode(input.code);
@@ -1679,11 +1691,58 @@ export class CompetitionManager {
       sponsor,
       sponsorReferralUrl,
       seasonId,
+      format: input.format === 'blitz' || input.format === 'weekly' ? input.format : null,
+      scheduleKey: input.scheduleKey != null && String(input.scheduleKey).trim()
+        ? String(input.scheduleKey).trim()
+        : null,
     };
 
     this.competitions.set(competition.id, competition);
     this.save();
     return competition;
+  }
+
+  /** Une occurrence programmée (scheduleKey) existe-t-elle déjà ? */
+  hasCompetitionWithScheduleKey(scheduleKey: string): boolean {
+    for (const competition of this.competitions.values()) {
+      if (competition.scheduleKey === scheduleKey) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Champion of the Week : vainqueur de la dernière Friday Night Arena
+   * (format 'weekly') terminée avec au moins un participant classé.
+   */
+  getChampionOfTheWeek(): {
+    competitionId: string;
+    competitionTitle: string;
+    endedAt: number;
+    winner: { userId: string; name: string; avatarUrl: string | null; pnlPercent: number };
+  } | null {
+    const now = Date.now();
+    const ended = Array.from(this.competitions.values())
+      .filter((competition) => competition.format === 'weekly' && competition.isPublic
+        && inferCompetitionStatus(competition, now) === 'ended')
+      .sort((a, b) => b.endAt - a.endAt);
+    for (const competition of ended) {
+      const ranked = sortAndRankLeaderboard(competition.entries.slice()).filter((entry) => entry.rank === 1);
+      const top = ranked[0];
+      if (!top) continue;
+      const user = this.users.get(top.userId);
+      return {
+        competitionId: competition.id,
+        competitionTitle: competition.title,
+        endedAt: competition.endAt,
+        winner: {
+          userId: top.userId,
+          name: user?.name || 'Participant',
+          avatarUrl: user?.avatarUrl || null,
+          pnlPercent: Number(top.pnlPercent) || 0,
+        },
+      };
+    }
+    return null;
   }
 
   listAdminCompetitions(): Array<Competition & { status: CompetitionStatus; participants: number; entriesDetailed: Array<CompetitionEntry & { user: CompetitionUser | null }> }> {
@@ -1718,6 +1777,7 @@ export class CompetitionManager {
     sponsor: string | null;
     sponsorReferralUrl: string | null;
     bannerImageUrl: string | null;
+    format: 'blitz' | 'weekly' | null;
   }> {
     const now = Date.now();
     return Array.from(this.competitions.values())
@@ -1741,6 +1801,7 @@ export class CompetitionManager {
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
         bannerImageUrl: competition.bannerImageUrl ?? null,
+        format: competition.format ?? null,
       }));
   }
 
