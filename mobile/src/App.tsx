@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Capacitor } from '@capacitor/core'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { PushNotifications } from '@capacitor/push-notifications'
@@ -1131,23 +1132,27 @@ function LeaderboardScreen({
       <ShareRankModal row={shareRow} competition={competition?.title || 'BTF Arena'}
         participants={competition?.participants || rows.length} onClose={() => setShareRow(null)} />
 
-      {token && sessionUser && competitionId && (
-        <button className="arena-chat-fab" type="button" onClick={() => setShowChat(true)} aria-label={t('chat.arenaOpen')}>
-          <Icon name="community" size={22} />
-        </button>
-      )}
-
-      {showChat && token && sessionUser && (
-        <div className="arena-chat-overlay">
-          <GlobalChat token={token} user={sessionUser} competitionId={competitionId}
-            title={competition?.title || t('chat.arenaTitle')}
-            onClose={() => setShowChat(false)}
-            onLatestSeen={() => {}}
-            onOpenPlayer={(userId) => {
-              setShowChat(false)
-              onOpenPlayer(userId)
-            }} />
-        </div>
+      {/* Portal : la bulle et l'overlay échappent au conteneur animé (transform)
+          qui casserait leur position:fixed. */}
+      {token && sessionUser && competitionId && createPortal(
+        <>
+          <button className="arena-chat-fab" type="button" onClick={() => setShowChat(true)} aria-label={t('chat.arenaOpen')}>
+            <Icon name="community" size={22} />
+          </button>
+          {showChat && (
+            <div className="arena-chat-overlay">
+              <GlobalChat token={token} user={sessionUser} competitionId={competitionId}
+                title={competition?.title || t('chat.arenaTitle')}
+                onClose={() => setShowChat(false)}
+                onLatestSeen={() => {}}
+                onOpenPlayer={(userId) => {
+                  setShowChat(false)
+                  onOpenPlayer(userId)
+                }} />
+            </div>
+          )}
+        </>,
+        document.body,
       )}
     </div>
   )
