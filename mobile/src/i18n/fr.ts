@@ -320,7 +320,7 @@ export const fr: typeof en = {
     title: 'Chat global',
     arenaTitle: 'Chat de l’arène',
     arenaOpen: 'Ouvrir le chat de l’arène',
-    arenaNotice: 'Salon privé — seuls les traders de cette arène peuvent lire et écrire.',
+    arenaNotice: 'Salon de l’arène — compétiteurs et spectateurs discutent ici. Aucun message ne constitue un conseil financier.',
     community: 'Communauté',
     traders: '{{count}} traders',
     notice: 'Appui long pour répondre · Aucun message ne constitue un conseil financier.',

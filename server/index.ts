@@ -103,13 +103,9 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 const itickClients = new Set<WebSocket>();
-// Clients chat → salle (null = chat global, sinon id d'arène).
+// Clients chat → salle (null = chat global, sinon id d'arène). Les salles
+// d'arène sont ouvertes à tout utilisateur connecté, spectateurs compris.
 const chatClients = new Map<WebSocket, string | null>();
-
-/** L'utilisateur participe-t-il à cette arène ? (accès au chat du tournoi) */
-function isArenaParticipant(userId: string, competitionId: string): boolean {
-  return competitionManager.listUserCompetitions(userId).some((competition) => competition.id === competitionId);
-}
 itickWss.on('connection', (ws) => {
   itickClients.add(ws);
   (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
@@ -298,10 +294,6 @@ chatWss.on('connection', (ws, req) => {
   void competitionManager.getUserFromToken(token).then((user) => {
     if (!user || ws.readyState !== WebSocket.OPEN) {
       ws.close(1008, 'Session invalide');
-      return;
-    }
-    if (room && !isArenaParticipant(user.id, room)) {
-      ws.close(1008, 'Réservé aux participants de cette arène');
       return;
     }
     chatClients.set(ws, room);
@@ -2375,10 +2367,6 @@ app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120
     return;
   }
   const room = String(req.query.competitionId || '').trim() || null;
-  if (room && !isArenaParticipant(user.id, room)) {
-    res.status(403).json({ error: 'Chat réservé aux participants de cette arène' });
-    return;
-  }
   const beforeValue = Number(String(req.query.before || ''));
   const messages = await listGlobalChatMessages({
     before: Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : undefined,
@@ -2395,10 +2383,6 @@ app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20
     return;
   }
   const room = String(req.body?.competitionId || '').trim() || null;
-  if (room && !isArenaParticipant(user.id, room)) {
-    res.status(403).json({ error: 'Chat réservé aux participants de cette arène' });
-    return;
-  }
   try {
     const message = await createGlobalChatMessage(user, {
       body: req.body?.body,

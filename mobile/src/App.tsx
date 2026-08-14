@@ -866,7 +866,6 @@ function App() {
               currentUserId={dashboard?.user?.id}
               token={token}
               sessionUser={dashboard?.user}
-              joinedCompetitionIds={new Set((dashboard?.myCompetitions || []).map((competition) => competition.id))}
               onBack={() => selectTab(leaderboardBackTab)}
               onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
@@ -971,7 +970,6 @@ function LeaderboardScreen({
   currentUserId,
   token,
   sessionUser,
-  joinedCompetitionIds,
   onBack,
   onOpenPlayer,
 }: {
@@ -980,7 +978,6 @@ function LeaderboardScreen({
   currentUserId?: string
   token?: string | null
   sessionUser?: SessionUser | null
-  joinedCompetitionIds: Set<string>
   onBack: () => void
   onOpenPlayer: (userId: string) => void
 }) {
@@ -1134,7 +1131,7 @@ function LeaderboardScreen({
       <ShareRankModal row={shareRow} competition={competition?.title || 'BTF Arena'}
         participants={competition?.participants || rows.length} onClose={() => setShareRow(null)} />
 
-      {token && sessionUser && competitionId && joinedCompetitionIds.has(competitionId) && (
+      {token && sessionUser && competitionId && (
         <button className="arena-chat-fab" type="button" onClick={() => setShowChat(true)} aria-label={t('chat.arenaOpen')}>
           <Icon name="community" size={22} />
         </button>
