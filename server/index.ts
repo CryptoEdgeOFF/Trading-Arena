@@ -50,8 +50,9 @@ import {
 import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
-import { createGlobalChatMessage, listGlobalChatMessages } from './globalChatStore.js';
+import { createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatImage } from './globalChatStore.js';
 import { syncUserProgression } from './xpStore.js';
+import { computeTradingAchievements } from './xpTradingAchievements.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -173,8 +174,9 @@ const upload = multer({
     }),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = /\.(jpg|jpeg|png|gif|webp)$/i;
-    cb(null, allowed.test(path.extname(file.originalname)));
+    const allowedExt = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i;
+    const allowedMime = /^image\/(jpeg|png|gif|webp|heic|heif)$/i;
+    cb(null, allowedExt.test(path.extname(file.originalname)) || allowedMime.test(file.mimetype));
   },
 });
 
@@ -292,7 +294,7 @@ chatWss.on('connection', (ws, req) => {
     ws.send(JSON.stringify({ type: 'chat:ready', data: { userId: user.id } }));
     const sentAt: number[] = [];
     ws.on('message', (raw) => {
-      let payload: { type?: string; data?: { body?: unknown; replyToId?: unknown; clientId?: unknown } };
+      let payload: { type?: string; data?: { body?: unknown; replyToId?: unknown; imageUrl?: unknown; clientId?: unknown } };
       try {
         payload = JSON.parse(String(raw));
       } catch {
@@ -307,7 +309,11 @@ chatWss.on('connection', (ws, req) => {
         return;
       }
       sentAt.push(now);
-      void createGlobalChatMessage(user, payload.data?.body, payload.data?.replyToId).then((message) => {
+      void createGlobalChatMessage(user, {
+        body: payload.data?.body,
+        replyToId: payload.data?.replyToId,
+        imageUrl: payload.data?.imageUrl,
+      }).then((message) => {
         broadcastGlobalChatMessage(message, clientId);
         notifyGlobalChatReply(user, message);
       }).catch((error) => {
@@ -334,7 +340,9 @@ function notifyGlobalChatReply(
   if (!message.replyTo || message.replyTo.userId === user.id) return;
   void sendPushToUser(message.replyTo.userId, {
     title: `${user.name} t’a répondu`,
-    body: message.body.length > 110 ? `${message.body.slice(0, 107)}…` : message.body,
+    body: message.body
+      ? (message.body.length > 110 ? `${message.body.slice(0, 107)}…` : message.body)
+      : '📷 Photo',
     kind: 'chat_reply',
     data: { messageId: message.id, replyToId: message.replyTo.id },
   });
@@ -2365,12 +2373,58 @@ app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20
     return;
   }
   try {
-    const message = await createGlobalChatMessage(user, req.body?.body, req.body?.replyToId);
+    const message = await createGlobalChatMessage(user, {
+      body: req.body?.body,
+      replyToId: req.body?.replyToId,
+      imageUrl: req.body?.imageUrl,
+    });
     broadcastGlobalChatMessage(message);
     notifyGlobalChatReply(user, message);
     res.status(201).json({ message });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message || 'Message invalide' });
+  }
+});
+
+app.post('/api/competition/chat/images', rateLimit({ windowMs: 60_000, max: 10, key: 'global-chat-upload' }), upload.single('image'), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer?.length) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 1600, quality: 82 });
+    const imageUrl = await putChatImage(user.id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`chat:${imageUrl.slice(imageUrl.lastIndexOf('/') + 1)}`);
+    res.status(201).json({ imageUrl });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Upload impossible' });
+  }
+});
+
+app.get('/api/chat-images/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    res.status(404).json({ error: 'Image introuvable' });
+    return;
+  }
+  try {
+    await sendImageBlob(res, `chat:${id}`, () => getChatImage(id), String(req.query.w || ''));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
   }
 });
 
@@ -2868,6 +2922,33 @@ function aggregateStatsForPlayerIds(paperPlayerIds: string[]): TradeStats {
   return computeTradeStats(trades);
 }
 
+function getUserXpFacts(userId: string) {
+  const facts = competitionManager.getUserXpFacts(userId);
+  const tradingAchievements: ReturnType<typeof computeTradingAchievements> = [];
+  for (const playerId of competitionManager.getPaperPlayerIdsForUser(userId)) {
+    const player = manager.getPlayerById(playerId);
+    const context = competitionManager.getPushContextForPaperPlayer(playerId);
+    if (!player || !context) continue;
+    let arenaEnded = false;
+    let breached = false;
+    try {
+      arenaEnded = competitionManager.getCompetitionStatus(context.competitionId) === 'ended';
+      breached = competitionManager.isPaperPlayerBreached(context.competitionId, playerId);
+    } catch {
+      continue;
+    }
+    tradingAchievements.push(...computeTradingAchievements({
+      playerId,
+      arenaTitle: context.competitionTitle,
+      startingBalance: Number(player.initialBalance) || 10_000,
+      trades: player.trades || [],
+      arenaEnded,
+      breached,
+    }));
+  }
+  return { ...facts, tradingAchievements };
+}
+
 /**
  * Journal de trades personnel : tous les trades (opens + closes) de
  * l'utilisateur, toutes arènes confondues (hors qualifications), rattachés à
@@ -2938,7 +3019,7 @@ app.get('/api/competition/player/:userId', async (req, res) => {
     return;
   }
   const { paperPlayerIds, ...rest } = profile;
-  const progression = await syncUserProgression(userId, competitionManager.getUserXpFacts(userId));
+  const progression = await syncUserProgression(userId, getUserXpFacts(userId));
   res.json({ ...rest, progression: { ...progression, recentEvents: [] }, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
 });
 
@@ -3042,7 +3123,7 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     : null;
   const myBadges = user ? competitionManager.getUserBadges(user.id) : [];
   const myProgression = user
-    ? await syncUserProgression(user.id, competitionManager.getUserXpFacts(user.id))
+    ? await syncUserProgression(user.id, getUserXpFacts(user.id))
     : null;
   res.json({
     user,

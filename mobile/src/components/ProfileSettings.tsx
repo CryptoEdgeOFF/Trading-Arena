@@ -5,6 +5,8 @@ import {
   uploadUserAvatar,
   type SessionUser,
 } from '../lib/api'
+import { LanguageSwitcher } from './LanguageSwitcher'
+import { useI18n } from '../i18n'
 import './ProfileSettings.css'
 
 async function compressAvatar(file: File): Promise<File> {
@@ -39,6 +41,7 @@ export function ProfileSettings({
   onUpdated: (user: SessionUser) => void
   onBack: () => void
 }) {
+  const { t } = useI18n()
   const inputRef = useRef<HTMLInputElement>(null)
   const [name, setName] = useState(user.name)
   const phone = user.phone || ''
@@ -60,9 +63,9 @@ export function ProfileSettings({
     try {
       const nextUser = await updateUserProfile(token, { name, phone, socials })
       onUpdated(nextUser)
-      setMessage('Profil mis à jour.')
+      setMessage(t('settings.saved'))
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Modification impossible')
+      setError(nextError instanceof Error ? nextError.message : t('settings.saveError'))
     } finally {
       setBusy(false)
     }
@@ -71,7 +74,7 @@ export function ProfileSettings({
   async function upload(file?: File) {
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      setError('Choisis une image valide.')
+      setError(t('settings.invalidImage'))
       return
     }
     setBusy(true)
@@ -82,9 +85,9 @@ export function ProfileSettings({
       const nextUser = await uploadUserAvatar(token, compressed)
       setAvatarUrl(nextUser.avatarUrl || '')
       onUpdated(nextUser)
-      setMessage('Photo de profil mise à jour.')
+      setMessage(t('settings.photoSaved'))
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Envoi impossible')
+      setError(nextError instanceof Error ? nextError.message : t('settings.uploadError'))
     } finally {
       setBusy(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -94,49 +97,54 @@ export function ProfileSettings({
   return (
     <div className="settings-page">
       <header className="subpage-head">
-        <button type="button" onClick={onBack} aria-label="Retour">‹</button>
-        <div><span>MON COMPTE</span><h2>Réglages</h2></div>
+        <button type="button" onClick={onBack} aria-label={t('common.back')}>‹</button>
+        <div><span>{t('settings.kicker')}</span><h2>{t('settings.title')}</h2></div>
       </header>
 
       <section className="settings-avatar-card">
         <button type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
           {avatarUrl ? <img src={apiAssetUrl(avatarUrl)} alt="" /> : <i>{name.slice(0, 2).toUpperCase()}</i>}
-          <span>Changer</span>
+          <span>{t('settings.change')}</span>
         </button>
-        <div><strong>Photo de profil</strong><p>JPG, PNG ou photo prise avec ton téléphone.</p></div>
+        <div><strong>{t('settings.photo')}</strong><p>{t('settings.photoHint')}</p></div>
         <input ref={inputRef} hidden type="file" accept="image/jpeg,image/png,image/webp" capture="user"
           onChange={(event) => void upload(event.target.files?.[0])} />
       </section>
 
       <section className="settings-form-card">
-        <div className="settings-section-title"><span>IDENTITÉ</span><p>Ces informations sont visibles dans les classements.</p></div>
-        <label>Nom de trader<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label>
-        <label>E-mail<input value={user.email} disabled /></label>
-        <label>Téléphone<input value={phone} inputMode="tel" readOnly /></label>
+        <div className="settings-section-title"><span>{t('settings.identity')}</span><p>{t('settings.identityHint')}</p></div>
+        <label>{t('settings.traderName')}<input value={name} maxLength={40} onChange={(event) => setName(event.target.value)} /></label>
+        <label>{t('settings.email')}<input value={user.email} disabled /></label>
+        <label>{t('settings.phone')}<input value={phone} inputMode="tel" readOnly /></label>
       </section>
 
       <section className="settings-form-card">
-        <div className="settings-section-title"><span>RÉSEAUX SOCIAUX</span><p>Ajoute un pseudo ou une URL complète.</p></div>
+        <div className="settings-section-title"><span>{t('settings.socials')}</span><p>{t('settings.socialsHint')}</p></div>
         <label>X / Twitter<input value={socials.x} placeholder="@pseudo"
           onChange={(event) => setSocials({ ...socials, x: event.target.value })} /></label>
         <label>Instagram<input value={socials.instagram} placeholder="@pseudo"
           onChange={(event) => setSocials({ ...socials, instagram: event.target.value })} /></label>
         <label>Discord<input value={socials.discord} placeholder="pseudo"
           onChange={(event) => setSocials({ ...socials, discord: event.target.value })} /></label>
-        <label>Site web<input value={socials.website} inputMode="url" placeholder="https://..."
+        <label>{t('settings.website')}<input value={socials.website} inputMode="url" placeholder="https://..."
           onChange={(event) => setSocials({ ...socials, website: event.target.value })} /></label>
       </section>
 
+      <section className="settings-form-card">
+        <div className="settings-section-title"><span>{t('profile.language')}</span><p>{t('profile.languageHint')}</p></div>
+        <LanguageSwitcher />
+      </section>
+
       <section className="settings-security">
-        <span>SÉCURITÉ</span>
-        <strong>Connexion sans mot de passe</strong>
-        <p>Comme sur la webapp, ton compte BTF utilise un code unique envoyé par e-mail, puis la vérification téléphone à l’inscription. Il n’existe donc aucun mot de passe stocké à modifier.</p>
+        <span>{t('settings.security')}</span>
+        <strong>{t('settings.passwordless')}</strong>
+        <p>{t('settings.passwordlessHint')}</p>
       </section>
 
       {error && <p className="settings-feedback is-error">{error}</p>}
       {message && <p className="settings-feedback is-success">{message}</p>}
       <button className="settings-save" type="button" disabled={busy || !name.trim()} onClick={() => void save()}>
-        {busy ? 'ENREGISTREMENT…' : 'ENREGISTRER LES MODIFICATIONS'}
+        {busy ? t('settings.saving') : t('settings.save')}
       </button>
     </div>
   )

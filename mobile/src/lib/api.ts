@@ -66,7 +66,7 @@ export type PlayerProgression = {
   frame: { id: string; label: string; tier: number }
   recentEvents: Array<{
     id: string
-    eventType: 'account.created' | 'arena.join' | 'arena.first_trade' | 'arena.completed' | 'arena.podium' | 'arena.streak' | 'badge.unlocked'
+    eventType: 'account.created' | 'arena.join' | 'arena.first_trade' | 'arena.completed' | 'arena.podium' | 'arena.streak' | 'badge.unlocked' | 'trading.achievement'
     amount: number
     label: string
     createdAt: number
@@ -116,6 +116,7 @@ export type NewsArticle = {
 
 let promotionsCache: Promotion[] | null = null
 let promotionsRequest: Promise<Promotion[]> | null = null
+let promotionsLang = 'en'
 const PROMOTIONS_CACHE_KEY = 'btf.promotions.v1'
 const NEWS_CACHE_KEY = 'btf.news.v1'
 
@@ -147,6 +148,7 @@ export type GlobalChatMessage = {
   name: string
   avatarUrl?: string | null
   body: string
+  imageUrl?: string | null
   createdAt: number
   clientId?: string
   replyTo?: {
@@ -154,6 +156,7 @@ export type GlobalChatMessage = {
     userId: string
     name: string
     body: string
+    imageUrl?: string | null
   } | null
 }
 
@@ -440,23 +443,27 @@ export function getBootstrap(token?: string | null): Promise<BootstrapData> {
   return apiFetch<BootstrapData>('/api/competition/bootstrap', undefined, token)
 }
 
-export async function getPromotions(): Promise<Promotion[]> {
+export async function getPromotions(lang = 'en'): Promise<Promotion[]> {
+  if (promotionsLang !== lang) {
+    promotionsCache = null
+    promotionsLang = lang
+  }
   if (promotionsCache) return promotionsCache
   if (typeof window !== 'undefined') {
     try {
-      const cached = JSON.parse(window.localStorage.getItem(PROMOTIONS_CACHE_KEY) || 'null') as {
+      const cached = JSON.parse(window.localStorage.getItem(`${PROMOTIONS_CACHE_KEY}.${lang}`) || 'null') as {
         promotions?: Promotion[]
       } | null
       if (Array.isArray(cached?.promotions) && cached.promotions.length > 0) {
         promotionsCache = cached.promotions
-        void refreshPromotions()
+        void refreshPromotions(lang)
         return promotionsCache
       }
     } catch {
-      window.localStorage.removeItem(PROMOTIONS_CACHE_KEY)
+      window.localStorage.removeItem(`${PROMOTIONS_CACHE_KEY}.${lang}`)
     }
   }
-  return refreshPromotions()
+  return refreshPromotions(lang)
 }
 
 export async function getNewsPage(before?: number, limit = 20, force = false): Promise<{ news: NewsArticle[]; hasMore: boolean }> {
@@ -489,10 +496,10 @@ export function getNewsArticle(id: string): Promise<NewsArticle> {
   return apiFetch<{ article: NewsArticle }>(`/api/news/${encodeURIComponent(id)}`).then((result) => result.article)
 }
 
-function refreshPromotions(): Promise<Promotion[]> {
+function refreshPromotions(lang = 'en'): Promise<Promotion[]> {
   if (promotionsRequest) return promotionsRequest
   const productionBase = API_BASE_URL.includes('btfarena.com') ? API_BASE_URL : 'https://btfarena.com'
-  promotionsRequest = fetch(`${productionBase}/api/promotions?lang=fr`)
+  promotionsRequest = fetch(`${productionBase}/api/promotions?lang=${lang === 'fr' ? 'fr' : 'en'}`)
     .then(async (response) => {
       if (!response.ok) return promotionsCache || []
       const production = await response.json() as { promotions?: Promotion[] }
@@ -503,7 +510,7 @@ function refreshPromotions(): Promise<Promotion[]> {
       if (next.length > 0) {
         promotionsCache = next
         if (typeof window !== 'undefined') {
-          window.localStorage.setItem(PROMOTIONS_CACHE_KEY, JSON.stringify({ promotions: next, storedAt: Date.now() }))
+          window.localStorage.setItem(`${PROMOTIONS_CACHE_KEY}.${lang}`, JSON.stringify({ promotions: next, storedAt: Date.now() }))
         }
       }
       return promotionsCache || []
@@ -621,17 +628,33 @@ export async function getGlobalChatMessages(token: string, before?: number): Pro
   return Array.isArray(data.messages) ? data.messages : []
 }
 
-export async function sendGlobalChatMessage(token: string, body: string, replyToId?: string): Promise<GlobalChatMessage> {
+export async function sendGlobalChatMessage(
+  token: string,
+  body: string,
+  replyToId?: string,
+  imageUrl?: string,
+): Promise<GlobalChatMessage> {
   const data = await apiFetch<{ message: GlobalChatMessage }>('/api/competition/chat/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body, replyToId }),
+    body: JSON.stringify({ body, replyToId, imageUrl }),
   }, token)
   return data.message
 }
 
+export async function uploadChatImage(token: string, file: File): Promise<string> {
+  const form = new FormData()
+  form.append('image', file, file.name || 'photo.jpg')
+  const data = await apiFetch<{ imageUrl?: string }>('/api/competition/chat/images', {
+    method: 'POST',
+    body: form,
+  }, token)
+  if (!data.imageUrl) throw new Error('Upload impossible')
+  return data.imageUrl
+}
+
 export function globalChatWebSocketUrl(token: string): string {
-  return `${API_WS_URL}/chat?token=${encodeURIComponent(token)}`
+  return `${API_WS_URL}/ws/chat?token=${encodeURIComponent(token)}`
 }
 
 export function createPaperSession(

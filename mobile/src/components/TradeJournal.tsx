@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getMyTrades, type JournalTrade, type SessionUser } from '../lib/api'
 import { SharePnlModal } from './SharePnlModal'
+import { useI18n } from '../i18n'
 import './TradeJournal.css'
 
 function netPnl(trade: JournalTrade) {
@@ -55,6 +56,7 @@ function computeStats(trades: JournalTrade[]) {
 }
 
 function EquityCurve({ trades }: { trades: JournalTrade[] }) {
+  const { t } = useI18n()
   const geometry = useMemo(() => {
     const values = [0]
     let value = 0
@@ -74,7 +76,7 @@ function EquityCurve({ trades }: { trades: JournalTrade[] }) {
   }, [trades])
   return (
     <section className="journal-curve">
-      <div><span>COURBE D’ÉQUITÉ</span><strong className={geometry.last >= 0 ? 'positive' : 'negative'}>{geometry.last >= 0 ? '+' : ''}{geometry.last.toFixed(2)} $</strong></div>
+      <div><span>{t('journal.equity')}</span><strong className={geometry.last >= 0 ? 'positive' : 'negative'}>{geometry.last >= 0 ? '+' : ''}{geometry.last.toFixed(2)} $</strong></div>
       <svg viewBox="0 0 360 140" preserveAspectRatio="none">
         <line x1="0" x2="360" y1={geometry.zeroY} y2={geometry.zeroY} />
         <path d={geometry.path} className={geometry.last >= 0 ? 'positive' : 'negative'} />
@@ -92,6 +94,7 @@ export function TradeJournal({
   user: SessionUser
   onBack: () => void
 }) {
+  const { t, locale } = useI18n()
   const [trades, setTrades] = useState<JournalTrade[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -102,7 +105,7 @@ export function TradeJournal({
     let active = true
     setLoading(true)
     void getMyTrades(token).then((next) => active && setTrades(next))
-      .catch((nextError) => active && setError(nextError instanceof Error ? nextError.message : 'Journal indisponible'))
+      .catch((nextError) => active && setError(nextError instanceof Error ? nextError.message : t('journal.unavailable')))
       .finally(() => active && setLoading(false))
     return () => { active = false }
   }, [token])
@@ -118,49 +121,49 @@ export function TradeJournal({
   return (
     <div className="journal-page">
       <header className="subpage-head">
-        <button type="button" onClick={onBack} aria-label="Retour">‹</button>
-        <div><span>PERFORMANCE</span><h2>Journal</h2></div>
+        <button type="button" onClick={onBack} aria-label={t('common.back')}>‹</button>
+        <div><span>{t('journal.kicker')}</span><h2>{t('journal.title')}</h2></div>
       </header>
-      <p className="journal-intro">Retrouve tous tes trades, tes statistiques nettes de frais et partage tes performances.</p>
+      <p className="journal-intro">{t('journal.intro')}</p>
 
-      {loading ? <div className="journal-state">Chargement du journal…</div> : error ? <div className="journal-state is-error">{error}</div> : !trades.length ? (
-        <div className="journal-state">Ton journal est encore vide. Tes prochains trades apparaîtront ici.</div>
+      {loading ? <div className="journal-state">{t('journal.loading')}</div> : error ? <div className="journal-state is-error">{error}</div> : !trades.length ? (
+        <div className="journal-state">{t('journal.empty')}</div>
       ) : (
         <>
           <div className="journal-filters">
-            <button type="button" className={arena === 'all' ? 'is-active' : ''} onClick={() => setArena('all')}>Toutes</button>
+            <button type="button" className={arena === 'all' ? 'is-active' : ''} onClick={() => setArena('all')}>{t('journal.all')}</button>
             {arenas.map(([id, title]) => <button key={id} type="button" className={arena === id ? 'is-active' : ''} onClick={() => setArena(id)}>{title}</button>)}
           </div>
           <EquityCurve trades={filtered} />
           <section className="journal-stats">
-            <div><strong className={stats.netPnl >= 0 ? 'positive' : 'negative'}>{stats.netPnl >= 0 ? '+' : ''}{stats.netPnl.toFixed(2)} $</strong><small>PnL réalisé</small></div>
-            <div><strong>{stats.winRate == null ? '—' : `${(stats.winRate * 100).toFixed(1)}%`}</strong><small>Win rate</small></div>
-            <div><strong>{stats.profitFactor === Infinity ? '∞' : stats.profitFactor?.toFixed(2) || '—'}</strong><small>Profit factor</small></div>
-            <div><strong>{stats.avgRR?.toFixed(2) || '—'}</strong><small>R/R moyen</small></div>
-            <div><strong className="positive">{stats.wins}</strong><small>Gagnants</small></div>
-            <div><strong className="negative">{stats.losses}</strong><small>Perdants</small></div>
-            <div><strong>{stats.maxWinStreak}</strong><small>Série gains</small></div>
-            <div><strong>{stats.maxLossStreak}</strong><small>Série pertes</small></div>
-            <div><strong className="negative">−{stats.totalFees.toFixed(2)} $</strong><small>Frais</small></div>
+            <div><strong className={stats.netPnl >= 0 ? 'positive' : 'negative'}>{stats.netPnl >= 0 ? '+' : ''}{stats.netPnl.toFixed(2)} $</strong><small>{t('journal.realized')}</small></div>
+            <div><strong>{stats.winRate == null ? '—' : `${(stats.winRate * 100).toFixed(1)}%`}</strong><small>{t('journal.winRate')}</small></div>
+            <div><strong>{stats.profitFactor === Infinity ? '∞' : stats.profitFactor?.toFixed(2) || '—'}</strong><small>{t('journal.profitFactor')}</small></div>
+            <div><strong>{stats.avgRR?.toFixed(2) || '—'}</strong><small>{t('journal.avgRR')}</small></div>
+            <div><strong className="positive">{stats.wins}</strong><small>{t('journal.winners')}</small></div>
+            <div><strong className="negative">{stats.losses}</strong><small>{t('journal.losers')}</small></div>
+            <div><strong>{stats.maxWinStreak}</strong><small>{t('journal.winStreak')}</small></div>
+            <div><strong>{stats.maxLossStreak}</strong><small>{t('journal.lossStreak')}</small></div>
+            <div><strong className="negative">−{stats.totalFees.toFixed(2)} $</strong><small>{t('journal.fees')}</small></div>
           </section>
 
           {(bestTrades.length > 0 || worstTrades.length > 0) && (
             <section className="journal-highlights">
-              {[...bestTrades.map((trade) => ({ trade, kind: 'MEILLEUR TRADE' })), ...worstTrades.map((trade) => ({ trade, kind: 'PLUS FORTE PERTE' }))].map(({ trade, kind }) => (
+              {[...bestTrades.map((trade) => ({ trade, kind: t('journal.best') })), ...worstTrades.map((trade) => ({ trade, kind: t('journal.worst') }))].map(({ trade, kind }) => (
                 <article key={trade.id}>
                   <div><small>{kind}</small><strong>{trade.pair}</strong><span>{trade.side.toUpperCase()} · ×{trade.leverage}</span></div>
-                  <div><strong className={netPnl(trade) >= 0 ? 'positive' : 'negative'}>{netPnl(trade) >= 0 ? '+' : ''}{netPnl(trade).toFixed(2)} $</strong><button type="button" onClick={() => setShareTrade(trade)}>Partager</button></div>
+                  <div><strong className={netPnl(trade) >= 0 ? 'positive' : 'negative'}>{netPnl(trade) >= 0 ? '+' : ''}{netPnl(trade).toFixed(2)} $</strong><button type="button" onClick={() => setShareTrade(trade)}>{t('common.share')}</button></div>
                 </article>
               ))}
             </section>
           )}
 
           <section className="journal-trades">
-            <header><span>TOUS LES TRADES</span><strong>{stats.count}</strong></header>
+            <header><span>{t('journal.allTrades')}</span><strong>{stats.count}</strong></header>
             {closed.map((trade) => (
               <article key={trade.id}>
-                <div><strong>{trade.pair}</strong><span>{trade.side.toUpperCase()} · ×{trade.leverage}</span><small>{trade.competitionTitle} · {new Date(trade.time).toLocaleString('fr-FR')}</small></div>
-                <div><strong className={netPnl(trade) >= 0 ? 'positive' : 'negative'}>{netPnl(trade) >= 0 ? '+' : ''}{netPnl(trade).toFixed(2)} $</strong><small>Frais −{trade.fee.toFixed(2)} $</small><button type="button" onClick={() => setShareTrade(trade)}>Partager</button></div>
+                <div><strong>{trade.pair}</strong><span>{trade.side.toUpperCase()} · ×{trade.leverage}</span><small>{trade.competitionTitle} · {new Date(trade.time).toLocaleString(locale)}</small></div>
+                <div><strong className={netPnl(trade) >= 0 ? 'positive' : 'negative'}>{netPnl(trade) >= 0 ? '+' : ''}{netPnl(trade).toFixed(2)} $</strong><small>{t('journal.feeLine', { fee: trade.fee.toFixed(2) })}</small><button type="button" onClick={() => setShareTrade(trade)}>{t('common.share')}</button></div>
               </article>
             ))}
           </section>

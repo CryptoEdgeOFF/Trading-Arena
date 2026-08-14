@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   API_BASE_URL,
   apiAssetUrl,
-  checkApiHealth,
   getBootstrap,
   getCompetitionLeaderboard,
   getGlobalChatMessages,
@@ -16,7 +15,6 @@ import {
   logoutSession,
   registerPushDevice,
   unregisterPushDevice,
-  type ApiHealth,
   type BootstrapData,
   type LeaderboardRow,
   type MyCompetition,
@@ -35,6 +33,7 @@ import { DealsScreen } from './components/DealsScreen'
 import { GlobalChat } from './components/GlobalChat'
 import { GlobalLeaderboard } from './components/GlobalLeaderboard'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
+import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { NewsScreen } from './components/NewsScreen'
 import { PlayerProfile } from './components/PlayerProfile'
 import { PlayerProgressionBar } from './components/PlayerProgressionBar'
@@ -43,6 +42,7 @@ import { ProfileSettings } from './components/ProfileSettings'
 import { ShareRankModal } from './components/ShareRankModal'
 import { TradeJournal } from './components/TradeJournal'
 import { TradingTerminal } from './components/TradingTerminal'
+import { translateTitle, useI18n } from './i18n'
 import './App.css'
 
 type Tab = 'home' | 'deals' | 'trade' | 'community' | 'news' | 'leaderboard' | 'global-leaderboard' | 'journal' | 'settings' | 'player' | 'profile'
@@ -90,12 +90,13 @@ function ArenaCard({
   joined: boolean
   mine?: MyCompetition
 }) {
-  const title = competition.title || 'Arène BTF'
+  const { t, locale } = useI18n()
+  const title = competition.title || t('arena.fallbackTitle')
   const players = competition.participants ?? 0
-  const status = competition.status === 'live' ? 'En direct'
-    : competition.status === 'registration' ? 'Inscriptions ouvertes'
-      : competition.status === 'starting_soon' ? 'À venir'
-        : 'Terminée'
+  const status = competition.status === 'live' ? t('arena.live')
+    : competition.status === 'registration' ? t('arena.registration')
+      : competition.status === 'starting_soon' ? t('arena.startingSoon')
+        : t('arena.ended')
   return (
     <motion.article className={`arena-card is-${competition.status}`} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
       <img className="arena-card__banner"
@@ -104,36 +105,97 @@ function ArenaCard({
       <div className="arena-card__glow" />
       <div className="arena-card__top">
         <span className="live-pill"><i />{status}</span>
-        <span className="arena-card__players">{players} joueurs</span>
+        <span className="arena-card__players">{t('arena.players', { count: players })}</span>
       </div>
       <h3>{title}</h3>
       <div className="arena-card__schedule">
-        <span><small>DÉBUT</small><strong>{new Date(competition.startAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}</strong></span>
-        <span><small>FIN</small><strong>{new Date(competition.endAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}</strong></span>
-        {mine && <span><small>MON RANG</small><strong>#{mine.rank ?? '—'}</strong></span>}
+        <span><small>{t('arena.start')}</small><strong>{new Date(competition.startAt).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</strong></span>
+        <span><small>{t('arena.end')}</small><strong>{new Date(competition.endAt).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</strong></span>
+        {mine && <span><small>{t('arena.myRank')}</small><strong>#{mine.rank ?? '—'}</strong></span>}
       </div>
       <div className="arena-card__meta">
         <div>
-          <small>Dotation</small>
+          <small>{t('arena.prize')}</small>
           <strong>
             {competition.cashPrize?.total
-              ? `${competition.cashPrize.total.toLocaleString('fr-FR')} ${competition.cashPrize.currency || '€'}`
-              : 'À confirmer'}
+              ? `${competition.cashPrize.total.toLocaleString(locale)} ${competition.cashPrize.currency || '€'}`
+              : t('arena.toConfirm')}
           </strong>
         </div>
         <div className="arena-card__actions">
-          {mine?.canTrade && <button type="button" onClick={() => onTrade(competition.id)}>Trader</button>}
+          {mine?.canTrade && <button type="button" onClick={() => onTrade(competition.id)}>{t('arena.trade')}</button>}
           {!joined && competition.canJoin !== false && (
-            <button type="button" onClick={() => onJoin(competition)}>S’inscrire</button>
+            <button type="button" onClick={() => onJoin(competition)}>{t('arena.join')}</button>
           )}
-          <button type="button" onClick={() => onLeaderboard(competition.id)} aria-label={`Voir le classement de ${title}`}>
-            Classement <Icon name="arrow" size={16} />
+          <button type="button" onClick={() => onLeaderboard(competition.id)} aria-label={t('arena.leaderboardAria', { title })}>
+            {t('arena.leaderboard')} <Icon name="arrow" size={16} />
           </button>
         </div>
       </div>
     </motion.article>
   )
 }
+
+// Données simulées en attendant le classement officiel de la saison.
+const seasonPodium = [
+  { rank: 2, name: 'NOVA QUEEN', pnlPercent: 142.8, trades: 214, level: 21 },
+  { rank: 1, name: 'KRAKEN MIKE', pnlPercent: 187.4, trades: 302, level: 27 },
+  { rank: 3, name: 'DARK PIPS', pnlPercent: 121.6, trades: 178, level: 19 },
+]
+const seasonRunners = [
+  { rank: 4, name: 'ALPHA WOLF', pnlPercent: 98.2 },
+  { rank: 5, name: 'MME CANDLE', pnlPercent: 87.5 },
+  { rank: 6, name: 'ZEN SCALPER', pnlPercent: 79.1 },
+]
+
+function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => void }) {
+  const { t } = useI18n()
+  return (
+    <section className="home-season">
+      <div className="home-season__banner">
+        <img src="/assets/pictures/trader-silhouette.jpg" alt="" />
+        <div className="home-season__banner-text">
+          <span>{t('season.eyebrow')}</span>
+          <h2>{t('season.title')}<br /><em>{t('season.titleEm')}</em></h2>
+          <p>{t('season.lead')}</p>
+        </div>
+      </div>
+      <div className="home-season__podium">
+        {seasonPodium.map((player) => (
+          <button key={player.rank} type="button" className={`home-season__player is-rank-${player.rank}`} onClick={onGlobalLeaderboard}>
+            <i>{player.rank}</i>
+            <span>{player.name.split(' ').map((word) => word[0]).join('').slice(0, 2)}</span>
+            <strong>{player.name}</strong>
+            <em>+{player.pnlPercent.toFixed(1)}%</em>
+            <small>{t('season.tradesLevel', { trades: player.trades, level: player.level })}</small>
+          </button>
+        ))}
+      </div>
+      <div className="home-season__runners">
+        {seasonRunners.map((player) => (
+          <button key={player.rank} type="button" onClick={onGlobalLeaderboard}>
+            <i>#{player.rank}</i>
+            <strong>{player.name}</strong>
+            <em>+{player.pnlPercent.toFixed(1)}%</em>
+          </button>
+        ))}
+        <button className="home-season__more" type="button" onClick={onGlobalLeaderboard}>
+          {t('season.seeFull')} <b>›</b>
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// Missions alignées sur les vraies récompenses XP du backend (xpStore/xpTradingAchievements).
+const homeMissions = [
+  { id: 'join', eventType: 'arena.join', xp: 50, labelKey: 'missions.join' },
+  { id: 'first-trade', eventType: 'arena.first_trade', xp: 75, labelKey: 'missions.firstTrade' },
+  { id: 'win-streak', eventType: 'trading.achievement', xp: 120, labelKey: 'missions.winStreak' },
+  { id: 'capital', eventType: 'trading.achievement', xp: 200, labelKey: 'missions.capital' },
+  { id: 'badge', eventType: 'badge.unlocked', xp: 300, labelKey: 'missions.badge' },
+  { id: 'podium', eventType: 'arena.podium', xp: 500, labelKey: 'missions.podium' },
+] as const
 
 function HomeScreen({
   loading,
@@ -144,9 +206,10 @@ function HomeScreen({
   onJoin,
   onTrade,
   onLeaderboard,
-  onJournal,
   onGlobalLeaderboard,
   onProfile,
+  onNews,
+  unreadNews,
 }: {
   loading: boolean
   competitions: PublicCompetition[]
@@ -156,10 +219,13 @@ function HomeScreen({
   onJoin: (competition: PublicCompetition) => void
   onTrade: (competitionId: string) => void
   onLeaderboard: (competitionId: string) => void
-  onJournal: () => void
   onGlobalLeaderboard: () => void
   onProfile: () => void
+  onNews: () => void
+  unreadNews: number
 }) {
+  const { t, locale, lang } = useI18n()
+  const [arenaFilter, setArenaFilter] = useState<'open' | 'upcoming' | 'ended'>('open')
   const user = dashboard?.user
   const stats = dashboard?.myStats
   const statsCompetitions = (dashboard?.myCompetitions || []).filter((competition) => !/qualif/i.test(competition.title))
@@ -168,68 +234,121 @@ function HomeScreen({
     ? statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlPercent, 0) / statsCompetitions.length
     : 0
   const mineById = new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))
+  const earnedEventTypes = new Set((dashboard?.myProgression?.recentEvents || []).map((event) => event.eventType))
   const open = competitions.filter((competition) => competition.status === 'live' || competition.status === 'registration')
   const upcoming = competitions.filter((competition) => competition.status === 'starting_soon')
   const ended = competitions.filter((competition) => competition.status === 'ended').sort((a, b) => b.endAt - a.endAt)
+  const hour = new Date().getHours()
+  const greeting = hour >= 18 || hour < 5 ? t('home.greetingEvening') : t('home.greetingMorning')
 
-  const arenaSection = (eyebrow: string, title: string, list: PublicCompetition[], empty: string) => (
-    <section className="home-arena-section">
-      <div className="section-title">
-        <div><span>{eyebrow}</span><h2>{title}</h2></div>
-        {title === 'Arènes ouvertes' && <button type="button" onClick={onRefresh} aria-label="Actualiser"><Icon name="refresh" size={18} /></button>}
-      </div>
-      {loading ? <div className="skeleton-card"><i /><i /><i /></div> : list.length ? (
-        <div className="arena-list">{list.map((competition) => (
-          <ArenaCard key={competition.id} competition={competition} mine={mineById.get(competition.id)}
-            joined={mineById.has(competition.id)} onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} />
-        ))}</div>
-      ) : <div className="home-arena-empty">{empty}</div>}
-    </section>
-  )
+  const arenaGroups = {
+    open: { list: open, empty: t('home.emptyOpen') },
+    upcoming: { list: upcoming, empty: t('home.emptyUpcoming') },
+    ended: { list: ended, empty: t('home.emptyEnded') },
+  }
+  const visibleArenas = arenaGroups[arenaFilter]
 
   return (
     <div className="home-dashboard">
       {user ? (
-        <section className="home-profile-card">
-          <div className="home-profile-card__identity">
+        <>
+          <header className="home-greeting">
             <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} progression={dashboard.myProgression} size="sm" />
-            <span><small>TRADER CONNECTÉ</small><strong>{user.name}</strong>{dashboard.myProgression && <em>{dashboard.myProgression.title.label}</em>}<p>{user.email}</p></span>
-            <button type="button" onClick={onProfile}>›</button>
-          </div>
-          {dashboard.myProgression && <div className="home-profile-xp"><PlayerProgressionBar progression={dashboard.myProgression} variant="compact" /></div>}
-          <div className="home-profile-stats">
-            <div><small>PNL TOTAL</small><strong className={totalPnl >= 0 ? 'positive' : 'negative'}>{totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)} $</strong></div>
-            <div><small>PNL MOYEN</small><strong className={averagePnlPercent >= 0 ? 'positive' : 'negative'}>{averagePnlPercent >= 0 ? '+' : ''}{averagePnlPercent.toFixed(2)}%</strong></div>
-            <div><small>ARÈNES</small><strong>{statsCompetitions.length}</strong></div>
-            <div><small>WIN RATE</small><strong>{((stats?.winRate || 0) * 100).toFixed(1)}%</strong></div>
-            <div><small>R/R MOYEN</small><strong>{stats?.avgRR?.toFixed(2) || '—'}</strong></div>
-            <div><small>PROFIT FACTOR</small><strong>{stats?.profitFactor == null ? '—' : stats.profitFactor.toFixed(2)}</strong></div>
-          </div>
-          <div className="home-profile-links">
-            <button className="home-journal-link" type="button" onClick={onJournal}>Ouvrir mon journal <span>→</span></button>
-            <button className="home-journal-link" type="button" onClick={onGlobalLeaderboard}>Classement global & saisons <span>→</span></button>
-          </div>
-        </section>
+            <div>
+              <small>{greeting}</small>
+              <strong>{user.name}</strong>
+              {dashboard.myProgression && <em>{translateTitle(lang, dashboard.myProgression.title.id, dashboard.myProgression.title.label)}</em>}
+            </div>
+            <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
+              <Icon name="bell" size={19} />
+              {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
+            </button>
+            <button type="button" onClick={onProfile} aria-label={t('home.openProfile')}><Icon name="arrow" size={18} /></button>
+          </header>
+
+          <section className={`home-pnl-hero ${totalPnl >= 0 ? 'is-profit' : 'is-loss'}`}>
+            <div className="home-pnl-hero__main">
+              <small>{t('home.pnlGlobal')}</small>
+              <strong>{totalPnl >= 0 ? '+' : ''}{totalPnl.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong>
+              <span>{t(statsCompetitions.length > 1 ? 'home.avgArenasPlural' : 'home.avgArenas', {
+                avg: `${averagePnlPercent >= 0 ? '+' : ''}${averagePnlPercent.toFixed(2)}`,
+                count: statsCompetitions.length,
+              })}</span>
+            </div>
+            {dashboard.myProgression && <div className="home-pnl-hero__xp"><PlayerProgressionBar progression={dashboard.myProgression} variant="compact" /></div>}
+          </section>
+
+          <section className="home-stat-strip" aria-label={t('home.myStats')}>
+            <div><small>{t('home.winRate')}</small><strong>{((stats?.winRate || 0) * 100).toFixed(1)}%</strong></div>
+            <div><small>{t('home.trades')}</small><strong>{stats?.closedTrades ?? 0}</strong></div>
+            <div><small>{t('home.avgRR')}</small><strong>{stats?.avgRR?.toFixed(2) || '—'}</strong></div>
+            <div><small>{t('home.profitFactor')}</small><strong>{stats?.profitFactor == null ? '—' : stats.profitFactor.toFixed(2)}</strong></div>
+          </section>
+
+          <section className="home-missions" aria-label={t('home.missions')}>
+            <header>
+              <div><small>{t('home.earnXp')}</small><strong>{t('home.missions')}</strong></div>
+              {dashboard.myProgression && <b>{dashboard.myProgression.totalXp.toLocaleString(locale)} XP</b>}
+            </header>
+            <div className="home-missions__carousel">
+              {homeMissions.map((mission) => {
+                const done = earnedEventTypes.has(mission.eventType)
+                return (
+                  <div key={mission.id} className={`home-mission ${done ? 'is-done' : ''}`}>
+                    <span className="home-mission__xp">+{mission.xp} XP</span>
+                    <strong>{t(`${mission.labelKey}.label`)}</strong>
+                    <small>{t(`${mission.labelKey}.hint`)}</small>
+                    {done && <b className="home-mission__check">✓</b>}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        </>
       ) : (
         <section className="home-guest-hero">
-          <div className="eyebrow"><span /> Compétition de trading</div>
-          <h1>Entre dans<br /><em>l’arène.</em></h1>
-          <p>Affronte les meilleurs traders et suis ta performance en direct.</p>
-          <button type="button" onClick={onAuth}>Se connecter <Icon name="arrow" size={17} /></button>
-          <button className="home-global-link" type="button" onClick={onGlobalLeaderboard}>Voir le classement global</button>
+          <button className="news-button home-guest-hero__news" type="button" onClick={onNews} aria-label={t('home.openNews')}>
+            <Icon name="bell" size={19} />
+            {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}
+          </button>
+          <div className="eyebrow"><span /> {t('home.guestEyebrow')}</div>
+          <h1>{t('home.guestTitle')}<br /><em>{t('home.guestTitleEm')}</em></h1>
+          <p>{t('home.guestLead')}</p>
+          <button type="button" onClick={onAuth}>{t('common.login')} <Icon name="arrow" size={17} /></button>
+          <button className="home-global-link" type="button" onClick={onGlobalLeaderboard}>{t('home.guestGlobal')}</button>
         </section>
       )}
-      {arenaSection('EN CE MOMENT', 'Arènes ouvertes', open, 'Aucune arène ouverte actuellement.')}
-      {arenaSection('PROCHAINEMENT', 'Arènes à venir', upcoming, 'Les prochaines arènes seront annoncées ici.')}
-      {arenaSection('HISTORIQUE', 'Arènes fermées', ended, 'Aucune arène terminée pour le moment.')}
+
+      <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
+
+      <section className="home-arena-section">
+        <div className="section-title">
+          <div><span>{t('home.competitions')}</span><h2>{t('home.arenas')}</h2></div>
+          <button type="button" onClick={onRefresh} aria-label={t('common.refresh')}><Icon name="refresh" size={18} /></button>
+        </div>
+        <div className="home-arena-tabs" role="tablist" aria-label={t('home.filterArenas')}>
+          {([['open', t('home.tabOpen'), open.length], ['upcoming', t('home.tabUpcoming'), upcoming.length], ['ended', t('home.tabEnded'), ended.length]] as const).map(([id, label, count]) => (
+            <button key={id} type="button" role="tab" aria-selected={arenaFilter === id}
+              className={arenaFilter === id ? 'is-active' : ''} onClick={() => setArenaFilter(id)}>
+              {label}{count > 0 && <b>{count}</b>}
+            </button>
+          ))}
+        </div>
+        {loading ? <div className="skeleton-card"><i /><i /><i /></div> : visibleArenas.list.length ? (
+          <div className="arena-list">{visibleArenas.list.map((competition) => (
+            <ArenaCard key={competition.id} competition={competition} mine={mineById.get(competition.id)}
+              joined={mineById.has(competition.id)} onJoin={onJoin} onTrade={onTrade} onLeaderboard={onLeaderboard} />
+          ))}</div>
+        ) : <div className="home-arena-empty">{visibleArenas.empty}</div>}
+      </section>
     </div>
   )
 }
 
 function App() {
+  const { t, lang } = useI18n()
   const [tab, setTab] = useState<Tab>('home')
   const [competitions, setCompetitions] = useState<PublicCompetition[]>([])
-  const [health, setHealth] = useState<ApiHealth>({ online: false, latencyMs: null })
   const [dashboard, setDashboard] = useState<BootstrapData | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [showAuth, setShowAuth] = useState(false)
@@ -247,11 +366,7 @@ function App() {
   const load = useCallback(async () => {
     setLoading(true)
     const storedToken = await readSessionToken()
-    const [nextHealth, nextDashboard] = await Promise.all([
-      checkApiHealth(),
-      getBootstrap(storedToken).catch(() => null),
-    ])
-    setHealth(nextHealth)
+    const nextDashboard = await getBootstrap(storedToken).catch(() => null)
     setToken(storedToken)
     setDashboard(nextDashboard)
     setCompetitions(nextDashboard?.publicCompetitions ?? [])
@@ -279,7 +394,7 @@ function App() {
 
   useEffect(() => {
     void load()
-    void getPromotions()
+    void getPromotions(lang)
     void getNewsPage()
     if (Capacitor.isNativePlatform()) {
       void StatusBar.setStyle({ style: Style.Dark })
@@ -437,11 +552,11 @@ function App() {
   }
 
   const navItems: Array<{ id: Tab; label: string }> = [
-    { id: 'home', label: 'Accueil' },
-    { id: 'community', label: 'Chat' },
-    { id: 'trade', label: 'Trader' },
-    { id: 'deals', label: 'Deals' },
-    { id: 'profile', label: 'Profil' },
+    { id: 'home', label: t('nav.home') },
+    { id: 'community', label: t('nav.chat') },
+    { id: 'trade', label: t('nav.trade') },
+    { id: 'deals', label: t('nav.deals') },
+    { id: 'profile', label: t('nav.profile') },
   ]
   const leaderboardCompetitions = [
     ...competitions,
@@ -449,28 +564,9 @@ function App() {
   ]
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${Capacitor.isNativePlatform() ? 'is-native' : ''}`}>
       <div className="ambient ambient--one" />
       <div className="ambient ambient--two" />
-      {tab !== 'trade' && (
-        <header className="topbar">
-          <button className="brand" type="button" onClick={() => selectTab('home')} aria-label="Accueil BTF Arena">
-            <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" />
-          </button>
-          <div className="topbar__actions">
-            <span className={`api-state ${health.online ? 'is-online' : ''}`}>
-              <i /> {health.online ? `${health.latencyMs ?? 0} ms` : 'hors ligne'}
-            </span>
-            <button className="icon-button news-button" type="button" aria-label="Ouvrir les actualités" onClick={() => {
-              setInitialNewsId('')
-              selectTab('news')
-            }}>
-              <Icon name="bell" size={20} />
-              {unreadNewsCount > 0 && <b className="topbar-unread-badge">{unreadNewsCount > 9 ? '9+' : unreadNewsCount}</b>}
-            </button>
-          </div>
-        </header>
-      )}
 
       <AnimatePresence mode="wait">
         <motion.section key={tab} className={`screen ${tab === 'trade' ? 'screen--trade' : ''} ${tab === 'community' ? 'screen--community' : ''}`} initial={{ opacity: 0, x: 10 }}
@@ -488,15 +584,19 @@ function App() {
                 selectTab('trade')
               }}
               onLeaderboard={(id) => openLeaderboard(id, 'home')}
-              onJournal={() => selectTab('journal')}
               onGlobalLeaderboard={() => selectTab('global-leaderboard')}
               onProfile={() => selectTab('profile')}
+              onNews={() => {
+                setInitialNewsId('')
+                selectTab('news')
+              }}
+              unreadNews={unreadNewsCount}
             />
           )}
 
           {tab === 'deals' && <DealsScreen />}
 
-          {tab === 'news' && <NewsScreen initialArticleId={initialNewsId} onSeen={markNewsSeen} />}
+          {tab === 'news' && <NewsScreen initialArticleId={initialNewsId} onSeen={markNewsSeen} onBack={() => selectTab('home')} />}
 
           {tab === 'community' && (
             token && dashboard?.user ? (
@@ -507,10 +607,10 @@ function App() {
               }} />
             ) : (
               <div className="empty-state empty-state--feature">
-                <span><Icon name="community" size={34} /></span><small>COMMUNAUTÉ BTF</small>
-                <h3>Connexion requise</h3>
-                <p>Connecte-toi pour discuter avec les traders et partager tes analyses.</p>
-                <button className="auth-open" type="button" onClick={() => setShowAuth(true)}>Se connecter</button>
+                <span><Icon name="community" size={34} /></span><small>{t('empty.communityKicker')}</small>
+                <h3>{t('empty.communityTitle')}</h3>
+                <p>{t('empty.communityLead')}</p>
+                <button className="auth-open" type="button" onClick={() => setShowAuth(true)}>{t('common.login')}</button>
               </div>
             )
           )}
@@ -522,10 +622,10 @@ function App() {
                 onOpenLeaderboard={(id) => openLeaderboard(id, 'trade')} />
             ) : (
               <div className="empty-state empty-state--feature">
-                <span><Icon name="trade" size={34} /></span><small>TERMINAL MOBILE</small>
-                <h3>Connexion requise</h3>
-                <p>Connecte ton compte BTF pour retrouver tes arènes et tes positions actives.</p>
-                <button className="auth-open" type="button" onClick={() => setShowAuth(true)}>Se connecter</button>
+                <span><Icon name="trade" size={34} /></span><small>{t('empty.tradeKicker')}</small>
+                <h3>{t('empty.tradeTitle')}</h3>
+                <p>{t('empty.tradeLead')}</p>
+                <button className="auth-open" type="button" onClick={() => setShowAuth(true)}>{t('common.login')}</button>
               </div>
             )
           )}
@@ -584,10 +684,10 @@ function App() {
               />
             ) : (
               <div className="empty-state empty-state--feature">
-                <span><Icon name="profile" size={34} /></span><small>COMPTE JOUEUR</small>
-                <h3>Retrouve ton profil</h3>
-                <p>Connecte le même compte que sur PC pour retrouver immédiatement tes compétitions, trades, rangs et badges.</p>
-                <button className="auth-open" type="button" onClick={() => setShowAuth(true)}>Se connecter</button>
+                <span><Icon name="profile" size={34} /></span><small>{t('empty.profileKicker')}</small>
+                <h3>{t('empty.profileTitle')}</h3>
+                <p>{t('empty.profileLead')}</p>
+                <button className="auth-open" type="button" onClick={() => setShowAuth(true)}>{t('common.login')}</button>
                 <code>{API_BASE_URL.replace('https://', '')}</code>
               </div>
             )
@@ -595,7 +695,7 @@ function App() {
         </motion.section>
       </AnimatePresence>
 
-      <nav className="bottom-nav" aria-label="Navigation principale">
+      <nav className="bottom-nav" aria-label={t('nav.main')}>
         {navItems.map((item) => (
           <button key={item.id} type="button" className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-primary-trade' : ''}`}
             onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
@@ -631,6 +731,7 @@ function LeaderboardScreen({
   onBack: () => void
   onOpenPlayer: (userId: string) => void
 }) {
+  const { t, locale } = useI18n()
   const [competitionId, setCompetitionId] = useState(
     initialCompetitionId || competitions.find((item) => item.status === 'live')?.id || competitions[0]?.id || '',
   )
@@ -660,11 +761,11 @@ function LeaderboardScreen({
       const nextRows = await getCompetitionLeaderboard(competitionId)
       setRows(nextRows.sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent))
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Classement indisponible')
+      setError(nextError instanceof Error ? nextError.message : t('leaderboard.unavailable'))
     } finally {
       setLoadingRows(false)
     }
-  }, [competitionId])
+  }, [competitionId, t])
 
   useEffect(() => {
     setLoadingRows(true)
@@ -681,10 +782,10 @@ function LeaderboardScreen({
     return (
       <div className="leaderboard-page">
         <div className="page-heading">
-          <span>COMPÉTITION</span><h2>Classement</h2>
-          <p>Inscris-toi à une arène pour apparaître dans le classement.</p>
+          <span>{t('leaderboard.kicker')}</span><h2>{t('leaderboard.title')}</h2>
+          <p>{t('leaderboard.emptyLead')}</p>
         </div>
-        <div className="empty-card"><div><strong>Aucune arène</strong><p>Ton classement apparaîtra ici après ton inscription.</p></div></div>
+        <div className="empty-card"><div><strong>{t('leaderboard.noArena')}</strong><p>{t('leaderboard.noArenaLead')}</p></div></div>
       </div>
     )
   }
@@ -692,37 +793,37 @@ function LeaderboardScreen({
   return (
     <div className="leaderboard-page">
       <div className="leaderboard-page__head">
-        <button className="leaderboard-back" type="button" onClick={onBack} aria-label="Retour">
+        <button className="leaderboard-back" type="button" onClick={onBack} aria-label={t('common.back')}>
           <Icon name="arrow" size={18} />
         </button>
-        <div><span>CLASSEMENT LIVE</span><h2>Leaderboard</h2></div>
-        <button type="button" onClick={() => void loadLeaderboard()} aria-label="Actualiser"><Icon name="refresh" size={18} /></button>
+        <div><span>{t('leaderboard.liveKicker')}</span><h2>Leaderboard</h2></div>
+        <button type="button" onClick={() => void loadLeaderboard()} aria-label={t('common.refresh')}><Icon name="refresh" size={18} /></button>
       </div>
 
       <label className="leaderboard-competition-select">
-        <span>ARÈNE</span>
+        <span>{t('leaderboard.arena')}</span>
         <select value={competitionId} onChange={(event) => setCompetitionId(event.target.value)}>
           {competitions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
         </select>
       </label>
 
       <section className="leaderboard-hero">
-        <div><small>{competition?.status === 'live' ? 'EN DIRECT' : String(competition?.status || '').replaceAll('_', ' ')}</small><h3>{competition?.title}</h3></div>
-        <div><small>PARTICIPANTS</small><strong>{competition?.participants ?? rows.length}</strong></div>
+        <div><small>{competition?.status === 'live' ? t('arena.live') : String(competition?.status || '').replaceAll('_', ' ')}</small><h3>{competition?.title}</h3></div>
+        <div><small>{t('leaderboard.participants')}</small><strong>{competition?.participants ?? rows.length}</strong></div>
       </section>
 
       {myRow && (
         <section className="my-ranking-card">
-          <div><small>TON CLASSEMENT</small><strong>#{myRow.rank}</strong></div>
-          <div><small>PERFORMANCE</small><strong className={myRow.pnlUsd >= 0 ? 'positive' : 'negative'}>{myRow.pnlUsd >= 0 ? '+' : ''}{myRow.pnlUsd.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $</strong><span>{myRow.pnlPercent >= 0 ? '+' : ''}{myRow.pnlPercent.toFixed(2)}%</span></div>
-          {myRow.rank > 0 && <button type="button" onClick={() => setShareRow(myRow)}>Partager</button>}
+          <div><small>{t('leaderboard.yourRank')}</small><strong>#{myRow.rank}</strong></div>
+          <div><small>{t('leaderboard.performance')}</small><strong className={myRow.pnlUsd >= 0 ? 'positive' : 'negative'}>{myRow.pnlUsd >= 0 ? '+' : ''}{myRow.pnlUsd.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong><span>{myRow.pnlPercent >= 0 ? '+' : ''}{myRow.pnlPercent.toFixed(2)}%</span></div>
+          {myRow.rank > 0 && <button type="button" onClick={() => setShareRow(myRow)}>{t('common.share')}</button>}
         </section>
       )}
 
       {error ? (
-        <div className="leaderboard-page-error">{error}<button type="button" onClick={() => void loadLeaderboard()}>Réessayer</button></div>
+        <div className="leaderboard-page-error">{error}<button type="button" onClick={() => void loadLeaderboard()}>{t('common.retry')}</button></div>
       ) : loadingRows ? (
-        <div className="leaderboard-page-loading"><i />Synchronisation du classement</div>
+        <div className="leaderboard-page-loading"><i />{t('leaderboard.syncing')}</div>
       ) : (
         <>
           {podium.length > 0 && (
@@ -732,26 +833,26 @@ function LeaderboardScreen({
                   <span className="podium-rank">#{row.rank}</span>
                   {row.avatarUrl ? <img src={apiAssetUrl(row.avatarUrl)} alt="" /> : <i>{row.name.slice(0, 2).toUpperCase()}</i>}
                   <strong>{row.name}</strong>
-                  <small className={row.pnlUsd >= 0 ? 'positive' : 'negative'}>{row.pnlUsd >= 0 ? '+' : ''}{row.pnlUsd.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} $</small>
+                  <small className={row.pnlUsd >= 0 ? 'positive' : 'negative'}>{row.pnlUsd >= 0 ? '+' : ''}{row.pnlUsd.toLocaleString(locale, { maximumFractionDigits: 0 })} $</small>
                 </article>
               ))}
             </section>
           )}
 
           <section className="leaderboard-table">
-            <div className="leaderboard-table__head"><span>Rang</span><span>Trader</span><span>Trades</span><span>PnL</span></div>
+            <div className="leaderboard-table__head"><span>{t('leaderboard.rank')}</span><span>{t('leaderboard.trader')}</span><span>{t('leaderboard.trades')}</span><span>PnL</span></div>
             {rows.map((row) => (
               <article key={row.userId} className={`${row.userId === currentUserId ? 'is-me' : ''} ${row.breached ? 'is-breached' : ''}`}>
                 <strong>#{row.rank}</strong>
                 <button type="button" className="leaderboard-table__player" onClick={() => onOpenPlayer(row.userId)}>
                   {row.avatarUrl ? <img src={apiAssetUrl(row.avatarUrl)} alt="" /> : <i>{row.name.slice(0, 2).toUpperCase()}</i>}
-                  <span>{row.name}{row.userId === currentUserId && <small>TOI</small>}</span>
+                  <span>{row.name}{row.userId === currentUserId && <small>{t('common.you')}</small>}</span>
                 </button>
                 <span>{row.tradesCount}</span>
-                <span className={row.pnlUsd >= 0 ? 'positive' : 'negative'}><strong>{row.pnlUsd >= 0 ? '+' : ''}{row.pnlUsd.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $</strong><small>{row.pnlPercent >= 0 ? '+' : ''}{row.pnlPercent.toFixed(2)}%</small></span>
+                <span className={row.pnlUsd >= 0 ? 'positive' : 'negative'}><strong>{row.pnlUsd >= 0 ? '+' : ''}{row.pnlUsd.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong><small>{row.pnlPercent >= 0 ? '+' : ''}{row.pnlPercent.toFixed(2)}%</small></span>
               </article>
             ))}
-            {!rows.length && <div className="leaderboard-table-empty">Aucun participant classé pour le moment.</div>}
+            {!rows.length && <div className="leaderboard-table-empty">{t('leaderboard.emptyRows')}</div>}
           </section>
         </>
       )}
@@ -776,58 +877,66 @@ function ProfileScreen({ dashboard, onJournal, onGlobalLeaderboard, onSettings, 
   onSettings: () => void
   onLogout: () => void
 }) {
+  const { t, locale, lang } = useI18n()
   const user = dashboard.user!
   const stats = dashboard.myStats
   return (
     <div className="profile-screen">
       <div className="profile-identity">
         <ProfileAvatar avatarUrl={user.avatarUrl} name={user.name} progression={dashboard.myProgression} size="lg" />
-        <div><small>COMPTE SYNCHRONISÉ</small><h2>{user.name}</h2>
-          {dashboard.myProgression && <em className={`profile-title rarity-${dashboard.myProgression.title.rarity}`}>{dashboard.myProgression.title.label}</em>}
+        <div><small>{t('profile.synced')}</small><h2>{user.name}</h2>
+          {dashboard.myProgression && <em className={`profile-title rarity-${dashboard.myProgression.title.rarity}`}>{translateTitle(lang, dashboard.myProgression.title.id, dashboard.myProgression.title.label)}</em>}
           <p>{user.email}</p>
         </div>
       </div>
       <div className="profile-stats">
-        <div><small>PnL total</small><strong className={(stats?.netPnl ?? 0) >= 0 ? 'positive' : 'negative'}>{(stats?.netPnl ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} $</strong></div>
-        <div><small>Win rate</small><strong>{((stats?.winRate ?? 0) * 100).toFixed(1)}%</strong></div>
-        <div><small>Trades</small><strong>{stats?.closedTrades ?? 0}</strong></div>
+        <div><small>{t('profile.totalPnl')}</small><strong className={(stats?.netPnl ?? 0) >= 0 ? 'positive' : 'negative'}>{(stats?.netPnl ?? 0).toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong></div>
+        <div><small>{t('profile.winRate')}</small><strong>{((stats?.winRate ?? 0) * 100).toFixed(1)}%</strong></div>
+        <div><small>{t('profile.trades')}</small><strong>{stats?.closedTrades ?? 0}</strong></div>
       </div>
       {dashboard.myProgression && <section className="profile-progression">
-        <header><span>PROGRESSION DU TRADER</span><small>{dashboard.myProgression.frame.label}</small></header>
+        <header><span>{t('profile.progression')}</span><small>{t(`frames.${dashboard.myProgression.frame.id}`) || dashboard.myProgression.frame.label}</small></header>
         <PlayerProgressionBar progression={dashboard.myProgression} />
         {dashboard.myProgression.recentEvents.length > 0 && <div className="profile-xp-events">
           {dashboard.myProgression.recentEvents.slice(0, 5).map((event) => <div key={event.id}>
-            <i>+{event.amount}</i><span><strong>{event.label}</strong><small>{new Date(event.createdAt).toLocaleDateString('fr-FR')}</small></span>
+            <i>+{event.amount}</i><span><strong>{event.label}</strong><small>{new Date(event.createdAt).toLocaleDateString(locale)}</small></span>
           </div>)}
         </div>}
       </section>}
       <section className="profile-actions">
-        <button type="button" onClick={onJournal}><span><Icon name="journal" size={20} /></span><div><strong>Journal de trading</strong><small>Statistiques, historique et partage des PnL</small></div><i>›</i></button>
-        <button type="button" onClick={onGlobalLeaderboard}><span><Icon name="global-leaderboard" size={20} /></span><div><strong>Classement global</strong><small>Saisons, classement général et partage du rang</small></div><i>›</i></button>
-        <button type="button" onClick={onSettings}><span><Icon name="settings" size={20} /></span><div><strong>Modifier mon profil</strong><small>Photo, identité et réseaux sociaux</small></div><i>›</i></button>
+        <button type="button" onClick={onJournal}><span><Icon name="journal" size={20} /></span><div><strong>{t('profile.journal')}</strong><small>{t('profile.journalHint')}</small></div><i>›</i></button>
+        <button type="button" onClick={onGlobalLeaderboard}><span><Icon name="global-leaderboard" size={20} /></span><div><strong>{t('profile.global')}</strong><small>{t('profile.globalHint')}</small></div><i>›</i></button>
+        <button type="button" onClick={onSettings}><span><Icon name="settings" size={20} /></span><div><strong>{t('profile.edit')}</strong><small>{t('profile.editHint')}</small></div><i>›</i></button>
       </section>
       <section className="profile-section">
-        <span>MES BADGES</span>
-        <div className="badge-list">
-          {dashboard.myBadges.length
-            ? dashboard.myBadges.map((badge) => <div key={badge}><Icon name="shield" size={18} />{badgeLabels[badge]}</div>)
-            : <p>Aucun badge débloqué pour le moment.</p>}
+        <span>{t('profile.language')}</span>
+        <div className="profile-language">
+          <p>{t('profile.languageHint')}</p>
+          <LanguageSwitcher />
         </div>
       </section>
       <section className="profile-section">
-        <span>MES ARÈNES</span>
+        <span>{t('profile.badges')}</span>
+        <div className="badge-list">
+          {dashboard.myBadges.length
+            ? dashboard.myBadges.map((badge) => <div key={badge}><Icon name="shield" size={18} />{badgeLabels[badge]}</div>)
+            : <p>{t('profile.noBadges')}</p>}
+        </div>
+      </section>
+      <section className="profile-section">
+        <span>{t('profile.arenas')}</span>
         <div className="profile-arenas">
           {dashboard.myCompetitions.length
             ? dashboard.myCompetitions.map((competition) => (
               <div key={competition.id}>
-                <div><strong>{competition.title}</strong><small>{competition.myEntry.tradesCount} trades</small></div>
-                <div><strong>#{competition.rank ?? '—'}</strong><small>{competition.myEntry.pnlUsd.toLocaleString('fr-FR')} $</small></div>
+                <div><strong>{competition.title}</strong><small>{competition.myEntry.tradesCount} {t('profile.trades').toLowerCase()}</small></div>
+                <div><strong>#{competition.rank ?? '—'}</strong><small>{competition.myEntry.pnlUsd.toLocaleString(locale)} $</small></div>
               </div>
             ))
-            : <p>Aucune compétition rattachée à ce compte.</p>}
+            : <p>{t('profile.noArenas')}</p>}
         </div>
       </section>
-      <button className="logout-button" type="button" onClick={onLogout}>Se déconnecter de cet appareil</button>
+      <button className="logout-button" type="button" onClick={onLogout}>{t('profile.logout')}</button>
     </div>
   )
 }

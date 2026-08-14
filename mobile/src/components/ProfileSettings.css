@@ -1,4 +1,4 @@
-.settings-page { margin-top: -18px; display: grid; gap: 12px; }
+.settings-page { display: grid; gap: 12px; }
 .subpage-head { margin-bottom: 9px; display: flex; align-items: center; gap: 12px; }
 .subpage-head > button { width: 40px; height: 40px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.035); color: #fff; font-size: 27px; line-height: 1; }
 .subpage-head > div { min-width: 0; }

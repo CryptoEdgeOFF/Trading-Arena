@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from './LanguageSwitcher';
 
 const CONTACT_EMAIL = 'breakout.pro.tv@gmail.com';
 
@@ -53,6 +54,7 @@ export default function LegalFooter() {
         </div>
 
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 sm:justify-end sm:gap-x-3 sm:gap-y-1">
+          <LanguageSwitcher className="mr-1" />
           <a className="hidden transition-colors hover:text-white sm:inline" href={`mailto:${CONTACT_EMAIL}`}>
             {CONTACT_EMAIL}
           </a>

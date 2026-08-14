@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { apiAssetUrl, getNewsArticle, getNewsPage, type NewsArticle } from '../lib/api'
+import { useI18n } from '../i18n'
 import './NewsScreen.css'
 
-function formatDate(timestamp: number) {
-  return new Date(timestamp).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+function formatDate(timestamp: number, locale: string) {
+  return new Date(timestamp).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 function articleDate(article: NewsArticle) {
@@ -22,13 +23,14 @@ function RichText({ text }: { text: string }) {
 }
 
 function NewsDetail({ article, onClose }: { article: NewsArticle; onClose: () => void }) {
+  const { t, locale } = useI18n()
   return <div className="news-detail-layer" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <motion.article className="news-detail" role="dialog" aria-modal="true" aria-label={article.title}
       initial={{ opacity: 0, y: 35 }} animate={{ opacity: 1, y: 0 }}>
-      <button className="news-detail__close" type="button" onClick={onClose} aria-label="Fermer">×</button>
+      <button className="news-detail__close" type="button" onClick={onClose} aria-label={t('common.close')}>×</button>
       {article.coverUrl && <img className="news-detail__cover" src={apiAssetUrl(article.coverUrl)} alt="" />}
       <div className="news-detail__content">
-        <span>{article.featured ? 'À LA UNE · ' : ''}{formatDate(articleDate(article))}</span>
+        <span>{article.featured ? t('news.featured') : ''}{formatDate(articleDate(article), locale)}</span>
         <h2>{article.title}</h2>
         {article.summary && <strong>{article.summary}</strong>}
         <RichText text={article.body} />
@@ -38,14 +40,15 @@ function NewsDetail({ article, onClose }: { article: NewsArticle; onClose: () =>
 }
 
 function NewsCard({ article, index, onOpen }: { article: NewsArticle; index: number; onOpen: () => void }) {
+  const { t, locale } = useI18n()
   return <motion.button className={`news-card ${article.featured ? 'is-featured' : ''}`} type="button" onClick={onOpen}
     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 6) * .035 }}>
     {article.coverUrl && <img src={apiAssetUrl(article.coverUrl)} alt="" />}
     <span className="news-card__content">
-      <small>{article.featured ? 'À LA UNE · ' : ''}{formatDate(articleDate(article))}</small>
+      <small>{article.featured ? t('news.featured') : ''}{formatDate(articleDate(article), locale)}</small>
       <strong>{article.title}</strong>
       <p>{article.summary || article.body}</p>
-      <em>Lire l’article <b>›</b></em>
+      <em>{t('news.read')} <b>›</b></em>
     </span>
   </motion.button>
 }
@@ -53,10 +56,13 @@ function NewsCard({ article, index, onOpen }: { article: NewsArticle; index: num
 export function NewsScreen({
   initialArticleId,
   onSeen,
+  onBack,
 }: {
   initialArticleId?: string
   onSeen: (timestamp: number) => void
+  onBack: () => void
 }) {
+  const { t } = useI18n()
   const [news, setNews] = useState<NewsArticle[]>([])
   const [selected, setSelected] = useState<NewsArticle | null>(null)
   const [loading, setLoading] = useState(true)
@@ -79,7 +85,7 @@ export function NewsScreen({
       apply(cached)
       setLoading(false)
       return getNewsPage(undefined, 20, true)
-    }).then(apply).catch((next) => active && setError(next instanceof Error ? next.message : 'Chargement impossible'))
+    }).then(apply).catch((next) => active && setError(next instanceof Error ? next.message : t('news.loadError')))
       .finally(() => active && setLoading(false))
     return () => { active = false }
   }, [onSeen])
@@ -137,22 +143,21 @@ export function NewsScreen({
 
   let index = 0
   return <div className="news-page">
-    <header className="news-hero">
-      <span>LE FIL BTF</span>
-      <h1>Actualités</h1>
-      <p>News du jour, annonces officielles et informations de la communauté.</p>
+    <header className="news-topline">
+      <button type="button" onClick={onBack} aria-label={t('common.back')}>‹</button>
+      <strong>{t('news.title')}</strong>
     </header>
-    {loading && !news.length ? <div className="news-state">Chargement des actualités…</div>
+    {loading && !news.length ? <div className="news-state">{t('news.loading')}</div>
       : error && !news.length ? <div className="news-state is-error">{error}</div>
-        : !news.length ? <div className="news-state">Aucune actualité publiée pour le moment.</div>
+        : !news.length ? <div className="news-state">{t('news.empty')}</div>
           : <>
-            {today.length > 0 && <section className="news-section"><header><small>AUJOURD’HUI</small><h2>Les news du jour</h2></header>
+            {today.length > 0 && <section className="news-section"><header><small>{t('news.today')}</small><h2>{t('news.todayTitle')}</h2></header>
               <div>{today.map((article) => <NewsCard key={article.id} article={article} index={index++} onOpen={() => setSelected(article)} />)}</div>
             </section>}
-            {older.length > 0 && <section className="news-section"><header><small>ARCHIVES</small><h2>Actualités précédentes</h2></header>
+            {older.length > 0 && <section className="news-section"><header><small>{t('news.archives')}</small><h2>{t('news.olderTitle')}</h2></header>
               <div>{older.map((article) => <NewsCard key={article.id} article={article} index={index++} onOpen={() => setSelected(article)} />)}</div>
             </section>}
-            <div ref={sentinelRef} className="news-sentinel">{loadingOlder ? 'Chargement…' : hasMore ? 'Voir plus' : 'Tu as tout lu'}</div>
+            <div ref={sentinelRef} className="news-sentinel">{loadingOlder ? t('common.loading') : hasMore ? t('news.loadMore') : t('news.allRead')}</div>
           </>}
     {selected && <NewsDetail article={selected} onClose={() => setSelected(null)} />}
   </div>

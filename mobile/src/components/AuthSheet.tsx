@@ -7,6 +7,7 @@ import {
   verifyPhoneCode,
   type SessionUser,
 } from '../lib/api'
+import { useI18n } from '../i18n'
 
 type Intent = 'login' | 'signup'
 type Step = 'identity' | 'email-code' | 'phone-code'
@@ -26,6 +27,7 @@ export function AuthSheet({
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const { t } = useI18n()
   const [hint, setHint] = useState('')
 
   function changeIntent(next: Intent) {
@@ -50,9 +52,9 @@ export function AuthSheet({
       })
       setEmail(result.email)
       setStep('email-code')
-      setHint(result.devCode ? `Code de développement : ${result.devCode}` : 'Code envoyé par e-mail')
+      setHint(result.devCode ? `Dev code: ${result.devCode}` : t('auth.codeSent'))
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Connexion impossible')
+      setError(nextError instanceof Error ? nextError.message : t('auth.loginFailed'))
     } finally {
       setBusy(false)
     }
@@ -67,13 +69,13 @@ export function AuthSheet({
       if (result.needsPhone) {
         setStep('phone-code')
         setCode('')
-        setHint(result.devSmsCode ? `Code de développement : ${result.devSmsCode}` : `Code SMS envoyé au ${result.phoneMasked || 'numéro renseigné'}`)
+        setHint(result.devSmsCode ? `Dev code: ${result.devSmsCode}` : t('auth.smsSent', { phone: result.phoneMasked || t('auth.smsFallback') }))
         return
       }
-      if (!result.token || !result.user) throw new Error('Réponse de connexion incomplète')
+      if (!result.token || !result.user) throw new Error(t('auth.incomplete'))
       await onAuthenticated(result.token, result.user)
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Code incorrect')
+      setError(nextError instanceof Error ? nextError.message : t('auth.badCode'))
     } finally {
       setBusy(false)
     }
@@ -87,7 +89,7 @@ export function AuthSheet({
       const result = await verifyPhoneCode(email, code)
       await onAuthenticated(result.token, result.user)
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Code SMS incorrect')
+      setError(nextError instanceof Error ? nextError.message : t('auth.badSms'))
     } finally {
       setBusy(false)
     }
@@ -100,7 +102,7 @@ export function AuthSheet({
       const result = await loginTestAccount()
       await onAuthenticated(result.token, result.user)
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Compte test indisponible')
+      setError(nextError instanceof Error ? nextError.message : t('auth.testUnavailable'))
     } finally {
       setBusy(false)
     }
@@ -114,46 +116,44 @@ export function AuthSheet({
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 300 }}>
         <div className="auth-sheet__handle" />
-        <button className="auth-sheet__close" type="button" onClick={onClose} aria-label="Fermer">×</button>
-        <span className="auth-sheet__kicker">COMPTE BTF UNIQUE</span>
-        <h2 id="auth-title">{step === 'identity' ? (intent === 'login' ? 'Connexion' : 'Inscription') : 'Vérification'}</h2>
+        <button className="auth-sheet__close" type="button" onClick={onClose} aria-label={t('auth.close')}>×</button>
+        <span className="auth-sheet__kicker">{t('auth.kicker')}</span>
+        <h2 id="auth-title">{step === 'identity' ? (intent === 'login' ? t('auth.login') : t('auth.signup')) : t('auth.verify')}</h2>
         <p className="auth-sheet__intro">
-          {step === 'identity'
-            ? 'Le même compte fonctionne sur ordinateur et mobile.'
-            : hint}
+          {step === 'identity' ? t('auth.intro') : hint}
         </p>
 
         {step === 'identity' && (
           <>
             <div className="auth-tabs">
-              <button type="button" className={intent === 'login' ? 'is-active' : ''} onClick={() => changeIntent('login')}>Connexion</button>
-              <button type="button" className={intent === 'signup' ? 'is-active' : ''} onClick={() => changeIntent('signup')}>Créer un compte</button>
+              <button type="button" className={intent === 'login' ? 'is-active' : ''} onClick={() => changeIntent('login')}>{t('auth.login')}</button>
+              <button type="button" className={intent === 'signup' ? 'is-active' : ''} onClick={() => changeIntent('signup')}>{t('auth.createAccount')}</button>
             </div>
             <form className="auth-form" onSubmit={submitIdentity}>
               {intent === 'signup' && (
                 <>
-                  <label>Nom ou pseudo<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required /></label>
-                  <label>Téléphone<input value={phone} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" inputMode="tel" required /></label>
+                  <label>{t('auth.name')}<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required /></label>
+                  <label>{t('auth.phone')}<input value={phone} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" inputMode="tel" required /></label>
                 </>
               )}
-              <label>Adresse e-mail<input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" inputMode="email" required /></label>
+              <label>{t('auth.email')}<input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" inputMode="email" required /></label>
               {error && <p className="auth-error" role="alert">{error}</p>}
-              <button className="auth-submit" type="submit" disabled={busy}>{busy ? 'Envoi…' : 'Recevoir mon code'}</button>
+              <button className="auth-submit" type="submit" disabled={busy}>{busy ? t('auth.sending') : t('auth.sendCode')}</button>
             </form>
             {import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true' && (
-              <button className="auth-test" type="button" disabled={busy} onClick={() => void testLogin()}>Utiliser ARTEMTEST987</button>
+              <button className="auth-test" type="button" disabled={busy} onClick={() => void testLogin()}>{t('auth.useTest')}</button>
             )}
           </>
         )}
 
         {step !== 'identity' && (
           <form className="auth-form" onSubmit={step === 'email-code' ? submitEmailCode : submitPhoneCode}>
-            <label>Code à 6 chiffres<input className="auth-code" value={code}
+            <label>{t('auth.code')}<input className="auth-code" value={code}
               onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
               autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" required autoFocus /></label>
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <button className="auth-submit" type="submit" disabled={busy || code.length !== 6}>{busy ? 'Vérification…' : 'Continuer'}</button>
-            <button className="auth-back" type="button" onClick={() => { setStep('identity'); setCode(''); setError('') }}>Changer d’adresse</button>
+            <button className="auth-submit" type="submit" disabled={busy || code.length !== 6}>{busy ? t('auth.verifying') : t('auth.continue')}</button>
+            <button className="auth-back" type="button" onClick={() => { setStep('identity'); setCode(''); setError('') }}>{t('auth.changeEmail')}</button>
           </form>
         )}
       </motion.section>

@@ -8,7 +8,8 @@ export type XpEventType =
   | 'arena.completed'
   | 'arena.podium'
   | 'arena.streak'
-  | 'badge.unlocked';
+  | 'badge.unlocked'
+  | 'trading.achievement';
 
 export interface XpEvent {
   id: string;
@@ -37,6 +38,7 @@ export interface UserXpFacts {
   completed: Array<{ competitionId: string; title: string }>;
   podiums: Array<{ competitionId: string; title: string; rank: number }>;
   badges: string[];
+  tradingAchievements?: Array<{ key: string; amount: number; label: string }>;
 }
 
 interface AwardInput {
@@ -195,6 +197,12 @@ function awardsFromFacts(facts: UserXpFacts): AwardInput[] {
     eventType: 'badge.unlocked',
     amount: 300,
     label: `Badge débloqué · ${badge}`,
+  });
+  for (const achievement of facts.tradingAchievements || []) awards.push({
+    eventKey: `trading.${achievement.key}`,
+    eventType: 'trading.achievement',
+    amount: achievement.amount,
+    label: achievement.label,
   });
   return awards;
 }

@@ -70,5 +70,11 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>BTF Arena uses the camera so you can share photos in the global chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BTF Arena needs access to your photos so you can share them in the global chat.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>BTF Arena can save a photo to your library if you choose to.</string>
 </dict>
 </plist>

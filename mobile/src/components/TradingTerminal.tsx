@@ -23,6 +23,7 @@ import {
   writePaperSessionToken,
 } from '../lib/session'
 import { TradingViewChart, type MobileOrderPreview } from './TradingViewChart'
+import { useI18n } from '../i18n'
 import './TradingTerminal.css'
 
 const CONTRACT_SIZE: Record<string, number> = {
@@ -56,6 +57,16 @@ function competitionSummary(context: PaperState['competition']) {
 
 function isBreached(context: PaperState['competition']) {
   return Boolean(context && 'competition' in context && context.breached)
+}
+
+function drawdownRule(context: PaperState['competition'], fallback?: MyCompetition) {
+  const nested = context && 'competition' in context ? context.competition : context
+  const percent = nested?.dailyDrawdownPercent ?? fallback?.dailyDrawdownPercent ?? null
+  const limitEquity = context && 'competition' in context ? context.dailyLimitEquity ?? null : null
+  return {
+    percent: percent != null && percent > 0 ? percent : null,
+    limitEquity,
+  }
 }
 
 function positionPnl(pair: string, side: 'long' | 'short', size: number, entry: number, mark: number) {
@@ -255,6 +266,7 @@ export function TradingTerminal({
   initialCompetitionId?: string
   onOpenLeaderboard: (competitionId: string) => void
 }) {
+  const { t } = useI18n()
   const [paperToken, setPaperToken] = useState<string | null>(null)
   const [state, setState] = useState<PaperState | null>(null)
   const [meta, setMeta] = useState<PaperMeta | null>(null)
@@ -430,6 +442,8 @@ export function TradingTerminal({
   const displayedRank = competitionRank ?? (playerRank != null && playerRank > 0 ? playerRank : null)
   const accountBreached = isBreached(state?.competition ?? null)
   const canTradeNow = Boolean(state?.canTrade) && !accountBreached && ticker?.marketOpen !== false
+  const selectedCompetition = competitions.find((item) => item.id === (activeCompetition?.id || competitionId))
+  const { percent: dailyDrawdownPercent, limitEquity: dailyLimitEquity } = drawdownRule(state?.competition ?? null, selectedCompetition)
 
   async function openCompetition() {
     if (!competitionId) return
@@ -775,6 +789,15 @@ export function TradingTerminal({
           <span>Disponible <strong>{money(state.player.availableMargin)} $</strong></span>
           <span>Utilisée <strong>{money(state.player.usedMargin)} $</strong></span>
         </div>
+        {dailyDrawdownPercent != null && (
+          <div className="terminal-drawdown">
+            <div>
+              <strong>{t('terminal.dailyDrawdownLabel', { percent: dailyDrawdownPercent })}</strong>
+              {dailyLimitEquity != null && <span>{t('terminal.dailyDrawdownValue', { amount: money(dailyLimitEquity) })}</span>}
+            </div>
+            <p>{t('terminal.dailyDrawdownHint')}</p>
+          </div>
+        )}
         {error && <div className="terminal-error">{error}</div>}
         {!canTradeNow && (
           <div className="terminal-warning">

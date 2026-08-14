@@ -1,4 +1,4 @@
-.journal-page { margin-top: -18px; }
+.journal-page { margin-top: 0; }
 .journal-intro { margin: 0 0 18px; color: #8d8791; font-size: 10px; line-height: 1.6; }
 .journal-state { min-height: 190px; padding: 25px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 12px; color: #817b84; text-align: center; font-size: 10px; }
 .journal-state.is-error { color: #ff8998; }
