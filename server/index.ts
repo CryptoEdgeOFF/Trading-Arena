@@ -54,6 +54,7 @@ import { createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatI
 import { syncUserProgression } from './xpStore.js';
 import { computeTradingAchievements } from './xpTradingAchievements.js';
 import { getRatingLeaderboard, syncUserRating } from './ratingStore.js';
+import { getPnlHistory, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -3286,11 +3287,65 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     const competitionId = String(req.params.id || '');
     await syncCompetitionResultsForCompetition(competitionId);
     const data = competitionManager.getPublicLeaderboard(competitionId);
+    if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
     res.json(data);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
   }
 });
+
+/**
+ * Historique PnL pour le mode spectateur : séries échantillonnées (~30 s)
+ * du PnL % du top 10, plus l'identité des traders suivis pour tracer les
+ * courbes avec avatars côté client.
+ */
+app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
+  try {
+    const competitionId = String(req.params.id || '');
+    await syncCompetitionResultsForCompetition(competitionId);
+    const data = competitionManager.getPublicLeaderboard(competitionId);
+    if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
+    const samples = getPnlHistory(competitionId);
+    const tracked = new Set(samples.flatMap((sample) => sample.rows.map((row) => row.userId)));
+    res.json({
+      status: data.competition.status,
+      samples,
+      traders: data.leaderboard
+        .filter((row) => tracked.has(row.userId))
+        .map((row) => ({
+          userId: row.userId,
+          name: row.name,
+          avatarUrl: row.avatarUrl,
+          rank: row.rank,
+          pnlPercent: row.pnlPercent,
+          breached: row.breached,
+        })),
+    });
+  } catch (error: any) {
+    res.status(404).json({ error: error.message || 'Historique introuvable' });
+  }
+});
+
+// Échantillonneur d'arrière-plan : construit l'historique PnL des arènes live
+// même sans spectateur connecté. Serveur persistant uniquement (Railway) —
+// en serverless, l'échantillonnage se fait au fil des GET leaderboard.
+if (!process.env.NETLIFY) {
+  setInterval(() => {
+    void (async () => {
+      const publicCompetitions = competitionManager.listPublicCompetitions();
+      prunePnlHistories(new Set(publicCompetitions.map((competition) => competition.id)));
+      for (const competition of publicCompetitions) {
+        if (competition.status !== 'live') continue;
+        try {
+          await syncCompetitionResultsForCompetition(competition.id);
+          maybeRecordPnlSample(competition.id, competitionManager.getPublicLeaderboard(competition.id).leaderboard);
+        } catch {
+          // Arène retirée ou sync impossible : on passe.
+        }
+      }
+    })();
+  }, 30_000);
+}
 
 // --- Admin APIs for competitions ---
 

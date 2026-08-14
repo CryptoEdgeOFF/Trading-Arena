@@ -55,6 +55,12 @@ export const fr: typeof en = {
     topTraders: 'Top traders',
     topTradersHint: 'Classement de saison et records all-time',
   },
+  spectate: {
+    kicker: 'SPECTATE',
+    title: 'Course au PnL',
+    dominates: '{{name}} domine',
+    collecting: 'Historique PnL en cours de collecte — premières courbes dans quelques minutes.',
+  },
   rank: {
     kicker: 'BTF RATING',
     title: 'Classement mondial',

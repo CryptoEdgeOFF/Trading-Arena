@@ -11,6 +11,7 @@ import {
   getCompetitionLeaderboard,
   getGlobalChatMessages,
   getNewsPage,
+  getPnlHistory,
   getPromotions,
   logoutSession,
   registerPushDevice,
@@ -18,6 +19,8 @@ import {
   type BootstrapData,
   type LeaderboardRow,
   type MyCompetition,
+  type PnlHistorySample,
+  type PnlHistoryTrader,
   type PublicCompetition,
   type SessionUser,
   type UserBadge,
@@ -38,6 +41,7 @@ import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { NewsScreen } from './components/NewsScreen'
 import { PlayerProfile } from './components/PlayerProfile'
 import { PlayerProgressionBar } from './components/PlayerProgressionBar'
+import { PnlRaceChart } from './components/PnlRaceChart'
 import { ProfileAvatar } from './components/ProfileAvatar'
 import { ProfileSettings } from './components/ProfileSettings'
 import { RankScreen } from './components/RankScreen'
@@ -942,6 +946,7 @@ function LeaderboardScreen({
   const [loadingRows, setLoadingRows] = useState(true)
   const [error, setError] = useState('')
   const [shareRow, setShareRow] = useState<LeaderboardRow | null>(null)
+  const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[] } | null>(null)
 
   useEffect(() => {
     if (initialCompetitionId && competitions.some((item) => item.id === initialCompetitionId)) {
@@ -953,6 +958,8 @@ function LeaderboardScreen({
     }
   }, [competitionId, competitions, initialCompetitionId])
 
+  const isLiveCompetition = competitions.find((item) => item.id === competitionId)?.status === 'live'
+
   const loadLeaderboard = useCallback(async () => {
     if (!competitionId) {
       setRows([])
@@ -961,14 +968,18 @@ function LeaderboardScreen({
     }
     setError('')
     try {
-      const nextRows = await getCompetitionLeaderboard(competitionId)
+      const [nextRows, history] = await Promise.all([
+        getCompetitionLeaderboard(competitionId),
+        isLiveCompetition ? getPnlHistory(competitionId).catch(() => null) : Promise.resolve(null),
+      ])
       setRows(nextRows.sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent))
+      setPnlHistory(history)
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : t('leaderboard.unavailable'))
     } finally {
       setLoadingRows(false)
     }
-  }, [competitionId, t])
+  }, [competitionId, isLiveCompetition, t])
 
   useEffect(() => {
     setLoadingRows(true)
@@ -1029,6 +1040,10 @@ function LeaderboardScreen({
         <div className="leaderboard-page-loading"><i />{t('leaderboard.syncing')}</div>
       ) : (
         <>
+          {isLiveCompetition && pnlHistory && (
+            <PnlRaceChart samples={pnlHistory.samples} traders={pnlHistory.traders} currentUserId={currentUserId} />
+          )}
+
           {podium.length > 0 && (
             <section className="leaderboard-podium">
               {podium.map((row) => (

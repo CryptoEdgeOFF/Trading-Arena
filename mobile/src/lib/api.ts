@@ -724,6 +724,33 @@ export async function getRatingLeaderboard(): Promise<RatingLeaderboardRow[]> {
   return Array.isArray(data.rows) ? data.rows : []
 }
 
+export type PnlHistorySample = {
+  t: number
+  rows: Array<{ userId: string; pnlPercent: number }>
+}
+
+export type PnlHistoryTrader = {
+  userId: string
+  name: string
+  avatarUrl?: string | null
+  rank: number
+  pnlPercent: number
+  breached?: boolean
+}
+
+export async function getPnlHistory(competitionId: string): Promise<{
+  samples: PnlHistorySample[]
+  traders: PnlHistoryTrader[]
+}> {
+  const data = await apiFetch<{ samples?: PnlHistorySample[]; traders?: PnlHistoryTrader[] }>(
+    `/api/competition/leaderboard/${encodeURIComponent(competitionId)}/pnl-history`,
+  )
+  return {
+    samples: Array.isArray(data.samples) ? data.samples : [],
+    traders: Array.isArray(data.traders) ? data.traders : [],
+  }
+}
+
 export function getPublicPlayerProfile(userId: string): Promise<PublicPlayerProfile> {
   return apiFetch(`/api/competition/player/${encodeURIComponent(userId)}`)
 }

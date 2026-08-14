@@ -53,6 +53,12 @@ export const en = {
     topTraders: 'Top traders',
     topTradersHint: 'Season leaderboard and all-time bests',
   },
+  spectate: {
+    kicker: 'SPECTATE',
+    title: 'PnL race',
+    dominates: '{{name}} dominates',
+    collecting: 'Building the live PnL history — first curves in a few minutes.',
+  },
   rank: {
     kicker: 'BTF RATING',
     title: 'World ranking',
