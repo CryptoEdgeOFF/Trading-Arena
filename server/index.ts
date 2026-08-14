@@ -3389,42 +3389,67 @@ if (MOBILE_STAGING_TEST_MODE && !process.env.NETLIFY) {
     { userId: 'sim-bot-zen', name: 'ZenTrader', drift: 0.01, vol: 0.25 },
     { userId: 'sim-bot-degen', name: 'DegenMax', drift: -0.03, vol: 1.15 },
   ];
-  const simState = new Map<string, { pnlPercent: number; tradesCount: number }>();
+  // État de marche aléatoire par arène puis par bot : chaque arène a sa
+  // propre course (un bot peut gagner la Blitz et perdre la Friday Night).
+  const simStateByCompetition = new Map<string, Map<string, { pnlPercent: number; tradesCount: number }>>();
+
+  const simulateCompetitionTick = (competitionId: string) => {
+    const liveRows = competitionManager.getPublicLeaderboard(competitionId).leaderboard;
+    let states = simStateByCompetition.get(competitionId);
+    if (!states) {
+      states = new Map();
+      simStateByCompetition.set(competitionId, states);
+    }
+
+    const updates = SIM_BOTS.map((bot) => {
+      let state = states.get(bot.userId);
+      if (!state) {
+        // Reprise après redéploiement : on repart du PnL persisté pour
+        // éviter un saut visuel, sinon départ dispersé autour de 0.
+        const existing = liveRows.find((row) => row.userId === bot.userId);
+        state = existing
+          ? { pnlPercent: existing.pnlPercent, tradesCount: Math.max(1, existing.tradesCount) }
+          : { pnlPercent: (Math.random() - 0.35) * 6, tradesCount: 1 + Math.floor(Math.random() * 8) };
+        states.set(bot.userId, state);
+      }
+      state.pnlPercent = Math.max(-14, Math.min(28, state.pnlPercent + bot.drift + (Math.random() - 0.5) * bot.vol));
+      if (Math.random() < 0.4) state.tradesCount += 1;
+      return {
+        userId: bot.userId,
+        name: bot.name,
+        pnlPercent: Number(state.pnlPercent.toFixed(3)),
+        pnlUsd: Number(((state.pnlPercent / 100) * 10_000).toFixed(2)),
+        tradesCount: state.tradesCount,
+      };
+    });
+
+    competitionManager.applySimulatedResults(competitionId, updates);
+    maybeRecordPnlSample(competitionId, competitionManager.getPublicLeaderboard(competitionId).leaderboard);
+  };
 
   const runSimulatedPlayersTick = () => {
     try {
-      const competition = competitionManager
+      // Arène de test ARTEMTEST + toutes les arènes programmées (Blitz /
+      // Friday Night) en cours : le rituel complet est visible en staging,
+      // y compris le Champion of the Week à la fin de la Friday Night.
+      const targets = competitionManager
         .listAdminCompetitions()
-        .find((item) => item.title === 'MOBILE STAGING - TRADING TEST' && item.status === 'live');
-      if (!competition) return;
-      const liveRows = competitionManager.getPublicLeaderboard(competition.id).leaderboard;
-
-      const updates = SIM_BOTS.map((bot) => {
-        let state = simState.get(bot.userId);
-        if (!state) {
-          // Reprise après redéploiement : on repart du PnL persisté pour
-          // éviter un saut visuel, sinon départ dispersé autour de 0.
-          const existing = liveRows.find((row) => row.userId === bot.userId);
-          state = existing
-            ? { pnlPercent: existing.pnlPercent, tradesCount: Math.max(1, existing.tradesCount) }
-            : { pnlPercent: (Math.random() - 0.35) * 6, tradesCount: 1 + Math.floor(Math.random() * 8) };
-          simState.set(bot.userId, state);
+        .filter((item) => item.status === 'live'
+          && (item.title === 'MOBILE STAGING - TRADING TEST' || item.format != null));
+      for (const competition of targets) {
+        try {
+          simulateCompetitionTick(competition.id);
+        } catch {
+          // Arène retirée entre-temps : on passe.
         }
-        state.pnlPercent = Math.max(-14, Math.min(28, state.pnlPercent + bot.drift + (Math.random() - 0.5) * bot.vol));
-        if (Math.random() < 0.4) state.tradesCount += 1;
-        return {
-          userId: bot.userId,
-          name: bot.name,
-          pnlPercent: Number(state.pnlPercent.toFixed(3)),
-          pnlUsd: Number(((state.pnlPercent / 100) * 10_000).toFixed(2)),
-          tradesCount: state.tradesCount,
-        };
-      });
-
-      competitionManager.applySimulatedResults(competition.id, updates);
-      maybeRecordPnlSample(competition.id, competitionManager.getPublicLeaderboard(competition.id).leaderboard);
+      }
+      for (const competitionId of simStateByCompetition.keys()) {
+        if (!targets.some((competition) => competition.id === competitionId)) {
+          simStateByCompetition.delete(competitionId);
+        }
+      }
     } catch {
-      // Arène de test absente (ARTEMTEST jamais connecté) : on réessaie au prochain tick.
+      // Store indisponible : on réessaie au prochain tick.
     }
   };
 
