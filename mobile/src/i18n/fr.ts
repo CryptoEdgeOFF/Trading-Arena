@@ -58,7 +58,7 @@ export const fr: typeof en = {
   },
   format: {
     blitz: 'BLITZ · 30 MIN',
-    weekly: 'FRIDAY NIGHT',
+    weekly: 'CHALLENGE HEBDO',
   },
   spectate: {
     kicker: 'SPECTATE',

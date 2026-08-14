@@ -56,7 +56,7 @@ export const en = {
   },
   format: {
     blitz: 'BLITZ · 30 MIN',
-    weekly: 'FRIDAY NIGHT',
+    weekly: 'WEEKLY CHALLENGE',
   },
   spectate: {
     kicker: 'SPECTATE',
