@@ -466,6 +466,7 @@ function HomeScreen({
       {user ? (
         <>
           <header className="home-topbar">
+            <img className="home-topbar__logo" src="/assets/pictures/btf-logo-header.png" alt="BTF Arena" />
             <button className="news-button" type="button" onClick={onNews} aria-label={t('home.openNews')}>
               <Icon name="bell" size={19} />
               {unreadNews > 0 && <b className="news-unread-badge">{unreadNews > 9 ? '9+' : unreadNews}</b>}

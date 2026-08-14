@@ -205,8 +205,9 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-dashboard { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .home-dashboard > * { min-width: 0; }
 
-/* Barre du haut : notifications au-dessus de la carte joueur. */
-.home-topbar { margin-bottom: -6px; display: flex; justify-content: flex-end; }
+/* Barre du haut : logo BTF Arena + notifications au-dessus de la carte joueur. */
+.home-topbar { margin-bottom: -6px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.home-topbar__logo { height: 52px; width: auto; margin: -6px 0 -6px -8px; filter: drop-shadow(0 4px 10px rgba(0,0,0,.45)); }
 .home-topbar .news-button { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.04); color: #fff; }
 
 /* --- Carte joueur : photo, PnL, R/R, badge de division, progression ---
