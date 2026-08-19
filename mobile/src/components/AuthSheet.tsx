@@ -1,4 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type MouseEvent } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { Keyboard } from '@capacitor/keyboard'
 import { motion } from 'framer-motion'
 import {
   loginTestAccount,
@@ -26,9 +28,37 @@ export function AuthSheet({
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
+  const [consent, setConsent] = useState(false)
   const [error, setError] = useState('')
   const { t } = useI18n()
   const [hint, setHint] = useState('')
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
+
+  useEffect(() => {
+    if (Capacitor.getPlatform() !== 'ios') return
+    let disposed = false
+    const removers: Array<() => Promise<void>> = []
+
+    void Promise.all([
+      Keyboard.addListener('keyboardWillShow', ({ keyboardHeight: nextHeight }) => {
+        setKeyboardHeight(nextHeight)
+      }),
+      Keyboard.addListener('keyboardWillHide', () => {
+        setKeyboardHeight(0)
+      }),
+    ]).then((handles) => {
+      if (disposed) {
+        void Promise.all(handles.map((handle) => handle.remove()))
+        return
+      }
+      for (const handle of handles) removers.push(() => handle.remove())
+    })
+
+    return () => {
+      disposed = true
+      void Promise.all(removers.map((remove) => remove()))
+    }
+  }, [])
 
   function changeIntent(next: Intent) {
     setIntent(next)
@@ -36,10 +66,21 @@ export function AuthSheet({
     setCode('')
     setError('')
     setHint('')
+    setConsent(false)
+  }
+
+  function openLegalPage(event: MouseEvent<HTMLAnchorElement>, path: '/cgu' | '/confidentialite') {
+    event.preventDefault()
+    event.stopPropagation()
+    window.open(`https://btfarena.com${path}`, '_blank', 'noopener,noreferrer')
   }
 
   async function submitIdentity(event: FormEvent) {
     event.preventDefault()
+    if (intent === 'signup' && !consent) {
+      setError(t('auth.consentRequired'))
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -48,7 +89,7 @@ export function AuthSheet({
         intent,
         name: intent === 'signup' ? name.trim() : undefined,
         phone: intent === 'signup' ? phone.trim() : undefined,
-        consent: intent === 'signup',
+        consent: intent === 'signup' ? consent : undefined,
       })
       setEmail(result.email)
       setStep('email-code')
@@ -109,12 +150,22 @@ export function AuthSheet({
   }
 
   return (
-    <div className="auth-overlay" role="presentation" onMouseDown={(event) => {
-      if (event.currentTarget === event.target) onClose()
-    }}>
+    <div
+      className="auth-overlay"
+      role="presentation"
+      style={{ bottom: keyboardHeight }}
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose()
+      }}
+    >
       <motion.section className="auth-sheet" role="dialog" aria-modal="true" aria-labelledby="auth-title"
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-        transition={{ type: 'spring', damping: 28, stiffness: 300 }}>
+        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+        onFocusCapture={(event) => {
+          const field = event.target
+          if (!(field instanceof HTMLElement)) return
+          window.setTimeout(() => field.scrollIntoView({ block: 'center', behavior: 'smooth' }), 280)
+        }}>
         <div className="auth-sheet__handle" />
         <button className="auth-sheet__close" type="button" onClick={onClose} aria-label={t('auth.close')}>×</button>
         <span className="auth-sheet__kicker">{t('auth.kicker')}</span>
@@ -137,8 +188,20 @@ export function AuthSheet({
                 </>
               )}
               <label>{t('auth.email')}<input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" inputMode="email" required /></label>
+              {intent === 'signup' && (
+                <label className="auth-consent">
+                  <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} required />
+                  <span>
+                    {t('auth.consentText')}{' '}
+                    <a href="https://btfarena.com/cgu" target="_blank" rel="noopener noreferrer" onClick={(event) => openLegalPage(event, '/cgu')}>{t('auth.cgu')}</a>
+                    {' '}{t('auth.consentAnd')}{' '}
+                    <a href="https://btfarena.com/confidentialite" target="_blank" rel="noopener noreferrer" onClick={(event) => openLegalPage(event, '/confidentialite')}>{t('auth.privacy')}</a>
+                    {t('auth.consentNewsletter')}
+                  </span>
+                </label>
+              )}
               {error && <p className="auth-error" role="alert">{error}</p>}
-              <button className="auth-submit" type="submit" disabled={busy}>{busy ? t('auth.sending') : t('auth.sendCode')}</button>
+              <button className="auth-submit" type="submit" disabled={busy || (intent === 'signup' && !consent)}>{busy ? t('auth.sending') : t('auth.sendCode')}</button>
             </form>
             {import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true' && (
               <button className="auth-test" type="button" disabled={busy} onClick={() => void testLogin()}>{t('auth.useTest')}</button>

@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { JournalTrade } from '../lib/api'
-import { drawShareLogo, roundedRectPath } from '../lib/shareCanvas'
+import { apiAssetUrl, type JournalTrade } from '../lib/api'
+import { drawShareAvatar, drawShareLogo, roundedRectPath } from '../lib/shareCanvas'
 import './SharePnlModal.css'
 
 function netPnl(trade: JournalTrade) {
   return trade.pnl - trade.fee
 }
 
-async function generateCard(trade: JournalTrade, playerName: string): Promise<{ blob: Blob; url: string }> {
+async function generateCard(
+  trade: JournalTrade,
+  playerName: string,
+  avatarUrl?: string | null,
+): Promise<{ blob: Blob; url: string }> {
   const canvas = document.createElement('canvas')
   canvas.width = 1080
   canvas.height = 1350
@@ -34,6 +38,13 @@ async function generateCard(trade: JournalTrade, playerName: string): Promise<{ 
   ctx.stroke()
 
   await drawShareLogo(ctx)
+  await drawShareAvatar(ctx, {
+    url: avatarUrl ? apiAssetUrl(avatarUrl) : null,
+    name: playerName,
+    x: 770,
+    y: 220,
+    size: 230,
+  })
   ctx.fillStyle = 'rgba(255,255,255,.55)'
   ctx.font = '700 23px Arial'
   ctx.textAlign = 'right'
@@ -101,10 +112,12 @@ async function generateCard(trade: JournalTrade, playerName: string): Promise<{ 
 export function SharePnlModal({
   trade,
   playerName,
+  avatarUrl,
   onClose,
 }: {
   trade: JournalTrade | null
   playerName: string
+  avatarUrl?: string | null
   onClose: () => void
 }) {
   const [result, setResult] = useState<{ blob: Blob; url: string } | null>(null)
@@ -115,14 +128,14 @@ export function SharePnlModal({
     let active = true
     setResult(null)
     setError('')
-    void generateCard(trade, playerName).then((next) => {
+    void generateCard(trade, playerName, avatarUrl).then((next) => {
       if (active) setResult(next)
       else URL.revokeObjectURL(next.url)
     }).catch(() => active && setError('La carte n’a pas pu être générée.'))
     return () => {
       active = false
     }
-  }, [playerName, trade])
+  }, [avatarUrl, playerName, trade])
 
   useEffect(() => () => {
     if (result) URL.revokeObjectURL(result.url)
@@ -161,7 +174,6 @@ export function SharePnlModal({
           {result ? <img src={result.url} alt="Carte de partage du PnL" /> : error || <i />}
         </div>
         <footer>
-          <button type="button" disabled={!result} onClick={download}>Télécharger</button>
           <button className="is-primary" type="button" disabled={!result} onClick={() => void share()}>Partager</button>
         </footer>
       </section>

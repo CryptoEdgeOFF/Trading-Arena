@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
-import type { UserXpFacts } from './xpStore.js';
+import { countryFromPhone } from './phoneCountry.js';
+import { DRAWDOWN_WARNING_RATIO, drawdownBufferConsumedRatio } from './notificationRules.js';
 
 export interface CompetitionUser {
   id: string;
@@ -28,6 +29,8 @@ export interface CompetitionUser {
     acceptedAt: number;
   } | null;
   createdAt: number;
+  /** Horodatage de suppression définitive. Le compte n'est plus connectable. */
+  deletedAt?: number | null;
 }
 
 /**
@@ -97,8 +100,31 @@ export interface CompetitionEntry {
    */
   dailyBaselineDayKey?: string | null;
   dailyBaselineEquity?: number | null;
+  /** Jour UTC où l'alerte des 80 % du drawdown a déjà été envoyée. */
+  dailyDrawdownWarnedDayKey?: string | null;
   breachedAt?: number | null;
+  /** Présent uniquement sur les arènes `entryMode === 'team'`. */
+  teamId?: string | null;
 }
+
+export const TEAM_REQUIRED_SIZE = 4;
+
+export interface CompetitionTeamMember {
+  userId: string;
+  joinedAt: number;
+}
+
+export interface CompetitionTeam {
+  id: string;
+  name: string;
+  inviteCode: string;
+  ownerUserId: string;
+  createdAt: number;
+  members: CompetitionTeamMember[];
+  imageUrl?: string | null;
+}
+
+export type CompetitionEntryMode = 'solo' | 'team';
 
 export interface CashPrizeBreakdownEntry {
   rank: number;
@@ -330,6 +356,8 @@ export interface Competition {
   notifiedEndedAt?: number | null;
   /** Timestamp d'envoi de l'email « nouvelle arène disponible » (anti-doublon). */
   notifiedNewArenaAt?: number | null;
+  /** Timestamp d'envoi du push « nouvelle arène disponible » (anti-doublon). */
+  notifiedNewArenaPushAt?: number | null;
   /** Saison du leaderboard global à laquelle cette arène contribue. */
   seasonId?: string | null;
   /**
@@ -337,6 +365,9 @@ export interface Competition {
    * 'weekly' (Friday Night Arena). null/absent = arène classique.
    */
   format?: 'blitz' | 'weekly' | null;
+  /** solo par défaut pour les arènes existantes. */
+  entryMode?: CompetitionEntryMode;
+  teamSize?: number;
   /**
    * Clé d'occurrence du scheduler (ex. 'blitz-ny:2026-08-14'). Garde
    * d'idempotence : une occurrence programmée n'est créée qu'une seule fois.
@@ -388,6 +419,7 @@ interface CompetitionStore {
   seasons?: LeaderboardSeason[];
   /** Payouts (certificats de gains) attribués manuellement aux joueurs. */
   payouts?: PlayerPayout[];
+  teams?: CompetitionTeam[];
   /**
    * Balance de départ (paper) des joueurs des arènes online. Indépendante de
    * la config de l'événement LIVE (`PlayerManager.paperStartingBalance`) pour
@@ -479,6 +511,15 @@ function canJoinCompetition(competition: CompetitionTiming, now = Date.now()): b
 
 function canTradeCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
   return now >= competition.startAt && now <= competition.endAt;
+}
+
+function isTeamCompetition(competition: Pick<Competition, 'entryMode'>): boolean {
+  return competition.entryMode === 'team';
+}
+
+function teamRequiredSize(competition: Pick<Competition, 'teamSize'>): number {
+  const size = Number(competition.teamSize);
+  return Number.isFinite(size) && size >= 2 ? Math.floor(size) : TEAM_REQUIRED_SIZE;
 }
 
 /** Clé de jour UTC ('YYYY-MM-DD') pour le reset journalier du drawdown. */
@@ -645,6 +686,8 @@ export class CompetitionManager {
   private competitions = new Map<string, Competition>();
   private seasons = new Map<string, LeaderboardSeason>();
   private payouts = new Map<string, PlayerPayout>();
+  private teams = new Map<string, CompetitionTeam>();
+  private localTeamImages = new Map<string, { mime: string; data: Buffer }>();
   // In serverless, sessions/OTPs/trader-sessions use dedicated Postgres
   // tables (one row per token/email). The maps below are only used as a
   // local fallback when no Postgres pool is configured (development mode).
@@ -679,20 +722,22 @@ export class CompetitionManager {
 
   private findUserByEmail(email: string): CompetitionUser | null {
     const normalized = normalizeEmail(email);
-    return Array.from(this.users.values()).find((entry) => entry.email === normalized) || null;
+    return Array.from(this.users.values()).find((entry) => !entry.deletedAt && entry.email === normalized) || null;
   }
 
   private findUserByPhone(phone: string): CompetitionUser | null {
     const normalized = normalizePhone(phone);
     if (!normalized) return null;
-    return Array.from(this.users.values()).find((entry) => entry.phone === normalized) || null;
+    return Array.from(this.users.values()).find((entry) => !entry.deletedAt && entry.phone === normalized) || null;
   }
 
   private findUserByName(name: string, exceptId?: string): CompetitionUser | null {
     const normalized = String(name || '').trim().toLowerCase();
     if (!normalized) return null;
     return Array.from(this.users.values()).find((entry) => (
-      entry.id !== exceptId && (entry.name || '').trim().toLowerCase() === normalized
+      !entry.deletedAt
+      && entry.id !== exceptId
+      && (entry.name || '').trim().toLowerCase() === normalized
     )) || null;
   }
 
@@ -1038,6 +1083,7 @@ export class CompetitionManager {
     this.competitions.clear();
     this.seasons.clear();
     this.payouts.clear();
+    this.teams.clear();
     if (Number.isFinite(parsed.competitionStartingBalance) && (parsed.competitionStartingBalance as number) > 0) {
       this.competitionStartingBalance = parsed.competitionStartingBalance as number;
     }
@@ -1057,6 +1103,9 @@ export class CompetitionManager {
     }
     for (const payout of parsed.payouts || []) {
       if (payout && payout.id && payout.userId) this.payouts.set(payout.id, normalizePayout(payout));
+    }
+    for (const team of parsed.teams || []) {
+      if (team?.id && team.ownerUserId && Array.isArray(team.members)) this.teams.set(team.id, team);
     }
     for (const competition of parsed.competitions || []) {
       this.competitions.set(competition.id, {
@@ -1097,6 +1146,7 @@ export class CompetitionManager {
       competitions: Array.from(this.competitions.values()),
       seasons: Array.from(this.seasons.values()),
       payouts: Array.from(this.payouts.values()),
+      teams: Array.from(this.teams.values()),
       competitionStartingBalance: this.competitionStartingBalance,
     };
     if (!this.pool) {
@@ -1289,6 +1339,14 @@ export class CompetitionManager {
         created_at timestamptz not null default now()
       )
     `);
+    await this.pool.query(`
+      create table if not exists comp_team_images (
+        team_id text primary key,
+        mime text not null,
+        data bytea not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
   }
 
   async putPrizeImage(id: string, mime: string, data: Buffer): Promise<void> {
@@ -1357,6 +1415,48 @@ export class CompetitionManager {
     const row = result.rows[0];
     if (!row) return null;
     return { mime: String(row.mime), data: row.data as Buffer };
+  }
+
+  async setTeamImageBlob(ownerUserId: string, teamId: string, mime: string, data: Buffer) {
+    const team = this.teams.get(teamId);
+    if (!team) throw new Error('Équipe introuvable');
+    if (team.ownerUserId !== ownerUserId) throw new Error('Seul le créateur peut changer le badge');
+    if (this.pool) {
+      await this.pool.query(
+        `insert into comp_team_images (team_id, mime, data, updated_at)
+         values ($1, $2, $3, now())
+         on conflict (team_id) do update
+           set mime = excluded.mime,
+               data = excluded.data,
+               updated_at = now()`,
+        [teamId, mime, data],
+      );
+    } else {
+      this.localTeamImages.set(teamId, { mime, data });
+    }
+    team.imageUrl = `/api/team-images/${teamId}?v=${Date.now()}`;
+    this.teams.set(team.id, team);
+    this.save();
+    return this.publicTeam(team);
+  }
+
+  async getTeamImageBlob(teamId: string): Promise<{ mime: string; data: Buffer } | null> {
+    if (this.pool) {
+      const result = await this.pool.query(
+        'select mime, data from comp_team_images where team_id = $1 limit 1',
+        [teamId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return { mime: String(row.mime), data: row.data as Buffer };
+    }
+    return this.localTeamImages.get(teamId) || null;
+  }
+
+  private async deleteTeamImage(teamId: string): Promise<void> {
+    this.localTeamImages.delete(teamId);
+    if (!this.pool) return;
+    await this.pool.query('delete from comp_team_images where team_id = $1', [teamId]).catch(() => undefined);
   }
 
   async addAdminToken(token: string): Promise<void> {
@@ -1527,12 +1627,13 @@ export class CompetitionManager {
         await this.refresh();
         user = this.users.get(userId) || null;
       }
-      if (!user) return null;
+      if (!user || user.deletedAt) return null;
       return this.hydrateUserAvatar(user);
     }
     const userId = this.sessions.get(token);
     if (!userId) return null;
-    return this.users.get(userId) || null;
+    const user = this.users.get(userId) || null;
+    return user && !user.deletedAt ? user : null;
   }
 
   async writeSession(token: string, userId: string): Promise<void> {
@@ -1557,13 +1658,233 @@ export class CompetitionManager {
     this.sessions.delete(token);
   }
 
+  async deleteSessionsForUser(userId: string): Promise<void> {
+    if (!userId) return;
+    if (this.pool) {
+      await this.pool.query('delete from comp_user_sessions where user_id = $1', [userId]);
+    }
+    for (const [token, sessionUserId] of this.sessions.entries()) {
+      if (sessionUserId === userId) this.sessions.delete(token);
+    }
+  }
+
+  /**
+   * Suppression définitive du compte : identité personnelle effacée,
+   * sessions révoquées, e-mail/téléphone libérés pour une réinscription.
+   * Les classements d'arènes restent anonymisés (pas de réécriture historique).
+   */
+  async deleteUserAccount(userId: string): Promise<{ paperPlayerIds: string[] }> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('Utilisateur introuvable');
+    if (user.deletedAt) throw new Error('Compte déjà supprimé');
+
+    const paperPlayerIds = this.getPaperPlayerIdsForUser(userId);
+    await this.deleteSessionsForUser(userId);
+    for (const playerId of paperPlayerIds) {
+      await this.deleteTraderSessionsForPlayer(playerId);
+    }
+    if (this.pool) {
+      if (user.email) {
+        await this.pool.query('delete from comp_pending_otps where email = $1', [normalizeEmail(user.email)]).catch(() => undefined);
+      }
+      await this.pool.query('delete from comp_user_avatars where user_id = $1', [userId]).catch(() => undefined);
+    }
+
+    this.users.set(userId, {
+      id: userId,
+      email: `deleted+${userId}@invalid.local`,
+      name: 'Compte supprimé',
+      phone: null,
+      phoneVerifiedAt: null,
+      avatarUrl: null,
+      socials: {},
+      consent: null,
+      createdAt: user.createdAt,
+      deletedAt: Date.now(),
+    });
+    this.save();
+    return { paperPlayerIds };
+  }
+
+  private generateTeamInviteCode(): string {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const code = crypto.randomBytes(3).toString('hex').toUpperCase();
+      if (!Array.from(this.teams.values()).some((team) => team.inviteCode === code)) return code;
+    }
+    return crypto.randomBytes(4).toString('hex').toUpperCase();
+  }
+
+  private findTeamByUser(userId: string): CompetitionTeam | null {
+    return Array.from(this.teams.values()).find((team) => team.members.some((member) => member.userId === userId)) || null;
+  }
+
+  private isTeamRosterLocked(teamId: string): boolean {
+    for (const competition of this.competitions.values()) {
+      if (!isTeamCompetition(competition)) continue;
+      if (inferCompetitionStatus(competition) === 'ended') continue;
+      if (competition.entries.some((entry) => entry.teamId === teamId)) return true;
+    }
+    return false;
+  }
+
+  private publicTeam(team: CompetitionTeam) {
+    return {
+      id: team.id,
+      name: team.name,
+      inviteCode: team.inviteCode,
+      ownerUserId: team.ownerUserId,
+      createdAt: team.createdAt,
+      size: team.members.length,
+      requiredSize: TEAM_REQUIRED_SIZE,
+      isComplete: team.members.length === TEAM_REQUIRED_SIZE,
+      imageUrl: team.imageUrl || null,
+      locked: this.isTeamRosterLocked(team.id),
+      members: team.members.map((member) => {
+        const user = this.users.get(member.userId);
+        return {
+          userId: member.userId,
+          name: user?.name || 'Trader',
+          avatarUrl: user?.avatarUrl || null,
+          joinedAt: member.joinedAt,
+          isOwner: member.userId === team.ownerUserId,
+        };
+      }),
+    };
+  }
+
+  createTeam(userId: string, nameInput: unknown) {
+    if (this.findTeamByUser(userId)) throw new Error('Tu es déjà dans une équipe');
+    const name = String(nameInput || '').trim();
+    if (name.length < 2) throw new Error('Nom d’équipe trop court');
+    if (name.length > 24) throw new Error('Nom d’équipe trop long');
+    const now = Date.now();
+    const team: CompetitionTeam = {
+      id: crypto.randomUUID(),
+      name,
+      inviteCode: this.generateTeamInviteCode(),
+      ownerUserId: userId,
+      createdAt: now,
+      members: [{ userId, joinedAt: now }],
+    };
+    this.teams.set(team.id, team);
+    this.save();
+    return this.publicTeam(team);
+  }
+
+  joinTeamByCode(userId: string, codeInput: unknown) {
+    if (this.findTeamByUser(userId)) throw new Error('Tu es déjà dans une équipe');
+    const code = normalizeCode(String(codeInput || ''));
+    const team = Array.from(this.teams.values()).find((item) => item.inviteCode === code);
+    if (!team) throw new Error('Code d’équipe invalide');
+    if (this.isTeamRosterLocked(team.id)) throw new Error('Cette équipe est déjà inscrite à une arène');
+    if (team.members.length >= TEAM_REQUIRED_SIZE) throw new Error('Cette équipe est déjà complète');
+    team.members.push({ userId, joinedAt: Date.now() });
+    this.teams.set(team.id, team);
+    this.save();
+    return this.publicTeam(team);
+  }
+
+  kickTeamMember(ownerUserId: string, teamId: string, memberUserId: string) {
+    const team = this.teams.get(teamId);
+    if (!team) throw new Error('Équipe introuvable');
+    if (team.ownerUserId !== ownerUserId) throw new Error('Seul le créateur peut exclure un membre');
+    if (memberUserId === ownerUserId) throw new Error('Le créateur ne peut pas s’exclure');
+    if (this.isTeamRosterLocked(team.id)) throw new Error('L’équipe est verrouillée pendant la compétition');
+    team.members = team.members.filter((member) => member.userId !== memberUserId);
+    this.teams.set(team.id, team);
+    this.save();
+    return this.publicTeam(team);
+  }
+
+  leaveTeam(userId: string, teamId: string) {
+    const team = this.teams.get(teamId);
+    if (!team) throw new Error('Équipe introuvable');
+    if (!team.members.some((member) => member.userId === userId)) throw new Error('Tu n’es pas dans cette équipe');
+    if (this.isTeamRosterLocked(team.id)) throw new Error('L’équipe est verrouillée pendant la compétition');
+    if (team.ownerUserId === userId) {
+      this.teams.delete(team.id);
+      void this.deleteTeamImage(team.id);
+      this.save();
+      return null;
+    }
+    team.members = team.members.filter((member) => member.userId !== userId);
+    this.teams.set(team.id, team);
+    this.save();
+    return this.publicTeam(team);
+  }
+
+  getUserTeam(userId: string) {
+    const team = this.findTeamByUser(userId);
+    return team ? this.publicTeam(team) : null;
+  }
+
+  registerTeamToCompetition(
+    ownerUserId: string,
+    teamId: string,
+    competitionId: string,
+    sponsorAccountIdInput?: unknown,
+  ): Competition {
+    const team = this.teams.get(teamId);
+    if (!team) throw new Error('Équipe introuvable');
+    if (team.ownerUserId !== ownerUserId) throw new Error('Seul le créateur peut inscrire l’équipe');
+    if (team.members.length !== TEAM_REQUIRED_SIZE) {
+      throw new Error(`Il faut ${TEAM_REQUIRED_SIZE} membres pour s’inscrire`);
+    }
+    const competition = this.competitions.get(competitionId);
+    if (!competition) throw new Error('Competition introuvable');
+    if (!isTeamCompetition(competition)) throw new Error('Cette arène se joue en individuel');
+    if (!canJoinCompetition(competition)) throw new Error('Les inscriptions sont fermees pour cette arene');
+    if (competition.entries.some((entry) => entry.teamId === team.id)) {
+      return competition;
+    }
+    for (const member of team.members) {
+      if (competition.entries.some((entry) => entry.userId === member.userId)) {
+        throw new Error('Un membre est déjà inscrit à cette arène');
+      }
+    }
+    if (competition.entries.length + TEAM_REQUIRED_SIZE > MAX_ARENA_PARTICIPANTS) {
+      throw new Error('Cette arene est complete');
+    }
+
+    const sponsorDef = competition.sponsor ? SPONSOR_DEFS[competition.sponsor] : null;
+    let sponsorAccountId: string | null = null;
+    if (sponsorDef?.requiresAccountId) {
+      const raw = String(sponsorAccountIdInput ?? '').trim();
+      const cleaned = sponsorDef.accountIdNormalize === 'lowercase'
+        ? raw.toLowerCase().slice(0, 128)
+        : String(raw).replace(/\s+/g, '').toUpperCase().slice(0, 64);
+      if (!cleaned) throw new Error('Identifiant sponsor requis');
+      if (sponsorDef.accountIdPattern && !sponsorDef.accountIdPattern.test(cleaned)) {
+        throw new Error('Identifiant sponsor invalide');
+      }
+      sponsorAccountId = cleaned;
+    }
+
+    const now = Date.now();
+    for (const member of team.members) {
+      competition.entries.push({
+        userId: member.userId,
+        joinedAt: now,
+        pnlUsd: 0,
+        pnlPercent: 0,
+        tradesCount: 0,
+        updatedAt: now,
+        teamId: team.id,
+        ...(sponsorAccountId ? { sponsorAccountId } : {}),
+      });
+    }
+    this.competitions.set(competition.id, competition);
+    this.save();
+    return competition;
+  }
+
   updateUserProfile(userId: string, input: {
     name?: unknown;
     phone?: unknown;
     socials?: unknown;
   }): CompetitionUser {
     const user = this.users.get(userId);
-    if (!user) throw new Error('Utilisateur introuvable');
+    if (!user || user.deletedAt) throw new Error('Utilisateur introuvable');
 
     const name = String(input.name ?? user.name).trim();
     if (!name || name.length < 2) throw new Error('Pseudo invalide');
@@ -1629,6 +1950,7 @@ export class CompetitionManager {
     seasonId?: unknown;
     format?: unknown;
     scheduleKey?: unknown;
+    entryMode?: unknown;
   }): Competition {
     const title = String(input.title || '').trim();
     const code = normalizeCode(input.code);
@@ -1692,6 +2014,8 @@ export class CompetitionManager {
       sponsorReferralUrl,
       seasonId,
       format: input.format === 'blitz' || input.format === 'weekly' ? input.format : null,
+      entryMode: input.entryMode === 'team' ? 'team' : 'solo',
+      teamSize: input.entryMode === 'team' ? TEAM_REQUIRED_SIZE : undefined,
       scheduleKey: input.scheduleKey != null && String(input.scheduleKey).trim()
         ? String(input.scheduleKey).trim()
         : null,
@@ -1778,6 +2102,8 @@ export class CompetitionManager {
     sponsorReferralUrl: string | null;
     bannerImageUrl: string | null;
     format: 'blitz' | 'weekly' | null;
+    entryMode: CompetitionEntryMode;
+    teamSize: number | null;
   }> {
     const now = Date.now();
     return Array.from(this.competitions.values())
@@ -1793,7 +2119,9 @@ export class CompetitionManager {
         registrationEndsAt: getRegistrationEndsAt(competition),
         dailyDrawdownPercent: competition.dailyDrawdownPercent ?? null,
         isPublic: competition.isPublic,
-        participants: competition.entries.length,
+        participants: isTeamCompetition(competition)
+          ? new Set(competition.entries.map((entry) => entry.teamId).filter(Boolean)).size
+          : competition.entries.length,
         status: inferCompetitionStatus(competition, now),
         canJoin: canJoinCompetition(competition, now),
         canTrade: canTradeCompetition(competition, now),
@@ -1802,6 +2130,8 @@ export class CompetitionManager {
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
         bannerImageUrl: competition.bannerImageUrl ?? null,
         format: competition.format ?? null,
+        entryMode: isTeamCompetition(competition) ? 'team' : 'solo',
+        teamSize: isTeamCompetition(competition) ? teamRequiredSize(competition) : null,
       }));
   }
 
@@ -1826,6 +2156,9 @@ export class CompetitionManager {
       else if (found && found.code) throw new Error('Code requis');
     }
     if (!competition) throw new Error('Competition introuvable');
+    if (isTeamCompetition(competition)) {
+      throw new Error('Cette arène se joue en équipe. Inscris ton équipe complète.');
+    }
 
     // Condition d'accès sponsor : si l'arène est sponsorisée par un partenaire
     // qui exige un identifiant public (ex. Kraken), il doit être fourni.
@@ -1971,6 +2304,7 @@ export class CompetitionManager {
     userId: string;
     name: string;
     avatarUrl: string | null;
+    country: string | null;
     pnlUsd: number;
     arenas: number;
     paperPlayerIds: string[];
@@ -1997,6 +2331,7 @@ export class CompetitionManager {
         userId,
         name: user?.name || 'Participant',
         avatarUrl: user?.avatarUrl || null,
+        country: countryFromPhone(user?.phone),
         pnlUsd: rec.pnlUsd,
         arenas: rec.arenas,
         paperPlayerIds: rec.paperPlayerIds,
@@ -2015,6 +2350,7 @@ export class CompetitionManager {
     userId: string;
     name: string;
     avatarUrl: string | null;
+    country: string | null;
     badges: UserBadge[];
     pnlUsd: number;
     arenas: number;
@@ -2131,45 +2467,6 @@ export class CompetitionManager {
 
   getUserBadges(userId: string): UserBadge[] {
     return this.getAllUserBadges().get(userId) ?? [];
-  }
-
-  getUserXpFacts(userId: string): UserXpFacts {
-    const joined: UserXpFacts['joined'] = [];
-    const traded: UserXpFacts['traded'] = [];
-    const completed: UserXpFacts['completed'] = [];
-    const podiums: UserXpFacts['podiums'] = [];
-    const topHalf: UserXpFacts['topHalf'] = [];
-    for (const competition of this.competitions.values()) {
-      const entry = competition.entries.find((item) => item.userId === userId);
-      if (!entry) continue;
-      const arena = { competitionId: competition.id, title: competition.title || 'Arène BTF' };
-      joined.push(arena);
-      if (entry.tradesCount > 0) traded.push(arena);
-      if (inferCompetitionStatus(competition) !== 'ended' || entry.tradesCount <= 0) continue;
-      completed.push(arena);
-      const ranked = sortAndRankLeaderboard(competition.entries.map((item) => ({
-        userId: item.userId,
-        pnlPercent: item.pnlPercent,
-        pnlUsd: item.pnlUsd,
-        tradesCount: item.tradesCount,
-        updatedAt: item.updatedAt,
-        breached: Boolean(item.breachedAt),
-      })));
-      const rank = ranked.find((item) => item.userId === userId)?.rank || 0;
-      if (rank >= 1 && rank <= 3) podiums.push({ ...arena, rank });
-      const rankedCount = ranked.filter((item) => item.rank > 0).length;
-      if (rank >= 1 && rankedCount >= 2 && rank <= Math.max(1, Math.floor(rankedCount / 2))) {
-        topHalf.push(arena);
-      }
-    }
-    return {
-      joined,
-      traded,
-      completed,
-      podiums,
-      topHalf,
-      badges: this.getUserBadges(userId),
-    };
   }
 
   /**
@@ -2316,9 +2613,27 @@ export class CompetitionManager {
   updatePaperResultByPlayerId(
     paperPlayerId: string,
     result: { pnlUsd: number; pnlPercent: number; tradesCount: number; equity?: number },
-  ): { newlyBreached: boolean; competitionId: string } | null {
+  ): {
+    newlyBreached: boolean;
+    competitionId: string;
+    drawdownWarning?: {
+      userId: string;
+      competitionTitle: string;
+      equity: number;
+      limitEquity: number;
+    };
+  } | null {
     let changed = false;
-    let breachResult: { newlyBreached: boolean; competitionId: string } | null = null;
+    let updateEvent: {
+      newlyBreached: boolean;
+      competitionId: string;
+      drawdownWarning?: {
+        userId: string;
+        competitionTitle: string;
+        equity: number;
+        limitEquity: number;
+      };
+    } | null = null;
     const now = Date.now();
     for (const competition of this.competitions.values()) {
       if (competition.finalizedAt) continue;
@@ -2341,19 +2656,35 @@ export class CompetitionManager {
         if (entry.dailyBaselineDayKey !== dayKey || entry.dailyBaselineEquity == null) {
           entry.dailyBaselineDayKey = dayKey;
           entry.dailyBaselineEquity = equity;
+          entry.dailyDrawdownWarnedDayKey = null;
         }
         if (!entry.breachedAt && entry.dailyBaselineEquity != null) {
           const limit = entry.dailyBaselineEquity * (1 - ddPercent / 100);
           if (equity <= limit) {
             entry.breachedAt = now;
-            breachResult = { newlyBreached: true, competitionId: competition.id };
+            updateEvent = { newlyBreached: true, competitionId: competition.id };
+          } else {
+            const consumedRatio = drawdownBufferConsumedRatio(entry.dailyBaselineEquity, equity, limit);
+            if (consumedRatio >= DRAWDOWN_WARNING_RATIO && entry.dailyDrawdownWarnedDayKey !== dayKey) {
+              entry.dailyDrawdownWarnedDayKey = dayKey;
+              updateEvent = {
+                newlyBreached: false,
+                competitionId: competition.id,
+                drawdownWarning: {
+                  userId: entry.userId,
+                  competitionTitle: competition.title,
+                  equity,
+                  limitEquity: limit,
+                },
+              };
+            }
           }
         }
       }
     }
 
     if (changed) this.save();
-    return breachResult;
+    return updateEvent;
   }
 
   /**
@@ -2434,8 +2765,10 @@ export class CompetitionManager {
       .filter((competition) => competition.entries.some((entry) => entry.userId === userId))
       .map((competition) => {
         const myEntry = competition.entries.find((entry) => entry.userId === userId)!;
-        const ranked = sortAndRankLeaderboard(competition.entries.slice());
-        const myRanked = ranked.find((entry) => entry.userId === userId);
+        const ranked = this.buildLeaderboardRows(competition);
+        const myRanked = isTeamCompetition(competition) && myEntry.teamId
+          ? ranked.find((entry) => entry.teamId === myEntry.teamId)
+          : ranked.find((entry) => entry.userId === userId);
         const now = Date.now();
         return {
           id: competition.id,
@@ -2452,7 +2785,9 @@ export class CompetitionManager {
           myEntry,
           breached: Boolean(myEntry.breachedAt),
           cashPrize: competition.cashPrize ?? null,
-          participants: competition.entries.length,
+          participants: isTeamCompetition(competition)
+            ? new Set(competition.entries.map((entry) => entry.teamId).filter(Boolean)).size
+            : competition.entries.length,
           // rank 0 = pas classé (aucun trade) → null côté client.
           rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
           sponsor: competition.sponsor ?? null,
@@ -2480,6 +2815,10 @@ export class CompetitionManager {
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, Math.max(1, Math.min(100, limit)))
       .map((u) => ({ id: u.id, name: u.name, email: u.email, avatarUrl: u.avatarUrl || null }));
+  }
+
+  countClaimablePayoutsForUser(userId: string): number {
+    return this.listPayoutsForUser(userId).filter((payout) => (payout.status || 'available') === 'available').length;
   }
 
   /** Payouts d'un joueur, du plus récent au plus ancien. */
@@ -2691,6 +3030,7 @@ export class CompetitionManager {
       id: string;
       name: string;
       avatarUrl: string | null;
+      country: string | null;
       socials: { x?: string; instagram?: string; discord?: string; website?: string };
     };
     badges: UserBadge[];
@@ -2760,6 +3100,7 @@ export class CompetitionManager {
         id: user.id,
         name: user.name,
         avatarUrl: user.avatarUrl || null,
+        country: countryFromPhone(user.phone),
         socials: {
           x: user.socials?.x,
           instagram: user.socials?.instagram,
@@ -2770,12 +3111,14 @@ export class CompetitionManager {
       badges: this.getUserBadges(userId),
       totalPnlUsd,
       paperPlayerIds,
-      payouts: this.listPayoutsForUser(userId).map((p) => ({
-        id: p.id,
-        amount: p.amount,
-        currency: p.currency,
-        paidAt: p.paidAt,
-      })),
+      payouts: this.listPayoutsForUser(userId)
+        .filter((p) => (p.status || 'available') === 'approved')
+        .map((p) => ({
+          id: p.id,
+          amount: p.amount,
+          currency: p.currency,
+          paidAt: p.paidAt,
+        })),
       arenas,
     };
   }
@@ -3010,6 +3353,7 @@ export class CompetitionManager {
     notifiedStartSoonAt: number | null;
     notifiedEndedAt: number | null;
     notifiedNewArenaAt: number | null;
+    notifiedNewArenaPushAt: number | null;
   }> {
     return Array.from(this.competitions.values()).map((competition) => ({
       id: competition.id,
@@ -3023,6 +3367,7 @@ export class CompetitionManager {
       notifiedStartSoonAt: competition.notifiedStartSoonAt ?? null,
       notifiedEndedAt: competition.notifiedEndedAt ?? null,
       notifiedNewArenaAt: competition.notifiedNewArenaAt ?? null,
+      notifiedNewArenaPushAt: competition.notifiedNewArenaPushAt ?? null,
     }));
   }
 
@@ -3032,12 +3377,13 @@ export class CompetitionManager {
   }
 
   /** Marque une notification comme envoyée (persisté, anti-doublon). */
-  markCompetitionNotified(competitionId: string, kind: 'startSoon' | 'ended' | 'newArena'): void {
+  markCompetitionNotified(competitionId: string, kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush'): void {
     const competition = this.competitions.get(competitionId);
     if (!competition) return;
     if (kind === 'startSoon') competition.notifiedStartSoonAt = Date.now();
     else if (kind === 'ended') competition.notifiedEndedAt = Date.now();
-    else competition.notifiedNewArenaAt = Date.now();
+    else if (kind === 'newArena') competition.notifiedNewArenaAt = Date.now();
+    else competition.notifiedNewArenaPushAt = Date.now();
     this.competitions.set(competition.id, competition);
     this.save();
   }
@@ -3166,6 +3512,71 @@ export class CompetitionManager {
     );
   }
 
+  private buildLeaderboardRows(competition: Competition) {
+    const badges = this.getAllUserBadges();
+    if (!isTeamCompetition(competition)) {
+      return sortAndRankLeaderboard(
+        competition.entries.map((entry) => {
+          const user = this.users.get(entry.userId);
+          return {
+            userId: entry.userId,
+            teamId: null as string | null,
+            name: user?.name || 'Participant',
+            avatarUrl: user?.avatarUrl || null,
+            country: countryFromPhone(user?.phone),
+            badges: badges.get(entry.userId) ?? [],
+            members: [] as Array<{ userId: string; name: string; avatarUrl: string | null; pnlUsd: number; pnlPercent: number }>,
+            pnlPercent: entry.pnlPercent,
+            pnlUsd: entry.pnlUsd,
+            tradesCount: entry.tradesCount,
+            updatedAt: entry.updatedAt,
+            breached: Boolean(entry.breachedAt),
+          };
+        }),
+      );
+    }
+
+    const grouped = new Map<string, CompetitionEntry[]>();
+    for (const entry of competition.entries) {
+      if (!entry.teamId) continue;
+      const rows = grouped.get(entry.teamId) || [];
+      rows.push(entry);
+      grouped.set(entry.teamId, rows);
+    }
+    const starting = this.competitionStartingBalance;
+    return sortAndRankLeaderboard(
+      Array.from(grouped.entries()).map(([teamId, members]) => {
+        const team = this.teams.get(teamId);
+        const pnlUsd = members.reduce((sum, entry) => sum + (Number(entry.pnlUsd) || 0), 0);
+        const tradesCount = members.reduce((sum, entry) => sum + (Number(entry.tradesCount) || 0), 0);
+        const capital = Math.max(1, members.length) * starting;
+        return {
+          userId: teamId,
+          teamId,
+          name: team?.name || 'Équipe',
+          avatarUrl: team?.imageUrl || this.users.get(team?.ownerUserId || '')?.avatarUrl || null,
+          country: null as string | null,
+          badges: [] as UserBadge[],
+          members: members.map((entry) => {
+            const user = this.users.get(entry.userId);
+            return {
+              userId: entry.userId,
+              name: user?.name || 'Trader',
+              avatarUrl: user?.avatarUrl || null,
+              pnlUsd: entry.pnlUsd,
+              pnlPercent: entry.pnlPercent,
+            };
+          }),
+          pnlUsd,
+          pnlPercent: (pnlUsd / capital) * 100,
+          tradesCount,
+          updatedAt: Math.max(...members.map((entry) => entry.updatedAt)),
+          breached: members.every((entry) => Boolean(entry.breachedAt)),
+        };
+      }),
+    );
+  }
+
   getPublicLeaderboard(competitionId: string): {
     competition: {
       id: string;
@@ -3185,9 +3596,12 @@ export class CompetitionManager {
     leaderboard: Array<{
       rank: number;
       userId: string;
+      teamId?: string | null;
       name: string;
       avatarUrl: string | null;
+      country: string | null;
       badges: UserBadge[];
+      members?: Array<{ userId: string; name: string; avatarUrl: string | null; pnlUsd: number; pnlPercent: number }>;
       pnlPercent: number;
       pnlUsd: number;
       tradesCount: number;
@@ -3198,23 +3612,7 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition || !competition.isPublic) throw new Error('Leaderboard introuvable');
 
-    const badges = this.getAllUserBadges();
-    const leaderboard = sortAndRankLeaderboard(
-      competition.entries.map((entry) => {
-        const user = this.users.get(entry.userId);
-        return {
-          userId: entry.userId,
-          name: user?.name || 'Participant',
-          avatarUrl: user?.avatarUrl || null,
-          badges: badges.get(entry.userId) ?? [],
-          pnlPercent: entry.pnlPercent,
-          pnlUsd: entry.pnlUsd,
-          tradesCount: entry.tradesCount,
-          updatedAt: entry.updatedAt,
-          breached: Boolean(entry.breachedAt),
-        };
-      }),
-    );
+    const leaderboard = this.buildLeaderboardRows(competition);
 
     const now = Date.now();
     return {
@@ -3227,7 +3625,9 @@ export class CompetitionManager {
         status: inferCompetitionStatus(competition, now),
         canJoin: canJoinCompetition(competition, now),
         canTrade: canTradeCompetition(competition, now),
-        participants: competition.entries.length,
+        participants: isTeamCompetition(competition)
+          ? new Set(competition.entries.map((entry) => entry.teamId).filter(Boolean)).size
+          : competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
@@ -3259,9 +3659,12 @@ export class CompetitionManager {
     leaderboard: Array<{
       rank: number;
       userId: string;
+      teamId?: string | null;
       name: string;
       avatarUrl: string | null;
+      country: string | null;
       badges: UserBadge[];
+      members?: Array<{ userId: string; name: string; avatarUrl: string | null; pnlUsd: number; pnlPercent: number }>;
       pnlPercent: number;
       pnlUsd: number;
       tradesCount: number;
@@ -3272,23 +3675,7 @@ export class CompetitionManager {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
 
-    const badges = this.getAllUserBadges();
-    const leaderboard = sortAndRankLeaderboard(
-      competition.entries.map((entry) => {
-        const user = this.users.get(entry.userId);
-        return {
-          userId: entry.userId,
-          name: user?.name || 'Participant',
-          avatarUrl: user?.avatarUrl || null,
-          badges: badges.get(entry.userId) ?? [],
-          pnlPercent: entry.pnlPercent,
-          pnlUsd: entry.pnlUsd,
-          tradesCount: entry.tradesCount,
-          updatedAt: entry.updatedAt,
-          breached: Boolean(entry.breachedAt),
-        };
-      }),
-    );
+    const leaderboard = this.buildLeaderboardRows(competition);
 
     const now = Date.now();
     return {
@@ -3302,7 +3689,9 @@ export class CompetitionManager {
         status: inferCompetitionStatus(competition, now),
         canJoin: canJoinCompetition(competition, now),
         canTrade: canTradeCompetition(competition, now),
-        participants: competition.entries.length,
+        participants: isTeamCompetition(competition)
+          ? new Set(competition.entries.map((entry) => entry.teamId).filter(Boolean)).size
+          : competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
       },
       leaderboard,

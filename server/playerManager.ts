@@ -25,7 +25,12 @@ import {
   Trade,
 } from './types.js';
 import * as kraken from './kraken.js';
-import { PaperTradingEngine, type ExternalQuote, type PaperOrderInput } from './exchangePaperEngine.js';
+import {
+  PaperTradingEngine,
+  type ExternalQuote,
+  type PaperOrderInput,
+  type PaperOrderResult,
+} from './exchangePaperEngine.js';
 import {
   EventArchiveStore,
   buildEventArchive,
@@ -201,6 +206,7 @@ export class PlayerManager {
   private malus: EventMalus | null = null;
   private malusClearTimer: ReturnType<typeof setTimeout> | null = null;
   private marketTickBroadcaster: ((pairs: string[]) => void) | null = null;
+  private paperRuntimeUpdateHandler: (() => void) | null = null;
   readonly ready: Promise<void>;
 
   constructor(onUpdate: (patch: StatePatch) => void) {
@@ -1138,6 +1144,11 @@ export class PlayerManager {
     this.marketTickBroadcaster = fn;
   }
 
+  /** Pulse WS/persistance pour les joueurs paper exclus du state public. */
+  setPaperRuntimeUpdateHandler(fn: () => void): void {
+    this.paperRuntimeUpdateHandler = fn;
+  }
+
   /** Notifie les terminaux paper quand le trading s'ouvre après le décompte. */
   setTradingUnlockHandler(fn: () => void): void {
     this.onTradingUnlock = fn;
@@ -1441,7 +1452,7 @@ export class PlayerManager {
     }
   }
 
-  async placePaperOrder(playerId: string, order: PaperOrderInput): Promise<void> {
+  async placePaperOrder(playerId: string, order: PaperOrderInput): Promise<PaperOrderResult> {
     if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
       throw new Error('Le paper trading n’est pas disponible');
     }
@@ -1462,9 +1473,10 @@ export class PlayerManager {
     this.checkBadges();
     this.saveRoster();
     this.broadcastState();
+    return result;
   }
 
-  async placeCompetitionPaperOrder(playerId: string, order: PaperOrderInput): Promise<void> {
+  async placeCompetitionPaperOrder(playerId: string, order: PaperOrderInput): Promise<PaperOrderResult> {
     const player = this.players.get(playerId);
     if (!player) {
       throw new Error('Trader introuvable');
@@ -1472,12 +1484,12 @@ export class PlayerManager {
 
     await this.ensureCompetitionPaperRuntime(player);
     const result = await this.paperEngine.placeOrder(player, order);
-    void result;
     await this.persistTradingMutation(player.id);
     this.broadcastState();
+    return result;
   }
 
-  async closePaperPosition(playerId: string, pair: string, partialSize?: number): Promise<void> {
+  async closePaperPosition(playerId: string, pair: string, partialSize?: number): Promise<PaperOrderResult> {
     if (!this.canTradeLiveEvent() || this.platformMode !== 'paper') {
       throw new Error('Le paper trading n’est pas disponible');
     }
@@ -1494,13 +1506,14 @@ export class PlayerManager {
     this.checkBadges();
     this.saveRoster();
     this.broadcastState();
+    return result;
   }
 
   async closeCompetitionPaperPosition(
     playerId: string,
     pair: string,
     partialSize?: number,
-  ): Promise<{ closed: boolean; alreadyClosed: boolean }> {
+  ): Promise<{ closed: boolean; alreadyClosed: boolean; trade?: Trade }> {
     const player = this.players.get(playerId);
     if (!player) {
       throw new Error('Trader introuvable');
@@ -1515,10 +1528,10 @@ export class PlayerManager {
     if (!stillOpen) {
       return { closed: false, alreadyClosed: true };
     }
-    await this.paperEngine.closePosition(player, pair, partialSize);
+    const result = await this.paperEngine.closePosition(player, pair, partialSize);
     await this.persistTradingMutation(player.id);
     this.broadcastState(true);
-    return { closed: true, alreadyClosed: false };
+    return { closed: true, alreadyClosed: false, trade: result.trade };
   }
 
   cancelPaperOrder(playerId: string, orderId: string): void {
@@ -2077,12 +2090,15 @@ export class PlayerManager {
     return report;
   }
 
-  /** Au boot : suit les joueurs compétition avec positions ouvertes (SL/TP + PnL live). */
+  /** Au boot : suit les joueurs compétition ayant positions ou limits à reprendre. */
   hydrateLiveEquityCompetitionPlayersAtBoot(): void {
     const toTrack: Player[] = [];
     for (const player of this.players.values()) {
       if (!player.isCompetitionPlayer) continue;
-      if ((player.openPositions?.length ?? 0) === 0) continue;
+      const hasOpenPosition = (player.openPositions?.length ?? 0) > 0;
+      const hasRestingOrder = process.env.PAPER_LIMIT_PARTIAL_FILLS === 'true'
+        && (player.openOrders ?? []).some((order) => order.status === 'open');
+      if (!hasOpenPosition && !hasRestingOrder) continue;
       this.liveEquityCompetitionPlayerIds.add(player.id);
       toTrack.push(player);
     }
@@ -2711,7 +2727,12 @@ export class PlayerManager {
   private fingerprintOrders(orders: Order[]): string {
     if (!orders.length) return '';
     return orders
-      .map((o) => `${o.id}|${o.pair}|${o.side}|${o.size}|${o.orderType}|${o.limitPrice ?? ''}|${o.status}|${o.stopLoss ?? ''}|${o.takeProfit ?? ''}`)
+      .map((o) => (
+        `${o.id}|${o.pair}|${o.side}|${o.size}|${o.orderType}|${o.limitPrice ?? ''}`
+        + `|${o.status}|${o.stopLoss ?? ''}|${o.takeProfit ?? ''}`
+        + `|${o.filledSize ?? 0}|${o.averageFillPrice ?? ''}`
+        + `|${o.marginReserved}|${o.feeEstimate}`
+      ))
       .join(';');
   }
 
@@ -3030,7 +3051,18 @@ export class PlayerManager {
     this.lastBroadcastAt = now;
 
     const patch = this.computeStatePatch();
-    if (!patch) return;
-    this.onUpdate(patch);
+    if (patch) {
+      this.onUpdate(patch);
+      return;
+    }
+    // Les joueurs d'arène sont volontairement exclus du state:patch public.
+    // Un fill partiel peut donc ne produire aucun diff public alors qu'il faut
+    // tout de même déclencher paper:update et le leaderboard.
+    if (
+      process.env.PAPER_LIMIT_PARTIAL_FILLS === 'true'
+      && this.liveEquityCompetitionPlayerIds.size > 0
+    ) {
+      this.paperRuntimeUpdateHandler?.();
+    }
   }
 }

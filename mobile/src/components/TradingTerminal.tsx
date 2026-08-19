@@ -15,6 +15,7 @@ import {
   type PaperOrder,
   type PaperMeta,
   type PaperState,
+  type PaperTrade,
   type Position,
 } from '../lib/api'
 import {
@@ -23,6 +24,8 @@ import {
   writePaperSessionToken,
 } from '../lib/session'
 import { TradingViewChart, type MobileOrderPreview } from './TradingViewChart'
+import { ArenaPickerList, ArenaPickerSheet } from './ArenaPicker'
+import ExecutionFillSheet from './ExecutionFillSheet'
 import { useI18n } from '../i18n'
 import './TradingTerminal.css'
 
@@ -42,6 +45,43 @@ function price(value?: number | null) {
     minimumFractionDigits: value < 10 ? 4 : 2,
     maximumFractionDigits: value < 10 ? 5 : 2,
   })
+}
+
+function formatLimitInput(value: number, category?: string) {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  if (category === 'forex') return value.toFixed(5)
+  if (value >= 1000) return value.toFixed(2)
+  if (value >= 1) return value.toFixed(4)
+  return Number(value.toPrecision(6)).toString()
+}
+
+function formatQtyInput(value: number, contract: number) {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  return Number(value.toFixed(contract > 1 ? 2 : 5)).toString()
+}
+
+function mirrorAround(value: string, entry: number, category?: string) {
+  const current = Number(value)
+  if (!(current > 0) || !(entry > 0)) return value
+  const next = entry * 2 - current
+  return next > 0 ? formatLimitInput(next, category) : ''
+}
+
+function sideFromLimit(limit: number, mark: number, fallback: 'long' | 'short'): 'long' | 'short' {
+  if (!(limit > 0) || !(mark > 0) || limit === mark) return fallback
+  return limit < mark ? 'long' : 'short'
+}
+
+function projectedRiskUsd(side: 'long' | 'short', entry: number, exit: number, engineSize: number) {
+  if (!(entry > 0) || !(exit > 0) || !(engineSize > 0)) return 0
+  return (side === 'long' ? exit - entry : entry - exit) * engineSize
+}
+
+function priceFromProjectedUsd(side: 'long' | 'short', kind: 'sl' | 'tp', entry: number, usd: number, engineSize: number) {
+  if (!(entry > 0) || !(usd > 0) || !(engineSize > 0)) return 0
+  const delta = usd / engineSize
+  if (side === 'long') return kind === 'tp' ? entry + delta : entry - delta
+  return kind === 'tp' ? entry - delta : entry + delta
 }
 
 function displaySize(pair: string, engineSize: number) {
@@ -277,9 +317,18 @@ export function TradingTerminal({
   const [side, setSide] = useState<'long' | 'short'>('long')
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market')
   const [sizePercent, setSizePercent] = useState(10)
+  const [sizeMode, setSizeMode] = useState<'percent' | 'qty' | 'usd'>('percent')
+  const [qtyDraft, setQtyDraft] = useState('')
+  const [usdDraft, setUsdDraft] = useState('')
+  const [qtyFocused, setQtyFocused] = useState(false)
+  const [usdFocused, setUsdFocused] = useState(false)
   const [limitPrice, setLimitPrice] = useState('')
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
+  const [slUsdDraft, setSlUsdDraft] = useState('')
+  const [tpUsdDraft, setTpUsdDraft] = useState('')
+  const [slUsdFocused, setSlUsdFocused] = useState(false)
+  const [tpUsdFocused, setTpUsdFocused] = useState(false)
   const leverage = 10
   const [panel, setPanel] = useState<'positions' | 'orders' | 'history'>('positions')
   const [riskEditor, setRiskEditor] = useState<{
@@ -298,6 +347,8 @@ export function TradingTerminal({
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [fillDetailsTrade, setFillDetailsTrade] = useState<PaperTrade | null>(null)
   const pendingClosedPositions = useRef(new Map<string, number>())
   const pendingCancelledOrders = useRef(new Map<string, number>())
 
@@ -318,6 +369,14 @@ export function TradingTerminal({
         openOrders: next.player.openOrders.filter((item) => !pendingCancelledOrders.current.has(item.id)),
       },
     }
+  }, [])
+
+  const showFillDetails = useCallback((trade: PaperTrade) => {
+    setFillDetailsTrade(trade)
+  }, [])
+
+  const closeFillDetails = useCallback(() => {
+    setFillDetailsTrade(null)
   }, [])
 
   const refresh = useCallback(async (token: string) => {
@@ -416,17 +475,34 @@ export function TradingTerminal({
   }, [paperToken, reconcilePending, refresh])
 
   const ticker = state?.market[selectedPair] || meta?.market[selectedPair]
+  const selectedCategory = meta?.marketMetadata?.[selectedPair]?.category
   const contract = CONTRACT_SIZE[selectedPair] || 1
-  const referencePrice = orderType === 'limit' ? Number(limitPrice) : ticker?.markPrice || 0
-  const selectedMargin = (state?.player.availableMargin || 0) * (sizePercent / 100)
-  const engineSize = referencePrice > 0 ? (selectedMargin * leverage) / referencePrice : 0
-  const inputQty = engineSize / contract
+  const limitEntry = Number(limitPrice)
+  const markPrice = ticker?.markPrice || 0
+  const ticketSide = orderType === 'limit' ? sideFromLimit(limitEntry, markPrice, side) : side
+  const buyLocked = orderType === 'limit' && limitEntry > 0 && markPrice > 0 && limitEntry > markPrice
+  const sellLocked = orderType === 'limit' && limitEntry > 0 && markPrice > 0 && limitEntry < markPrice
+  const referencePrice = orderType === 'limit'
+    ? (limitEntry > 0 ? limitEntry : markPrice)
+    : markPrice
+  const availableMargin = state?.player.availableMargin || 0
+  const percentEngine = referencePrice > 0 ? (availableMargin * (sizePercent / 100) * leverage) / referencePrice : 0
+  const qtyEngine = Number(qtyDraft) > 0 ? Number(qtyDraft) * contract : 0
+  const usdEngine = Number(usdDraft) > 0 && referencePrice > 0 ? Number(usdDraft) / referencePrice : 0
+  const engineSize = sizeMode === 'qty' ? qtyEngine : sizeMode === 'usd' ? usdEngine : percentEngine
+  const inputQty = contract > 0 ? engineSize / contract : 0
   const notional = engineSize * referencePrice
   const marginEstimate = leverage > 0 ? notional / leverage : 0
-  const orderPreview: MobileOrderPreview | null = selectedPair && engineSize > 0 && referencePrice > 0
+  const selectedMargin = sizeMode === 'percent' ? availableMargin * (sizePercent / 100) : marginEstimate
+  const sliderPercent = availableMargin > 0
+    ? Math.max(1, Math.min(100, sizeMode === 'percent' ? sizePercent : Math.round((marginEstimate / availableMargin) * 100) || 1))
+    : sizePercent
+  const showLimitPreview = orderType === 'limit' && selectedPair && referencePrice > 0
+  const showMarketPreview = orderType === 'market' && selectedPair && engineSize > 0 && referencePrice > 0
+  const orderPreview: MobileOrderPreview | null = showLimitPreview || showMarketPreview
     ? {
         pair: selectedPair,
-        side,
+        side: ticketSide,
         orderType,
         entryPrice: referencePrice,
         size: engineSize,
@@ -434,6 +510,72 @@ export function TradingTerminal({
         takeProfit: takeProfit && Number(takeProfit) > 0 ? Number(takeProfit) : null,
       }
     : null
+
+  useEffect(() => {
+    if (ticketSide === side) return
+    setSide(ticketSide)
+    if (!(referencePrice > 0)) return
+    setStopLoss((current) => mirrorAround(current, referencePrice, selectedCategory))
+    setTakeProfit((current) => mirrorAround(current, referencePrice, selectedCategory))
+  }, [referencePrice, selectedCategory, side, ticketSide])
+
+  useEffect(() => {
+    if (orderType !== 'limit' || !ticker?.markPrice) return
+    setLimitPrice(formatLimitInput(ticker.markPrice, selectedCategory))
+    // Seed only when switching to limit or changing pair — not on every tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderType, selectedPair])
+
+  useEffect(() => {
+    if (orderType !== 'limit' || limitPrice || !ticker?.markPrice) return
+    setLimitPrice(formatLimitInput(ticker.markPrice, selectedCategory))
+  }, [orderType, limitPrice, ticker?.markPrice, selectedCategory])
+
+  useEffect(() => {
+    if (qtyFocused || sizeMode === 'qty') return
+    const next = formatQtyInput(inputQty, contract)
+    if (next !== qtyDraft) setQtyDraft(next)
+  }, [inputQty, contract, qtyDraft, qtyFocused, sizeMode])
+
+  useEffect(() => {
+    if (usdFocused || sizeMode === 'usd') return
+    const next = notional > 0 ? notional.toFixed(2) : ''
+    if (next !== usdDraft) setUsdDraft(next)
+  }, [notional, usdDraft, usdFocused, sizeMode])
+
+  useEffect(() => {
+    if (!(engineSize > 0) || !(referencePrice > 0)) {
+      if (!slUsdFocused && slUsdDraft) setSlUsdDraft('')
+      if (!tpUsdFocused && tpUsdDraft) setTpUsdDraft('')
+      return
+    }
+    if (slUsdFocused) {
+      const target = Number(slUsdDraft)
+      if (!Number.isFinite(target) || target <= 0) return
+      const next = formatLimitInput(priceFromProjectedUsd(ticketSide, 'sl', referencePrice, target, engineSize), selectedCategory)
+      if (next && next !== stopLoss) setStopLoss(next)
+    } else {
+      const sl = Number(stopLoss)
+      const raw = projectedRiskUsd(ticketSide, referencePrice, sl, engineSize)
+      const next = sl > 0 && raw < 0 ? Math.abs(raw).toFixed(2) : ''
+      if (next !== slUsdDraft) setSlUsdDraft(next)
+    }
+  }, [engineSize, referencePrice, selectedCategory, slUsdDraft, slUsdFocused, stopLoss, ticketSide])
+
+  useEffect(() => {
+    if (!(engineSize > 0) || !(referencePrice > 0)) return
+    if (tpUsdFocused) {
+      const target = Number(tpUsdDraft)
+      if (!Number.isFinite(target) || target <= 0) return
+      const next = formatLimitInput(priceFromProjectedUsd(ticketSide, 'tp', referencePrice, target, engineSize), selectedCategory)
+      if (next && next !== takeProfit) setTakeProfit(next)
+    } else {
+      const tp = Number(takeProfit)
+      const raw = projectedRiskUsd(ticketSide, referencePrice, tp, engineSize)
+      const next = tp > 0 && raw > 0 ? raw.toFixed(2) : ''
+      if (next !== tpUsdDraft) setTpUsdDraft(next)
+    }
+  }, [engineSize, referencePrice, selectedCategory, takeProfit, ticketSide, tpUsdDraft, tpUsdFocused])
   const activeCompetition = competitionSummary(state?.competition ?? null)
   const competitionRank = state?.competition && 'competition' in state.competition
     ? state.competition.rank
@@ -445,14 +587,35 @@ export function TradingTerminal({
   const selectedCompetition = competitions.find((item) => item.id === (activeCompetition?.id || competitionId))
   const { percent: dailyDrawdownPercent, limitEquity: dailyLimitEquity } = drawdownRule(state?.competition ?? null, selectedCompetition)
 
-  async function openCompetition() {
-    if (!competitionId) return
+  function applyQty(value: string) {
+    setSizeMode('qty')
+    setQtyDraft(value)
+    const qty = Number(value)
+    if (!Number.isFinite(qty) || qty <= 0 || referencePrice <= 0 || availableMargin <= 0) return
+    const margin = (qty * contract * referencePrice) / leverage
+    setSizePercent(Math.max(1, Math.min(100, Math.round((margin / availableMargin) * 100))))
+  }
+
+  function applyUsdAmount(value: string) {
+    setSizeMode('usd')
+    setUsdDraft(value)
+    const usd = Number(value)
+    if (!Number.isFinite(usd) || usd <= 0 || availableMargin <= 0) return
+    const margin = usd / leverage
+    setSizePercent(Math.max(1, Math.min(100, Math.round((margin / availableMargin) * 100))))
+  }
+
+  async function openCompetition(nextId = competitionId) {
+    if (!nextId) return
+    setCompetitionId(nextId)
     setBusy(true)
     setError('')
     try {
-      const session = await createPaperSession(accountToken, competitionId)
+      const session = await createPaperSession(accountToken, nextId)
+      setFillDetailsTrade(null)
       await writePaperSessionToken(session.token)
       setPaperToken(session.token)
+      setPickerOpen(false)
       await refresh(session.token)
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Terminal indisponible')
@@ -461,11 +624,12 @@ export function TradingTerminal({
     }
   }
 
-  async function submitOrder() {
+  async function submitOrder(nextSide: 'long' | 'short' = side) {
     if (!paperToken || !selectedPair || engineSize <= 0) return
+    setSide(nextSide)
     const nextStopLoss = stopLoss ? Number(stopLoss) : null
     const nextTakeProfit = takeProfit ? Number(takeProfit) : null
-    const validationError = riskValidationError(side, referencePrice, nextStopLoss, nextTakeProfit)
+    const validationError = riskValidationError(nextSide, referencePrice, nextStopLoss, nextTakeProfit)
     if (validationError) {
       setError(validationError)
       return
@@ -475,7 +639,7 @@ export function TradingTerminal({
     try {
       await placePaperOrder(paperToken, {
         pair: selectedPair,
-        side,
+        side: nextSide,
         size: engineSize,
         orderType,
         limitPrice: orderType === 'limit' ? Number(limitPrice) : null,
@@ -668,53 +832,63 @@ export function TradingTerminal({
     }
   }
 
-  async function leaveTerminal() {
-    await clearPaperSessionToken()
-    setPaperToken(null)
-    setState(null)
-    setError('')
-  }
-
   if (loading) return <div className="terminal-loader"><i /><span>Synchronisation du terminal</span></div>
 
   if (!paperToken || !state) {
     return (
       <div className="terminal-gate">
         <span>SESSION DE TRADING</span>
-        <h2>Choisis ton arène</h2>
-        <p>Le terminal ouvrira la même session joueur et les mêmes positions que sur ordinateur.</p>
+        <h2>{t('terminal.pickArena')}</h2>
+        <p>{t('terminal.pickArenaLead')}</p>
         {competitions.length ? (
           <>
-            <label>Compétition
-              <select value={competitionId} onChange={(event) => setCompetitionId(event.target.value)}>
-                <option value="">Sélectionner</option>
-                {competitions.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.status}</option>)}
-              </select>
-            </label>
+            <ArenaPickerList
+              competitions={competitions}
+              currentId={competitionId}
+              busyId={busy ? competitionId : ''}
+              onSelect={(id) => void openCompetition(id)}
+            />
             {error && <div className="terminal-error">{error}</div>}
-            <button type="button" disabled={!competitionId || busy} onClick={() => void openCompetition()}>
-              {busy ? 'Connexion…' : 'Ouvrir le terminal'}
-            </button>
           </>
-        ) : <div className="terminal-empty">Inscris-toi d’abord à une arène.</div>}
+        ) : <div className="terminal-empty">{t('terminal.arenaEmpty')}</div>}
       </div>
     )
   }
 
+  const historyTrades = (state.player.trades || []).filter((trade) => trade.action === 'close')
+
   return (
     <div className="mobile-terminal">
       <header className="terminal-head">
-        <div><span>{activeCompetition?.title || 'BTF ARENA'}</span><strong>{state.player.name}</strong></div>
-        <div className="terminal-head__metric"><small>ÉQUITÉ</small><strong>{money(state.player.currentBalance)}</strong></div>
-        <div className={`terminal-head__metric ${state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}`}><small>PNL</small><strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)} $</strong><span>{state.player.pnlPercent.toFixed(2)}%</span></div>
-        <div className="terminal-head__right">
-          <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
-            onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
-            <small>RANG</small><strong>#{displayedRank ?? '—'}</strong><span>Classement</span>
-          </button>
-          <button type="button" onClick={() => void leaveTerminal()} aria-label="Changer d’arène">↺</button>
+        <button className="terminal-head__arena" type="button" onClick={() => setPickerOpen(true)}>
+          <span>{activeCompetition?.title || 'BTF ARENA'}</span>
+          <strong>{state.player.name}</strong>
+        </button>
+        <div className="terminal-head__stats">
+          <div className="terminal-head__metric">
+            <small>Équité</small>
+            <strong>{money(state.player.currentBalance)}</strong>
+          </div>
+          <div className={`terminal-head__metric ${state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}`}>
+            <small>PnL</small>
+            <strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)}</strong>
+          </div>
         </div>
+        <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
+          onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
+          <small>Rang</small>
+          <strong>#{displayedRank ?? '—'}</strong>
+        </button>
       </header>
+      <ArenaPickerSheet
+        open={pickerOpen}
+        competitions={competitions}
+        currentId={activeCompetition?.id || competitionId}
+        busyId={busy ? competitionId : ''}
+        onSelect={(id) => void openCompetition(id)}
+        onClose={() => setPickerOpen(false)}
+      />
+      <ExecutionFillSheet trade={fillDetailsTrade} onClose={closeFillDetails} />
 
       <section className="quote-card tradingview-card">
         <TradingViewChart
@@ -726,8 +900,8 @@ export function TradingTerminal({
           orders={state.player.openOrders}
           orderPreview={orderPreview}
           onPairChange={setSelectedPair}
-          onUpdatePositionRisk={(positionId, nextStopLoss, nextTakeProfit) => {
-            void updatePositionRisk(positionId, nextStopLoss, nextTakeProfit)
+          onUpdatePositionRisk={(positionId, nextStopLoss, nextTakeProfit, sizes) => {
+            void updatePositionRisk(positionId, nextStopLoss, nextTakeProfit, sizes)
           }}
           onUpdateOrderRisk={(orderId, nextStopLoss, nextTakeProfit) => {
             void updateOrderRisk(orderId, nextStopLoss, nextTakeProfit)
@@ -741,7 +915,7 @@ export function TradingTerminal({
           onClosePosition={(positionId) => {
             void closePosition(positionId)
           }}
-          onPreviewEntryChange={(nextPrice) => setLimitPrice(String(nextPrice))}
+          onPreviewEntryChange={(nextPrice) => setLimitPrice(formatLimitInput(nextPrice, selectedCategory))}
           onPreviewRiskChange={(patch) => {
             if ('stopLoss' in patch) setStopLoss(patch.stopLoss == null ? '' : String(patch.stopLoss))
             if ('takeProfit' in patch) setTakeProfit(patch.takeProfit == null ? '' : String(patch.takeProfit))
@@ -760,28 +934,86 @@ export function TradingTerminal({
       </section>
 
       <section className="order-ticket">
-        <div className="ticket-toggle">
-          <button type="button" className={side === 'long' ? 'is-buy' : ''} onClick={() => setSide('long')}>ACHETER</button>
-          <button type="button" className={side === 'short' ? 'is-sell' : ''} onClick={() => setSide('short')}>VENDRE</button>
-        </div>
         <div className="order-type">
           <button type="button" className={orderType === 'market' ? 'is-active' : ''} onClick={() => setOrderType('market')}>Marché</button>
           <button type="button" className={orderType === 'limit' ? 'is-active' : ''} onClick={() => setOrderType('limit')}>Limite</button>
         </div>
-        <div className="ticket-grid">
-          {orderType === 'limit' && <label>Prix limite<input value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} inputMode="decimal" placeholder={price(ticker?.markPrice)} /></label>}
-          <label>Stop loss<input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} inputMode="decimal" placeholder="Optionnel" /></label>
-          <label>Take profit<input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} inputMode="decimal" placeholder="Optionnel" /></label>
-        </div>
+        {orderType === 'limit' && (
+          <div className="ticket-grid">
+            <label className="is-wide">Prix limite
+              <input value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} inputMode="decimal" placeholder={price(ticker?.markPrice)} />
+            </label>
+          </div>
+        )}
         <div className="position-size-slider">
-          <div><span>Taille de position</span><strong>{sizePercent}%</strong></div>
-          <input type="range" min="1" max="100" step="1" value={sizePercent}
-            onChange={(event) => setSizePercent(Number(event.target.value))} />
+          <div><span>Taille de position</span><strong>{sliderPercent}%</strong></div>
+          <input type="range" min="1" max="100" step="1" value={sliderPercent}
+            onChange={(event) => {
+              setSizeMode('percent')
+              setSizePercent(Number(event.target.value))
+            }} />
           <div>
-            <span>{inputQty.toLocaleString('fr-FR', { maximumFractionDigits: contract > 1 ? 2 : 5 })} {contract > 1 ? 'lots' : selectedPair.split('/')[0]}</span>
             <span>Marge {money(selectedMargin)} $</span>
             <span>Levier ×10</span>
           </div>
+        </div>
+        <div className="ticket-grid">
+          <label>Taille
+            <span>
+              <input value={qtyDraft} inputMode="decimal" placeholder="0"
+                onFocus={() => setQtyFocused(true)}
+                onBlur={() => setQtyFocused(false)}
+                onChange={(event) => applyQty(event.target.value)} />
+              <em>{contract > 1 ? 'lots' : selectedPair.split('/')[0] || 'qty'}</em>
+            </span>
+          </label>
+          <label>Montant
+            <span>
+              <input value={usdDraft} inputMode="decimal" placeholder="0"
+                onFocus={() => setUsdFocused(true)}
+                onBlur={() => setUsdFocused(false)}
+                onChange={(event) => applyUsdAmount(event.target.value)} />
+              <em>USD</em>
+            </span>
+          </label>
+        </div>
+        <div className="ticket-actions">
+          <button className={`place-order buy${buyLocked ? ' is-locked' : ''}`} type="button"
+            disabled={busy || buyLocked || !canTradeNow || engineSize <= 0 || (orderType === 'limit' && !Number(limitPrice))}
+            onClick={() => void submitOrder('long')}>
+            {busy && ticketSide === 'long' ? '…' : 'ACHETER'}
+          </button>
+          <button className={`place-order sell${sellLocked ? ' is-locked' : ''}`} type="button"
+            disabled={busy || sellLocked || !canTradeNow || engineSize <= 0 || (orderType === 'limit' && !Number(limitPrice))}
+            onClick={() => void submitOrder('short')}>
+            {busy && ticketSide === 'short' ? '…' : 'VENDRE'}
+          </button>
+        </div>
+        <div className="ticket-grid">
+          <label>Stop loss
+            <input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} inputMode="decimal" placeholder="Prix" />
+          </label>
+          <label className="is-loss">Perte $
+            <span>
+              <input value={slUsdDraft} inputMode="decimal" placeholder="0"
+                onFocus={() => setSlUsdFocused(true)}
+                onBlur={() => setSlUsdFocused(false)}
+                onChange={(event) => setSlUsdDraft(event.target.value)} />
+              <em>USD</em>
+            </span>
+          </label>
+          <label>Take profit
+            <input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} inputMode="decimal" placeholder="Prix" />
+          </label>
+          <label className="is-profit">Gain $
+            <span>
+              <input value={tpUsdDraft} inputMode="decimal" placeholder="0"
+                onFocus={() => setTpUsdFocused(true)}
+                onBlur={() => setTpUsdFocused(false)}
+                onChange={(event) => setTpUsdDraft(event.target.value)} />
+              <em>USD</em>
+            </span>
+          </label>
         </div>
         <div className="order-summary">
           <span>Notionnel <strong>{money(notional)} $</strong></span>
@@ -808,18 +1040,13 @@ export function TradingTerminal({
                 : 'Le trading n’est pas ouvert pour cette arène.'}
           </div>
         )}
-        <button className={`place-order ${side === 'long' ? 'buy' : 'sell'}`} type="button"
-          disabled={busy || !canTradeNow || engineSize <= 0 || (orderType === 'limit' && !Number(limitPrice))}
-          onClick={() => void submitOrder()}>
-          {busy ? 'TRAITEMENT…' : `${side === 'long' ? 'ACHETER' : 'VENDRE'} ${selectedPair}`}
-        </button>
       </section>
 
       <section className="portfolio-panel">
         <div className="portfolio-tabs">
           <button type="button" className={panel === 'positions' ? 'is-active' : ''} onClick={() => setPanel('positions')}>Positions <i>{state.player.openPositions.length}</i></button>
           <button type="button" className={panel === 'orders' ? 'is-active' : ''} onClick={() => setPanel('orders')}>Ordres <i>{state.player.openOrders.length}</i></button>
-          <button type="button" className={panel === 'history' ? 'is-active' : ''} onClick={() => setPanel('history')}>Historique <i>{state.player.trades?.length || 0}</i></button>
+          <button type="button" className={panel === 'history' ? 'is-active' : ''} onClick={() => setPanel('history')}>Historique <i>{historyTrades.length}</i></button>
         </div>
         <AnimatePresence mode="wait">
           <motion.div key={panel} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -883,20 +1110,37 @@ export function TradingTerminal({
                 </article>
               )) : <div className="portfolio-empty">Aucune position ouverte</div>
             ) : panel === 'orders' ? (
-              state.player.openOrders.length ? state.player.openOrders.map((order) => (
+              state.player.openOrders.length ? state.player.openOrders.map((order) => {
+                const filledSize = Math.max(0, Math.min(order.size, order.filledSize ?? 0))
+                const remainingSize = Math.max(0, order.size - filledSize)
+                const isPartial = filledSize > 0 && filledSize < order.size
+                const latestFill = (state.player.trades || [])
+                  .filter((trade) => trade.orderId === order.id && trade.fillDetails?.length)
+                  .sort((a, b) => b.time - a.time)[0]
+                return (
                 <article className="position-card" key={order.id}>
                   <div className="position-row">
                     <button className="position-main" type="button" onClick={() => setSelectedPair(order.pair)}>
-                      <span className={order.side === 'long' ? 'is-profit' : 'is-loss'}>{order.side === 'long' ? 'ACHAT' : 'VENTE'} LIMITE</span>
+                      <span className={order.side === 'long' ? 'is-profit' : 'is-loss'}>
+                        {order.side === 'long' ? 'ACHAT' : 'VENTE'} LIMITE
+                        {isPartial && <i className="partial-fill-badge">Partiel</i>}
+                      </span>
                       <strong>{order.pair}</strong>
-                      <small>{displaySize(order.pair, order.size)} · ×{order.leverage}</small>
+                      <small>Exécuté {displaySize(order.pair, filledSize)} / {displaySize(order.pair, order.size)} · ×{order.leverage}</small>
+                      <small>Restant {displaySize(order.pair, remainingSize)}</small>
                       <small>SL {price(order.stopLoss)} · TP {price(order.takeProfit)}</small>
                       <small>Marge {money(order.marginReserved)} $ · Frais estimés {money(order.feeEstimate || 0)} $</small>
                     </button>
-                    <div><strong>{price(order.limitPrice)}</strong><button type="button" disabled={busy} onClick={() => {
-                      if (orderEditor?.orderId === order.id) setOrderEditor(null)
-                      else editOrder(order)
-                    }}>{orderEditor?.orderId === order.id ? 'Masquer' : 'Modifier'}</button></div>
+                    <div>
+                      <strong>{price(order.limitPrice)}</strong>
+                      {latestFill && (
+                        <button type="button" onClick={() => showFillDetails(latestFill)}>Détails du fill</button>
+                      )}
+                      <button type="button" disabled={busy} onClick={() => {
+                        if (orderEditor?.orderId === order.id) setOrderEditor(null)
+                        else editOrder(order)
+                      }}>{orderEditor?.orderId === order.id ? 'Masquer' : 'Modifier'}</button>
+                    </div>
                   </div>
                   {orderEditor?.orderId === order.id && (
                     <div className="risk-editor order-editor">
@@ -911,20 +1155,30 @@ export function TradingTerminal({
                     </div>
                   )}
                 </article>
-              )) : <div className="portfolio-empty">Aucun ordre en attente</div>
+                )
+              }) : <div className="portfolio-empty">Aucun ordre en attente</div>
             ) : (
-              state.player.trades?.length ? state.player.trades.map((trade) => (
+              historyTrades.length ? historyTrades.map((trade) => (
                 <article className="history-row" key={trade.id}>
                   <div>
                     <span className={trade.side === 'long' ? 'is-profit' : 'is-loss'}>
-                      {trade.action === 'open' ? 'OUVERTURE' : trade.action === 'close' ? 'CLÔTURE' : 'MODIFICATION'} · {trade.side === 'long' ? 'LONG' : 'SHORT'}
+                      TRADE · {trade.side === 'long' ? 'LONG' : 'SHORT'}
                     </span>
                     <strong>{trade.pair}</strong>
                     <small>{new Date(trade.time).toLocaleString('fr-FR')} · {displaySize(trade.pair, trade.size)}</small>
                   </div>
                   <div>
                     <strong className={trade.pnl >= 0 ? 'is-profit' : 'is-loss'}>{trade.pnl >= 0 ? '+' : ''}{money(trade.pnl)} $</strong>
-                    <small>{price(trade.price)} · frais {money(trade.fee)} $</small>
+                    <small>{price(trade.entryPrice)} → {price(trade.price)} · frais {money(trade.fee)} $</small>
+                    {trade.requestedPrice != null && (
+                      <button
+                        className="history-fill-button"
+                        type="button"
+                        onClick={() => showFillDetails(trade)}
+                      >
+                        Détail · {Number(trade.slippageBps || 0).toFixed(2)} bps
+                      </button>
+                    )}
                   </div>
                 </article>
               )) : <div className="portfolio-empty">Aucun trade dans l’historique</div>

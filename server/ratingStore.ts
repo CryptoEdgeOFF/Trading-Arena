@@ -3,12 +3,10 @@ import { Pool } from 'pg';
 
 /**
  * BTF Rating : Arena Points visibles gagnés/perdus selon le résultat final de
- * chaque arène terminée. Même pattern que le ledger XP (xpStore) : événements
- * idempotents (une seule écriture par arène et par user), Postgres si
+ * chaque arène terminée. Les événements sont idempotents (une seule écriture
+ * par arène et par user), avec Postgres si
  * DATABASE_URL est présent, fallback mémoire sinon.
- *
- * Le rating est distinct de l'XP : l'XP mesure l'activité/l'ancienneté, le
- * rating mesure le niveau compétitif (divisions Bronze → Legend).
+ * Le rating mesure le niveau compétitif (divisions Bronze → Legend).
  */
 
 export interface RatingEvent {
@@ -31,14 +29,14 @@ export interface ArenaRatingResult {
 export interface RatingDivision {
   id: string;
   label: string;
-  /** 3 → 1 dans la division (1 = palier haut). 0 = pas de palier (Legend). */
+  /** Conservé pour compatibilité API. Toujours 0 : les sous-paliers sont supprimés. */
   tier: number;
 }
 
 export interface PlayerRating {
   points: number;
   division: RatingDivision;
-  /** Prochain palier/division et points manquants. Null au sommet (Legend). */
+  /** Prochaine division et points manquants. Null au sommet (Legend). */
   next: { label: string; pointsNeeded: number } | null;
   worldRank: number | null;
   totalPlayers: number;
@@ -57,12 +55,9 @@ const DIVISIONS: Array<{ id: string; label: string; floor: number; ceiling: numb
   { id: 'gold', label: 'Gold', floor: 250, ceiling: 500 },
   { id: 'platinum', label: 'Platinum', floor: 500, ceiling: 900 },
   { id: 'diamond', label: 'Diamond', floor: 900, ceiling: 1_500 },
-  { id: 'master', label: 'Master', floor: 1_500, ceiling: 2_400 },
-  { id: 'grandmaster', label: 'Grandmaster', floor: 2_400, ceiling: 3_600 },
+  { id: 'master', label: 'Master', floor: 1_500, ceiling: 3_600 },
   { id: 'legend', label: 'Legend', floor: 3_600, ceiling: Number.POSITIVE_INFINITY },
 ];
-
-const TIER_LABELS: Record<number, string> = { 3: 'III', 2: 'II', 1: 'I' };
 
 let pool: Pool | null = null;
 let ready: Promise<void> | null = null;
@@ -131,18 +126,13 @@ export function divisionForPoints(totalPoints: number): { division: RatingDivisi
   if (!Number.isFinite(division.ceiling)) {
     return { division: { id: division.id, label: division.label, tier: 0 }, next: null };
   }
-  const span = division.ceiling - division.floor;
-  const tierSize = span / 3;
-  const into = points - division.floor;
-  const tier = into < tierSize ? 3 : into < tierSize * 2 ? 2 : 1;
-  const nextBoundary = tier === 1 ? division.ceiling : division.floor + tierSize * (tier === 3 ? 1 : 2);
   const nextDivision = DIVISIONS[DIVISIONS.indexOf(division) + 1];
-  const nextLabel = tier === 1
-    ? (nextDivision && Number.isFinite(nextDivision.ceiling) ? `${nextDivision.label} III` : nextDivision?.label || division.label)
-    : `${division.label} ${TIER_LABELS[tier - 1]}`;
   return {
-    division: { id: division.id, label: division.label, tier },
-    next: { label: nextLabel, pointsNeeded: Math.max(1, Math.ceil(nextBoundary - points)) },
+    division: { id: division.id, label: division.label, tier: 0 },
+    next: {
+      label: nextDivision?.label || division.label,
+      pointsNeeded: Math.max(1, Math.ceil(division.ceiling - points)),
+    },
   };
 }
 
@@ -162,6 +152,15 @@ async function awardRating(userId: string, eventKey: string, points: number, lab
     values ($1,$2,$3,$4,$5,$6)
     on conflict (user_id, event_key) do nothing
   `, [event.id, userId, eventKey, points, label, event.createdAt]);
+}
+
+export async function deleteUserRating(userId: string): Promise<void> {
+  if (!userId) return;
+  memory.delete(userId);
+  const db = getPool();
+  if (!db) return;
+  await ensureTable();
+  await db.query('delete from comp_rating_ledger where user_id = $1', [userId]);
 }
 
 export async function syncUserRating(userId: string, results: ArenaRatingResult[]): Promise<PlayerRating> {

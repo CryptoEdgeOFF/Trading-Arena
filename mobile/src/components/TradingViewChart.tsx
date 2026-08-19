@@ -34,6 +34,7 @@ type Subscription = {
 
 type TvWidget = {
   onChartReady: (callback: () => void) => void
+  applyOverrides?: (overrides: Record<string, unknown>) => void
   activeChart: () => {
     setSymbol: (symbol: string, callback?: () => void) => void
     setResolution: (resolution: string, callback?: () => void) => void
@@ -54,6 +55,8 @@ type TvWidget = {
         getVisiblePriceRange: () => { from: number; to: number } | null
       } | null
     }>
+    onSymbolChanged?: () => { subscribe: (ctx: unknown, callback: () => void) => void }
+    symbol?: () => string
   }
   subscribe?: (event: string, callback: (id: string | number, eventType: string) => void) => void
   remove: () => void
@@ -117,6 +120,8 @@ type MobileOverlayLine = {
   positionId?: string
   orderId?: string
   preview?: boolean
+  entryPrice?: number
+  riskSize?: number
 }
 
 const OVERLAY_COLORS: Record<OverlayKind, string> = {
@@ -124,6 +129,16 @@ const OVERLAY_COLORS: Record<OverlayKind, string> = {
   order: '#409cff',
   sl: '#ff5066',
   tp: '#38df8a',
+}
+
+function potentialRiskPnl(line: MobileOverlayLine, targetPrice: number, pair: string): number | null {
+  if ((line.kind !== 'sl' && line.kind !== 'tp') || !line.entryPrice || !line.riskSize) return null
+  const rawPnl = (line.side === 'long'
+    ? targetPrice - line.entryPrice
+    : line.entryPrice - targetPrice) * line.riskSize
+  return pair === 'USD/JPY' || pair === 'USD/CHF'
+    ? rawPnl / Math.max(targetPrice, 1e-9)
+    : rawPnl
 }
 
 function rectInTopViewport(element: Element): DOMRect {
@@ -171,6 +186,13 @@ const TIMEFRAME_OPTIONS = [
 ]
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js'
 let scriptPromise: Promise<void> | null = null
+const INITIAL_CANDLE_BARS = 700
+const SCROLL_CANDLE_BARS = 2_000
+const CANDLE_CACHE_TTL_MS = 15 * 60_000
+const CANDLE_REFRESH_AFTER_MS = 20_000
+const CANDLE_STORAGE_PREFIX = 'btf.mobile.candles.'
+const candleMemoryCache = new Map<string, { bars: TvBar[]; savedAt: number }>()
+const candleRequests = new Map<string, Promise<TvBar[]>>()
 
 async function fetchJsonWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController()
@@ -181,6 +203,66 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number) {
     return await response.json()
   } finally {
     window.clearTimeout(timeout)
+  }
+}
+
+function candleCacheKey(pair: string, interval: number) {
+  return `${pair}@${interval}`
+}
+
+function readCachedCandles(pair: string, interval: number) {
+  const key = candleCacheKey(pair, interval)
+  const memory = candleMemoryCache.get(key)
+  if (memory && Date.now() - memory.savedAt < CANDLE_CACHE_TTL_MS) return memory
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(`${CANDLE_STORAGE_PREFIX}${key}`) || 'null') as {
+      bars?: TvBar[]
+      savedAt?: number
+    } | null
+    if (!stored?.savedAt || !Array.isArray(stored.bars) || Date.now() - stored.savedAt >= CANDLE_CACHE_TTL_MS) return null
+    const cached = { bars: stored.bars, savedAt: stored.savedAt }
+    candleMemoryCache.set(key, cached)
+    return cached
+  } catch {
+    return null
+  }
+}
+
+function cacheCandles(pair: string, interval: number, bars: TvBar[]) {
+  if (!bars.length) return
+  const key = candleCacheKey(pair, interval)
+  const cached = { bars: bars.slice(-INITIAL_CANDLE_BARS), savedAt: Date.now() }
+  candleMemoryCache.set(key, cached)
+  try {
+    window.localStorage.setItem(`${CANDLE_STORAGE_PREFIX}${key}`, JSON.stringify(cached))
+  } catch {
+    // Le cache mémoire reste disponible si le stockage WebView est plein.
+  }
+}
+
+async function fetchInitialCandles(pair: string, interval: number) {
+  const key = candleCacheKey(pair, interval)
+  const pending = candleRequests.get(key)
+  if (pending) return pending
+  const request = (async () => {
+    const params = new URLSearchParams({
+      pair,
+      interval: String(interval),
+      countBack: String(INITIAL_CANDLE_BARS),
+    })
+    const payload = await fetchJsonWithTimeout(`${API_BASE_URL}/api/paper/candles?${params.toString()}`, 12_000)
+    const bars = (Array.isArray(payload.candles) ? payload.candles : [])
+      .filter((item: TvBar) => Number.isFinite(item.time) && Number.isFinite(item.close))
+      .map((item: TvBar) => ({ ...item, time: item.time * 1000 }))
+      .sort((a: TvBar, b: TvBar) => a.time - b.time)
+    cacheCandles(pair, interval, bars)
+    return bars
+  })()
+  candleRequests.set(key, request)
+  try {
+    return await request
+  } finally {
+    candleRequests.delete(key)
   }
 }
 
@@ -322,17 +404,44 @@ class MobileBtfDatafeed {
   ) {
     const pair = symbolInfo.ticker || symbolInfo.name
     const interval = RESOLUTION_MINUTES[resolution] || 1
+    if (period.firstDataRequest) {
+      const cached = readCachedCandles(pair, interval)
+      if (cached?.bars.length) {
+        const bars = cached.bars
+        this.latestBars.set(`${pair}@${interval}`, bars[bars.length - 1])
+        this.onBarsReady(pair)
+        onResult(bars, { noData: false })
+        if (Date.now() - cached.savedAt > CANDLE_REFRESH_AFTER_MS) {
+          void fetchInitialCandles(pair, interval).catch(() => undefined)
+        }
+        return
+      }
+      try {
+        const bars = await fetchInitialCandles(pair, interval)
+        if (bars.length) this.latestBars.set(`${pair}@${interval}`, bars[bars.length - 1])
+        if (bars.length) this.onBarsReady(pair)
+        else this.onBarsError(pair, 'Aucune bougie disponible')
+        onResult(bars, { noData: bars.length === 0 })
+      } catch (error) {
+        const message = error instanceof Error && error.name !== 'AbortError'
+          ? error.message
+          : 'Le serveur de bougies ne répond pas'
+        this.onBarsError(pair, message)
+        onError(message)
+      }
+      return
+    }
     const params = new URLSearchParams({
       pair,
       interval: String(interval),
       to: String(Math.floor(period.to)),
-      countBack: String(Math.max(period.countBack || 0, period.firstDataRequest ? 2000 : 4000)),
+      countBack: String(Math.max(period.countBack || 0, SCROLL_CANDLE_BARS)),
     })
-    if (!period.firstDataRequest && period.from > 0) params.set('from', String(Math.floor(period.from)))
+    if (period.from > 0) params.set('from', String(Math.floor(period.from)))
     try {
       const payload = await fetchJsonWithTimeout(
         `${API_BASE_URL}/api/paper/candles?${params.toString()}`,
-        period.firstDataRequest ? 12_000 : 20_000,
+        20_000,
       )
       const bars = (Array.isArray(payload.candles) ? payload.candles : [])
         .filter((item: TvBar) => Number.isFinite(item.time) && Number.isFinite(item.close))
@@ -422,7 +531,12 @@ export function TradingViewChart({
   orders: PaperOrder[]
   orderPreview: MobileOrderPreview | null
   onPairChange: (pair: string) => void
-  onUpdatePositionRisk: (positionId: string, stopLoss: number | null, takeProfit: number | null) => void
+  onUpdatePositionRisk: (
+    positionId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+    sizes?: { stopLossSize?: number | null; takeProfitSize?: number | null },
+  ) => void
   onUpdateOrderRisk: (orderId: string, stopLoss: number | null, takeProfit: number | null) => void
   onUpdateOrderLimit: (orderId: string, limitPrice: number) => void
   onCancelOrder: (orderId: string) => void
@@ -432,6 +546,7 @@ export function TradingViewChart({
   toolbarLeading?: ReactNode
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const paneRef = useRef<HTMLDivElement | null>(null)
   const containerId = useRef(`tv-mobile-${Math.random().toString(36).slice(2)}`)
   const widgetRef = useRef<TvWidget | null>(null)
   const datafeedRef = useRef<MobileBtfDatafeed | null>(null)
@@ -441,6 +556,9 @@ export function TradingViewChart({
   const overlayElementRefs = useRef(new Map<string, HTMLDivElement>())
   const overlayDragPricesRef = useRef(new Map<string, number>())
   const overlayInvalidRef = useRef(new Set<string>())
+  const riskDragGuideRef = useRef<HTMLDivElement | null>(null)
+  const riskDragGuideLabelRef = useRef<HTMLSpanElement | null>(null)
+  const riskDragGuidePriceRef = useRef<HTMLElement | null>(null)
   const [, forceOverlayRender] = useState(0)
   const pairRef = useRef(pair)
   const [chartReady, setChartReady] = useState(false)
@@ -448,6 +566,7 @@ export function TradingViewChart({
   const [candlesError, setCandlesError] = useState('')
   const [resolution, setResolution] = useState('5')
   const [timeframeOpen, setTimeframeOpen] = useState(false)
+  const [expandedPeKey, setExpandedPeKey] = useState<string | null>(null)
   const timeframeMenuRef = useRef<HTMLDivElement>(null)
   const propsRef = useRef({
     pair,
@@ -504,6 +623,9 @@ export function TradingViewChart({
       },
     )
     datafeedRef.current = datafeed
+    // Lance le réseau bougies immédiatement, en parallèle du chargement du
+    // bundle TradingView, pour supprimer le waterfall du premier affichage.
+    void fetchInitialCandles(initial.pair, 5).catch(() => undefined)
     void loadTradingView().then(() => {
       if (disposed || !window.TradingView?.widget) return
       const widget = new window.TradingView.widget({
@@ -520,7 +642,6 @@ export function TradingViewChart({
         toolbar_bg: '#0b0a0d',
         custom_css_url: '',
         enabled_features: [
-          'use_localstorage_for_settings',
           'show_symbol_logos',
         ],
         disabled_features: [
@@ -552,16 +673,21 @@ export function TradingViewChart({
           'mainSeriesProperties.candleStyle.borderDownColor': '#ff5066',
           'mainSeriesProperties.candleStyle.wickUpColor': '#38df8a',
           'mainSeriesProperties.candleStyle.wickDownColor': '#ff5066',
+          'mainSeriesProperties.bidAsk.visible': false,
+          'mainSeriesProperties.highLowAvgPrice.highLowPriceLinesVisible': false,
+          'mainSeriesProperties.highLowAvgPrice.averagePriceLineVisible': false,
         },
       })
       widgetRef.current = widget
       widget.onChartReady(() => {
         if (disposed) return
+        widget.applyOverrides?.({
+          'mainSeriesProperties.bidAsk.visible': false,
+          'mainSeriesProperties.highLowAvgPrice.highLowPriceLinesVisible': false,
+          'mainSeriesProperties.highLowAvgPrice.averagePriceLineVisible': false,
+        })
         setChartReady(true)
-        const chart = widget.activeChart() as unknown as {
-          onSymbolChanged?: () => { subscribe: (ctx: unknown, callback: () => void) => void }
-          symbol?: () => string
-        }
+        const chart = widget.activeChart()
         chart.onSymbolChanged?.().subscribe(null, () => {
           const next = chart.symbol?.()
           const current = propsRef.current
@@ -618,7 +744,7 @@ export function TradingViewChart({
       item.id, item.pair, item.side, item.size, item.entryPrice, item.stopLoss, item.takeProfit,
     ]),
     orders: orders.map((item) => [
-      item.id, item.pair, item.side, item.size, item.limitPrice, item.stopLoss, item.takeProfit, item.status,
+      item.id, item.pair, item.side, item.size, item.filledSize, item.limitPrice, item.stopLoss, item.takeProfit, item.status,
     ]),
     preview: orderPreview && [
       orderPreview.pair,
@@ -639,11 +765,13 @@ export function TradingViewChart({
           key: 'preview:pe',
           kind: 'pe',
           price: orderPreview.entryPrice,
-          label: `NOUVEL ORDRE ${orderPreview.side === 'long' ? 'ACHAT' : 'VENTE'}`,
+          label: `LIMITE ${orderPreview.side === 'long' ? 'ACHAT' : 'VENTE'}`,
           draggable: true,
           side: orderPreview.side,
           referencePrice: orderPreview.entryPrice,
           preview: true,
+          entryPrice: orderPreview.entryPrice,
+          riskSize: orderPreview.size,
         })
       }
       if (orderPreview.stopLoss != null) {
@@ -656,6 +784,8 @@ export function TradingViewChart({
           side: orderPreview.side,
           referencePrice: orderPreview.entryPrice,
           preview: true,
+          entryPrice: orderPreview.entryPrice,
+          riskSize: orderPreview.size,
         })
       }
       if (orderPreview.takeProfit != null) {
@@ -694,6 +824,8 @@ export function TradingViewChart({
           side: position.side,
           referencePrice: position.markPrice || position.entryPrice,
           positionId: position.id,
+          entryPrice: position.entryPrice,
+          riskSize: position.stopLossSize ?? position.size,
         })
       }
       if (position.takeProfit != null) {
@@ -706,12 +838,15 @@ export function TradingViewChart({
           side: position.side,
           referencePrice: position.markPrice || position.entryPrice,
           positionId: position.id,
+          entryPrice: position.entryPrice,
+          riskSize: position.takeProfitSize ?? position.size,
         })
       }
     }
 
     for (const order of orders) {
       if (order.pair !== pair || order.status !== 'open' || order.limitPrice == null) continue
+      const remainingSize = Math.max(0, order.size - (order.filledSize ?? 0))
       next.push({
         key: `order:pe:${order.id}`,
         kind: 'order',
@@ -721,6 +856,7 @@ export function TradingViewChart({
         side: order.side,
         referencePrice: order.limitPrice,
         orderId: order.id,
+        riskSize: remainingSize,
       })
       if (order.stopLoss != null) {
         next.push({
@@ -732,6 +868,8 @@ export function TradingViewChart({
           side: order.side,
           referencePrice: order.limitPrice,
           orderId: order.id,
+          entryPrice: order.limitPrice,
+          riskSize: remainingSize,
         })
       }
       if (order.takeProfit != null) {
@@ -744,6 +882,8 @@ export function TradingViewChart({
           side: order.side,
           referencePrice: order.limitPrice,
           orderId: order.id,
+          entryPrice: order.limitPrice,
+          riskSize: remainingSize,
         })
       }
     }
@@ -751,303 +891,24 @@ export function TradingViewChart({
   }, [orderPreview, orders, pair, positions])
 
   useEffect(() => {
-    if (!chartReady || !candlesReady || !pair) return
+    if (!chartReady) return
     const chart = widgetRef.current?.activeChart()
-    if (!chart) return
-
-    // Même stratégie que le terminal web : les dessins TradingView restent
-    // verrouillés et toute l'interaction tactile passe par nos chips HTML.
-    const useTradingPrimitives = false
-    let disposed = false
     for (const line of managedLinesRef.current) {
       try { line.remove() } catch { /* déjà supprimée */ }
     }
     managedLinesRef.current = []
-
-    const register = (line: ManagedLine) => {
-      if (disposed) {
-        try { line.remove() } catch { /* déjà supprimée */ }
-        return false
-      }
-      managedLinesRef.current.push(line)
-      return true
-    }
-
-    const styleOrderLine = (line: TvOrderLine, color: string) => line
-      .setLineColor(color)
-      .setBodyBorderColor(color)
-      .setBodyBackgroundColor('#111015')
-      .setBodyTextColor('#ffffff')
-      .setQuantityBackgroundColor(color)
-      .setQuantityTextColor('#08080a')
-
-    const stylePositionLine = (line: TvPositionLine, color: string) => line
-      .setLineColor(color)
-      .setBodyBorderColor(color)
-      .setBodyBackgroundColor('#111015')
-      .setBodyTextColor('#ffffff')
-      .setQuantityBackgroundColor(color)
-      .setQuantityTextColor('#08080a')
-
-    const addFallbackLine = async (
-      priceValue: number,
-      color: string,
-      draggable: boolean,
-      onPriceChange?: (price: number) => void,
-    ) => {
-      if (!chart.createShape) return
-      try {
-        const id = await chart.createShape(
-          [{ time: Math.floor(Date.now() / 1000), price: priceValue }],
-          {
-            shape: 'horizontal_line',
-            lock: true,
-            disableSelection: true,
-            disableSave: true,
-            disableUndo: true,
-            overrides: {
-              linecolor: color,
-              linewidth: draggable ? 2 : 1,
-              linestyle: draggable ? 2 : 0,
-              showPrice: false,
-            },
-          },
-        )
-        const fallback = {
-          remove: () => {
-            fallbackLineHandlersRef.current.delete(id)
-            const timer = fallbackLineTimersRef.current.get(id)
-            if (timer) clearTimeout(timer)
-            fallbackLineTimersRef.current.delete(id)
-            try { chart.removeEntity?.(id) } catch { /* déjà supprimée */ }
-          },
-        }
-        if (!register(fallback)) return
-        if (draggable && onPriceChange) {
-          fallbackLineHandlersRef.current.set(id, () => {
-            const nextPrice = chart.getShapeById?.(id).getPoints()[0]?.price
-            if (nextPrice != null && Number.isFinite(nextPrice) && nextPrice > 0) onPriceChange(nextPrice)
-          })
-        }
-      } catch {
-        // Le reste du terminal continue de fonctionner sans primitive graphique.
-      }
-    }
-
-    const addRiskLine = async (
-      kind: 'sl' | 'tp',
-      priceValue: number,
-      sizeValue: number,
-      position?: Position,
-      order?: PaperOrder,
-    ) => {
-      const commitPrice = (nextPrice: number) => {
-        const current = propsRef.current
-        if (position) {
-          current.onUpdatePositionRisk(
-            position.id,
-            kind === 'sl' ? nextPrice : position.stopLoss,
-            kind === 'tp' ? nextPrice : position.takeProfit,
-          )
-        } else if (order) {
-          current.onUpdateOrderRisk(
-            order.id,
-            kind === 'sl' ? nextPrice : order.stopLoss ?? null,
-            kind === 'tp' ? nextPrice : order.takeProfit ?? null,
-          )
+    try {
+      const shapes = (chart as { getAllShapes?: () => Array<{ id: string | number; name?: string }> })?.getAllShapes?.() || []
+      for (const shape of shapes) {
+        if (shape.name === 'horizontal_line') {
+          try { chart?.removeEntity?.(shape.id) } catch { /* déjà supprimée */ }
         }
       }
-      const color = kind === 'sl' ? '#ff5066' : '#38df8a'
-      if (!useTradingPrimitives || !chart.createOrderLine) {
-        await addFallbackLine(priceValue, color, true, commitPrice)
-        return
-      }
-      try {
-        const line = await chart.createOrderLine()
-        if (!register(line)) return
-        styleOrderLine(line, color)
-          .setPrice(priceValue)
-          .setText(kind === 'sl' ? 'STOP LOSS' : 'TAKE PROFIT')
-          .setQuantity(String(sizeValue))
-          .setEditable(true)
-          .setCancellable(true)
-          .onMove(() => {
-            const nextPrice = line.getPrice()
-            if (!Number.isFinite(nextPrice) || nextPrice <= 0) return
-            commitPrice(nextPrice)
-          })
-          .onCancel(() => {
-            const current = propsRef.current
-            if (position) {
-              current.onUpdatePositionRisk(
-                position.id,
-                kind === 'sl' ? null : position.stopLoss,
-                kind === 'tp' ? null : position.takeProfit,
-              )
-            } else if (order) {
-              current.onUpdateOrderRisk(
-                order.id,
-                kind === 'sl' ? null : order.stopLoss ?? null,
-                kind === 'tp' ? null : order.takeProfit ?? null,
-              )
-            }
-          })
-      } catch {
-        await addFallbackLine(priceValue, color, true, commitPrice)
-      }
-    }
-
-    const addPreviewRiskLine = async (
-      kind: 'sl' | 'tp',
-      priceValue: number,
-      preview: MobileOrderPreview,
-    ) => {
-      const color = kind === 'sl' ? '#ff5066' : '#38df8a'
-      const commitPrice = (nextPrice: number) => {
-        propsRef.current.onPreviewRiskChange({
-          [kind === 'sl' ? 'stopLoss' : 'takeProfit']: nextPrice,
-        })
-      }
-      if (!useTradingPrimitives || !chart.createOrderLine) {
-        await addFallbackLine(priceValue, color, true, commitPrice)
-        return
-      }
-      try {
-        const line = await chart.createOrderLine()
-        if (!register(line)) return
-        styleOrderLine(line, color)
-          .setPrice(priceValue)
-          .setText(kind === 'sl' ? 'NOUVEAU SL' : 'NOUVEAU TP')
-          .setQuantity(String(preview.size))
-          .setEditable(true)
-          .setCancellable(true)
-          .onMove(() => commitPrice(line.getPrice()))
-          .onCancel(() => propsRef.current.onPreviewRiskChange({
-            [kind === 'sl' ? 'stopLoss' : 'takeProfit']: null,
-          }))
-      } catch {
-        await addFallbackLine(priceValue, color, true, commitPrice)
-      }
-    }
-
-    const buildLines = async () => {
-      const current = propsRef.current
-      const visiblePositions = current.positions.filter((item) => item.pair === pair)
-      const visibleOrders = current.orders.filter((item) => item.pair === pair && item.status === 'open')
-      const preview = current.orderPreview?.pair === pair ? current.orderPreview : null
-
-      if (preview) {
-        if (preview.orderType === 'limit') {
-          const commitEntryPrice = (nextPrice: number) => propsRef.current.onPreviewEntryChange(nextPrice)
-          let previewEntryCreated = false
-          if (useTradingPrimitives && chart.createOrderLine) {
-            try {
-              const line = await chart.createOrderLine()
-              if (register(line)) {
-                previewEntryCreated = true
-                styleOrderLine(line, '#52a8ff')
-                  .setPrice(preview.entryPrice)
-                  .setText(`NOUVEL ORDRE ${preview.side === 'long' ? 'ACHAT' : 'VENTE'}`)
-                  .setQuantity(String(preview.size))
-                  .setEditable(true)
-                  .setCancellable(false)
-                  .onMove(() => commitEntryPrice(line.getPrice()))
-              }
-            } catch {
-              // Une ligne horizontale simple est créée juste après.
-            }
-          }
-          if (!previewEntryCreated) {
-            await addFallbackLine(preview.entryPrice, '#52a8ff', true, commitEntryPrice)
-          }
-        }
-        if (preview.stopLoss != null) await addPreviewRiskLine('sl', preview.stopLoss, preview)
-        if (preview.takeProfit != null) await addPreviewRiskLine('tp', preview.takeProfit, preview)
-      }
-
-      for (const position of visiblePositions) {
-        let positionPrimitiveCreated = false
-        if (useTradingPrimitives && chart.createPositionLine) {
-          try {
-            const line = await chart.createPositionLine()
-            if (register(line)) {
-              positionPrimitiveCreated = true
-              const color = position.side === 'long' ? '#38df8a' : '#ff5066'
-              stylePositionLine(line, color)
-                .setPrice(position.entryPrice)
-                .setText(`PE ${position.side === 'long' ? 'LONG' : 'SHORT'}`)
-                .setQuantity(String(position.size))
-                .setCloseTooltip('Fermer la position')
-                .onClose(() => propsRef.current.onClosePosition(position.id))
-            }
-          } catch {
-            // Une ligne horizontale simple est créée juste après.
-          }
-        }
-        if (!positionPrimitiveCreated) {
-          await addFallbackLine(position.entryPrice, '#f2f2f5', false)
-        }
-        if (position.stopLoss != null) {
-          await addRiskLine('sl', position.stopLoss, position.stopLossSize || position.size, position)
-        }
-        if (position.takeProfit != null) {
-          await addRiskLine('tp', position.takeProfit, position.takeProfitSize || position.size, position)
-        }
-      }
-
-      for (const order of visibleOrders) {
-        if (order.limitPrice != null) {
-          const commitLimitPrice = (nextPrice: number) => {
-            propsRef.current.onUpdateOrderLimit(order.id, nextPrice)
-          }
-          let orderPrimitiveCreated = false
-          if (useTradingPrimitives && chart.createOrderLine) {
-          try {
-            const line = await chart.createOrderLine()
-            if (register(line)) {
-              orderPrimitiveCreated = true
-              const color = order.side === 'long' ? '#38df8a' : '#ff5066'
-              styleOrderLine(line, color)
-                .setPrice(order.limitPrice)
-                .setText(`LIMITE ${order.side === 'long' ? 'ACHAT' : 'VENTE'}`)
-                .setQuantity(String(order.size))
-                .setEditable(true)
-                .setCancellable(true)
-                .onMove(() => {
-                  const nextPrice = line.getPrice()
-                  if (Number.isFinite(nextPrice) && nextPrice > 0) {
-                    commitLimitPrice(nextPrice)
-                  }
-                })
-                .onCancel(() => propsRef.current.onCancelOrder(order.id))
-            }
-          } catch {
-            // Une ligne horizontale simple est créée juste après.
-          }
-          }
-          if (!orderPrimitiveCreated) {
-            await addFallbackLine(
-              order.limitPrice,
-              order.side === 'long' ? '#38df8a' : '#ff5066',
-              true,
-              commitLimitPrice,
-            )
-          }
-        }
-        if (order.stopLoss != null) await addRiskLine('sl', order.stopLoss, order.size, undefined, order)
-        if (order.takeProfit != null) await addRiskLine('tp', order.takeProfit, order.size, undefined, order)
-      }
-    }
-
-    void buildLines()
-    return () => {
-      disposed = true
-      for (const line of managedLinesRef.current) {
-        try { line.remove() } catch { /* déjà supprimée */ }
-      }
-      managedLinesRef.current = []
+    } catch {
+      // Pas bloquant si l'API dessins n'est pas dispo.
     }
   }, [candlesReady, chartReady, pair, tradingLinesSignature])
+
 
   const collectCanvases = useCallback((root: ParentNode) => {
     const canvases: HTMLCanvasElement[] = []
@@ -1064,7 +925,7 @@ export function TradingViewChart({
   }, [])
 
   const getPaneRect = useCallback(() => {
-    const container = wrapRef.current
+    const container = paneRef.current
     if (!container) return null
     const canvases = collectCanvases(container)
     let largest: HTMLCanvasElement | null = null
@@ -1112,7 +973,7 @@ export function TradingViewChart({
   const priceToY = useCallback((value: number) => {
     const pane = getPaneRect()
     const range = getPriceRange()
-    if (!pane || !range) return null
+    if (!pane || !range || !Number.isFinite(value)) return null
     return pane.top + ((range.top - value) / (range.top - range.bottom)) * pane.height
   }, [getPaneRect, getPriceRange])
 
@@ -1129,7 +990,7 @@ export function TradingViewChart({
     const position = () => {
       if (stopped) return
       const pane = getPaneRect()
-      const container = wrapRef.current
+      const container = paneRef.current
       if (container) {
         let fallbackIndex = 0
         for (const line of overlayLines) {
@@ -1138,12 +999,12 @@ export function TradingViewChart({
           const currentPrice = overlayDragPricesRef.current.get(line.key) ?? line.price
           const exactY = priceToY(currentPrice)
           const fallbackY = container.clientHeight / 2 + fallbackIndex * 34
-          const y = exactY == null || !pane
-            ? fallbackY
-            : Math.max(pane.top + 4, Math.min(pane.bottom - 4, exactY))
+          const offscreen = exactY == null || !pane || exactY < pane.top - 10 || exactY > pane.bottom + 10
+          const y = exactY == null || !pane ? fallbackY : exactY
           element.style.left = `${pane ? Math.max(8, pane.left + 8) : 8}px`
           element.style.transform = `translate3d(0, ${y}px, 0) translateY(-50%)`
-          element.style.opacity = exactY != null && pane && (exactY < pane.top - 20 || exactY > pane.bottom + 20) ? '.4' : '1'
+          element.style.opacity = offscreen ? '0' : '1'
+          element.style.pointerEvents = offscreen ? 'none' : 'auto'
           fallbackIndex += 1
         }
       }
@@ -1184,8 +1045,12 @@ export function TradingViewChart({
     }
     if (line.positionId) {
       const position = current.positions.find((item) => item.id === line.positionId)
-      if (line.kind === 'sl') current.onUpdatePositionRisk(line.positionId, value, position?.takeProfit ?? null)
-      else if (line.kind === 'tp') current.onUpdatePositionRisk(line.positionId, position?.stopLoss ?? null, value)
+      const sizes = {
+        stopLossSize: position?.stopLossSize ?? null,
+        takeProfitSize: position?.takeProfitSize ?? null,
+      }
+      if (line.kind === 'sl') current.onUpdatePositionRisk(line.positionId, value, position?.takeProfit ?? null, sizes)
+      else if (line.kind === 'tp') current.onUpdatePositionRisk(line.positionId, position?.stopLoss ?? null, value, sizes)
     }
   }, [])
 
@@ -1202,7 +1067,7 @@ export function TradingViewChart({
     overlayDragPricesRef.current.set(line.key, startPrice)
 
     const move = (nextEvent: globalThis.PointerEvent) => {
-      const container = wrapRef.current
+      const container = paneRef.current
       if (!container) return
       nextEvent.preventDefault()
       const nextPrice = yToPrice(nextEvent.clientY - container.getBoundingClientRect().top)
@@ -1256,43 +1121,106 @@ export function TradingViewChart({
     }
     if (line.positionId) {
       const position = current.positions.find((item) => item.id === line.positionId)
-      if (line.kind === 'sl') current.onUpdatePositionRisk(line.positionId, null, position?.takeProfit ?? null)
-      else if (line.kind === 'tp') current.onUpdatePositionRisk(line.positionId, position?.stopLoss ?? null, null)
-      else if (line.kind === 'pe') current.onClosePosition(line.positionId)
+      if (line.kind === 'sl') {
+        current.onUpdatePositionRisk(line.positionId, null, position?.takeProfit ?? null, {
+          stopLossSize: null,
+          takeProfitSize: position?.takeProfitSize ?? null,
+        })
+      } else if (line.kind === 'tp') {
+        current.onUpdatePositionRisk(line.positionId, position?.stopLoss ?? null, null, {
+          stopLossSize: position?.stopLossSize ?? null,
+          takeProfitSize: null,
+        })
+      } else if (line.kind === 'pe') current.onClosePosition(line.positionId)
     }
   }, [])
 
-  const addRiskFromEntry = useCallback((line: MobileOverlayLine, kind: 'sl' | 'tp') => {
-    const current = propsRef.current
-    const reference = line.referencePrice > 0 ? line.referencePrice : line.price
-    const offset = Math.max(reference * 0.005, 1e-6)
-    const nextPrice = roundedOverlayPrice(
-      line.side === 'long'
-        ? reference + (kind === 'tp' ? offset : -offset)
-        : reference + (kind === 'sl' ? offset : -offset),
-    )
-    if (line.preview) {
-      current.onPreviewRiskChange({ [kind === 'sl' ? 'stopLoss' : 'takeProfit']: nextPrice })
-      return
+  const beginRiskButtonDrag = useCallback((
+    event: ReactPointerEvent<HTMLButtonElement>,
+    line: MobileOverlayLine,
+    kind: 'sl' | 'tp',
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const element = event.currentTarget
+    const pointerId = event.pointerId
+    const startY = event.clientY
+    const draftLine: MobileOverlayLine = {
+      ...line,
+      key: `draft:${kind}:${line.key}`,
+      kind,
+      label: kind === 'sl' ? 'STOP LOSS' : 'TAKE PROFIT',
+      draggable: true,
     }
-    if (line.orderId) {
-      const order = current.orders.find((item) => item.id === line.orderId)
-      current.onUpdateOrderRisk(
-        line.orderId,
-        kind === 'sl' ? nextPrice : order?.stopLoss ?? null,
-        kind === 'tp' ? nextPrice : order?.takeProfit ?? null,
-      )
-      return
+    let lastPrice: number | null = null
+    let moved = false
+    let invalid = false
+
+    try { element.setPointerCapture(pointerId) } catch { /* support WebView variable */ }
+    element.classList.add('is-dragging')
+    const guide = riskDragGuideRef.current
+    if (guide) guide.style.setProperty('--risk-color', kind === 'sl' ? '#ff6377' : '#4ce69a')
+    if (riskDragGuideLabelRef.current) riskDragGuideLabelRef.current.textContent = kind.toUpperCase()
+
+    const move = (nextEvent: globalThis.PointerEvent) => {
+      const container = paneRef.current
+      if (!container) return
+      nextEvent.preventDefault()
+      const deltaY = nextEvent.clientY - startY
+      if (Math.abs(deltaY) > 4) {
+        moved = true
+        guide?.classList.add('is-visible')
+      }
+      element.style.transform = `translate3d(0, ${deltaY}px, 0)`
+      const guideY = nextEvent.clientY - container.getBoundingClientRect().top
+      if (guide) guide.style.transform = `translate3d(0, ${guideY}px, 0)`
+      const nextPrice = yToPrice(guideY)
+      if (nextPrice == null || !Number.isFinite(nextPrice) || nextPrice <= 0) return
+      lastPrice = nextPrice
+      invalid = !isValidOverlayPrice(draftLine, nextPrice)
+      element.classList.toggle('is-invalid', invalid)
+      if (riskDragGuidePriceRef.current) {
+        riskDragGuidePriceRef.current.textContent = roundedOverlayPrice(nextPrice).toLocaleString('en-US', { maximumFractionDigits: 6 })
+      }
     }
-    if (line.positionId) {
-      const position = current.positions.find((item) => item.id === line.positionId)
-      current.onUpdatePositionRisk(
-        line.positionId,
-        kind === 'sl' ? nextPrice : position?.stopLoss ?? null,
-        kind === 'tp' ? nextPrice : position?.takeProfit ?? null,
-      )
+
+    const finish = (nextEvent: globalThis.PointerEvent) => {
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', finish)
+      document.removeEventListener('pointercancel', finish)
+      element.classList.remove('is-dragging', 'is-invalid')
+      element.style.removeProperty('transform')
+      const cancelled = nextEvent.type === 'pointercancel'
+      if (!cancelled && moved && !invalid && lastPrice != null) {
+        commitOverlayPrice(draftLine, roundedOverlayPrice(lastPrice))
+        setExpandedPeKey(null)
+        const expectedKey = draftLine.preview
+          ? `preview:${kind}`
+          : draftLine.orderId
+            ? `order:${kind}:${draftLine.orderId}`
+            : draftLine.positionId
+              ? `position:${kind}:${draftLine.positionId}`
+              : ''
+        const startedAt = performance.now()
+        const hideWhenCommitted = () => {
+          if (!expectedKey || overlayElementRefs.current.has(expectedKey) || performance.now() - startedAt > 12_000) {
+            guide?.classList.remove('is-visible')
+            guide?.style.removeProperty('transform')
+            return
+          }
+          requestAnimationFrame(hideWhenCommitted)
+        }
+        requestAnimationFrame(hideWhenCommitted)
+      } else {
+        guide?.classList.remove('is-visible')
+        guide?.style.removeProperty('transform')
+      }
     }
-  }, [roundedOverlayPrice])
+
+    document.addEventListener('pointermove', move, { passive: false })
+    document.addEventListener('pointerup', finish)
+    document.addEventListener('pointercancel', finish)
+  }, [commitOverlayPrice, isValidOverlayPrice, roundedOverlayPrice, yToPrice])
 
   const changeResolution = useCallback((nextResolution: string) => {
     setResolution(nextResolution)
@@ -1331,10 +1259,16 @@ export function TradingViewChart({
           </div>}
         </div>
       </div>
+      <div ref={paneRef} className="tradingview-mobile-pane">
       <div id={containerId.current} className="tradingview-mobile-chart" />
       <div className="chart-trade-overlay">
+        <div ref={riskDragGuideRef} className="chart-risk-drag-guide">
+          <span ref={riskDragGuideLabelRef} />
+          <strong ref={riskDragGuidePriceRef} />
+        </div>
         {candlesReady && overlayLines.map((line) => {
           const displayedPrice = overlayDragPricesRef.current.get(line.key) ?? line.price
+          const potentialPnl = potentialRiskPnl(line, displayedPrice, pair)
           const invalid = overlayInvalidRef.current.has(line.key)
           const color = invalid ? '#ffb020' : OVERLAY_COLORS[line.kind]
           const hasStop = overlayLines.some((item) => item.kind === 'sl' && item.positionId === line.positionId && item.orderId === line.orderId && item.preview === line.preview)
@@ -1348,17 +1282,28 @@ export function TradingViewChart({
               }}
               className={`chart-trade-chip ${line.draggable ? 'is-draggable' : ''} ${invalid ? 'is-invalid' : ''}`}
               style={{ '--line-color': color } as CSSProperties}
-              onPointerDown={(event) => beginOverlayDrag(event, line)}
+              onPointerDown={(event) => {
+                if (line.kind === 'pe' || line.kind === 'order') {
+                  setExpandedPeKey((current) => current === line.key ? null : line.key)
+                }
+                beginOverlayDrag(event, line)
+              }}
             >
-              {line.draggable && <span className="chart-trade-chip__grip">⋮⋮</span>}
+              {line.draggable && line.kind !== 'sl' && line.kind !== 'tp' && <span className="chart-trade-chip__grip">⋮⋮</span>}
               <strong>{line.label}</strong>
-              <span className="chart-trade-chip__price">{displayedPrice.toLocaleString('en-US', { maximumFractionDigits: 6 })}</span>
-              {(line.kind === 'pe' || line.kind === 'order') && (
+              <span className="chart-trade-chip__price">
+                {potentialPnl == null
+                  ? displayedPrice.toLocaleString('en-US', { maximumFractionDigits: 6 })
+                  : `${potentialPnl >= 0 ? '+' : ''}${potentialPnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`}
+              </span>
+              {(line.kind === 'pe' || line.kind === 'order') && expandedPeKey === line.key && (
                 <span className="chart-trade-chip__risk-stack">
                   {!hasStop && <button className={line.side === 'long' ? 'is-below is-sl' : 'is-above is-sl'} type="button"
-                    onPointerDown={(event) => event.stopPropagation()} onClick={() => addRiskFromEntry(line, 'sl')}>+ SL</button>}
+                    onPointerDown={(event) => beginRiskButtonDrag(event, line, 'sl')}
+                    onClick={(event) => event.preventDefault()}>SL</button>}
                   {!hasTakeProfit && <button className={line.side === 'long' ? 'is-above is-tp' : 'is-below is-tp'} type="button"
-                    onPointerDown={(event) => event.stopPropagation()} onClick={() => addRiskFromEntry(line, 'tp')}>+ TP</button>}
+                    onPointerDown={(event) => beginRiskButtonDrag(event, line, 'tp')}
+                    onClick={(event) => event.preventDefault()}>TP</button>}
                 </span>
               )}
               {(line.kind === 'sl' || line.kind === 'tp' || (!line.preview && line.kind === 'order') || (line.kind === 'pe' && Boolean(line.positionId))) && (
@@ -1370,6 +1315,7 @@ export function TradingViewChart({
             </div>
           )
         })}
+      </div>
       </div>
       {!candlesReady && (
         <div className={`chart-candles-loading ${candlesError ? 'is-error' : ''}`}>

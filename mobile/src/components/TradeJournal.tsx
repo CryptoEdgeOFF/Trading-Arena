@@ -169,7 +169,7 @@ export function TradeJournal({
           </section>
         </>
       )}
-      <SharePnlModal trade={shareTrade} playerName={user.name} onClose={() => setShareTrade(null)} />
+      <SharePnlModal trade={shareTrade} playerName={user.name} avatarUrl={user.avatarUrl} onClose={() => setShareTrade(null)} />
     </div>
   )
 }

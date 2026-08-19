@@ -10,7 +10,6 @@ const LADDER: Array<{ id: string; label: string }> = [
   { id: 'platinum', label: 'Platinum' },
   { id: 'diamond', label: 'Diamond' },
   { id: 'master', label: 'Master' },
-  { id: 'grandmaster', label: 'Grandmaster' },
   { id: 'legend', label: 'Legend' },
 ]
 

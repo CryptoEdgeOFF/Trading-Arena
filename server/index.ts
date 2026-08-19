@@ -42,20 +42,24 @@ import * as promotionsStore from './promotionsStore.js';
 import * as newsStore from './newsStore.js';
 import {
   CompetitionPushNotifier,
+  describePushForUser,
+  isPushConfigured,
   registerPushDevice,
   sendPushToAllDevices,
   sendPushToUser,
+  unregisterAllPushDevices,
   unregisterPushDevice,
 } from './pushNotifications.js';
 import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
-import { createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatImage } from './globalChatStore.js';
-import { syncUserProgression } from './xpStore.js';
-import { computeTradingAchievements } from './xpTradingAchievements.js';
-import { getRatingLeaderboard, syncUserRating } from './ratingStore.js';
+import { anonymizeChatForUser, createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatImage } from './globalChatStore.js';
+import { deleteUserRating, getRatingLeaderboard, syncUserRating } from './ratingStore.js';
 import { getPnlHistoryWithLivePoint, getPnlMoments, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
+import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
+import { renderPublicSpectatePage } from './publicSpectatePage.js';
+import { shouldNotifyCompletedLimit } from './notificationRules.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -262,6 +266,10 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets'), {
+  immutable: true,
+  maxAge: '7d',
+}));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -425,40 +433,53 @@ const manager = new PlayerManager((patch: StatePatch) => {
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
+  syncAndBroadcastPaperRuntime();
+});
+
+function syncAndBroadcastPaperRuntime(): void {
   // Sync online-competition (paper) traders whose PnL changed into their
-  // competition.entries before pushing arena diffs. This keeps the
-  // arena leaderboard live (rank changes when prices move) without
-  // walking every player on every tick.
+  // competition.entries before pushing arena diffs. This also propagates
+  // order-only partial-fill progress, even though competition players are
+  // intentionally absent from the public state patch.
   const dirtyPaperPlayers = manager.drainDirtyPaperPlayers();
   for (const player of dirtyPaperPlayers) {
-    competitionManager.updatePaperResultByPlayerId(player.id, {
+    const update = competitionManager.updatePaperResultByPlayerId(player.id, {
       pnlUsd: player.pnl,
       pnlPercent: player.pnlPercent,
       tradesCount: player.tradeCount,
+      equity: player.currentBalance,
     });
+    if (update?.drawdownWarning) void sendDrawdownWarning(update);
     void sendTradingPushNotifications(player);
   }
   broadcastPaperUpdates();
-});
+}
 
 manager.setMarketTickBroadcaster((pairs) => broadcastMarketTicks(pairs));
+manager.setPaperRuntimeUpdateHandler(syncAndBroadcastPaperRuntime);
 manager.setTradingUnlockHandler(() => broadcastPaperUpdates());
 
 async function sendTradingPushNotifications(player: NonNullable<ReturnType<typeof manager.getPlayerById>>): Promise<void> {
   const context = competitionManager.getPushContextForPaperPlayer(player.id);
-  if (!context) return;
+  if (!context) {
+    console.warn(`[push] skip SL/TP: pas de contexte compétition pour ${player.id}`);
+    return;
+  }
   const recentTrades = (player.trades || []).slice(-12);
   for (const trade of recentTrades) {
     if (trade.time < pushRuntimeStartedAt - 5_000 || pushedTradeIds.has(trade.id)) continue;
     if (trade.action !== 'open' && trade.closeReason !== 'stop-loss' && trade.closeReason !== 'take-profit') continue;
     pushedTradeIds.add(trade.id);
     if (trade.action === 'open') {
+      const openOrderIds = new Set(player.openOrders.map((order) => order.id));
+      if (!shouldNotifyCompletedLimit(trade, openOrderIds)) continue;
+      const parentOrderId = trade.orderId || trade.id;
       await sendPushToUser(context.userId, {
-        title: 'Ordre exécuté',
+        title: 'Ordre limite exécuté',
         body: `${trade.side === 'long' ? 'Achat' : 'Vente'} ${trade.pair} exécuté à ${trade.price.toLocaleString('fr-FR')}.`,
         kind: 'order_filled',
         competitionId: context.competitionId,
-        data: { pair: trade.pair, price: trade.price, side: trade.side },
+        data: { pair: trade.pair, price: trade.price, side: trade.side, orderId: parentOrderId },
       });
       continue;
     }
@@ -472,6 +493,31 @@ async function sendTradingPushNotifications(player: NonNullable<ReturnType<typeo
     });
   }
   if (pushedTradeIds.size > 20_000) pushedTradeIds.clear();
+}
+
+async function sendDrawdownWarning(update: {
+  competitionId: string;
+  drawdownWarning?: {
+    userId: string;
+    competitionTitle: string;
+    equity: number;
+    limitEquity: number;
+  };
+}): Promise<void> {
+  const warning = update.drawdownWarning;
+  if (!warning) return;
+  const remaining = Math.max(0, warning.equity - warning.limitEquity);
+  await sendPushToUser(warning.userId, {
+    title: 'Attention au Daily Drawdown',
+    body: `Tu as consommé 80 % de ta limite dans ${warning.competitionTitle}. Il te reste ${remaining.toFixed(2)} $.`,
+    kind: 'drawdown_warning',
+    competitionId: update.competitionId,
+    data: {
+      equity: warning.equity,
+      limitEquity: warning.limitEquity,
+      remaining,
+    },
+  });
 }
 
 function broadcastMarketTicks(pairs: string[]): void {
@@ -718,16 +764,17 @@ async function refreshCompetitionStoreIfServerless(): Promise<void> {
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
   const player = manager.getPlayerById(playerId);
   if (!player) return;
-  const breach = competitionManager.updatePaperResultByPlayerId(player.id, {
+  const update = competitionManager.updatePaperResultByPlayerId(player.id, {
     pnlUsd: player.pnl,
     pnlPercent: player.pnlPercent,
     tradesCount: player.tradeCount,
     equity: player.currentBalance,
   });
+  if (update?.drawdownWarning) await sendDrawdownWarning(update);
   // Drawdown journalier atteint → on élimine le joueur : annulation des ordres,
   // clôture de toutes les positions (PnL figé) et déconnexion. Il ne pourra
   // plus trader (cf. assertCompetitionTraderCanTrade + canTrade côté client).
-  if (breach?.newlyBreached) {
+  if (update?.newlyBreached) {
     try {
       await manager.finalizeCompetitionPaperPlayer(player.id);
       const after = manager.getPlayerById(player.id);
@@ -776,6 +823,7 @@ async function finalizeEndedCompetitions(): Promise<void> {
       for (const competitionId of needPayouts) {
         const created = competitionManager.generateCompetitionPayouts(competitionId);
         total += created.length;
+        for (const payout of created) notifyPayoutAvailable(payout);
       }
       await competitionManager.persist();
       if (total > 0) console.log(`[payouts] auto-generated ${total} payout(s) for ${needPayouts.length} ended arena(s)`);
@@ -856,7 +904,9 @@ async function getCompetitionUser(req: express.Request) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
   const token = header.slice('Bearer '.length);
-  return competitionManager.getUserFromToken(token);
+  const user = await competitionManager.getUserFromToken(token);
+  if (!user) return null;
+  return { ...user, country: countryFromPhone(user.phone) };
 }
 
 function publicPlayer(player: ReturnType<typeof manager.getPlayerById>) {
@@ -1786,6 +1836,11 @@ app.get('/api/paper/candles', async (req, res) => {
       }
       source = 'kraken';
     }
+    if (candleOpts.from == null) {
+      // Le snapshot initial est partagé et brièvement réutilisable. Les ticks
+      // WebSocket prennent ensuite le relais pour la bougie en cours.
+      res.set('Cache-Control', 'public, max-age=5, stale-while-revalidate=20');
+    }
     res.json({ pair, interval, candles, source });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Historique indisponible' });
@@ -1979,7 +2034,7 @@ app.post('/api/paper/order', async (req, res) => {
     const handler = competitionId
       ? manager.placeCompetitionPaperOrder.bind(manager)
       : manager.placePaperOrder.bind(manager);
-    await handler(player.id, {
+    const result = await handler(player.id, {
       pair,
       side,
       size: Number(size),
@@ -1990,7 +2045,7 @@ app.post('/api/paper/order', async (req, res) => {
       takeProfit: takeProfit == null || takeProfit === '' ? null : Number(takeProfit),
     });
     if (competitionId) await syncCompetitionResultForPlayer(player.id);
-    res.json({ ok: true });
+    res.json({ ok: true, trade: result.trade });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Ordre refusé' });
   }
@@ -2092,10 +2147,10 @@ app.post('/api/paper/close', async (req, res) => {
     if (competitionId) {
       const result = await manager.closeCompetitionPaperPosition(player.id, positionRef, partialSize);
       await syncCompetitionResultForPlayer(player.id);
-      res.json({ ok: true, alreadyClosed: result.alreadyClosed });
+      res.json({ ok: true, alreadyClosed: result.alreadyClosed, trade: result.trade });
     } else {
-      await manager.closePaperPosition(player.id, positionRef, partialSize);
-      res.json({ ok: true });
+      const result = await manager.closePaperPosition(player.id, positionRef, partialSize);
+      res.json({ ok: true, trade: result.trade });
     }
   } catch (error: any) {
     const msg = error?.message || 'Clôture refusée';
@@ -2360,6 +2415,26 @@ app.delete('/api/competition/me/push-device', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/competition/me/push-test', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session requise' });
+    return;
+  }
+  const status = await describePushForUser(user.id);
+  const sent = await sendPushToUser(user.id, {
+    title: 'Test BTF Arena',
+    body: 'Si tu vois ça, les notifications marchent.',
+    kind: 'news',
+  });
+  res.json({
+    ok: true,
+    sent,
+    configured: status.configured || isPushConfigured(),
+    devices: status.devices,
+  });
+});
+
 app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120, key: 'global-chat-read' }), async (req, res) => {
   const room = String(req.query.competitionId || '').trim() || null;
   // Lecture ouverte pour les salles d'arène (spectateurs non connectés).
@@ -2459,6 +2534,35 @@ app.patch('/api/competition/me', async (req, res) => {
     res.json({ user: nextUser });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Profil impossible a modifier' });
+  }
+});
+
+app.delete('/api/competition/me', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const { paperPlayerIds } = await competitionManager.deleteUserAccount(user.id);
+    for (const playerId of paperPlayerIds) {
+      try {
+        await manager.finalizeCompetitionPaperPlayer(playerId);
+      } catch (error) {
+        console.warn('[account] finalize paper player failed:', (error as Error).message);
+      }
+      manager.removePlayer(playerId);
+    }
+    await Promise.all([
+      unregisterAllPushDevices(user.id),
+      deleteUserRating(user.id),
+      anonymizeChatForUser(user.id),
+    ]);
+    invalidateBlobCache(`avatar:${user.id}`);
+    if (IS_SERVERLESS) await competitionManager.persist();
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression du compte impossible' });
   }
 });
 
@@ -2689,10 +2793,24 @@ app.get('/api/admin/news', requireAdmin, async (_req, res) => {
   }
 });
 
+async function notifyPublishedNews(
+  article: Awaited<ReturnType<typeof newsStore.createNews>>,
+): Promise<{ article: Awaited<ReturnType<typeof newsStore.createNews>>; notified: number }> {
+  if (!article.published || article.pushSentAt) return { article, notified: 0 };
+  const notified = await sendPushToAllDevices({
+    title: article.title,
+    body: article.summary || article.body.slice(0, 140),
+    kind: 'news',
+    data: { newsId: article.id },
+  });
+  return { article: await newsStore.markPushSent(article.id), notified };
+}
+
 app.post('/api/admin/news', requireAdmin, async (req, res) => {
   try {
-    const article = await newsStore.createNews(req.body || {});
-    res.status(201).json({ article });
+    const created = await newsStore.createNews(req.body || {});
+    const { article, notified } = await notifyPublishedNews(created);
+    res.status(201).json({ article, notified });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Création impossible' });
   }
@@ -2700,8 +2818,9 @@ app.post('/api/admin/news', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/news/:id', requireAdmin, async (req, res) => {
   try {
-    const article = await newsStore.updateNews(String(req.params.id || ''), req.body || {});
-    res.json({ article });
+    const updated = await newsStore.updateNews(String(req.params.id || ''), req.body || {});
+    const { article, notified } = await notifyPublishedNews(updated);
+    res.json({ article, notified });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Mise à jour impossible' });
   }
@@ -2709,17 +2828,10 @@ app.patch('/api/admin/news/:id', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/news/:id/publish', requireAdmin, async (req, res) => {
   try {
-    let article = await newsStore.updateNews(String(req.params.id || ''), { published: true });
-    let notified = 0;
-    if (req.body?.notify === true && !article.pushSentAt) {
-      notified = await sendPushToAllDevices({
-        title: article.title,
-        body: article.summary || article.body.slice(0, 140),
-        kind: 'news',
-        data: { newsId: article.id },
-      });
-      article = await newsStore.markPushSent(article.id);
-    }
+    const published = await newsStore.updateNews(String(req.params.id || ''), { published: true });
+    // Une publication est un événement public : le push part exactement une
+    // fois, indépendamment de l'ancien checkbox admin.
+    const { article, notified } = await notifyPublishedNews(published);
     res.json({ article, notified });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Publication impossible' });
@@ -2938,33 +3050,6 @@ function aggregateStatsForPlayerIds(paperPlayerIds: string[]): TradeStats {
   return computeTradeStats(trades);
 }
 
-function getUserXpFacts(userId: string) {
-  const facts = competitionManager.getUserXpFacts(userId);
-  const tradingAchievements: ReturnType<typeof computeTradingAchievements> = [];
-  for (const playerId of competitionManager.getPaperPlayerIdsForUser(userId)) {
-    const player = manager.getPlayerById(playerId);
-    const context = competitionManager.getPushContextForPaperPlayer(playerId);
-    if (!player || !context) continue;
-    let arenaEnded = false;
-    let breached = false;
-    try {
-      arenaEnded = competitionManager.getCompetitionStatus(context.competitionId) === 'ended';
-      breached = competitionManager.isPaperPlayerBreached(context.competitionId, playerId);
-    } catch {
-      continue;
-    }
-    tradingAchievements.push(...computeTradingAchievements({
-      playerId,
-      arenaTitle: context.competitionTitle,
-      startingBalance: Number(player.initialBalance) || 10_000,
-      trades: player.trades || [],
-      arenaEnded,
-      breached,
-    }));
-  }
-  return { ...facts, tradingAchievements };
-}
-
 /**
  * Journal de trades personnel : tous les trades (opens + closes) de
  * l'utilisateur, toutes arènes confondues (hors qualifications), rattachés à
@@ -3035,9 +3120,8 @@ app.get('/api/competition/player/:userId', async (req, res) => {
     return;
   }
   const { paperPlayerIds, ...rest } = profile;
-  const progression = await syncUserProgression(userId, getUserXpFacts(userId));
   const rating = await syncUserRating(userId, competitionManager.getUserArenaResults(userId)).catch(() => null);
-  res.json({ ...rest, progression: { ...progression, recentEvents: [] }, rating, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
+  res.json({ ...rest, rating, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
 });
 
 app.get('/api/competition/global-leaderboard', async (req, res) => {
@@ -3051,6 +3135,7 @@ app.get('/api/competition/global-leaderboard', async (req, res) => {
         userId: p.userId,
         name: p.name,
         avatarUrl: p.avatarUrl,
+        country: p.country,
         badges: p.badges,
         pnlUsd: p.pnlUsd,
         arenas: p.arenas,
@@ -3139,20 +3224,20 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     ? aggregateStatsForPlayerIds(competitionManager.getPaperPlayerIdsForUserStats(user.id))
     : null;
   const myBadges = user ? competitionManager.getUserBadges(user.id) : [];
-  const myProgression = user
-    ? await syncUserProgression(user.id, getUserXpFacts(user.id))
-    : null;
   const myRating = user
     ? await syncUserRating(user.id, competitionManager.getUserArenaResults(user.id))
     : null;
+  const claimablePayouts = user ? competitionManager.countClaimablePayoutsForUser(user.id) : 0;
+  const myTeam = user ? competitionManager.getUserTeam(user.id) : null;
   res.json({
     user,
     publicCompetitions,
     myCompetitions,
     myStats,
     myBadges,
-    myProgression,
     myRating,
+    claimablePayouts,
+    myTeam,
   });
 });
 
@@ -3174,6 +3259,7 @@ app.get('/api/competition/rating-leaderboard', async (_req, res) => {
         userId: row.userId,
         name: identity?.name || 'Trader BTF',
         avatarUrl: identity?.avatarUrl ?? null,
+        country: identity?.country ?? null,
         points: row.points,
         division: row.division,
       };
@@ -3202,6 +3288,146 @@ app.post('/api/competition/join', async (req, res) => {
     res.json({ ok: true, competitionId: competition.id });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Join impossible' });
+  }
+});
+
+app.get('/api/competition/teams/mine', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  res.json({ team: competitionManager.getUserTeam(user.id) });
+});
+
+app.post('/api/competition/teams', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.createTeam(user.id, req.body?.name);
+    await competitionManager.persist();
+    res.status(201).json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Création d’équipe impossible' });
+  }
+});
+
+app.post('/api/competition/teams/join', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.joinTeamByCode(user.id, req.body?.code);
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Invitation invalide' });
+  }
+});
+
+app.post('/api/competition/teams/:id/kick', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.kickTeamMember(user.id, String(req.params.id || ''), String(req.body?.userId || ''));
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Exclusion impossible' });
+  }
+});
+
+app.post('/api/competition/teams/:id/leave', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.leaveTeam(user.id, String(req.params.id || ''));
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Départ impossible' });
+  }
+});
+
+app.post('/api/competition/teams/:id/image', upload.single('image'), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 512, quality: 80 });
+    const team = await competitionManager.setTeamImageBlob(
+      user.id,
+      String(req.params.id || ''),
+      optimized.mime,
+      optimized.buffer,
+    );
+    invalidateBlobCache(`team-image:${req.params.id}`);
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Badge d’équipe impossible à modifier' });
+  }
+});
+
+app.get('/api/team-images/:teamId', async (req, res) => {
+  const teamId = String(req.params.teamId);
+  try {
+    await sendImageBlob(
+      res,
+      `team-image:${teamId}`,
+      () => competitionManager.getTeamImageBlob(teamId),
+      String(req.query.w || ''),
+    );
+  } catch (error: any) {
+    console.error(`[team-images] failed teamId=${teamId}:`, error?.message);
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
+});
+
+app.post('/api/competition/teams/:id/register', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    await refreshCompetitionStoreIfServerless();
+    const competition = competitionManager.registerTeamToCompetition(
+      user.id,
+      String(req.params.id || ''),
+      String(req.body?.competitionId || ''),
+      req.body?.sponsorAccountId,
+    );
+    await competitionManager.persist();
+    res.json({ ok: true, competitionId: competition.id });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Inscription d’équipe impossible' });
   }
 });
 
@@ -3522,6 +3748,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       sponsor,
       sponsorReferralUrl,
       seasonId,
+      entryMode: req.body?.entryMode,
     });
     await competitionManager.persist();
     res.json({ ok: true, competition });
@@ -3600,6 +3827,7 @@ app.post('/api/admin/payouts', requireAdmin, async (req, res) => {
       paidAt: paidAt == null || paidAt === '' ? undefined : Number(paidAt),
     });
     await competitionManager.persist();
+    notifyPayoutAvailable(payout);
     res.json({ ok: true, payout });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Creation payout impossible' });
@@ -3627,6 +3855,19 @@ function payoutRankLabel(rank?: number | null): string {
   if (r === 3) return '3e';
   if (Number.isFinite(r) && r > 0) return `#${r}`;
   return '—';
+}
+
+function notifyPayoutAvailable(payout: { id?: string; userId: string; amount: number; currency: string; competitionId?: string | null }): void {
+  const amountLabel = payoutAmountLabel(payout.amount, payout.currency);
+  void sendPushToUser(payout.userId, {
+    title: 'Payout à réclamer',
+    body: `${amountLabel} t’attendent. Ouvre l’app pour claim tes gains.`,
+    kind: 'payout',
+    competitionId: payout.competitionId || undefined,
+    data: { payoutId: payout.id || undefined },
+  }).catch((error) => {
+    console.warn('[payout] push failed:', (error as Error)?.message || error);
+  });
 }
 
 function payoutAmountLabel(amount: number, currency: string): string {
@@ -3725,6 +3966,25 @@ app.post('/api/admin/competitions/result', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/spectate/:id', async (req, res) => {
+  try {
+    const competitionId = String(req.params.id || '').trim();
+    await syncCompetitionResultsForCompetition(competitionId);
+    const data = competitionManager.getPublicLeaderboard(competitionId);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const publicUrl = `${origin}/spectate/${encodeURIComponent(competitionId)}`;
+    res.setHeader('Cache-Control', 'no-cache');
+    res.type('html').send(renderPublicSpectatePage({
+      competition: data.competition,
+      leaderboard: data.leaderboard,
+      publicUrl,
+      appUrl: (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim(),
+    }));
+  } catch {
+    res.status(404).type('html').send('<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width"><body style="margin:0;background:#07070a;color:#fff;font-family:Arial;display:grid;place-items:center;min-height:100vh"><main style="text-align:center"><h1>Arène introuvable</h1><p style="color:#8d8791">Cette compétition n’existe pas ou n’est plus publique.</p><a href="https://btfarena.com" style="color:#ff536b">BTF Arena</a></main></body></html>');
+  }
+});
+
 // Middleware d'erreur Express global : doit être enregistré APRÈS toutes les
 // routes. Capture toute erreur synchrone ou rejet propagé via next(err) afin
 // de renvoyer une réponse JSON propre au lieu de laisser la connexion pendre
@@ -3781,7 +4041,9 @@ if (!process.env.NETLIFY) {
           { pair: 'BNB/USD', source: 'binance' },
           { pair: 'TRX/USD', source: 'binance' },
         ],
-        [1],
+        // Le mobile ouvre en 5m ; préchauffer aussi 15m évite les cold starts
+        // lors des changements de timeframe les plus fréquents.
+        [1, 5, 15],
       );
 
       // Démarrage du pipeline iTick : subscribe aux 11 instruments prod,

@@ -6,10 +6,11 @@
 .share-pnl-modal header span { color: var(--red-bright); font-size: 7px; font-weight: 700; letter-spacing: .17em; }
 .share-pnl-modal header strong { font: 700 20px 'Barlow Condensed', sans-serif; text-transform: uppercase; }
 .share-pnl-modal header button { width: 35px; height: 35px; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: #aaa4ae; font-size: 22px; }
-.share-pnl-preview { min-height: 350px; padding: 15px; display: grid; place-items: center; color: #ff8796; font-size: 10px; }
-.share-pnl-preview img { max-width: 290px; width: 100%; max-height: 59dvh; border: 1px solid var(--line); border-radius: 12px; object-fit: contain; }
+.share-pnl-preview { position:relative; min-height: 350px; padding: 15px; display: grid; place-items: center; color: #ff8796; font-size: 10px; }
+.share-pnl-preview img,.share-pnl-preview video { max-width: 290px; width: 100%; max-height: 59dvh; border: 1px solid var(--line); border-radius: 12px; object-fit: contain; }
+.share-pnl-preview small { position:absolute; left:20px; right:20px; bottom:8px; color:#ff8796; text-align:center; }
 .share-pnl-preview i { width: 27px; height: 27px; border: 2px solid #322c35; border-top-color: var(--red-bright); border-radius: 50%; animation: leaderboard-spin .8s linear infinite; }
-.share-pnl-modal footer { padding: 13px 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; border-top: 1px solid var(--line); }
+.share-pnl-modal footer { padding: 13px 15px; display: grid; grid-template-columns: 1fr; gap: 7px; border-top: 1px solid var(--line); }
 .share-pnl-modal footer button { min-height: 47px; border: 1px solid #322c36; border-radius: 8px; background: #141217; color: #fff; font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .share-pnl-modal footer button.is-primary { border-color: rgba(255,75,96,.5); background: var(--red); }
 .share-pnl-modal footer button:disabled { opacity: .4; }

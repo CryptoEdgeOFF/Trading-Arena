@@ -1,34 +1,45 @@
+import { useState } from 'react'
 import { useI18n } from '../i18n'
-import type { PlayerRating } from '../lib/api'
+import type { PlayerRating, RatingDivision } from '../lib/api'
 import './DivisionCard.css'
 
-const TIER_ROMAN = ['', 'I', 'II', 'III']
-
 // Bornes des divisions, dupliquées du serveur (ratingStore) pour calculer la
-// progression visuelle dans le palier sans round-trip supplémentaire.
-// Paliers progressifs : facile de monter au début, exigeant au sommet.
+// progression visuelle vers la division suivante sans round-trip supplémentaire.
 export const DIVISION_BOUNDS: Record<string, [number, number]> = {
   bronze: [0, 100],
   silver: [100, 250],
   gold: [250, 500],
   platinum: [500, 900],
   diamond: [900, 1_500],
-  master: [1_500, 2_400],
-  grandmaster: [2_400, 3_600],
+  master: [1_500, 3_600],
   legend: [3_600, Number.POSITIVE_INFINITY],
 }
 
 export function divisionDisplayName(division: PlayerRating['division']): string {
-  return division.tier > 0 ? `${division.label} ${TIER_ROMAN[division.tier]}` : division.label
+  return division.label
 }
 
-function tierProgress(rating: PlayerRating): number {
+/** Visuel officiel `/assets/badges/{Label}.png` (Bronze, Silver, …). */
+export function DivisionBadge({ division, className }: { division: RatingDivision; className?: string }) {
+  const [broken, setBroken] = useState(false)
+  if (broken) {
+    return <span className={`division-badge-fallback is-${division.id}`}>{division.label}</span>
+  }
+  return (
+    <img
+      className={className || 'division-badge-image'}
+      src={`/assets/badges/${division.label}.png`}
+      alt={division.label}
+      onError={() => setBroken(true)}
+    />
+  )
+}
+
+function divisionProgress(rating: PlayerRating): number {
   const bounds = DIVISION_BOUNDS[rating.division.id]
   if (!bounds || !Number.isFinite(bounds[1])) return 100
   const [floor, ceiling] = bounds
-  const tierSize = (ceiling - floor) / 3
-  const tierStart = floor + (3 - rating.division.tier) * tierSize
-  return Math.max(4, Math.min(100, ((rating.points - tierStart) / tierSize) * 100))
+  return Math.max(4, Math.min(100, ((rating.points - floor) / (ceiling - floor)) * 100))
 }
 
 export function DivisionCard({
@@ -47,13 +58,16 @@ export function DivisionCard({
         <small>{t('division.kicker')}</small>
         <em>{t('division.points', { points: rating.points.toLocaleString(locale) })}</em>
       </header>
-      <div className="division-card__main">
-        <strong>{divisionDisplayName(rating.division)}</strong>
-        {rating.worldRank != null
-          ? <span>{t('division.world', { rank: rating.worldRank.toLocaleString(locale) })}</span>
-          : <span className="division-card__placement">{t('division.placement')}</span>}
+      <div className="division-card__row">
+        <DivisionBadge division={rating.division} className="division-card__badge" />
+        <div className="division-card__main">
+          <strong>{divisionDisplayName(rating.division)}</strong>
+          {rating.worldRank != null
+            ? <span>{t('division.world', { rank: rating.worldRank.toLocaleString(locale) })}</span>
+            : <span className="division-card__placement">{t('division.placement')}</span>}
+        </div>
       </div>
-      <div className="division-card__bar" aria-hidden="true"><i style={{ width: `${tierProgress(rating)}%` }} /></div>
+      <div className="division-card__bar" aria-hidden="true"><i style={{ width: `${divisionProgress(rating)}%` }} /></div>
       <footer>
         {rating.next
           ? t('division.toNext', { points: rating.next.pointsNeeded.toLocaleString(locale), label: rating.next.label })

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { drawShareLogo, roundedRectPath } from '../lib/shareCanvas'
+import { apiAssetUrl } from '../lib/api'
+import { drawShareAvatar, drawShareLogo, roundedRectPath } from '../lib/shareCanvas'
 import './SharePnlModal.css'
 
 export type RankShareRow = {
@@ -8,6 +9,7 @@ export type RankShareRow = {
   name: string
   pnlUsd: number
   pnlPercent?: number
+  avatarUrl?: string | null
 }
 
 async function generateRankCard(row: RankShareRow, competition: string, participants: number): Promise<{ blob: Blob; url: string }> {
@@ -32,6 +34,13 @@ async function generateRankCard(row: RankShareRow, competition: string, particip
   roundedRectPath(ctx, 30, 30, 1020, 1290, 40)
   ctx.stroke()
   await drawShareLogo(ctx)
+  await drawShareAvatar(ctx, {
+    url: row.avatarUrl ? apiAssetUrl(row.avatarUrl) : null,
+    name: row.name,
+    x: 760,
+    y: 260,
+    size: 240,
+  })
   ctx.fillStyle = '#8d8791'
   ctx.font = '700 25px Arial'
   ctx.fillText('MON CLASSEMENT', 80, 305)
@@ -69,11 +78,13 @@ export function ShareRankModal({
   row,
   competition,
   participants,
+  spectatorUrl,
   onClose,
 }: {
   row: RankShareRow | null
   competition: string
   participants: number
+  spectatorUrl?: string
   onClose: () => void
 }) {
   const [result, setResult] = useState<{ blob: Blob; url: string } | null>(null)
@@ -104,7 +115,7 @@ export function ShareRankModal({
     const file = new File([result.blob], `btf-rang-${row!.rank}.png`, { type: 'image/png' })
     try {
       if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-        await navigator.share({ title: 'BTF Arena', text: `Je suis #${row!.rank} sur ${competition}`, files: [file] })
+        await navigator.share({ title: 'BTF Arena', text: `Je suis #${row!.rank} sur ${competition}`, ...(spectatorUrl ? { url: spectatorUrl } : {}), files: [file] })
         return
       }
     } catch (error) {
@@ -118,8 +129,12 @@ export function ShareRankModal({
       <button className="share-pnl-backdrop" type="button" onClick={onClose} aria-label="Fermer" />
       <section className="share-pnl-modal">
         <header><div><span>PARTAGE</span><strong>Mon classement</strong></div><button type="button" onClick={onClose}>×</button></header>
-        <div className="share-pnl-preview">{result ? <img src={result.url} alt="Carte de partage du classement" /> : error || <i />}</div>
-        <footer><button type="button" disabled={!result} onClick={download}>Télécharger</button><button className="is-primary" type="button" disabled={!result} onClick={() => void share()}>Partager</button></footer>
+        <div className="share-pnl-preview">
+          {result ? <img src={result.url} alt="Carte de partage du classement" /> : error || <i />}
+        </div>
+        <footer>
+          <button className="is-primary" type="button" disabled={!result} onClick={() => void share()}>Partager</button>
+        </footer>
       </section>
     </div>,
     document.body,

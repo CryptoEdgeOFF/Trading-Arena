@@ -27,10 +27,17 @@ export type PublicCompetition = {
   cashPrize?: {
     currency: string
     total: number
+    label?: string
+    imageUrl?: string
+    description?: string
+    breakdown?: Array<{ rank: number; amount: number }>
+    items?: Array<{ rank?: number; imageUrl?: string; title?: string; description?: string }>
   } | null
   sponsor?: string | null
   bannerImageUrl?: string | null
   format?: 'blitz' | 'weekly' | null
+  entryMode?: 'solo' | 'team'
+  teamSize?: number | null
 }
 
 export type SessionUser = {
@@ -39,6 +46,7 @@ export type SessionUser = {
   name: string
   phone?: string | null
   phoneVerifiedAt?: number | null
+  country?: string | null
   avatarUrl?: string | null
   socials?: {
     x?: string
@@ -54,25 +62,6 @@ export type UserBadge =
   | 'paris-champion'
   | 'summer-champion'
   | 'autumn-champion'
-
-export type PlayerProgression = {
-  totalXp: number
-  level: number
-  levelStartXp: number
-  nextLevelXp: number
-  xpIntoLevel: number
-  xpForNextLevel: number
-  progressPercent: number
-  title: { id: string; label: string; rarity: 'common' | 'rare' | 'epic' | 'legendary' }
-  frame: { id: string; label: string; tier: number }
-  recentEvents: Array<{
-    id: string
-    eventType: 'account.created' | 'arena.join' | 'arena.first_trade' | 'arena.completed' | 'arena.podium' | 'arena.top_half' | 'arena.streak' | 'badge.unlocked' | 'trading.achievement'
-    amount: number
-    label: string
-    createdAt: number
-  }>
-}
 
 export type UserStats = {
   closedTrades: number
@@ -134,13 +123,36 @@ export type MyCompetition = PublicCompetition & {
 export type LeaderboardRow = {
   rank: number
   userId: string
+  teamId?: string | null
   name: string
   avatarUrl?: string | null
+  country?: string | null
+  members?: Array<{ userId: string; name: string; avatarUrl: string | null; pnlUsd: number; pnlPercent: number }>
   pnlPercent: number
   pnlUsd: number
   tradesCount: number
   updatedAt: number
   breached?: boolean
+}
+
+export type ArenaTeam = {
+  id: string
+  name: string
+  inviteCode: string
+  ownerUserId: string
+  createdAt: number
+  size: number
+  requiredSize: number
+  isComplete: boolean
+  locked: boolean
+  imageUrl?: string | null
+  members: Array<{
+    userId: string
+    name: string
+    avatarUrl: string | null
+    joinedAt: number
+    isOwner: boolean
+  }>
 }
 
 export type GlobalChatMessage = {
@@ -172,6 +184,7 @@ export type GlobalLeaderboardRow = {
   userId: string
   name: string
   avatarUrl?: string | null
+  country?: string | null
   badges?: UserBadge[]
   pnlUsd: number
   arenas: number
@@ -198,6 +211,7 @@ export type PublicPlayerProfile = {
     id: string
     name: string
     avatarUrl?: string | null
+    country?: string | null
     socials?: SessionUser['socials']
   }
   badges: UserBadge[]
@@ -213,14 +227,13 @@ export type PublicPlayerProfile = {
   }>
   payouts?: Array<{ id: string; amount: number; currency: string; paidAt: number }>
   stats: UserStats & { totalFees?: number }
-  progression?: PlayerProgression | null
   rating?: PlayerRating | null
 }
 
 export type RatingDivision = {
   id: string
   label: string
-  /** 3 → 1 (1 = palier haut). 0 = pas de palier (Legend). */
+  /** Compatibilité API ; toujours 0 depuis la suppression des sous-paliers. */
   tier: number
 }
 
@@ -238,6 +251,7 @@ export type RatingLeaderboardRow = {
   userId: string
   name: string
   avatarUrl?: string | null
+  country?: string | null
   points: number
   division: RatingDivision
 }
@@ -248,8 +262,24 @@ export type BootstrapData = {
   myCompetitions: MyCompetition[]
   myStats: UserStats | null
   myBadges: UserBadge[]
-  myProgression?: PlayerProgression | null
   myRating?: PlayerRating | null
+  claimablePayouts?: number
+  myTeam?: ArenaTeam | null
+}
+
+export type PayoutStatus = 'available' | 'pending' | 'approved'
+
+export type MyPayout = {
+  id: string
+  amount: number
+  currency: string
+  paidAt: number
+  arenaTitle: string | null
+  rank?: number | null
+  status?: PayoutStatus
+  erc20Address?: string | null
+  requestedAt?: number | null
+  approvedAt?: number | null
 }
 
 export type AuthRequestResult = {
@@ -358,6 +388,9 @@ export type PaperOrder = {
   pair: string
   side: 'long' | 'short'
   size: number
+  filledSize?: number
+  averageFillPrice?: number
+  lastDepthTs?: number
   orderType: 'market' | 'limit'
   status: 'open' | 'filled' | 'cancelled'
   limitPrice: number | null
@@ -371,6 +404,8 @@ export type PaperOrder = {
 
 export type PaperTrade = {
   id: string
+  orderId?: string
+  fillIndex?: number
   pair: string
   side: 'long' | 'short'
   size: number
@@ -380,6 +415,15 @@ export type PaperTrade = {
   pnl: number
   time: number
   action: 'open' | 'close' | 'update'
+  entryPrice?: number
+  requestedPrice?: number
+  slippageBps?: number
+  slippageSource?: 'legacy' | 'model' | 'itick-l5'
+  fillDetails?: Array<{
+    price: number
+    size: number
+    source: 'book' | 'estimated'
+  }>
 }
 
 export type PaperPlayer = {
@@ -593,6 +637,10 @@ export function logoutSession(token: string): Promise<{ ok: true }> {
   return apiFetch('/api/competition/auth/logout', { method: 'POST' }, token)
 }
 
+export function deleteUserAccount(token: string): Promise<{ ok: true }> {
+  return apiFetch('/api/competition/me', { method: 'DELETE' }, token)
+}
+
 export async function updateUserProfile(token: string, profile: {
   name: string
   phone?: string
@@ -617,6 +665,10 @@ export async function registerPushDevice(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: deviceToken, platform, environment }),
   }, token)
+}
+
+export async function sendPushTest(token: string): Promise<{ sent: number; configured: boolean; devices: number }> {
+  return apiFetch('/api/competition/me/push-test', { method: 'POST' }, token)
 }
 
 export async function unregisterPushDevice(token: string, deviceToken: string): Promise<void> {
@@ -782,12 +834,86 @@ export function getPublicPlayerProfile(userId: string): Promise<PublicPlayerProf
   return apiFetch(`/api/competition/player/${encodeURIComponent(userId)}`)
 }
 
+export async function getMyPayouts(token: string): Promise<MyPayout[]> {
+  const data = await apiFetch<{ payouts?: MyPayout[] }>('/api/competition/my-payouts', undefined, token)
+  return Array.isArray(data.payouts) ? data.payouts : []
+}
+
+export function requestPayout(token: string, payoutId: string, erc20Address: string): Promise<{ ok: true; payout: MyPayout }> {
+  return apiFetch(`/api/competition/payouts/${encodeURIComponent(payoutId)}/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ erc20Address }),
+  }, token)
+}
+
 export function joinCompetition(token: string, input: {
   competitionId: string
   code?: string
   sponsorAccountId?: string
 }): Promise<{ ok: true; competitionId: string }> {
   return apiFetch('/api/competition/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  }, token)
+}
+
+export async function getMyTeam(token: string): Promise<ArenaTeam | null> {
+  const data = await apiFetch<{ team?: ArenaTeam | null }>('/api/competition/teams/mine', undefined, token)
+  return data.team || null
+}
+
+export async function createTeam(token: string, name: string): Promise<ArenaTeam> {
+  const data = await apiFetch<{ team: ArenaTeam }>('/api/competition/teams', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }, token)
+  return data.team
+}
+
+export async function joinTeamByCode(token: string, code: string): Promise<ArenaTeam> {
+  const data = await apiFetch<{ team: ArenaTeam }>('/api/competition/teams/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  }, token)
+  return data.team
+}
+
+export async function kickTeamMember(token: string, teamId: string, userId: string): Promise<ArenaTeam> {
+  const data = await apiFetch<{ team: ArenaTeam }>(`/api/competition/teams/${encodeURIComponent(teamId)}/kick`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId }),
+  }, token)
+  return data.team
+}
+
+export async function leaveTeam(token: string, teamId: string): Promise<ArenaTeam | null> {
+  const data = await apiFetch<{ team: ArenaTeam | null }>(`/api/competition/teams/${encodeURIComponent(teamId)}/leave`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }, token)
+  return data.team || null
+}
+
+export async function uploadTeamImage(token: string, teamId: string, file: File): Promise<ArenaTeam> {
+  const form = new FormData()
+  form.append('image', file, file.name || 'team.jpg')
+  const data = await apiFetch<{ team: ArenaTeam }>(`/api/competition/teams/${encodeURIComponent(teamId)}/image`, {
+    method: 'POST',
+    body: form,
+  }, token)
+  return data.team
+}
+
+export function registerTeamToCompetition(token: string, teamId: string, input: {
+  competitionId: string
+  sponsorAccountId?: string
+}): Promise<{ ok: true; competitionId: string }> {
+  return apiFetch(`/api/competition/teams/${encodeURIComponent(teamId)}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -810,7 +936,7 @@ export function placePaperOrder(paperToken: string, order: {
   leverage: number
   stopLoss: number | null
   takeProfit: number | null
-}): Promise<{ ok: true }> {
+}): Promise<{ ok: true; trade?: PaperTrade }> {
   return apiFetch('/api/paper/order', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -822,7 +948,7 @@ export function closePaperPosition(
   paperToken: string,
   positionId: string,
   size?: number | null,
-): Promise<{ ok: true; alreadyClosed?: boolean }> {
+): Promise<{ ok: true; alreadyClosed?: boolean; trade?: PaperTrade }> {
   return apiFetch('/api/paper/close', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

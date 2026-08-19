@@ -1,0 +1,62 @@
+.payouts-page { display: grid; gap: 14px; }
+.payouts-page__intro { margin: 0; color: #8f8893; font-size: 13px; line-height: 1.45; }
+.payouts-page__empty {
+  padding: 28px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: #8f8893;
+  font-size: 13px;
+  text-align: center;
+}
+.payouts-page__list { display: grid; gap: 10px; }
+.payouts-card {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .03);
+}
+.payouts-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.payouts-card__top strong { display: block; color: #fff; font: 800 16px/1.1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.payouts-card__top small { display: block; margin-top: 4px; color: #38df8a; font-size: 12px; font-weight: 700; }
+.payouts-card__top em {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.payouts-card.is-available em { border: 1px solid rgba(238, 36, 60, .4); background: rgba(238, 36, 60, .12); color: #ff8a9a; }
+.payouts-card.is-pending em { border: 1px solid rgba(245, 190, 69, .4); background: rgba(245, 190, 69, .1); color: #f5c65f; }
+.payouts-card.is-approved em { border: 1px solid rgba(56, 223, 138, .4); background: rgba(56, 223, 138, .1); color: #38df8a; }
+.payouts-card__claim { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.payouts-card__claim label { display: grid; gap: 6px; color: #8f8893; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.payouts-card__claim input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0c0c10;
+  color: #fff;
+  font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.payouts-card__claim p { margin: 0; color: #77717a; font-size: 11px; line-height: 1.4; }
+.payouts-card__claim button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: #ee243c;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.payouts-card__claim button:disabled { opacity: .5; }
+.payouts-card__note { margin: 0; color: #a1a1aa; font-size: 12px; line-height: 1.4; }
+.payouts-card__note.is-ok { color: #38df8a; }
+.payouts-card__note code { display: block; margin-top: 6px; overflow: hidden; color: #77717a; font-size: 10px; text-overflow: ellipsis; }

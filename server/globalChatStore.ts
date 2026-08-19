@@ -100,6 +100,28 @@ function chatImageIdFromUrl(imageUrl: string): string {
   return imageUrl.slice(imageUrl.lastIndexOf('/') + 1);
 }
 
+export async function anonymizeChatForUser(userId: string): Promise<void> {
+  if (!userId) return;
+  for (const message of memoryMessages) {
+    if (message.userId === userId) {
+      message.name = 'Compte supprimé';
+      message.avatarUrl = null;
+    }
+    if (message.replyTo?.userId === userId) {
+      message.replyTo.name = 'Compte supprimé';
+    }
+  }
+  const db = getPool();
+  if (!db) return;
+  await ensureTable();
+  await db.query(
+    `update comp_global_chat_messages
+     set name = 'Compte supprimé', avatar_url = null
+     where user_id = $1`,
+    [userId],
+  );
+}
+
 export async function putChatImage(userId: string, mime: string, data: Buffer): Promise<string> {
   const id = crypto.randomUUID();
   const db = getPool();

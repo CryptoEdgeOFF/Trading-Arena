@@ -32,7 +32,6 @@
 .rating-guide__ladder i.is-platinum { background: #7fe7d2; }
 .rating-guide__ladder i.is-diamond { background: #8fb7ff; }
 .rating-guide__ladder i.is-master { background: #c48bff; }
-.rating-guide__ladder i.is-grandmaster { background: #ff7a5c; }
 .rating-guide__ladder i.is-legend { background: linear-gradient(135deg, #ffd257, #ff4655); }
 .rating-guide__ladder strong { font-size: 11.5px; font-weight: 800; }
 .rating-guide__ladder em { margin-left: auto; color: #8d8690; font-size: 10.5px; font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; }

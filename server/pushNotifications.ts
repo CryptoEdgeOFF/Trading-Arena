@@ -3,8 +3,20 @@ import http2 from 'node:http2';
 import { GoogleAuth } from 'google-auth-library';
 import { Pool } from 'pg';
 import type { CompetitionManager } from './competitionManager.js';
+import { isPodiumLoss } from './notificationRules.js';
 
-export type PushKind = 'order_filled' | 'stop_loss' | 'take_profit' | 'rank_change' | 'arena_open' | 'chat_reply' | 'news';
+export type PushKind =
+  | 'order_filled'
+  | 'stop_loss'
+  | 'take_profit'
+  | 'drawdown_warning'
+  | 'rank_change'
+  | 'podium_lost'
+  | 'new_arena'
+  | 'arena_open'
+  | 'chat_reply'
+  | 'news'
+  | 'payout';
 export type PushEnvironment = 'sandbox' | 'production' | 'auto';
 export type PushPlatform = 'ios' | 'android';
 
@@ -100,6 +112,19 @@ export async function registerPushDevice(
   `, [normalizedToken, userId, normalizedPlatform, normalizedEnvironment, now]);
 }
 
+export async function unregisterAllPushDevices(userId: string): Promise<void> {
+  if (!userId) return;
+  const db = getPool();
+  if (!db) {
+    for (const [token, device] of memoryDevices.entries()) {
+      if (device.userId === userId) memoryDevices.delete(token);
+    }
+    return;
+  }
+  await ensureTable();
+  await db.query('delete from comp_push_devices where user_id = $1', [userId]);
+}
+
 export async function unregisterPushDevice(userId: string, token: string): Promise<void> {
   const normalizedToken = String(token || '').trim();
   if (!normalizedToken) return;
@@ -187,7 +212,7 @@ function deleteDevice(token: string): void {
 
 async function sendApnsToEnvironment(device: PushDevice, message: PushMessage, environment: Exclude<PushEnvironment, 'auto'>): Promise<void> {
   const jwt = apnsJwt();
-  const bundleId = process.env.APNS_BUNDLE_ID?.trim() || 'com.btfarena.mobile';
+  const bundleId = process.env.APNS_BUNDLE_ID?.trim() || 'com.btfarena.app';
   if (!jwt) return;
   const origin = environment === 'sandbox'
     ? 'https://api.sandbox.push.apple.com'
@@ -335,9 +360,25 @@ export function isPushConfigured(): boolean {
   );
 }
 
+export async function describePushForUser(userId: string): Promise<{
+  configured: boolean;
+  devices: number;
+}> {
+  return {
+    configured: isPushConfigured(),
+    devices: (await devicesForUser(userId)).length,
+  };
+}
+
 export async function sendPushToUser(userId: string, message: PushMessage): Promise<number> {
-  if (!isPushConfigured()) return 0;
+  if (!isPushConfigured()) {
+    console.warn('[push] skip: APNs/FCM non configuré');
+    return 0;
+  }
   const devices = await devicesForUser(userId);
+  if (devices.length === 0) {
+    console.warn(`[push] skip: aucun device pour ${userId}`);
+  }
   const apnsConfigured = Boolean(process.env.APNS_TEAM_ID && process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY);
   const eligible = devices.filter((device) => device.platform === 'android' ? isFirebaseConfigured() : apnsConfigured);
   const results = await Promise.allSettled(eligible.map((device) => (
@@ -378,6 +419,7 @@ export class CompetitionPushNotifier {
   private statuses = new Map<string, string>();
   private ranks = new Map<string, Map<string, number>>();
   private lastRankPush = new Map<string, number>();
+  private lastPodiumPush = new Map<string, number>();
   private initialized = false;
   private running = false;
 
@@ -393,6 +435,20 @@ export class CompetitionPushNotifier {
         this.statuses.set(competition.id, competition.status);
         const entries = this.competitionManager.getRankedEntriesForNotifier(competition.id);
 
+        if (!competition.notifiedNewArenaPushAt && competition.isPublic) {
+          // Au premier tick on photographie l'existant sans rejouer tout
+          // l'historique. Toute arène publique créée ensuite est annoncée.
+          this.competitionManager.markCompetitionNotified(competition.id, 'newArenaPush');
+          if (this.initialized && competition.status !== 'ended') {
+            await sendPushToAllDevices({
+              title: 'Nouvelle arène disponible',
+              body: `${competition.title} est ouverte aux inscriptions.`,
+              kind: 'new_arena',
+              competitionId: competition.id,
+            });
+          }
+        }
+
         if (this.initialized && previousStatus && previousStatus !== 'live' && competition.status === 'live') {
           await sendPushToUsers(entries.map((entry) => entry.userId), {
             title: 'L’arène est ouverte',
@@ -406,16 +462,29 @@ export class CompetitionPushNotifier {
           this.ranks.delete(competition.id);
           continue;
         }
+        const activeEntries = entries.filter((entry) => entry.tradesCount > 0 && !entry.breached);
         const previousRanks = this.ranks.get(competition.id);
-        const nextRanks = new Map(entries.map((entry) => [entry.userId, entry.rank]));
+        const nextRanks = new Map(activeEntries.map((entry) => [entry.userId, entry.rank]));
         this.ranks.set(competition.id, nextRanks);
         if (!previousRanks) continue;
 
-        for (const entry of entries) {
+        for (const entry of activeEntries) {
           if (entry.rank <= 0) continue;
           const previousRank = previousRanks.get(entry.userId);
           if (!previousRank || previousRank === entry.rank) continue;
           const cooldownKey = `${competition.id}:${entry.userId}`;
+          if (isPodiumLoss(previousRank, entry.rank)) {
+            if (now - (this.lastPodiumPush.get(cooldownKey) || 0) < 30 * 60_000) continue;
+            this.lastPodiumPush.set(cooldownKey, now);
+            await sendPushToUser(entry.userId, {
+              title: 'Tu viens de perdre ta place sur le podium',
+              body: `Tu es maintenant #${entry.rank} dans ${competition.title}. Reprends ta place !`,
+              kind: 'podium_lost',
+              competitionId: competition.id,
+              data: { rank: entry.rank, previousRank },
+            });
+            continue;
+          }
           if (now - (this.lastRankPush.get(cooldownKey) || 0) < 3 * 60_000) continue;
           this.lastRankPush.set(cooldownKey, now);
           await sendPushToUser(entry.userId, {

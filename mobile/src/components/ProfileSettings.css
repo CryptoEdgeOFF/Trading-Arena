@@ -24,3 +24,11 @@
 .settings-feedback.is-success { border: 1px solid rgba(61,222,127,.25); background: rgba(61,222,127,.07); color: #72eaa2; }
 .settings-save { min-height: 51px; border: 1px solid rgba(255,90,110,.45); border-radius: 7px; background: var(--red); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .settings-save:disabled { opacity: .45; }
+.settings-danger { padding: 17px; display: grid; gap: 8px; border: 1px solid rgba(255,70,92,.28); border-radius: 12px; background: rgba(255,70,92,.06); }
+.settings-danger > span { color: var(--red-bright); font-size: 8px; font-weight: 700; letter-spacing: .17em; }
+.settings-danger strong { font: 700 18px 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.settings-danger p { margin: 0; color: #8b858e; font-size: 9px; line-height: 1.5; }
+.settings-danger-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; }
+.settings-danger button { min-height: 46px; border: 1px solid rgba(255,255,255,.12); border-radius: 7px; background: rgba(255,255,255,.04); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.settings-danger button.is-destroy { border-color: rgba(255,70,92,.45); background: #dc263e; }
+.settings-danger button:disabled { opacity: .45; }

@@ -3,79 +3,140 @@ import { apiAssetUrl, type PnlHistorySample, type PnlHistoryTrader, type PnlMome
 import { useI18n } from '../i18n'
 import './PnlRaceChart.css'
 
-const CHART_WIDTH = 340
-const CHART_HEIGHT = 168
-const PADDING = { top: 12, right: 40, bottom: 8, left: 6 }
-const SERIES_COLORS = ['#ffd257', '#8fb7ff', '#ff7a5c', '#5cd596', '#c48bff', '#ff5a91']
-const MAX_SERIES = 6
+// Course au PnL des 3 leaders. Design volontairement sobre :
+// palette podium (or / argent / bronze), courbes fortement lissées,
+// échelle zoomée sur l'écart réel entre les traders.
+
+const CHART_WIDTH = 360
+const CHART_HEIGHT = 250
+const PADDING = { top: 16, right: 44, bottom: 14, left: 10 }
+const PODIUM_COLORS = ['#ffc94d', '#c9d2dc', '#cd8b4e']
+const MAX_SERIES = 3
+const BUCKETS = 48
 
 type Series = {
   trader: PnlHistoryTrader
   color: string
   points: Array<{ x: number; y: number }>
   path: string
+  areaPath: string
   isLeader: boolean
+  lastValue: number
 }
 
-function buildSeries(samples: PnlHistorySample[], traders: PnlHistoryTrader[]): Series[] {
+/**
+ * Moyenne par tranche de temps puis EMA : élimine le bruit des
+ * échantillons ~10 s pour obtenir une courbe propre.
+ */
+function resample(list: Array<{ t: number; value: number }>, t0: number, timeSpan: number): Array<{ t: number; value: number }> {
+  if (list.length <= 3) return list
+  const buckets: Array<{ sum: number; count: number; t: number }> = []
+  for (const point of list) {
+    const index = Math.min(BUCKETS - 1, Math.floor(((point.t - t0) / timeSpan) * BUCKETS))
+    if (!buckets[index]) buckets[index] = { sum: 0, count: 0, t: t0 + ((index + 0.5) / BUCKETS) * timeSpan }
+    buckets[index].sum += point.value
+    buckets[index].count += 1
+  }
+  const averaged = buckets.filter(Boolean).map((bucket) => ({ t: bucket.t, value: bucket.sum / bucket.count }))
+  const alpha = 0.45
+  let ema = averaged[0].value
+  const smoothed = averaged.map((point) => {
+    ema += alpha * (point.value - ema)
+    return { t: point.t, value: ema }
+  })
+  // Le dernier point reste la valeur réelle actuelle.
+  smoothed[smoothed.length - 1] = { t: list[list.length - 1].t, value: list[list.length - 1].value }
+  return smoothed
+}
+
+/** Courbe fluide (Catmull-Rom → Bézier). */
+function smoothPath(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return ''
+  if (points.length < 3) {
+    return points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
+  }
+  let path = `M${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const p0 = points[Math.max(0, index - 1)]
+    const p1 = points[index]
+    const p2 = points[index + 1]
+    const p3 = points[Math.min(points.length - 1, index + 2)]
+    path += ` C${(p1.x + (p2.x - p0.x) / 6).toFixed(1)} ${(p1.y + (p2.y - p0.y) / 6).toFixed(1)},${(p2.x - (p3.x - p1.x) / 6).toFixed(1)} ${(p2.y - (p3.y - p1.y) / 6).toFixed(1)},${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+  }
+  return path
+}
+
+function buildChart(
+  samples: PnlHistorySample[],
+  traders: PnlHistoryTrader[],
+): { series: Series[]; min: number; max: number; yFor: (value: number) => number } | null {
   const ranked = traders
     .filter((trader) => trader.rank > 0)
     .sort((a, b) => a.rank - b.rank)
     .slice(0, MAX_SERIES)
-  if (ranked.length === 0 || samples.length < 2) return []
+  if (ranked.length === 0 || samples.length < 2) return null
 
   const t0 = samples[0].t
   const t1 = samples[samples.length - 1].t
   const timeSpan = Math.max(1, t1 - t0)
 
-  const values = new Map<string, Array<{ t: number; pnl: number }>>()
+  const values = new Map<string, Array<{ t: number; value: number }>>()
   for (const trader of ranked) values.set(trader.userId, [])
   for (const sample of samples) {
     for (const row of sample.rows) {
-      values.get(row.userId)?.push({ t: sample.t, pnl: row.pnlPercent })
+      values.get(row.userId)?.push({ t: sample.t, value: row.pnlPercent })
     }
+  }
+  for (const [userId, list] of values) {
+    values.set(userId, resample(list, t0, timeSpan))
   }
 
-  let min = 0
-  let max = 0
+  // Échelle zoomée sur l'écart réel entre le premier et le dernier.
+  let min = Infinity
+  let max = -Infinity
   for (const list of values.values()) {
     for (const point of list) {
-      if (point.pnl < min) min = point.pnl
-      if (point.pnl > max) max = point.pnl
+      if (point.value < min) min = point.value
+      if (point.value > max) max = point.value
     }
   }
-  const span = Math.max(0.4, max - min)
-  min -= span * 0.12
-  max += span * 0.12
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null
+  const span = Math.max(0.5, max - min)
+  const paddedMin = min - span * 0.14
+  const paddedMax = max + span * 0.14
 
   const innerWidth = CHART_WIDTH - PADDING.left - PADDING.right
   const innerHeight = CHART_HEIGHT - PADDING.top - PADDING.bottom
   const xFor = (t: number) => PADDING.left + ((t - t0) / timeSpan) * innerWidth
-  const yFor = (pnl: number) => PADDING.top + (1 - (pnl - min) / (max - min)) * innerHeight
+  const yFor = (value: number) => PADDING.top + (1 - (value - paddedMin) / (paddedMax - paddedMin)) * innerHeight
+  const bottomY = CHART_HEIGHT - PADDING.bottom
 
-  return ranked
+  const series = ranked
     .map((trader, index) => {
       const list = values.get(trader.userId) || []
       if (list.length < 2) return null
-      const points = list.map((point) => ({ x: xFor(point.t), y: yFor(point.pnl) }))
-      const path = points
-        .map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
-        .join(' ')
+      const points = list.map((point) => ({ x: xFor(point.t), y: yFor(point.value) }))
+      const path = smoothPath(points)
+      const first = points[0]
+      const last = points[points.length - 1]
       return {
         trader,
-        color: SERIES_COLORS[index % SERIES_COLORS.length],
+        color: PODIUM_COLORS[index],
         points,
         path,
+        areaPath: `${path} L${last.x.toFixed(1)} ${bottomY} L${first.x.toFixed(1)} ${bottomY} Z`,
         isLeader: trader.rank === 1,
+        lastValue: list[list.length - 1].value,
       }
     })
-    .filter((series): series is Series => series !== null)
+    .filter((item): item is Series => item !== null)
+
+  return { series, min, max, yFor }
 }
 
 export function PnlRaceChart({
   samples,
   traders,
-  moments,
   currentUserId,
 }: {
   samples: PnlHistorySample[]
@@ -84,17 +145,11 @@ export function PnlRaceChart({
   currentUserId?: string
 }) {
   const { t } = useI18n()
-  const series = useMemo(() => buildSeries(samples, traders), [samples, traders])
+  const chart = useMemo(() => buildChart(samples, traders), [samples, traders])
   const leader = traders.filter((trader) => trader.rank > 0).sort((a, b) => a.rank - b.rank)[0]
-  const momentsFeed = useMemo(() => {
-    const names = new Map(traders.map((trader) => [trader.userId, trader.name]))
-    return (moments || [])
-      .slice(-3)
-      .reverse()
-      .map((moment) => ({ ...moment, name: names.get(moment.userId) || 'Trader' }))
-  }, [moments, traders])
+  const fmt = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
 
-  if (!series.length) {
+  if (!chart || chart.series.length === 0) {
     return (
       <section className="pnl-race">
         <header className="pnl-race__head">
@@ -105,20 +160,14 @@ export function PnlRaceChart({
     )
   }
 
-  // Le zéro n'est visible que s'il est dans la fenêtre affichée.
-  const zeroY = (() => {
-    const first = series[0]
-    if (!first) return null
-    // Recalcule la position du 0 à partir de deux points connus de la série.
-    const sampleValues = samples.flatMap((sample) => sample.rows.map((row) => row.pnlPercent))
-    const minPnl = Math.min(...sampleValues)
-    const maxPnl = Math.max(...sampleValues)
-    if (minPnl >= 0 || maxPnl <= 0) return null
-    const span = Math.max(0.4, maxPnl - minPnl)
-    const min = minPnl - span * 0.12
-    const max = maxPnl + span * 0.12
-    return PADDING.top + (1 - (0 - min) / (max - min)) * (CHART_HEIGHT - PADDING.top - PADDING.bottom)
-  })()
+  const { series, min, max, yFor } = chart
+  const tickStep = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    .find((step) => (max - min) / step <= 4) || 1000
+  const tickDecimals = tickStep < 1 ? 1 : 0
+  const ticks: number[] = []
+  for (let value = Math.ceil(min / tickStep) * tickStep; value <= max; value += tickStep) {
+    ticks.push(Number(value.toFixed(2)))
+  }
 
   return (
     <section className="pnl-race">
@@ -129,13 +178,28 @@ export function PnlRaceChart({
 
       <div className="pnl-race__chart">
         <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
-          {zeroY != null && <line className="pnl-race__zero" x1={PADDING.left} y1={zeroY} x2={CHART_WIDTH - PADDING.right} y2={zeroY} />}
+          <defs>
+            <linearGradient id="pnl-race-fill-m" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={PODIUM_COLORS[0]} stopOpacity="0.14" />
+              <stop offset="100%" stopColor={PODIUM_COLORS[0]} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {ticks.map((value) => (
+            <g key={value}>
+              <line className="pnl-race__grid" x1={PADDING.left} y1={yFor(value)} x2={CHART_WIDTH - PADDING.right} y2={yFor(value)} />
+              <text className="pnl-race__tick" x={CHART_WIDTH - PADDING.right + 7} y={yFor(value) + 3}>
+                {value.toFixed(tickDecimals)}%
+              </text>
+            </g>
+          ))}
+          {series.filter((item) => item.isLeader).map((item) => (
+            <path key={`fill-${item.trader.userId}`} d={item.areaPath} fill="url(#pnl-race-fill-m)" stroke="none" />
+          ))}
           {[...series].reverse().map((item) => (
-            <path key={item.trader.userId} d={item.path} fill="none" stroke={item.color}
-              strokeWidth={item.isLeader ? 2.6 : 1.6}
+            <path key={item.trader.userId} className="pnl-race__line" d={item.path} fill="none" stroke={item.color}
+              strokeWidth={item.isLeader ? 2.4 : 1.7}
               strokeLinecap="round" strokeLinejoin="round"
-              opacity={item.trader.breached ? 0.35 : item.isLeader ? 1 : 0.82}
-              style={item.isLeader ? { filter: `drop-shadow(0 0 5px ${item.color})` } : undefined} />
+              opacity={item.trader.breached ? 0.35 : 1} />
           ))}
         </svg>
         {series.map((item) => {
@@ -159,26 +223,13 @@ export function PnlRaceChart({
 
       <div className="pnl-race__legend">
         {series.map((item) => (
-          <span key={item.trader.userId} className="pnl-race__chip">
-            <i style={{ background: item.color }} />
-            <strong>#{item.trader.rank} {item.trader.name}</strong>
-            <em className={item.trader.pnlPercent >= 0 ? 'positive' : 'negative'}>
-              {item.trader.pnlPercent >= 0 ? '+' : ''}{item.trader.pnlPercent.toFixed(2)}%
-            </em>
+          <span key={item.trader.userId} className={`pnl-race__chip ${item.isLeader ? 'is-leader' : ''}`}>
+            <b style={{ color: item.color }}>#{item.trader.rank}</b>
+            <strong>{item.trader.name}</strong>
+            <em className={item.lastValue >= 0 ? 'positive' : 'negative'}>{fmt(item.lastValue)}</em>
           </span>
         ))}
       </div>
-
-      {momentsFeed.length > 0 && (
-        <div className="pnl-race__moments">
-          {momentsFeed.map((moment) => (
-            <span key={`${moment.t}-${moment.userId}-${moment.type}`}>
-              {moment.type === 'leader' ? '⚡' : '▲'}{' '}
-              {t(moment.type === 'leader' ? 'spectate.momentLeader' : 'spectate.momentTop3', { name: moment.name })}
-            </span>
-          ))}
-        </div>
-      )}
     </section>
   )
 }

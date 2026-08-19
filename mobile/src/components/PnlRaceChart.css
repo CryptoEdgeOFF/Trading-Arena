@@ -1,27 +1,68 @@
-.pnl-race { padding: 13px 13px 11px; display: grid; gap: 10px; border: 1px solid rgba(238,36,60,.22); border-radius: 15px; background: linear-gradient(170deg, rgba(238,36,60,.06), rgba(255,255,255,.012)); }
+.pnl-race {
+  position: relative;
+  overflow: hidden;
+  padding: 16px 14px 14px;
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #121016, #0a090d);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+
 .pnl-race__head { display: flex; align-items: baseline; justify-content: space-between; gap: 9px; }
-.pnl-race__head span { color: var(--red-bright, #ff4655); font-size: 8px; font-weight: 800; letter-spacing: .16em; }
-.pnl-race__head h3 { margin: 1px 0 0; font: 800 19px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
-.pnl-race__leader { overflow: hidden; color: #ffd257; font-size: 9.5px; font-style: normal; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
+.pnl-race__head span { color: #ff4655; font-size: 8px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; }
+.pnl-race__head h3 { margin: 2px 0 0; font: italic 800 24px/.9 'Barlow Condensed', 'Rajdhani', sans-serif; text-transform: uppercase; color: #fff; }
+.pnl-race__leader { overflow: hidden; color: #ffc94d; font-size: 10px; font-style: italic; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
+
 .pnl-race__chart { position: relative; }
-.pnl-race__chart svg { display: block; width: 100%; height: auto; border-radius: 9px; background: linear-gradient(180deg, rgba(255,255,255,.028), rgba(0,0,0,.12)); }
-.pnl-race__zero { stroke: rgba(255,255,255,.16); stroke-width: 1; stroke-dasharray: 3 4; }
-.pnl-race__avatar { position: absolute; width: 24px; height: 24px; display: grid; place-items: center; overflow: hidden; transform: translate(-50%, -50%); border: 2px solid #fff; border-radius: 50%; background: #201d23; box-shadow: 0 2px 9px rgba(0,0,0,.55); }
+.pnl-race__chart svg { display: block; width: 100%; height: 210px; }
+.pnl-race__grid { stroke: rgba(255, 255, 255, .07); stroke-width: 1; }
+.pnl-race__tick { fill: #6d6772; font: 700 9px 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; }
+.pnl-race__line { animation: pnl-race-line-in 1.1s cubic-bezier(.2, .8, .2, 1) both; }
+
+.pnl-race__avatar {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #1c1920;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .55);
+  transition: left 1.1s cubic-bezier(.2, .8, .2, 1), top 1.1s cubic-bezier(.2, .8, .2, 1);
+}
 .pnl-race__avatar img { width: 100%; height: 100%; object-fit: cover; }
 .pnl-race__avatar i { color: #ddd8df; font-size: 7px; font-style: normal; font-weight: 800; }
-.pnl-race__avatar.is-leader { width: 28px; height: 28px; box-shadow: 0 0 14px rgba(255,210,87,.5), 0 2px 9px rgba(0,0,0,.55); }
-.pnl-race__avatar.is-me::after { content: ''; position: absolute; inset: -5px; border: 1px dashed rgba(238,36,60,.8); border-radius: 50%; }
-.pnl-race__legend { display: flex; flex-wrap: wrap; gap: 5px 7px; }
-.pnl-race__chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid #26222a; border-radius: 99px; background: rgba(255,255,255,.03); }
-.pnl-race__chip i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; }
-.pnl-race__chip strong { max-width: 96px; overflow: hidden; font-size: 8.5px; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; }
-.pnl-race__chip em { font-size: 8.5px; font-style: normal; font-weight: 800; }
-.pnl-race__chip .positive { color: #38df8a; }
-.pnl-race__chip .negative { color: #ff5066; }
-.pnl-race__moments { display: grid; gap: 4px; padding-top: 2px; border-top: 1px dashed rgba(255,255,255,.08); }
-.pnl-race__moments span { color: #cfc8d4; font-size: 9px; font-weight: 700; }
-.pnl-race__moments span:first-child { color: #ffd257; }
+.pnl-race__avatar.is-leader { width: 29px; height: 29px; }
+.pnl-race__avatar.is-me::after { content: ''; position: absolute; inset: -4px; border: 1px dashed rgba(238, 36, 60, .8); border-radius: 50%; }
 
-.pnl-race__collecting { padding: 26px 10px; display: grid; justify-items: center; gap: 8px; color: #8d8690; font-size: 10px; text-align: center; }
-.pnl-race__collecting i { width: 16px; height: 16px; border: 2px solid #2c2930; border-top-color: #ff4655; border-radius: 50%; animation: pnl-race-spin 0.9s linear infinite; }
+.pnl-race__legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.pnl-race__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .03);
+}
+.pnl-race__chip.is-leader { border-color: rgba(255, 201, 77, .35); background: rgba(255, 201, 77, .05); }
+.pnl-race__chip b { font: italic 900 11px 'Barlow Condensed', sans-serif; }
+.pnl-race__chip strong { max-width: 120px; overflow: hidden; font: italic 800 12px 'Barlow Condensed', 'Rajdhani', sans-serif; color: #fff; white-space: nowrap; text-overflow: ellipsis; text-transform: uppercase; }
+.pnl-race__chip em { font-size: 10px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pnl-race__chip em.positive { color: #38df8a; }
+.pnl-race__chip em.negative { color: #ff5066; }
+
+.pnl-race__collecting { min-height: 150px; padding: 34px 10px; display: grid; place-content: center; justify-items: center; gap: 8px; color: #8d8690; font-size: 11px; text-align: center; }
+.pnl-race__collecting i { width: 16px; height: 16px; border: 2px solid #2c2930; border-top-color: #ff4655; border-radius: 50%; animation: pnl-race-spin .9s linear infinite; }
+
 @keyframes pnl-race-spin { to { transform: rotate(360deg); } }
+@keyframes pnl-race-line-in { from { stroke-dasharray: 1500; stroke-dashoffset: 1500; } to { stroke-dasharray: 1500; stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pnl-race__line, .pnl-race__avatar { animation: none; transition: none; }
+}

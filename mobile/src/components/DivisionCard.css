@@ -5,8 +5,10 @@
 .division-card.is-platinum { --division-color: #7fd6d2; }
 .division-card.is-diamond { --division-color: #7fb2ff; }
 .division-card.is-master { --division-color: #c48bff; }
-.division-card.is-grandmaster { --division-color: #ff7a5c; }
 .division-card.is-legend { --division-color: #ff4655; }
+.division-card__row { display: flex; align-items: center; gap: 12px; }
+.division-card__badge { width: 56px; height: auto; flex: 0 0 auto; filter: drop-shadow(0 8px 16px color-mix(in srgb, var(--division-color) 45%, transparent)); }
+.division-card.is-compact .division-card__badge { width: 48px; }
 .division-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .division-card header small { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .division-card header em { color: var(--division-color); font-size: 10px; font-style: normal; font-weight: 800; }

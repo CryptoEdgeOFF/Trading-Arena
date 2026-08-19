@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.btfarena.mobile',
+  appId: 'com.btfarena.app',
   appName: 'BTF Arena',
   webDir: 'dist',
   backgroundColor: '#050507',
@@ -13,7 +13,8 @@ const config: CapacitorConfig = {
   },
   plugins: {
     SplashScreen: {
-      launchShowDuration: 1200,
+      launchAutoHide: false,
+      launchShowDuration: 0,
       backgroundColor: '#050507',
       showSpinner: false,
     },
@@ -22,7 +23,7 @@ const config: CapacitorConfig = {
       backgroundColor: '#050507',
     },
     Keyboard: {
-      resize: 'body',
+      resize: 'none',
     },
     PushNotifications: {
       presentationOptions: ['badge', 'sound', 'alert'],

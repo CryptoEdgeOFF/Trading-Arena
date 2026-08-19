@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import {
   apiAssetUrl,
+  deleteUserAccount,
   updateUserProfile,
   uploadUserAvatar,
   type SessionUser,
@@ -34,11 +35,13 @@ export function ProfileSettings({
   token,
   user,
   onUpdated,
+  onDeleted,
   onBack,
 }: {
   token: string
   user: SessionUser
   onUpdated: (user: SessionUser) => void
+  onDeleted: () => void
   onBack: () => void
 }) {
   const { t } = useI18n()
@@ -53,6 +56,7 @@ export function ProfileSettings({
   })
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '')
   const [busy, setBusy] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
@@ -91,6 +95,19 @@ export function ProfileSettings({
     } finally {
       setBusy(false)
       if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  async function removeAccount() {
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      await deleteUserAccount(token)
+      onDeleted()
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t('settings.deleteError'))
+      setBusy(false)
     }
   }
 
@@ -146,6 +163,26 @@ export function ProfileSettings({
       <button className="settings-save" type="button" disabled={busy || !name.trim()} onClick={() => void save()}>
         {busy ? t('settings.saving') : t('settings.save')}
       </button>
+
+      <section className="settings-danger">
+        <span>{t('settings.danger')}</span>
+        <strong>{t('settings.deleteTitle')}</strong>
+        <p>{confirmDelete ? t('settings.deleteConfirmLead') : t('settings.deleteHint')}</p>
+        {confirmDelete ? (
+          <div className="settings-danger-actions">
+            <button type="button" disabled={busy} onClick={() => setConfirmDelete(false)}>
+              {t('settings.deleteCancel')}
+            </button>
+            <button className="is-destroy" type="button" disabled={busy} onClick={() => void removeAccount()}>
+              {busy ? t('settings.deleteBusy') : t('settings.deleteConfirm')}
+            </button>
+          </div>
+        ) : (
+          <button className="is-destroy" type="button" disabled={busy} onClick={() => setConfirmDelete(true)}>
+            {t('settings.deleteTitle')}
+          </button>
+        )}
+      </section>
     </div>
   )
 }

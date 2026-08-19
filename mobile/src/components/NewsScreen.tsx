@@ -24,19 +24,21 @@ function RichText({ text }: { text: string }) {
 
 function NewsDetail({ article, onClose }: { article: NewsArticle; onClose: () => void }) {
   const { t, locale } = useI18n()
-  return <div className="news-detail-layer" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <motion.article className="news-detail" role="dialog" aria-modal="true" aria-label={article.title}
-      initial={{ opacity: 0, y: 35 }} animate={{ opacity: 1, y: 0 }}>
-      <button className="news-detail__close" type="button" onClick={onClose} aria-label={t('common.close')}>×</button>
-      {article.coverUrl && <img className="news-detail__cover" src={apiAssetUrl(article.coverUrl)} alt="" />}
-      <div className="news-detail__content">
+  return (
+    <article className="news-article">
+      <header className="news-topline">
+        <button type="button" onClick={onClose} aria-label={t('common.back')}>‹</button>
+        <strong>{t('news.title')}</strong>
+      </header>
+      {article.coverUrl && <img className="news-article__cover" src={apiAssetUrl(article.coverUrl)} alt="" />}
+      <div className="news-article__content">
         <span>{article.featured ? t('news.featured') : ''}{formatDate(articleDate(article), locale)}</span>
         <h2>{article.title}</h2>
         {article.summary && <strong>{article.summary}</strong>}
         <RichText text={article.body} />
       </div>
-    </motion.article>
-  </div>
+    </article>
+  )
 }
 
 function NewsCard({ article, index, onOpen }: { article: NewsArticle; index: number; onOpen: () => void }) {
@@ -51,6 +53,11 @@ function NewsCard({ article, index, onOpen }: { article: NewsArticle; index: num
       <em>{t('news.read')} <b>›</b></em>
     </span>
   </motion.button>
+}
+
+let closeOpenArticle: (() => boolean) | null = null
+export function closeNewsArticleIfOpen() {
+  return closeOpenArticle?.() ?? false
 }
 
 export function NewsScreen({
@@ -122,6 +129,16 @@ export function NewsScreen({
   }
 
   useEffect(() => {
+    closeOpenArticle = selected
+      ? () => {
+          setSelected(null)
+          return true
+        }
+      : null
+    return () => { closeOpenArticle = null }
+  }, [selected])
+
+  useEffect(() => {
     const sentinel = sentinelRef.current
     if (!sentinel) return
     const observer = new IntersectionObserver((entries) => {
@@ -141,6 +158,14 @@ export function NewsScreen({
     return news.filter((article) => !todayIds.has(article.id))
   }, [news, today])
 
+  if (selected) {
+    return (
+      <div className="news-page">
+        <NewsDetail article={selected} onClose={() => setSelected(null)} />
+      </div>
+    )
+  }
+
   let index = 0
   return <div className="news-page">
     <header className="news-topline">
@@ -159,6 +184,5 @@ export function NewsScreen({
             </section>}
             <div ref={sentinelRef} className="news-sentinel">{loadingOlder ? t('common.loading') : hasMore ? t('news.loadMore') : t('news.allRead')}</div>
           </>}
-    {selected && <NewsDetail article={selected} onClose={() => setSelected(null)} />}
   </div>
 }
