@@ -181,6 +181,62 @@ function base64Url(value: string | Buffer): string {
   return Buffer.from(value).toString('base64url');
 }
 
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+/** Railway aplatit souvent le .p8 : on reconstruit un PEM PKCS#8 lisible par OpenSSL. */
+export function normalizeApnsPrivateKey(raw: string): string {
+  let value = stripWrappingQuotes(raw).replace(/\r\n/g, '\n').replace(/\\n/g, '\n');
+  const header = value.match(/-----BEGIN ([A-Z ]*PRIVATE KEY)-----/);
+  if (header) {
+    const label = header[1];
+    const body = value
+      .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----/, '')
+      .replace(/-----END [A-Z ]*PRIVATE KEY-----/, '')
+      .replace(/\s+/g, '');
+    const lines = body.match(/.{1,64}/g) || [];
+    return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----`;
+  }
+
+  const compact = value.replace(/\s+/g, '');
+  const decodedUtf8 = Buffer.from(compact, 'base64').toString('utf8');
+  if (decodedUtf8.includes('BEGIN') && decodedUtf8.includes('PRIVATE KEY')) {
+    return normalizeApnsPrivateKey(decodedUtf8);
+  }
+
+  const lines = compact.match(/.{1,64}/g) || [];
+  return `-----BEGIN PRIVATE KEY-----\n${lines.join('\n')}\n-----END PRIVATE KEY-----`;
+}
+
+let apnsConfigLogged = false;
+
+function logApnsConfigOnce(): void {
+  if (apnsConfigLogged) return;
+  apnsConfigLogged = true;
+  const teamId = process.env.APNS_TEAM_ID?.trim();
+  const keyId = process.env.APNS_KEY_ID?.trim();
+  const raw = process.env.APNS_PRIVATE_KEY?.trim();
+  const bundleId = process.env.APNS_BUNDLE_ID?.trim() || 'com.btfarena.app';
+  if (!teamId || !keyId || !raw) {
+    console.warn('[push] APNs incomplet: TEAM_ID / KEY_ID / PRIVATE_KEY manquant');
+    return;
+  }
+  try {
+    crypto.createPrivateKey(normalizeApnsPrivateKey(raw));
+    console.log(`[push] APNs prêt · team=${teamId} key=${keyId} bundle=${bundleId} keyChars=${raw.length}`);
+  } catch {
+    console.error('[push] APNs: APNS_PRIVATE_KEY illisible (PEM cassé). Colle le .p8 entier, ou une ligne avec \\n à la place des retours.');
+  }
+}
+
 function apnsJwt(): string | null {
   const teamId = process.env.APNS_TEAM_ID?.trim();
   const keyId = process.env.APNS_KEY_ID?.trim();
@@ -188,9 +244,12 @@ function apnsJwt(): string | null {
   if (!teamId || !keyId || !privateKeyRaw) return null;
   const now = Date.now();
   if (jwtCache && now - jwtCache.createdAt < 50 * 60_000) return jwtCache.value;
-  const privateKey = privateKeyRaw.includes('BEGIN PRIVATE KEY')
-    ? privateKeyRaw.replace(/\\n/g, '\n')
-    : Buffer.from(privateKeyRaw, 'base64').toString('utf8');
+  const privateKey = normalizeApnsPrivateKey(privateKeyRaw);
+  try {
+    crypto.createPrivateKey(privateKey);
+  } catch {
+    throw new Error('APNs key unreadable: APNS_PRIVATE_KEY n’est pas un PEM PKCS#8 valide');
+  }
   const issuedAt = Math.floor(now / 1000);
   const encodedHeader = base64Url(JSON.stringify({ alg: 'ES256', kid: keyId }));
   const encodedPayload = base64Url(JSON.stringify({ iss: teamId, iat: issuedAt }));
@@ -354,6 +413,7 @@ async function sendFcm(device: PushDevice, message: PushMessage): Promise<void> 
 }
 
 export function isPushConfigured(): boolean {
+  logApnsConfigOnce();
   return Boolean(
     (process.env.APNS_TEAM_ID && process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY)
     || isFirebaseConfigured(),
