@@ -2422,6 +2422,7 @@ app.post('/api/competition/me/push-test', async (req, res) => {
     return;
   }
   const status = await describePushForUser(user.id);
+  console.log(`[push] test requested by ${user.id} devices=${status.devices} configured=${status.configured}`);
   const sent = await sendPushToUser(user.id, {
     title: 'Test BTF Arena',
     body: 'Si tu vois ça, les notifications marchent.',

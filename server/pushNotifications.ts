@@ -312,7 +312,7 @@ async function sendApnsToEnvironment(device: PushDevice, message: PushMessage, e
         return;
       }
       if (status === 410 || body.includes('Unregistered')) deleteDevice(device.token);
-      reject(new Error(`APNs ${status}: ${body || 'envoi refusé'}`));
+      reject(new Error(`APNs ${status} ${environment}: ${body || 'envoi refusé'}`));
     });
     request.on('error', (error) => {
       client.close();
@@ -430,24 +430,35 @@ export async function describePushForUser(userId: string): Promise<{
   };
 }
 
+function isSimulatedBot(userId: string): boolean {
+  return userId.startsWith('sim-bot-');
+}
+
 export async function sendPushToUser(userId: string, message: PushMessage): Promise<number> {
+  if (isSimulatedBot(userId)) return 0;
   if (!isPushConfigured()) {
     console.warn('[push] skip: APNs/FCM non configuré');
     return 0;
   }
   const devices = await devicesForUser(userId);
   if (devices.length === 0) {
-    console.warn(`[push] skip: aucun device pour ${userId}`);
+    console.warn(`[push] skip: aucun device pour ${userId} (${message.kind})`);
+    return 0;
   }
   const apnsConfigured = Boolean(process.env.APNS_TEAM_ID && process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY);
   const eligible = devices.filter((device) => device.platform === 'android' ? isFirebaseConfigured() : apnsConfigured);
   const results = await Promise.allSettled(eligible.map((device) => (
     device.platform === 'android' ? sendFcm(device, message) : sendApns(device, message)
   )));
+  let sent = 0;
   for (const result of results) {
-    if (result.status === 'rejected') console.warn('[push] send failed:', result.reason?.message || result.reason);
+    if (result.status === 'fulfilled') sent += 1;
+    else console.warn('[push] send failed:', result.reason?.message || result.reason);
   }
-  return results.filter((result) => result.status === 'fulfilled').length;
+  if (sent > 0) {
+    console.log(`[push] sent ${sent}/${eligible.length} · user=${userId} kind=${message.kind}`);
+  }
+  return sent;
 }
 
 export async function sendPushToUsers(userIds: string[], message: PushMessage): Promise<number> {
@@ -529,7 +540,7 @@ export class CompetitionPushNotifier {
         if (!previousRanks) continue;
 
         for (const entry of activeEntries) {
-          if (entry.rank <= 0) continue;
+          if (isSimulatedBot(entry.userId) || entry.rank <= 0) continue;
           const previousRank = previousRanks.get(entry.userId);
           if (!previousRank || previousRank === entry.rank) continue;
           const cooldownKey = `${competition.id}:${entry.userId}`;
