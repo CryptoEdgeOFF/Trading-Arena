@@ -3779,6 +3779,7 @@ if (!process.env.NETLIFY) {
           { pair: 'SOL/USD', source: 'binance' },
           { pair: 'XRP/USD', source: 'binance' },
           { pair: 'BNB/USD', source: 'binance' },
+          { pair: 'TRX/USD', source: 'binance' },
         ],
         [1],
       );
