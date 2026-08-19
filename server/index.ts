@@ -2933,6 +2933,31 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   }
 });
 
+app.delete('/api/admin/competitions/:id/participants', requireAdmin, async (req, res) => {
+  try {
+    const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds.map(String) : [];
+    const reason = String(req.body?.reason || 'Admin removal').trim();
+    const result = await competitionManager.removeCompetitionParticipants(
+      String(req.params.id || ''),
+      userIds,
+      reason,
+    );
+    const paperPlayerIds = result.removed
+      .map((entry) => entry.paperPlayerId)
+      .filter((value): value is string => Boolean(value));
+
+    manager.unmarkOnlineCompetitionPlayers(paperPlayerIds);
+    for (const playerId of paperPlayerIds) {
+      await competitionManager.deleteTraderSessionsForPlayer(playerId);
+      await manager.removePlayerPermanently(playerId);
+    }
+
+    res.json({ ok: true, removed: result.removed });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression participants impossible' });
+  }
+});
+
 app.delete('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   try {
     const { paperPlayerIds } = competitionManager.deleteCompetition(String(req.params.id || ''));

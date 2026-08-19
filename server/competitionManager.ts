@@ -2584,6 +2584,93 @@ export class CompetitionManager {
     return { paperPlayerIds };
   }
 
+  async removeCompetitionParticipants(
+    id: string,
+    userIds: string[],
+    reason: string,
+  ): Promise<{ removed: Array<{ userId: string; paperPlayerId: string | null }> }> {
+    const competition = this.competitions.get(id);
+    if (!competition) throw new Error('Competition introuvable');
+
+    const targets = new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean));
+    if (!targets.size) throw new Error('Aucun participant fourni');
+
+    const entries = competition.entries.filter((entry) => targets.has(entry.userId));
+    const found = new Set(entries.map((entry) => entry.userId));
+    const missing = [...targets].filter((userId) => !found.has(userId));
+    if (missing.length) throw new Error(`Participant(s) absent(s) de cette competition: ${missing.join(', ')}`);
+
+    const linkedPayout = Array.from(this.payouts.values()).find((payout) => (
+      payout.competitionId === id && targets.has(payout.userId)
+    ));
+    if (linkedPayout) {
+      throw new Error('Suppression refusee: un payout est deja lie a cette participation');
+    }
+
+    if (this.pool) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(`
+          create table if not exists comp_removed_participations (
+            id text primary key,
+            competition_id text not null,
+            user_id text not null,
+            paper_player_id text,
+            entry_data jsonb not null,
+            player_data jsonb,
+            reason text not null,
+            removed_at timestamptz not null default now(),
+            unique (competition_id, user_id)
+          )
+        `);
+        for (const entry of entries) {
+          await client.query(`
+            insert into comp_removed_participations (
+              id, competition_id, user_id, paper_player_id, entry_data, player_data, reason
+            )
+            values (
+              $1, $2, $3, $4, $5::jsonb,
+              (select data from comp_paper_players where id = $4),
+              $6
+            )
+            on conflict (competition_id, user_id) do update set
+              paper_player_id = excluded.paper_player_id,
+              entry_data = excluded.entry_data,
+              player_data = excluded.player_data,
+              reason = excluded.reason,
+              removed_at = now()
+          `, [
+            crypto.randomUUID(),
+            id,
+            entry.userId,
+            entry.paperPlayerId || null,
+            JSON.stringify(entry),
+            reason,
+          ]);
+        }
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    competition.entries = competition.entries.filter((entry) => !targets.has(entry.userId));
+    competition.updatedAt = Date.now();
+    this.competitions.set(id, competition);
+    await this.persist();
+
+    return {
+      removed: entries.map((entry) => ({
+        userId: entry.userId,
+        paperPlayerId: entry.paperPlayerId || null,
+      })),
+    };
+  }
+
   updateCompetition(id: string, patch: Partial<{
     title: string;
     code: string;

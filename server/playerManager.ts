@@ -830,6 +830,18 @@ export class PlayerManager {
     }
   }
 
+  async removePlayerPermanently(id: string): Promise<void> {
+    this.players.delete(id);
+    this.playerQueue = this.playerQueue.filter((playerId) => playerId !== id);
+    this.onlineCompetitionPlayerIds.delete(id);
+    this.liveEquityCompetitionPlayerIds.delete(id);
+    if (this.pool) {
+      await this.deletePlayerRow(id);
+    } else {
+      this.saveRoster();
+    }
+  }
+
   togglePlayer(id: string): Player | null {
     const player = this.players.get(id);
     if (!player) return null;
