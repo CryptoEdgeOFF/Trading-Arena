@@ -152,6 +152,10 @@ export function computeDueOccurrences(now: number, exists: (scheduleKey: string)
 const SCHEDULED_ARENA_DRAWDOWN_PERCENT = 5;
 
 export async function ensureScheduledArenas(manager: CompetitionManager): Promise<number> {
+  // Production ne doit pas inventer d'arènes. Activer uniquement en staging
+  // avec ENABLE_SCHEDULED_ARENAS=true.
+  if (process.env.ENABLE_SCHEDULED_ARENAS !== 'true') return 0;
+
   let dirty = false;
 
   // Retire les occurrences des templates désactivés (ex. anciennes Blitz),
