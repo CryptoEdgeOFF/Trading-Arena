@@ -8,18 +8,20 @@ import * as kraken from './kraken.js';
  * Source unique d'historique OHLC pour les pairs crypto, avec une chaîne
  * de fallback explicite et ordonnée :
  *
- *   1. Binance Futures   — source rapide et stable pour les graphes crypto.
- *   2. iTick (region BA) — fallback aligné sur notre flux live, mais soumis
+ *   1. Binance Spot      — même venue que le live iTick (region BA). Tick
+ *                          plus fin sur les alts type TRX (0,00001 vs perp).
+ *   2. Binance Futures   — fallback si le spot est géo-bloqué / vide.
+ *   3. iTick (region BA) — fallback aligné sur notre flux live, mais soumis
  *                          au quota REST iTick (`code=1 your request is too much`).
- *   3. Bybit V5          — venue indépendante, dernier recours toujours up.
- *   4. Kraken Spot       — fallback anti-écran vide quand Railway est bloqué
+ *   4. Bybit V5          — venue indépendante, dernier recours toujours up.
+ *   5. Kraken Spot       — fallback anti-écran vide quand Railway est bloqué
  *                          par Binance 451 + Bybit 403 + cooldown iTick.
  *
  * On passe au maillon suivant dès qu'un fournisseur échoue OU renvoie zéro
  * bougie. Le premier qui répond avec des données gagne.
  */
 
-export type CryptoCandleSource = 'binance' | 'itick' | 'bybit' | 'kraken';
+export type CryptoCandleSource = 'binance' | 'binance-futures' | 'itick' | 'bybit' | 'kraken';
 
 export interface CryptoCandleResult {
   candles: OhlcCandle[];
@@ -49,6 +51,11 @@ export async function getCryptoOhlc(
   const providers: Provider[] = [
     {
       name: 'binance',
+      enabled: true,
+      fetch: () => binance.getSpotOhlcCandles(pair, interval, opts),
+    },
+    {
+      name: 'binance-futures',
       enabled: true,
       fetch: () => binance.getOhlcCandles(pair, interval, opts),
     },

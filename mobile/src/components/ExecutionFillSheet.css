@@ -1,0 +1,197 @@
+.execution-fill-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.execution-fill-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(2, 1, 7, 0.78);
+  backdrop-filter: blur(5px);
+}
+
+.execution-fill-sheet {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  max-height: min(82dvh, 720px);
+  overflow-y: auto;
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  background: #100b17;
+  box-shadow: 0 -24px 80px rgba(0, 0, 0, 0.55);
+  color: #fff;
+  padding-bottom: max(18px, env(safe-area-inset-bottom));
+}
+
+.execution-fill-sheet > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(16, 11, 23, 0.96);
+}
+
+.execution-fill-sheet > header div {
+  display: grid;
+  gap: 4px;
+}
+
+.execution-fill-sheet > header span,
+.execution-fill-levels > span {
+  color: #a78bfa;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.execution-fill-sheet > header strong {
+  font-size: 19px;
+}
+
+.execution-fill-sheet > header button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c9c4d0;
+  font-size: 23px;
+}
+
+.execution-fill-content {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.execution-fill-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.execution-fill-metrics > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.execution-fill-metrics > div.is-highlight {
+  border-color: rgba(167, 139, 250, 0.28);
+  background: rgba(167, 139, 250, 0.09);
+}
+
+.execution-fill-metrics span,
+.execution-fill-source span {
+  overflow: hidden;
+  color: #777181;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.execution-fill-metrics strong {
+  overflow: hidden;
+  color: #f7f3fa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-fill-metrics .is-highlight strong {
+  color: #ddd0ff;
+}
+
+.execution-fill-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.execution-fill-source strong {
+  color: #ddd7e5;
+  font-size: 12px;
+}
+
+.execution-fill-levels {
+  display: grid;
+  gap: 8px;
+}
+
+.execution-fill-levels > div {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 13px;
+}
+
+.execution-fill-levels p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 11px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+
+.execution-fill-levels p:last-child {
+  border-bottom: 0;
+}
+
+.execution-fill-levels p span {
+  color: #aaa4b3;
+}
+
+.execution-fill-levels p strong {
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.execution-fill-note {
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.16);
+  border-radius: 13px;
+  background: rgba(251, 191, 36, 0.06);
+  color: rgba(254, 243, 199, 0.76);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (min-width: 700px) {
+  .execution-fill-layer {
+    align-items: center;
+    padding: 20px;
+  }
+
+  .execution-fill-sheet {
+    border-bottom: 1px solid rgba(167, 139, 250, 0.2);
+    border-radius: 24px;
+  }
+}

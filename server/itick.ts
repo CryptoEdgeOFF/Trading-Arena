@@ -389,6 +389,76 @@ export interface ItickLiveTick {
   ts: number;
 }
 
+export interface ItickDepthLevel {
+  position: number;
+  price: number;
+  volume: number;
+}
+
+export interface ItickLiveDepth {
+  symbol: string;
+  asset: ItickAssetClass;
+  asks: ItickDepthLevel[];
+  bids: ItickDepthLevel[];
+  ts: number;
+}
+
+export function parseItickDepthLevels(rows: unknown): ItickDepthLevel[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row: any): ItickDepthLevel | null => {
+      const price = Number(row?.p);
+      const volume = Number(row?.v ?? row?.o);
+      const position = Number(row?.po);
+      if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(volume) || volume <= 0) {
+        return null;
+      }
+      return {
+        position: Number.isFinite(position) ? position : 0,
+        price,
+        volume,
+      };
+    })
+    .filter((row): row is ItickDepthLevel => row !== null);
+}
+
+export function chunkItickDepthSymbols(codes: string[], batchSize = 20): string[][] {
+  const size = Math.max(1, Math.min(20, Math.floor(batchSize) || 20));
+  const unique = [...new Set(codes.map((code) => code.trim().toUpperCase()).filter(Boolean))];
+  const chunks: string[][] = [];
+  for (let index = 0; index < unique.length; index += size) {
+    chunks.push(unique.slice(index, index + size));
+  }
+  return chunks;
+}
+
+export async function getBatchCryptoDepths(codes: string[]): Promise<Record<string, ItickLiveDepth>> {
+  const out: Record<string, ItickLiveDepth> = {};
+  for (const chunk of chunkItickDepthSymbols(codes)) {
+    const data = await fetchItick<Record<string, any>>(
+      '/crypto/depths',
+      { region: CRYPTO_REGION, codes: chunk.join(',') },
+    );
+    const fetchedAt = Date.now();
+    if (!data || typeof data !== 'object') continue;
+    for (const [rawCode, row] of Object.entries(data)) {
+      const symbol = String((row as any)?.s || rawCode).trim().toUpperCase();
+      if (!symbol) continue;
+      const asks = parseItickDepthLevels((row as any)?.a).sort((a, b) => a.price - b.price);
+      const bids = parseItickDepthLevels((row as any)?.b).sort((a, b) => b.price - a.price);
+      if (!asks.length && !bids.length) continue;
+      out[symbol] = {
+        symbol,
+        asset: 'crypto',
+        asks,
+        bids,
+        ts: fetchedAt,
+      };
+    }
+  }
+  return out;
+}
+
 /** iTick exige un keepalive applicatif `{"ac":"ping",...}` au moins
  *  toutes les 60s, sinon le serveur ferme la connexion. On envoie à
  *  30s pour garder une marge confortable. */
@@ -410,6 +480,7 @@ class ItickClusterManager extends EventEmitter {
   private authenticated = false;
   private wantConnected = false;
   private latest = new Map<string, ItickLiveTick>();
+  private latestDepth = new Map<string, ItickLiveDepth>();
   private lastOpenAt = 0;
   private cooldownUntil = 0;
   private lastError = '';
@@ -455,6 +526,10 @@ class ItickClusterManager extends EventEmitter {
     return this.latest.get(symbol.trim().toUpperCase());
   }
 
+  getLatestDepth(symbol: string): ItickLiveDepth | undefined {
+    return this.latestDepth.get(symbol.trim().toUpperCase());
+  }
+
   resetCooldown(): void {
     this.cooldownUntil = 0;
     this.reconnectAttempt = 0;
@@ -493,6 +568,12 @@ class ItickClusterManager extends EventEmitter {
         symbol: sym,
         price: t.price,
         ageMs: Date.now() - t.ts,
+      })),
+      depth: [...this.latestDepth.entries()].map(([sym, depth]) => ({
+        symbol: sym,
+        asks: depth.asks.length,
+        bids: depth.bids.length,
+        ageMs: Date.now() - depth.ts,
       })),
     };
   }
@@ -570,7 +651,12 @@ class ItickClusterManager extends EventEmitter {
       this.intentionalClose = false;
       console.warn(`[itickWS:${this.asset}] close code=${code} reason=${reason.toString() || 'n/a'} aliveMs=${aliveMs} intentional=${intentional}`);
       if (!intentional && this.lastOpenAt && aliveMs < FAST_CLOSE_THRESHOLD_MS && !this.authenticated) {
-        this.cooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+        this.rateLimitHits += 1;
+        const cooldown = Math.min(
+          RATE_LIMIT_COOLDOWN_MAX_MS,
+          RATE_LIMIT_COOLDOWN_MIN_MS * Math.pow(2, this.rateLimitHits - 1),
+        );
+        this.cooldownUntil = Date.now() + cooldown;
         this.lastError = `Cluster a fermé après ${aliveMs}ms (probable refus). Cooldown.`;
       }
       this.authenticated = false;
@@ -615,6 +701,21 @@ class ItickClusterManager extends EventEmitter {
     const data = msg?.data && typeof msg.data === 'object' ? msg.data : msg;
     const symbol = String(data?.s || '').toUpperCase();
     if (!symbol) return;
+    const messageType = String(msg?.type || data?.type || '').toLowerCase();
+    if (messageType === 'depth' || (Array.isArray(data?.a) && Array.isArray(data?.b))) {
+      const depth: ItickLiveDepth = {
+        symbol,
+        asset: this.asset,
+        asks: parseItickDepthLevels(data.a).sort((a, b) => a.price - b.price),
+        bids: parseItickDepthLevels(data.b).sort((a, b) => b.price - a.price),
+        ts: Number(data?.t || Date.now()),
+      };
+      if (depth.asks.length > 0 || depth.bids.length > 0) {
+        this.latestDepth.set(symbol, depth);
+        this.emit('depth', depth);
+      }
+      return;
+    }
     const last = Number(data?.ld ?? data?.lp ?? data?.c);
     const bid = Number(data?.bp ?? data?.b);
     const ask = Number(data?.ap ?? data?.a);
@@ -657,6 +758,20 @@ class ItickClusterManager extends EventEmitter {
     try {
       this.ws.send(JSON.stringify(msg));
       console.log(`[itickWS:${this.asset}] subscribe →`, params);
+      if (this.asset === 'crypto') {
+        const depthSymbols = new Set(
+          String(process.env.ITICK_DEPTH_SYMBOLS || '')
+            .split(',')
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter(Boolean),
+        );
+        const selected = [...this.subscribedSymbols].filter((symbol) => depthSymbols.has(symbol));
+        if (selected.length > 0) {
+          const depthParams = selected.map((symbol) => `${symbol}$${region}`).join(',');
+          this.ws.send(JSON.stringify({ ac: 'subscribe', params: depthParams, types: 'depth' }));
+          console.log(`[itickWS:${this.asset}] depth subscribe →`, depthParams);
+        }
+      }
     } catch (err) {
       console.warn(`[itickWS:${this.asset}] subscribe send failed:`, (err as Error).message);
     }
@@ -710,12 +825,20 @@ class ItickFeedRegistry extends EventEmitter {
   private managers = new Map<ItickAssetClass, ItickClusterManager>();
   private quotesByAsset = new Map<ItickAssetClass, Record<string, ItickQuote>>();
   private quotesPollTimer: ReturnType<typeof setInterval> | null = null;
+  private depthBatchTimer: ReturnType<typeof setInterval> | null = null;
+  private depthBatchInflight = false;
+  private depthBatchSymbols: string[] = [];
+  private batchDepth = new Map<string, ItickLiveDepth>();
+  private depthBatchCalls = 0;
+  private depthBatchLastAt = 0;
+  private depthBatchLastError = '';
 
   private ensure(asset: ItickAssetClass): ItickClusterManager {
     let m = this.managers.get(asset);
     if (!m) {
       m = new ItickClusterManager(asset);
       m.on('tick', (tick: ItickLiveTick) => this.emit('tick', tick));
+      m.on('depth', (depth: ItickLiveDepth) => this.emit('depth', depth));
       this.managers.set(asset, m);
     }
     return m;
@@ -761,6 +884,46 @@ class ItickFeedRegistry extends EventEmitter {
     if (typeof this.quotesPollTimer.unref === 'function') this.quotesPollTimer.unref();
   }
 
+  private startDepthBatchPoller(codes: string[]): void {
+    if (process.env.ITICK_DEPTH_BATCH_ENABLED !== 'true') return;
+    const configured = String(process.env.ITICK_DEPTH_BATCH_SYMBOLS || '')
+      .split(',')
+      .map((symbol) => symbol.trim().toUpperCase())
+      .filter(Boolean);
+    this.depthBatchSymbols = [...new Set(configured.length ? configured : codes.map((code) => code.toUpperCase()))];
+    if (!this.depthBatchSymbols.length || this.depthBatchTimer) return;
+
+    const requestedInterval = Number(process.env.ITICK_DEPTH_BATCH_INTERVAL_MS) || 3_000;
+    const intervalMs = Math.max(2_000, requestedInterval);
+    const tick = async () => {
+      if (this.depthBatchInflight || isRestInCooldown()) return;
+      this.depthBatchInflight = true;
+      try {
+        const depths = await getBatchCryptoDepths(this.depthBatchSymbols);
+        for (const depth of Object.values(depths)) {
+          this.batchDepth.set(depth.symbol, depth);
+          this.emit('depth', depth);
+        }
+        this.depthBatchCalls += chunkItickDepthSymbols(this.depthBatchSymbols).length;
+        this.depthBatchLastAt = Date.now();
+        this.depthBatchLastError = '';
+      } catch (error) {
+        this.depthBatchLastError = (error as Error).message;
+        console.warn('[itickDepthBatch] poll KO:', this.depthBatchLastError);
+      } finally {
+        this.depthBatchInflight = false;
+      }
+    };
+
+    console.log(
+      `[itickDepthBatch] actif — ${this.depthBatchSymbols.length} symboles, `
+      + `${chunkItickDepthSymbols(this.depthBatchSymbols).length} appels/${intervalMs}ms`,
+    );
+    void tick();
+    this.depthBatchTimer = setInterval(() => void tick(), intervalMs);
+    this.depthBatchTimer.unref?.();
+  }
+
   /** Configure tous les clusters en une fois. Les clusters non listés
    *  sont déconnectés. Les opens sont espacés de ~800ms pour éviter le
    *  rate-limit "burst" côté iTick (l'IP prend un 429 si on ouvre 2 WS
@@ -783,6 +946,7 @@ class ItickFeedRegistry extends EventEmitter {
       if (!wanted.has(asset)) m.setSymbols([]);
     }
     if (wanted.size > 0) this.startQuotesPoller();
+    this.startDepthBatchPoller(byAsset.crypto || []);
   }
 
   /**
@@ -807,18 +971,49 @@ class ItickFeedRegistry extends EventEmitter {
     return undefined;
   }
 
+  getLatestDepth(symbol: string, asset?: ItickAssetClass): ItickLiveDepth | undefined {
+    const normalized = symbol.trim().toUpperCase();
+    const batch = asset && asset !== 'crypto' ? undefined : this.batchDepth.get(normalized);
+    if (asset) {
+      const live = this.managers.get(asset)?.getLatestDepth(normalized);
+      if (!live) return batch;
+      if (!batch) return live;
+      return live.ts >= batch.ts ? live : batch;
+    }
+    let latest = batch;
+    for (const manager of this.managers.values()) {
+      const depth = manager.getLatestDepth(normalized);
+      if (depth && (!latest || depth.ts > latest.ts)) latest = depth;
+    }
+    return latest;
+  }
+
   resetCooldown(): void {
     for (const m of this.managers.values()) m.resetCooldown();
   }
 
   disconnect(): void {
     for (const m of this.managers.values()) m.disconnect();
+    if (this.depthBatchTimer) {
+      clearInterval(this.depthBatchTimer);
+      this.depthBatchTimer = null;
+    }
   }
 
   getStatus() {
     const clusters = [...this.managers.values()].map((m) => m.getStatus());
     return {
       clusters,
+      depthBatch: {
+        enabled: process.env.ITICK_DEPTH_BATCH_ENABLED === 'true',
+        symbols: this.depthBatchSymbols.length,
+        chunksPerPoll: chunkItickDepthSymbols(this.depthBatchSymbols).length,
+        calls: this.depthBatchCalls,
+        lastAt: this.depthBatchLastAt,
+        ageMs: this.depthBatchLastAt ? Date.now() - this.depthBatchLastAt : null,
+        lastError: this.depthBatchLastError || null,
+        cached: this.batchDepth.size,
+      },
       // Backward-compat avec l'ancienne page /feed-test : on remonte le
       // premier cluster comme "feed" principal.
       ...(clusters[0] ? {

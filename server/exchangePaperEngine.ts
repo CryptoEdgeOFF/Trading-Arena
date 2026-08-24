@@ -10,6 +10,14 @@ import { ITICK_INSTRUMENTS, findByPair } from './itickInstruments.js';
 import { itickFeed } from './itick.js';
 import { pnlToAccountCcy } from './pairFx.js';
 import { assertMarketOpen, getMarketSessionForPair } from './marketHours.js';
+import {
+  applyPaperSlippage,
+  configuredPaperExecutionModel,
+  walkPaperLimitOrderBook,
+  type PaperFillDetail,
+  type PaperOrderBook,
+  type PaperExecutionModel,
+} from './paperSlippage.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -184,6 +192,7 @@ const BYBIT_TAKEOVER_MS = 3000;
  */
 const ITICK_CRYPTO_TAKEOVER_MS = 3000;
 const ITICK_CRYPTO_STALE_MS = 10_000;
+const ITICK_DEPTH_MAX_AGE_MS = Number(process.env.ITICK_DEPTH_MAX_AGE_MS) || 3_000;
 
 /** Pairs crypto (source kraken_futures) qu'on alimente en live via iTick. */
 export const CRYPTO_LIVE_PAIRS = PAPER_PAIRS
@@ -195,6 +204,18 @@ const cryptoPairToItickCode = new Map<string, string>();
 for (const pair of CRYPTO_LIVE_PAIRS) {
   const base = pair.split('/')[0]?.trim().toUpperCase();
   if (base) cryptoPairToItickCode.set(pair, `${base}USDT`);
+}
+
+function getItickOrderBook(pair: string): PaperOrderBook | undefined {
+  const code = cryptoPairToItickCode.get(pair);
+  if (!code) return undefined;
+  const depth = itickFeed.getLatestDepth(code, 'crypto');
+  if (!depth || Date.now() - depth.ts > ITICK_DEPTH_MAX_AGE_MS) return undefined;
+  return {
+    asks: depth.asks.map((level) => ({ price: level.price, volume: level.volume })),
+    bids: depth.bids.map((level) => ({ price: level.price, volume: level.volume })),
+    ts: depth.ts,
+  };
 }
 
 const pairToDefinition = new Map(PAPER_PAIRS.map((item) => [item.pair, item]));
@@ -310,6 +331,17 @@ function getReservedCapital(player: Player): number {
   return player.openOrders.reduce((total, order) => total + order.marginReserved + order.feeEstimate, 0);
 }
 
+function partialLimitFillsEnabled(): boolean {
+  return process.env.PAPER_LIMIT_PARTIAL_FILLS === 'true';
+}
+
+function getOrderRemainingSize(order: Order): number {
+  const filledSize = Number.isFinite(order.filledSize) && (order.filledSize ?? 0) > 0
+    ? Math.min(order.size, order.filledSize!)
+    : 0;
+  return Math.max(0, order.size - filledSize);
+}
+
 function clampLeverage(value: number): number {
   if (!Number.isFinite(value)) return MIN_LEVERAGE;
   return Math.max(MIN_LEVERAGE, Math.min(MAX_LEVERAGE, Math.floor(value)));
@@ -412,6 +444,8 @@ export class PaperTradingEngine {
    * et passer deux fois le contrôle de marge → double dépense du capital.
    */
   private playerLocks = new Map<string, Promise<unknown>>();
+  /** Injectable pour les scénarios locaux ; iTick reste la source par défaut. */
+  private orderBookProvider: (pair: string) => PaperOrderBook | undefined;
 
   private withPlayerLock<T>(playerId: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.playerLocks.get(playerId) ?? Promise.resolve();
@@ -427,9 +461,14 @@ export class PaperTradingEngine {
     return next;
   }
 
-  constructor(onTick: () => void, onMarketPairsUpdated?: (pairs: string[]) => void) {
+  constructor(
+    onTick: () => void,
+    onMarketPairsUpdated?: (pairs: string[]) => void,
+    orderBookProvider: (pair: string) => PaperOrderBook | undefined = getItickOrderBook,
+  ) {
     this.onTick = onTick;
     this.onMarketPairsUpdated = onMarketPairsUpdated ?? null;
+    this.orderBookProvider = orderBookProvider;
   }
 
   /**
@@ -905,6 +944,7 @@ export class PaperTradingEngine {
         updatedAt: Date.now(),
         stopLoss: inputStopLoss,
         takeProfit: inputTakeProfit,
+        executionModel: configuredPaperExecutionModel(),
       }, executionPrice, resolveFeeRate(pair, 'taker'));
     }
 
@@ -928,6 +968,8 @@ export class PaperTradingEngine {
 
     const now = Date.now();
     const placedAtMark = ticker.markPrice > 0 ? ticker.markPrice : limitPrice;
+    const executionModel = configuredPaperExecutionModel();
+    const usesPartialLimitFills = partialLimitFillsEnabled() && executionModel === 'slippage-v1';
     const order: Order = {
       id: crypto.randomUUID(),
       pair,
@@ -944,6 +986,8 @@ export class PaperTradingEngine {
       stopLoss: inputStopLoss,
       takeProfit: inputTakeProfit,
       placedAtMark,
+      executionModel,
+      filledSize: usesPartialLimitFills ? 0 : undefined,
     };
 
     player.openOrders.push(order);
@@ -1003,7 +1047,7 @@ export class PaperTradingEngine {
       if (!isValidQuotePrice(exitPrice)) {
         throw new Error(`Prix de sortie invalide: ${exitPrice}`);
       }
-      const trade = this.closePositionAtPrice(player, existing, exitPrice, undefined, reason);
+      const trade = this.closePositionAtPrice(player, existing, exitPrice, undefined, reason, false);
       const stillOpen = player.openPositions.some((p) => p.id === existing.id);
       if (stillOpen || !trade) {
         throw new Error(`Fermeture refusée pour ${existing.pair} ${existing.side} @ ${exitPrice}`);
@@ -1045,7 +1089,16 @@ export class PaperTradingEngine {
       }
     }
 
-    const exitPrice = existing.side === 'long' ? ticker.bidPrice : ticker.askPrice;
+    const requestedPrice = existing.side === 'long' ? ticker.bidPrice : ticker.askPrice;
+    const execution = applyPaperSlippage(
+      pair,
+      requestedPrice,
+      sizeToClose,
+      existing.side === 'long' ? 'sell' : 'buy',
+      existing.executionModel ?? 'legacy',
+      this.orderBookProvider(pair),
+    );
+    const exitPrice = execution.executionPrice;
     existing.markPrice = exitPrice;
     existing.pnl = computePositionPnl(existing);
 
@@ -1081,6 +1134,10 @@ export class PaperTradingEngine {
       pnl: realizedPnl,
       time: Date.now(),
       action: 'close',
+      requestedPrice: execution.requestedPrice,
+      slippageBps: execution.slippageBps,
+      slippageSource: execution.source,
+      fillDetails: execution.fills,
     };
 
     const tradeReturn = (trade.pnl / (existing.entryPrice * sizeToClose)) * 100;
@@ -1171,7 +1228,11 @@ export class PaperTradingEngine {
     if (!Number.isFinite(newLimit) || newLimit <= 0) {
       throw new Error('Prix limite invalide');
     }
-    if (newLimit * order.size < MIN_ORDER_NOTIONAL) {
+    const reservableSize = partialLimitFillsEnabled()
+      && order.executionModel === 'slippage-v1'
+      ? getOrderRemainingSize(order)
+      : order.size;
+    if (newLimit * reservableSize < MIN_ORDER_NOTIONAL) {
       throw new Error('Taille de position trop faible');
     }
 
@@ -1185,7 +1246,7 @@ export class PaperTradingEngine {
       order.takeProfit ?? null,
     );
 
-    const notional = newLimit * order.size;
+    const notional = newLimit * reservableSize;
     const marginRequired = notional / order.leverage;
     const feeEstimate = notional * resolveFeeRate(order.pair, 'maker');
     const previousReserve = order.marginReserved + order.feeEstimate;
@@ -1761,8 +1822,24 @@ export class PaperTradingEngine {
     // décorrélés du marché réel pendant 1-2 ticks).
     if (Date.now() - this.bootedAt < LIMIT_WARMUP_MS) return;
 
+    if (!partialLimitFillsEnabled()) {
+      this.processOpenOrdersLegacy(players);
+      return;
+    }
+
+    // Les ordres historiques / legacy gardent strictement l'ancien matching,
+    // même lorsque l'expérimentation est activée pour les nouveaux ordres.
+    this.processOpenOrdersLegacy(players, (order) => order.executionModel !== 'slippage-v1');
+    this.processOpenOrdersPartial(players);
+  }
+
+  private processOpenOrdersLegacy(
+    players: Player[],
+    include: (order: Order) => boolean = () => true,
+  ): void {
     for (const player of players) {
       const executable = player.openOrders.filter((order) => {
+        if (!include(order)) return false;
         if (order.status !== 'open' || order.limitPrice == null) return false;
         if (!getMarketSessionForPair(order.pair).open) return false;
         const ticker = this.market[order.pair];
@@ -1787,6 +1864,122 @@ export class PaperTradingEngine {
         );
         player.openOrders = player.openOrders.filter((entry) => entry.id !== order.id);
         this.executeOrder(player, order, fillPrice, resolveFeeRate(order.pair, 'maker'));
+      }
+    }
+  }
+
+  private processOpenOrdersPartial(players: Player[]): void {
+    const candidatesByPair = new Map<string, Array<{ player: Player; order: Order }>>();
+    for (const player of players) {
+      for (const order of player.openOrders) {
+        if (
+          order.status !== 'open'
+          || order.orderType !== 'limit'
+          || order.limitPrice == null
+          || order.executionModel !== 'slippage-v1'
+          || getOrderRemainingSize(order) <= 0
+          || !getMarketSessionForPair(order.pair).open
+        ) {
+          continue;
+        }
+        const candidates = candidatesByPair.get(order.pair) ?? [];
+        candidates.push({ player, order });
+        candidatesByPair.set(order.pair, candidates);
+      }
+    }
+
+    for (const [pair, candidates] of candidatesByPair) {
+      const liveBook = this.orderBookProvider(pair);
+      const depthTs = liveBook?.ts;
+      // Les nouveaux limits slippage-v1 attendent un vrai snapshot frais :
+      // aucun fallback formule / mark n'est autorisé.
+      if (
+        !liveBook
+        || !Number.isFinite(depthTs)
+        || depthTs! <= 0
+        || Date.now() - depthTs! > ITICK_DEPTH_MAX_AGE_MS
+      ) {
+        continue;
+      }
+
+      const sharedBook: PaperOrderBook = {
+        asks: liveBook.asks.map((level) => ({ ...level })),
+        bids: liveBook.bids.map((level) => ({ ...level })),
+        ts: depthTs,
+      };
+
+      // Priorité prix puis temps : meilleur prix limite d'abord, FIFO à prix
+      // égal. Buy et sell consomment des côtés indépendants du carnet.
+      candidates.sort((left, right) => {
+        if (left.order.side !== right.order.side) {
+          return left.order.side.localeCompare(right.order.side);
+        }
+        const priceDelta = left.order.side === 'long'
+          ? right.order.limitPrice! - left.order.limitPrice!
+          : left.order.limitPrice! - right.order.limitPrice!;
+        if (Math.abs(priceDelta) > Number.EPSILON) return priceDelta;
+        const timeDelta = left.order.createdAt - right.order.createdAt;
+        return timeDelta !== 0 ? timeDelta : left.order.id.localeCompare(right.order.id);
+      });
+
+      for (const { player, order } of candidates) {
+        if (!player.openOrders.includes(order)) continue;
+        if ((order.lastDepthTs ?? 0) >= depthTs!) continue;
+
+        const remainingSize = getOrderRemainingSize(order);
+        const direction = order.side === 'long' ? 'buy' : 'sell';
+        // Marque aussi les ordres arrivés après l'épuisement du côté partagé :
+        // ils ne doivent pas pouvoir réutiliser la même liquidité au tick suivant.
+        order.lastDepthTs = depthTs;
+        order.updatedAt = Date.now();
+        const quote = walkPaperLimitOrderBook(
+          order.limitPrice!,
+          remainingSize,
+          direction,
+          sharedBook,
+        );
+        if (quote.filledSize <= 0 || quote.executionPrice == null) continue;
+
+        try {
+          this.executePartialLimitFill(
+            player,
+            order,
+            quote.filledSize,
+            quote.executionPrice,
+            quote.fills,
+            depthTs!,
+          );
+          this.consumeLimitBookLevels(sharedBook, direction, quote.fills);
+        } catch (error) {
+          console.warn(
+            `[paper] partial limit fill skipped ${player.name} ${order.id}:`,
+            (error as Error).message,
+          );
+          continue;
+        }
+
+        if (getOrderRemainingSize(order) <= Math.max(order.size * 1e-9, 1e-9)) {
+          order.status = 'filled';
+          player.openOrders = player.openOrders.filter((entry) => entry.id !== order.id);
+          this.updatePlayerEquity(player);
+        }
+      }
+    }
+  }
+
+  private consumeLimitBookLevels(
+    orderBook: PaperOrderBook,
+    direction: 'buy' | 'sell',
+    fills: PaperFillDetail[],
+  ): void {
+    const levels = direction === 'buy' ? orderBook.asks : orderBook.bids;
+    for (const fill of fills) {
+      let remaining = fill.size;
+      for (const level of levels) {
+        if (remaining <= 0 || level.price !== fill.price || level.volume <= 0) continue;
+        const consumed = Math.min(level.volume, remaining);
+        level.volume = Math.max(0, level.volume - consumed);
+        remaining -= consumed;
       }
     }
   }
@@ -1860,6 +2053,7 @@ export class PaperTradingEngine {
     exitPrice: number,
     partialSize?: number,
     reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'manual',
+    applyImpact = true,
   ): Trade | null {
     if (!isValidQuotePrice(exitPrice)) {
       console.warn(
@@ -1880,6 +2074,15 @@ export class PaperTradingEngine {
       }
     }
 
+    const execution = applyPaperSlippage(
+      existing.pair,
+      exitPrice,
+      sizeToClose,
+      existing.side === 'long' ? 'sell' : 'buy',
+      applyImpact ? (existing.executionModel ?? 'legacy') : 'legacy',
+      this.orderBookProvider(existing.pair),
+    );
+    exitPrice = execution.executionPrice;
     existing.markPrice = exitPrice;
     existing.pnl = computePositionPnl(existing);
 
@@ -1914,6 +2117,11 @@ export class PaperTradingEngine {
       pnl: realizedPnl,
       time: Date.now(),
       action: 'close',
+      closeReason: reason,
+      requestedPrice: execution.requestedPrice,
+      slippageBps: execution.slippageBps,
+      slippageSource: execution.source,
+      fillDetails: execution.fills,
     };
 
     const tradeReturn = (trade.pnl / (existing.entryPrice * sizeToClose)) * 100;
@@ -1960,10 +2168,172 @@ export class PaperTradingEngine {
     return trade;
   }
 
-  private executeOrder(player: Player, order: Order, executionPrice: number, feeRate: number): PaperOrderResult {
+  private executePartialLimitFill(
+    player: Player,
+    order: Order,
+    fillSize: number,
+    executionPrice: number,
+    fills: PaperFillDetail[],
+    depthTs: number,
+  ): Trade {
+    const remainingBefore = getOrderRemainingSize(order);
+    const normalizedFillSize = Math.min(remainingBefore, fillSize);
+    if (
+      !Number.isFinite(normalizedFillSize)
+      || normalizedFillSize <= 0
+      || !isValidQuotePrice(executionPrice)
+    ) {
+      throw new Error('Tranche limit invalide');
+    }
+
+    const previousFilled = Math.max(0, Math.min(order.size, order.filledSize ?? 0));
+    const existingPosition = player.openPositions.find((position) => position.id === order.id);
+    const notional = executionPrice * normalizedFillSize;
+    const margin = notional / order.leverage;
+    const fee = notional * resolveFeeRate(order.pair, 'maker');
+    const nextFilledPreview = Math.min(order.size, previousFilled + normalizedFillSize);
+    const remainingAfterPreview = Math.max(0, order.size - nextFilledPreview);
+    const remainingNotionalPreview = (order.limitPrice ?? executionPrice) * remainingAfterPreview;
+    const nextMarginReserve = remainingNotionalPreview / order.leverage;
+    const nextFeeReserve = remainingNotionalPreview * resolveFeeRate(order.pair, 'maker');
+    const availableWithReserve = player.availableMargin + order.marginReserved + order.feeEstimate;
+    if (margin + fee + nextMarginReserve + nextFeeReserve > availableWithReserve) {
+      throw new Error(`Capital disponible insuffisant (${player.availableMargin.toFixed(2)}$)`);
+    }
+
+    const ticker = this.market[order.pair];
+    const markRef = ticker?.markPrice && ticker.markPrice > 0 ? ticker.markPrice : executionPrice;
+    if (!existingPosition) {
+      validateRiskLevels(
+        order.side,
+        executionPrice,
+        markRef,
+        order.stopLoss ?? null,
+        order.takeProfit ?? null,
+      );
+    }
+
+    const nextFilled = nextFilledPreview;
+    const priorAverage = order.averageFillPrice
+      ?? existingPosition?.entryPrice
+      ?? executionPrice;
+    const nextAverage = previousFilled > 0
+      ? ((priorAverage * previousFilled) + (executionPrice * normalizedFillSize)) / nextFilled
+      : executionPrice;
+    const openedAt = Date.now();
+
+    if (existingPosition) {
+      const nextPositionSize = existingPosition.size + normalizedFillSize;
+      existingPosition.entryPrice = (
+        (existingPosition.entryPrice * existingPosition.size)
+        + (executionPrice * normalizedFillSize)
+      ) / nextPositionSize;
+      existingPosition.size = nextPositionSize;
+      existingPosition.margin += margin;
+      existingPosition.feesPaid += fee;
+      existingPosition.markPrice = markRef;
+      existingPosition.liquidationPrice = this.computeLiquidationPrice(
+        existingPosition.entryPrice,
+        existingPosition.side,
+        existingPosition.leverage,
+      );
+      existingPosition.pnl = computePositionPnl(existingPosition);
+    } else {
+      player.openPositions.push({
+        id: order.id,
+        pair: order.pair,
+        side: order.side,
+        size: normalizedFillSize,
+        entryPrice: executionPrice,
+        markPrice: markRef,
+        pnl: 0,
+        unrealizedFunding: 0,
+        leverage: order.leverage,
+        margin,
+        feesPaid: fee,
+        liquidationPrice: this.computeLiquidationPrice(executionPrice, order.side, order.leverage),
+        stopLoss: order.stopLoss ?? null,
+        takeProfit: order.takeProfit ?? null,
+        openedAt,
+        executionModel: order.executionModel,
+      });
+    }
+
+    order.filledSize = nextFilled;
+    order.averageFillPrice = nextAverage;
+    order.updatedAt = openedAt;
+    order.marginReserved = nextMarginReserve;
+    order.feeEstimate = nextFeeReserve;
+
+    player.feesPaid += fee;
+    if (previousFilled <= Math.max(order.size * 1e-9, 1e-9) && !existingPosition) {
+      player.tradeCount += 1;
+    }
+
+    const fillIndex = player.trades.filter(
+      (trade) => trade.action === 'open' && trade.orderId === order.id,
+    ).length + 1;
+    const requestedPrice = order.limitPrice ?? executionPrice;
+    const signedSlippageBps = order.side === 'long'
+      ? (executionPrice / requestedPrice - 1) * 10_000
+      : (requestedPrice / executionPrice - 1) * 10_000;
+    const trade: Trade = {
+      id: `${order.id}-fill-${fillIndex}-${depthTs}`,
+      orderId: order.id,
+      fillIndex,
+      playerName: player.name,
+      playerColor: player.color,
+      pair: order.pair,
+      side: order.side,
+      size: normalizedFillSize,
+      price: executionPrice,
+      fee,
+      leverage: order.leverage,
+      orderType: 'limit',
+      pnl: 0,
+      time: openedAt,
+      action: 'open',
+      requestedPrice,
+      // Un limit amélioré porte un bps négatif (favorable), jamais un impact
+      // positif au-delà du plafond/plancher demandé.
+      slippageBps: signedSlippageBps,
+      slippageSource: 'itick-l5',
+      fillDetails: fills,
+    };
+    this.appendTrade(player, trade);
+    this.updatePlayerEquity(player);
+
+    console.log(
+      `[paper] partial limit fill ${player.name} ${order.pair} ${order.side} `
+      + `slice=${normalizedFillSize} filled=${nextFilled}/${order.size} `
+      + `vwap=${nextAverage} depthTs=${depthTs} orderId=${order.id}`,
+    );
+    return trade;
+  }
+
+  private executeOrder(player: Player, order: Order, requestedPrice: number, feeRate: number): PaperOrderResult {
+    const executionModel: PaperExecutionModel = order.executionModel ?? 'legacy';
+    const execution = order.orderType === 'market'
+      ? applyPaperSlippage(
+          order.pair,
+          requestedPrice,
+          order.size,
+          order.side === 'long' ? 'buy' : 'sell',
+          executionModel,
+          this.orderBookProvider(order.pair),
+        )
+      : {
+          requestedPrice,
+          executionPrice: requestedPrice,
+          slippageBps: 0,
+          source: 'legacy' as const,
+          fills: [],
+        };
+    const executionPrice = execution.executionPrice;
     console.log(
       `[paper] executeOrder ${player.name} ${order.pair} ${order.side} `
-      + `${order.orderType} size=${order.size} @ ${executionPrice} `
+      + `${order.orderType} size=${order.size} requested=${requestedPrice} `
+      + `fill=${executionPrice} slip=${execution.slippageBps.toFixed(2)}bps `
       + `(orderId=${order.id} createdAt=${order.createdAt})`,
     );
     const notional = executionPrice * order.size;
@@ -1998,6 +2368,7 @@ export class PaperTradingEngine {
       stopLoss: orderStopLoss,
       takeProfit: orderTakeProfit,
       openedAt,
+      executionModel,
     };
 
     player.feesPaid += fee;
@@ -2018,6 +2389,10 @@ export class PaperTradingEngine {
       pnl: 0,
       time: openedAt,
       action: 'open',
+      requestedPrice: execution.requestedPrice,
+      slippageBps: execution.slippageBps,
+      slippageSource: execution.source,
+      fillDetails: execution.fills,
     };
     this.appendTrade(player, trade);
     this.updatePlayerEquity(player);

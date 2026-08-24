@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
+import { formatDHMS } from '../utils/formatters';
 import Seo from './Seo';
 import CompeteHeader from './CompeteHeader';
 import {
@@ -278,13 +279,7 @@ function useCountdown(target: number): string {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-  const delta = target - now;
-  if (delta <= 0) return '00:00:00';
-  const totalSec = Math.floor(delta / 1000);
-  const hours = Math.floor(totalSec / 3600);
-  const mins = Math.floor((totalSec % 3600) / 60);
-  const secs = totalSec % 60;
-  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  return formatDHMS(target - now, i18n.language.startsWith('fr') ? 'j' : 'd');
 }
 
 function formatPrizeAmount(amount: number, currency: string): string {

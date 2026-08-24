@@ -17,6 +17,7 @@ import { getSponsor } from '../lib/sponsors';
 import ShareCardModal from './ShareCardModal';
 import type { ShareCardData } from '../lib/shareCard';
 import Seo, { SITE_URL } from './Seo';
+import { formatDHMS } from '../utils/formatters';
 import { buildArenaEventJsonLd } from '../lib/structuredData';
 
 const REFRESH_MS = 2000;
@@ -86,13 +87,7 @@ function useCountdown(target: number): string {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-  const delta = target - now;
-  if (delta <= 0) return '00:00:00';
-  const totalSec = Math.floor(delta / 1000);
-  const hours = Math.floor(totalSec / 3600);
-  const mins = Math.floor((totalSec % 3600) / 60);
-  const secs = totalSec % 60;
-  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  return formatDHMS(target - now, i18n.language.startsWith('fr') ? 'j' : 'd');
 }
 
 function StatusPill({ status }: { status: 'registration' | 'starting_soon' | 'live' | 'ended' }) {

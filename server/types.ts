@@ -85,6 +85,10 @@ export interface StoredPlayer {
 
 export interface Trade {
   id: string;
+  /** Ordre parent pour regrouper les tranches d'un fill limit partiel. */
+  orderId?: string;
+  /** Numéro de tranche (1-based) pour un même ordre. */
+  fillIndex?: number;
   playerName: string;
   playerColor: string;
   pair: string;
@@ -97,9 +101,24 @@ export interface Trade {
   pnl: number;
   time: number;
   action: 'open' | 'close' | 'update';
+  closeReason?: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation';
   /** Prix d'entrée de la position (rempli sur les trades de clôture). */
   entryPrice?: number;
+  /** Prix bid/ask avant impact de taille (audit du modèle paper). */
+  requestedPrice?: number;
+  /** Impact en basis points ; négatif lorsqu'un limit bénéficie d'une amélioration. */
+  slippageBps?: number;
+  /** Origine du calcul : formule seule ou carnet iTick L5 + extrapolation. */
+  slippageSource?: 'legacy' | 'model' | 'itick-l5';
+  /** Niveaux de carnet réellement parcourus et éventuelle portion estimée. */
+  fillDetails?: Array<{
+    price: number;
+    size: number;
+    source: 'book' | 'estimated';
+  }>;
 }
+
+export type PaperExecutionModel = 'legacy' | 'slippage-v1';
 
 export interface Position {
   id: string;
@@ -120,6 +139,11 @@ export interface Position {
   stopLossSize?: number | null;
   takeProfitSize?: number | null;
   openedAt?: number;
+  /**
+   * Absent sur les positions historiques = legacy. Ainsi activer le flag ne
+   * change jamais les sorties des positions déjà ouvertes.
+   */
+  executionModel?: PaperExecutionModel;
 }
 
 export type OrderType = 'market' | 'limit';
@@ -142,6 +166,14 @@ export interface Order {
   takeProfit?: number | null;
   /** Mark au moment du placement — sert au déclenchement « au prix limite ». */
   placedAtMark?: number | null;
+  /** Capturé au placement ; absent sur les ordres existants = legacy. */
+  executionModel?: PaperExecutionModel;
+  /** Quantité cumulée exécutée ; absent sur les anciens ordres = 0. */
+  filledSize?: number;
+  /** VWAP cumulé des tranches déjà exécutées. */
+  averageFillPrice?: number;
+  /** Timestamp du dernier snapshot de profondeur évalué pour cet ordre. */
+  lastDepthTs?: number;
 }
 
 export type BadgeType =

@@ -3,6 +3,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from './LanguageSwitcher';
 import { AvatarImage } from './OptimizedImage';
 import {
   COMPETE_SESSION_KEY,
@@ -271,6 +272,7 @@ export default function CompeteHeader({
 
         {/* Menu compte desktop (un seul point d'entrée) */}
         <div className="hidden shrink-0 items-center gap-2 lg:flex">
+          <LanguageSwitcher />
           {user ? (
             <div ref={menuRef} className="relative">
               <button
@@ -397,6 +399,13 @@ export default function CompeteHeader({
                   <MobileNavItem key={item.to} item={item} onNavigate={() => setMobileOpen(false)} />
                 ))}
               </nav>
+
+              <div className="my-2 h-px bg-white/[0.06]" />
+
+              <div className="flex items-center justify-between rounded-xl px-3 py-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#71717a]">{t('lang.label')}</span>
+                <LanguageSwitcher />
+              </div>
 
               <div className="my-2 h-px bg-white/[0.06]" />
 

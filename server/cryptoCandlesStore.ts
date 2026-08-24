@@ -78,6 +78,10 @@ export function getCandlesPoolStats(): { max: number | null; total: number; idle
 
 /** Backfills en cours, dédupliqués par (pair, interval, to). */
 const inflightBackfills = new Map<string, Promise<void>>();
+/** Dernier refresh OHLC officiel (évite d'écraser le live last-only). */
+const lastOfficialRepairAt = new Map<string, number>();
+const OFFICIAL_REPAIR_MS = 60_000;
+const OFFICIAL_REPAIR_BARS = 240;
 
 function seriesKey(pair: string, intervalMin: number): SeriesKey {
   return `${pair}:${intervalMin}`;
@@ -149,13 +153,19 @@ async function persistCandles(
   pair: string,
   intervalMin: number,
   candles: OhlcCandle[],
-  mode: 'upsert' | 'fillGap' = 'upsert',
+  mode: 'upsert' | 'fillGap' | 'live' = 'upsert',
 ): Promise<void> {
   if (!pool || candles.length === 0) return;
   await schemaReady;
 
   const conflictClause = mode === 'fillGap'
     ? 'ON CONFLICT (pair, timeframe, bar_time) DO NOTHING'
+    : mode === 'live'
+      ? `ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
+           high = GREATEST(crypto_candles.high, EXCLUDED.high),
+           low = LEAST(crypto_candles.low, EXCLUDED.low),
+           close = EXCLUDED.close,
+           ingested_at = NOW()`
     : `ON CONFLICT (pair, timeframe, bar_time) DO UPDATE SET
          open = EXCLUDED.open,
          high = EXCLUDED.high,
@@ -239,7 +249,7 @@ async function flushDirty(): Promise<void> {
     series.dirty.clear();
     if (candles.length === 0) continue;
     try {
-      await persistCandles(pair, intervalMin, candles, 'upsert');
+        await persistCandles(pair, intervalMin, candles, 'live');
     } catch (err) {
       console.warn(`[cryptoCandles] flush ${pair} ${intervalMin}m KO:`, (err as Error).message);
     }
@@ -416,7 +426,7 @@ async function readDb(
   }));
 }
 
-/** Overlay des bougies live RAM (head frais) sur le résultat DB. */
+/** Overlay du bucket live en cours seulement — ne pas écraser les 1m déjà closes. */
 function overlayLive(
   pair: string,
   intervalMin: number,
@@ -428,16 +438,48 @@ function overlayLive(
   const series = liveSeries.get(seriesKey(pair, intervalMin));
   if (!series || series.bars.size === 0) return dbBars;
 
+  const nowBucket = bucketStart(Math.floor(Date.now() / 1000), intervalMin);
+  const liveCurrent = series.bars.get(nowBucket);
+  if (!liveCurrent || liveCurrent.time > toSec || (fromSec != null && liveCurrent.time < fromSec)) {
+    return dbBars;
+  }
+
   const map = new Map<number, OhlcCandle>();
   for (const bar of dbBars) map.set(bar.time, bar);
-  for (const bar of series.bars.values()) {
-    if (bar.time <= toSec && (fromSec == null || bar.time >= fromSec)) {
-      map.set(bar.time, bar);
-    }
-  }
+  const dbBar = map.get(nowBucket);
+  map.set(nowBucket, dbBar
+    ? {
+        time: nowBucket,
+        open: dbBar.open,
+        high: Math.max(dbBar.high, liveCurrent.high),
+        low: Math.min(dbBar.low, liveCurrent.low),
+        close: liveCurrent.close,
+      }
+    : liveCurrent);
   let merged = [...map.values()].sort((a, b) => a.time - b.time);
   if (merged.length > targetCount) merged = merged.slice(merged.length - targetCount);
   return merged;
+}
+
+/** Réécrit les 1m récemment aplaties par le last-only avec l'OHLC spot officiel. */
+async function repairRecentOfficialBars(pair: string, intervalMin: number): Promise<void> {
+  if (!pool || intervalMin !== 1) return;
+  const key = seriesKey(pair, intervalMin);
+  const now = Date.now();
+  if (now - (lastOfficialRepairAt.get(key) || 0) < OFFICIAL_REPAIR_MS) return;
+  lastOfficialRepairAt.set(key, now);
+  try {
+    const { candles } = await cryptoCandles.getCryptoOhlc(pair, intervalMin, {
+      countBack: OFFICIAL_REPAIR_BARS,
+    });
+    const nowBucket = bucketStart(Math.floor(now / 1000), intervalMin);
+    const closed = candles.filter((candle) => candle.time < nowBucket);
+    if (closed.length > 0) {
+      await persistCandles(pair, intervalMin, closed, 'upsert');
+    }
+  } catch (err) {
+    console.warn(`[cryptoCandles] repair ${pair} ${intervalMin}m KO:`, (err as Error).message);
+  }
 }
 
 /**
@@ -464,6 +506,7 @@ export async function getCandles(
   }
 
   await ensureHistory(pair, interval, toSec, targetCount, fromSec);
+  await repairRecentOfficialBars(pair, interval);
   const dbBars = await readDb(pair, interval, toSec, fromSec, targetCount);
   return overlayLive(pair, interval, dbBars, toSec, fromSec, targetCount);
 }

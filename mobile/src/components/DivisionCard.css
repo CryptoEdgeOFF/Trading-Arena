@@ -1,0 +1,23 @@
+.division-card { --division-color: #b0703c; width: 100%; padding: 13px 14px; display: grid; gap: 8px; text-align: left; border: 1px solid color-mix(in srgb, var(--division-color) 32%, #211e25); border-radius: 15px; background: linear-gradient(135deg, color-mix(in srgb, var(--division-color) 13%, #0d0c10), #0a090c); color: inherit; }
+.division-card.is-bronze { --division-color: #c07a40; }
+.division-card.is-silver { --division-color: #b9c0cc; }
+.division-card.is-gold { --division-color: #e8b93c; }
+.division-card.is-platinum { --division-color: #7fd6d2; }
+.division-card.is-diamond { --division-color: #7fb2ff; }
+.division-card.is-master { --division-color: #c48bff; }
+.division-card.is-legend { --division-color: #ff4655; }
+.division-card__row { display: flex; align-items: center; gap: 12px; }
+.division-card__badge { width: 56px; height: auto; flex: 0 0 auto; filter: drop-shadow(0 8px 16px color-mix(in srgb, var(--division-color) 45%, transparent)); }
+.division-card.is-compact .division-card__badge { width: 48px; }
+.division-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.division-card header small { color: #8d8690; font-size: 8px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.division-card header em { color: var(--division-color); font-size: 10px; font-style: normal; font-weight: 800; }
+.division-card__main { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.division-card__main strong { font: 800 27px/1 'Barlow Condensed', sans-serif; letter-spacing: .02em; text-transform: uppercase; color: var(--division-color); text-shadow: 0 0 22px color-mix(in srgb, var(--division-color) 45%, transparent); }
+.division-card__main span { color: #cfc9d2; font-size: 10px; font-weight: 800; letter-spacing: .06em; white-space: nowrap; }
+.division-card__main .division-card__placement { color: #8d8690; font-weight: 600; letter-spacing: .02em; white-space: normal; text-align: right; max-width: 45%; }
+.division-card__bar { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.07); }
+.division-card__bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, color-mix(in srgb, var(--division-color) 55%, #fff0), var(--division-color)); box-shadow: 0 0 12px color-mix(in srgb, var(--division-color) 60%, transparent); }
+.division-card footer { color: #9b949f; font-size: 9.5px; font-weight: 700; }
+.division-card.is-compact { padding: 10px 12px; gap: 6px; border-radius: 12px; }
+.division-card.is-compact .division-card__main strong { font-size: 21px; }

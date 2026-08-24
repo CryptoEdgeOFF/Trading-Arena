@@ -39,12 +39,47 @@ import {
 import { checkSmsOtp, isSmsLive, sendSmsOtp } from './smsSender.js';
 import { getMarketMetadata, getMarketMetadataPoolStats } from './marketMetadata.js';
 import * as promotionsStore from './promotionsStore.js';
+import * as newsStore from './newsStore.js';
+import {
+  CompetitionPushNotifier,
+  describePushForUser,
+  isPushConfigured,
+  registerPushDevice,
+  sendPushToAllDevices,
+  sendPushToUser,
+  unregisterAllPushDevices,
+  unregisterPushDevice,
+} from './pushNotifications.js';
 import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
+import {
+  anonymizeChatForUser,
+  blockChatUser,
+  createGlobalChatMessage,
+  getChatImage,
+  listBlockedChatUserIds,
+  listGlobalChatMessages,
+  putChatImage,
+  reportGlobalChatMessage,
+  unblockChatUser,
+  type ChatReportReason,
+} from './globalChatStore.js';
+import { deleteUserRating, getRatingLeaderboard, syncUserRating } from './ratingStore.js';
+import { getPnlHistoryWithLivePoint, getPnlMoments, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
+import { countryFromPhone } from './phoneCountry.js';
+import { ensureScheduledArenas } from './arenaScheduler.js';
+import { renderPublicSpectatePage } from './publicSpectatePage.js';
+import { shouldNotifyCompletedLimit } from './notificationRules.js';
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
+const MODERATION_CONTACT_EMAIL = (
+  process.env.MODERATION_EMAIL
+  || process.env.PRIZE_CONTACT_EMAIL
+  || 'contact.cryptoedge@gmail.com'
+).trim();
 // permessage-deflate compresses every WS frame natively. With state:patch
 // payloads being mostly repetitive JSON keys, gzip typically yields a 3-5x
 // reduction on the wire. We tune it to favor latency over CPU: small window,
@@ -64,6 +99,7 @@ const wss = new WebSocketServer({
 // Canal WS isolé pour /feed-test : forward des ticks iTick live aux
 // navigateurs sans toucher au pipeline /ws principal (compétition).
 const itickWss = new WebSocketServer({ noServer: true });
+const chatWss = new WebSocketServer({ noServer: true });
 
 // Dispatcher manuel : ws.js fait un startsWith(path) qui ferait intercepter
 // /ws/itick par le serveur principal /ws. On route nous-mêmes selon le
@@ -78,6 +114,8 @@ server.on('upgrade', (req, socket, head) => {
   }
   if (pathname === '/ws') {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } else if (pathname === '/ws/chat') {
+    chatWss.handleUpgrade(req, socket, head, (ws) => chatWss.emit('connection', ws, req));
   } else if (pathname === '/ws/itick') {
     itickWss.handleUpgrade(req, socket, head, (ws) => itickWss.emit('connection', ws, req));
   } else {
@@ -85,6 +123,9 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 const itickClients = new Set<WebSocket>();
+// Clients chat → salle (null = chat global, sinon id d'arène). Les salles
+// d'arène sont ouvertes à tout utilisateur connecté, spectateurs compris.
+const chatClients = new Map<WebSocket, string | null>();
 itickWss.on('connection', (ws) => {
   itickClients.add(ws);
   (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
@@ -158,8 +199,9 @@ const upload = multer({
     }),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = /\.(jpg|jpeg|png|gif|webp)$/i;
-    cb(null, allowed.test(path.extname(file.originalname)));
+    const allowedExt = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i;
+    const allowedMime = /^image\/(jpeg|png|gif|webp|heic|heif)$/i;
+    cb(null, allowedExt.test(path.extname(file.originalname)) || allowedMime.test(file.mimetype));
   },
 });
 
@@ -240,6 +282,10 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets'), {
+  immutable: true,
+  maxAge: '7d',
+}));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -259,6 +305,80 @@ app.get('/uploads/:filename', (req, res) => {
 
 const clients = new Set<WebSocket>();
 const competitionManager = new CompetitionManager();
+const pushRuntimeStartedAt = Date.now();
+const pushedTradeIds = new Set<string>();
+chatWss.on('connection', (ws, req) => {
+  (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  ws.on('pong', () => {
+    (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+  });
+  const url = new URL(req.url || '/ws/chat', `http://${req.headers.host || 'localhost'}`);
+  const token = url.searchParams.get('token') || '';
+  const room = String(url.searchParams.get('competitionId') || '').trim() || null;
+  void competitionManager.getUserFromToken(token).then((user) => {
+    if (!user || ws.readyState !== WebSocket.OPEN) {
+      ws.close(1008, 'Session invalide');
+      return;
+    }
+    chatClients.set(ws, room);
+    ws.send(JSON.stringify({ type: 'chat:ready', data: { userId: user.id } }));
+    const sentAt: number[] = [];
+    ws.on('message', (raw) => {
+      let payload: { type?: string; data?: { body?: unknown; replyToId?: unknown; imageUrl?: unknown; clientId?: unknown } };
+      try {
+        payload = JSON.parse(String(raw));
+      } catch {
+        return;
+      }
+      if (payload.type !== 'chat:send') return;
+      const now = Date.now();
+      while (sentAt.length && now - sentAt[0] > 60_000) sentAt.shift();
+      const clientId = String(payload.data?.clientId || '').slice(0, 100);
+      if (sentAt.length >= 20) {
+        ws.send(JSON.stringify({ type: 'chat:error', data: { clientId, error: 'Trop de messages, attends quelques secondes.' } }));
+        return;
+      }
+      sentAt.push(now);
+      void createGlobalChatMessage(user, {
+        body: payload.data?.body,
+        replyToId: payload.data?.replyToId,
+        imageUrl: payload.data?.imageUrl,
+        competitionId: room,
+      }).then((message) => {
+        broadcastGlobalChatMessage(message, clientId);
+        notifyGlobalChatReply(user, message);
+      }).catch((error) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'chat:error', data: { clientId, error: (error as Error).message || 'Message invalide' } }));
+        }
+      });
+    });
+  }).catch(() => ws.close(1011, 'Authentification impossible'));
+  ws.on('close', () => chatClients.delete(ws));
+});
+
+function broadcastGlobalChatMessage(message: Awaited<ReturnType<typeof createGlobalChatMessage>>, clientId?: string): void {
+  const payload = JSON.stringify({ type: 'chat:message', data: { ...message, ...(clientId ? { clientId } : {}) } });
+  const room = message.competitionId || null;
+  for (const [ws, clientRoom] of chatClients) {
+    if (clientRoom === room && ws.readyState === WebSocket.OPEN) ws.send(payload);
+  }
+}
+
+function notifyGlobalChatReply(
+  user: NonNullable<Awaited<ReturnType<typeof competitionManager.getUserFromToken>>>,
+  message: Awaited<ReturnType<typeof createGlobalChatMessage>>,
+): void {
+  if (!message.replyTo || message.replyTo.userId === user.id) return;
+  void sendPushToUser(message.replyTo.userId, {
+    title: `${user.name} t’a répondu`,
+    body: message.body
+      ? (message.body.length > 110 ? `${message.body.slice(0, 107)}…` : message.body)
+      : '📷 Photo',
+    kind: 'chat_reply',
+    data: { messageId: message.id, replyToId: message.replyTo.id },
+  });
+}
 let finalizingEndedCompetitions: Promise<void> | null = null;
 const paperClients = new Map<WebSocket, { token: string; playerId: string; competitionId: string | null }>();
 // Per-competition shard: every paperClient is also tracked under its
@@ -285,9 +405,10 @@ if (!ADMIN_CODE) {
 }
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const MOBILE_STAGING_TEST_MODE = process.env.MOBILE_STAGING_TEST_MODE === 'true';
 // Le compte de test (ARTEMTEST987) bypasse l'OTP : il ne doit JAMAIS être
 // actif en production sauf activation explicite via ALLOW_TEST_LOGIN=true.
-const ALLOW_TEST_LOGIN = process.env.ALLOW_TEST_LOGIN === 'true' || !IS_PRODUCTION;
+const ALLOW_TEST_LOGIN = MOBILE_STAGING_TEST_MODE || process.env.ALLOW_TEST_LOGIN === 'true' || !IS_PRODUCTION;
 // Les codes OTP de secours (devCode/devSmsCode) ne sont renvoyés au client
 // qu'en dehors de la production.
 const EXPOSE_DEV_OTP = !IS_PRODUCTION;
@@ -328,23 +449,92 @@ const manager = new PlayerManager((patch: StatePatch) => {
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
+  syncAndBroadcastPaperRuntime();
+});
+
+function syncAndBroadcastPaperRuntime(): void {
   // Sync online-competition (paper) traders whose PnL changed into their
-  // competition.entries before pushing arena diffs. This keeps the
-  // arena leaderboard live (rank changes when prices move) without
-  // walking every player on every tick.
+  // competition.entries before pushing arena diffs. This also propagates
+  // order-only partial-fill progress, even though competition players are
+  // intentionally absent from the public state patch.
   const dirtyPaperPlayers = manager.drainDirtyPaperPlayers();
   for (const player of dirtyPaperPlayers) {
-    competitionManager.updatePaperResultByPlayerId(player.id, {
+    const update = competitionManager.updatePaperResultByPlayerId(player.id, {
       pnlUsd: player.pnl,
       pnlPercent: player.pnlPercent,
       tradesCount: player.tradeCount,
+      equity: player.currentBalance,
     });
+    if (update?.drawdownWarning) void sendDrawdownWarning(update);
+    void sendTradingPushNotifications(player);
   }
   broadcastPaperUpdates();
-});
+}
 
 manager.setMarketTickBroadcaster((pairs) => broadcastMarketTicks(pairs));
+manager.setPaperRuntimeUpdateHandler(syncAndBroadcastPaperRuntime);
 manager.setTradingUnlockHandler(() => broadcastPaperUpdates());
+
+async function sendTradingPushNotifications(player: NonNullable<ReturnType<typeof manager.getPlayerById>>): Promise<void> {
+  const context = competitionManager.getPushContextForPaperPlayer(player.id);
+  if (!context) {
+    console.warn(`[push] skip SL/TP: pas de contexte compétition pour ${player.id}`);
+    return;
+  }
+  const recentTrades = (player.trades || []).slice(-12);
+  for (const trade of recentTrades) {
+    if (trade.time < pushRuntimeStartedAt - 5_000 || pushedTradeIds.has(trade.id)) continue;
+    if (trade.action !== 'open' && trade.closeReason !== 'stop-loss' && trade.closeReason !== 'take-profit') continue;
+    pushedTradeIds.add(trade.id);
+    if (trade.action === 'open') {
+      const openOrderIds = new Set(player.openOrders.map((order) => order.id));
+      if (!shouldNotifyCompletedLimit(trade, openOrderIds)) continue;
+      const parentOrderId = trade.orderId || trade.id;
+      await sendPushToUser(context.userId, {
+        title: 'Ordre limite exécuté',
+        body: `${trade.side === 'long' ? 'Achat' : 'Vente'} ${trade.pair} exécuté à ${trade.price.toLocaleString('fr-FR')}.`,
+        kind: 'order_filled',
+        competitionId: context.competitionId,
+        data: { pair: trade.pair, price: trade.price, side: trade.side, orderId: parentOrderId },
+      });
+      continue;
+    }
+    const isTakeProfit = trade.closeReason === 'take-profit';
+    await sendPushToUser(context.userId, {
+      title: isTakeProfit ? 'Take Profit touché' : 'Stop Loss touché',
+      body: `${trade.pair} clôturé à ${trade.price.toLocaleString('fr-FR')} · PnL ${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)} $.`,
+      kind: isTakeProfit ? 'take_profit' : 'stop_loss',
+      competitionId: context.competitionId,
+      data: { pair: trade.pair, price: trade.price, pnl: trade.pnl },
+    });
+  }
+  if (pushedTradeIds.size > 20_000) pushedTradeIds.clear();
+}
+
+async function sendDrawdownWarning(update: {
+  competitionId: string;
+  drawdownWarning?: {
+    userId: string;
+    competitionTitle: string;
+    equity: number;
+    limitEquity: number;
+  };
+}): Promise<void> {
+  const warning = update.drawdownWarning;
+  if (!warning) return;
+  const remaining = Math.max(0, warning.equity - warning.limitEquity);
+  await sendPushToUser(warning.userId, {
+    title: 'Attention au Daily Drawdown',
+    body: `Tu as consommé 80 % de ta limite dans ${warning.competitionTitle}. Il te reste ${remaining.toFixed(2)} $.`,
+    kind: 'drawdown_warning',
+    competitionId: update.competitionId,
+    data: {
+      equity: warning.equity,
+      limitEquity: warning.limitEquity,
+      remaining,
+    },
+  });
+}
 
 function broadcastMarketTicks(pairs: string[]): void {
   if (pairs.length === 0 || clients.size === 0) return;
@@ -590,16 +780,17 @@ async function refreshCompetitionStoreIfServerless(): Promise<void> {
 async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
   const player = manager.getPlayerById(playerId);
   if (!player) return;
-  const breach = competitionManager.updatePaperResultByPlayerId(player.id, {
+  const update = competitionManager.updatePaperResultByPlayerId(player.id, {
     pnlUsd: player.pnl,
     pnlPercent: player.pnlPercent,
     tradesCount: player.tradeCount,
     equity: player.currentBalance,
   });
+  if (update?.drawdownWarning) await sendDrawdownWarning(update);
   // Drawdown journalier atteint → on élimine le joueur : annulation des ordres,
   // clôture de toutes les positions (PnL figé) et déconnexion. Il ne pourra
   // plus trader (cf. assertCompetitionTraderCanTrade + canTrade côté client).
-  if (breach?.newlyBreached) {
+  if (update?.newlyBreached) {
     try {
       await manager.finalizeCompetitionPaperPlayer(player.id);
       const after = manager.getPlayerById(player.id);
@@ -648,6 +839,7 @@ async function finalizeEndedCompetitions(): Promise<void> {
       for (const competitionId of needPayouts) {
         const created = competitionManager.generateCompetitionPayouts(competitionId);
         total += created.length;
+        for (const payout of created) notifyPayoutAvailable(payout);
       }
       await competitionManager.persist();
       if (total > 0) console.log(`[payouts] auto-generated ${total} payout(s) for ${needPayouts.length} ended arena(s)`);
@@ -728,7 +920,9 @@ async function getCompetitionUser(req: express.Request) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
   const token = header.slice('Bearer '.length);
-  return competitionManager.getUserFromToken(token);
+  const user = await competitionManager.getUserFromToken(token);
+  if (!user) return null;
+  return { ...user, country: countryFromPhone(user.phone) };
 }
 
 function publicPlayer(player: ReturnType<typeof manager.getPlayerById>) {
@@ -745,8 +939,9 @@ function buildPaperUpdatePayload(playerId: string, competitionId: string | null)
   let canTrade = manager.canTradeLiveEvent();
   if (competitionId) {
     const status = competitionManager.getCompetitionStatus(competitionId);
-    canTrade = status === 'live';
-    competitionPayload = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id) || { id: competitionId };
+    const context = competitionManager.getCompetitionContextForPaperPlayer(competitionId, player.id);
+    canTrade = status === 'live' && !context?.breached;
+    competitionPayload = context || { id: competitionId };
   }
 
   return {
@@ -978,6 +1173,19 @@ if (!IS_SERVERLESS) {
         ws.ping();
       } catch {
         // noop : le close handler nettoiera les Sets/Maps
+      }
+    });
+    chatWss.clients.forEach((ws) => {
+      const sock = ws as WebSocket & { isAlive?: boolean };
+      if (sock.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      sock.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // Le close handler nettoiera chatClients.
       }
     });
   }, WS_HEARTBEAT_MS);
@@ -1620,7 +1828,12 @@ app.get('/api/paper/candles', async (req, res) => {
       // Crypto : store Postgres persistant (cryptoCandlesStore) avec backfill
       // à la demande au scroll. L'historique survit aux redémarrages et les
       // scrolls suivants sont servis depuis la DB sans retaper l'upstream.
-      candles = await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
+      // Comme le datafeed web n'envoie pas `from` au premier rendu, on sert
+      // immédiatement son cache rapide. Le scroll historique (avec `from`)
+      // continue d'utiliser le store Postgres profond.
+      candles = candleOpts.from == null
+        ? await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts)
+        : await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
       source = 'binance';
       if (candles.length === 0) {
         // Repli : si le store n'a encore rien (ex. backfill upstream KO),
@@ -1638,6 +1851,11 @@ app.get('/api/paper/candles', async (req, res) => {
         candles = await kraken.getOhlcCandles(pair, interval);
       }
       source = 'kraken';
+    }
+    if (candleOpts.from == null) {
+      // Le snapshot initial est partagé et brièvement réutilisable. Les ticks
+      // WebSocket prennent ensuite le relais pour la bougie en cours.
+      res.set('Cache-Control', 'public, max-age=5, stale-while-revalidate=20');
     }
     res.json({ pair, interval, candles, source });
   } catch (error: any) {
@@ -1832,7 +2050,7 @@ app.post('/api/paper/order', async (req, res) => {
     const handler = competitionId
       ? manager.placeCompetitionPaperOrder.bind(manager)
       : manager.placePaperOrder.bind(manager);
-    await handler(player.id, {
+    const result = await handler(player.id, {
       pair,
       side,
       size: Number(size),
@@ -1843,7 +2061,7 @@ app.post('/api/paper/order', async (req, res) => {
       takeProfit: takeProfit == null || takeProfit === '' ? null : Number(takeProfit),
     });
     if (competitionId) await syncCompetitionResultForPlayer(player.id);
-    res.json({ ok: true });
+    res.json({ ok: true, trade: result.trade });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Ordre refusé' });
   }
@@ -1945,10 +2163,10 @@ app.post('/api/paper/close', async (req, res) => {
     if (competitionId) {
       const result = await manager.closeCompetitionPaperPosition(player.id, positionRef, partialSize);
       await syncCompetitionResultForPlayer(player.id);
-      res.json({ ok: true, alreadyClosed: result.alreadyClosed });
+      res.json({ ok: true, alreadyClosed: result.alreadyClosed, trade: result.trade });
     } else {
-      await manager.closePaperPosition(player.id, positionRef, partialSize);
-      res.json({ ok: true });
+      const result = await manager.closePaperPosition(player.id, positionRef, partialSize);
+      res.json({ ok: true, trade: result.trade });
     }
   } catch (error: any) {
     const msg = error?.message || 'Clôture refusée';
@@ -2028,7 +2246,39 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
   try {
     await refreshCompetitionStoreIfServerless();
     const result = await competitionManager.loginTestAccount(String(username || ''));
-    res.json(result);
+    let testCompetitionId: string | null = null;
+    if (MOBILE_STAGING_TEST_MODE) {
+      const title = 'MOBILE STAGING - TRADING TEST';
+      let competition = competitionManager
+        .listAdminCompetitions()
+        .find((item) => item.title === title && item.status === 'live');
+      if (!competition) {
+        const now = Date.now();
+        competition = {
+          ...competitionManager.createCompetition({
+            title,
+            code: '',
+            executionMode: 'paper',
+            startAt: now - 5 * 60_000,
+            endAt: now + 30 * 24 * 60 * 60_000,
+            registrationEndsAt: now - 5 * 60_000,
+            dailyDrawdownPercent: 10,
+            isPublic: true,
+          }),
+          status: 'live',
+          participants: 0,
+          entriesDetailed: [],
+        };
+      }
+      testCompetitionId = competition.id;
+      try {
+        competitionManager.joinCompetition(result.user.id, '', undefined, competition.id, true);
+      } catch (joinError: any) {
+        if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
+      }
+      await competitionManager.persist();
+    }
+    res.json({ ...result, testCompetitionId });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Connexion test impossible' });
   }
@@ -2157,6 +2407,208 @@ app.get('/api/competition/me', async (req, res) => {
   res.json({ user });
 });
 
+app.post('/api/competition/me/push-device', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session requise' });
+    return;
+  }
+  try {
+    await registerPushDevice(user.id, req.body?.token, req.body?.platform, req.body?.environment);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Token push invalide' });
+  }
+});
+
+app.delete('/api/competition/me/push-device', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session requise' });
+    return;
+  }
+  await unregisterPushDevice(user.id, req.body?.token);
+  res.json({ ok: true });
+});
+
+app.post('/api/competition/me/push-test', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session requise' });
+    return;
+  }
+  const status = await describePushForUser(user.id);
+  console.log(`[push] test requested by ${user.id} devices=${status.devices} configured=${status.configured}`);
+  const sent = await sendPushToUser(user.id, {
+    title: 'Test BTF Arena',
+    body: 'Si tu vois ça, les notifications marchent.',
+    kind: 'news',
+  });
+  res.json({
+    ok: true,
+    sent,
+    configured: status.configured || isPushConfigured(),
+    devices: status.devices,
+  });
+});
+
+app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120, key: 'global-chat-read' }), async (req, res) => {
+  const room = String(req.query.competitionId || '').trim() || null;
+  const viewer = await getCompetitionUser(req);
+  // Lecture ouverte pour les salles d'arène (spectateurs non connectés).
+  // Le chat global reste authentifié.
+  if (!room && !viewer) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  const beforeValue = Number(String(req.query.before || ''));
+  const messages = await listGlobalChatMessages({
+    before: Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : undefined,
+    limit: 80,
+    competitionId: room,
+    viewerUserId: viewer?.id,
+  });
+  res.json({ messages });
+});
+
+app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20, key: 'global-chat-send' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  const room = String(req.body?.competitionId || '').trim() || null;
+  try {
+    const message = await createGlobalChatMessage(user, {
+      body: req.body?.body,
+      replyToId: req.body?.replyToId,
+      imageUrl: req.body?.imageUrl,
+      competitionId: room,
+    });
+    broadcastGlobalChatMessage(message);
+    notifyGlobalChatReply(user, message);
+    res.status(201).json({ message });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Message invalide' });
+  }
+});
+
+app.get('/api/competition/chat/blocks', rateLimit({ windowMs: 60_000, max: 60, key: 'global-chat-blocks-read' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  const blockedUserIds = await listBlockedChatUserIds(user.id);
+  res.json({ blockedUserIds });
+});
+
+app.post('/api/competition/chat/users/:userId/block', rateLimit({ windowMs: 60_000, max: 20, key: 'global-chat-block' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  try {
+    await blockChatUser(user.id, String(req.params.userId || '').trim());
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Blocage impossible' });
+  }
+});
+
+app.delete('/api/competition/chat/users/:userId/block', rateLimit({ windowMs: 60_000, max: 20, key: 'global-chat-unblock' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  await unblockChatUser(user.id, String(req.params.userId || '').trim());
+  res.json({ ok: true });
+});
+
+app.post('/api/competition/chat/messages/:messageId/report', rateLimit({ windowMs: 60_000, max: 10, key: 'global-chat-report' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  try {
+    const created = await reportGlobalChatMessage({
+      reporterUserId: user.id,
+      messageId: String(req.params.messageId || '').trim(),
+      reason: String(req.body?.reason || '') as ChatReportReason,
+      details: req.body?.details,
+    });
+    if (created) {
+      const messageId = String(req.params.messageId || '').trim();
+      const reason = String(req.body?.reason || '').trim();
+      void sendNotificationEmail(
+        MODERATION_CONTACT_EMAIL,
+        `[Modération] Nouveau signalement chat — ${reason}`,
+        {
+          eyebrow: 'SÉCURITÉ DU CHAT',
+          heading: 'Un message a été signalé',
+          bodyLines: [
+            `Signalé par ${user.name} (${user.email}).`,
+            `Message : ${messageId}`,
+            `Motif : ${reason}`,
+            'Le signalement est enregistré avec le statut pending dans comp_chat_reports.',
+          ],
+          highlight: 'À examiner rapidement',
+        },
+      ).catch((error) => {
+        console.warn('[chat moderation] notification email failed:', error?.message || error);
+      });
+    }
+    res.status(created ? 201 : 200).json({ ok: true, duplicate: !created });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Signalement impossible' });
+  }
+});
+
+app.post('/api/competition/chat/images', rateLimit({ windowMs: 60_000, max: 10, key: 'global-chat-upload' }), upload.single('image'), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer?.length) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 1600, quality: 82 });
+    const imageUrl = await putChatImage(user.id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`chat:${imageUrl.slice(imageUrl.lastIndexOf('/') + 1)}`);
+    res.status(201).json({ imageUrl });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Upload impossible' });
+  }
+});
+
+app.get('/api/chat-images/:id', async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    res.status(404).json({ error: 'Image introuvable' });
+    return;
+  }
+  try {
+    await sendImageBlob(res, `chat:${id}`, () => getChatImage(id), String(req.query.w || ''));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
+});
+
 app.patch('/api/competition/me', async (req, res) => {
   const user = await getCompetitionUser(req);
   if (!user) {
@@ -2172,6 +2624,35 @@ app.patch('/api/competition/me', async (req, res) => {
     res.json({ user: nextUser });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Profil impossible a modifier' });
+  }
+});
+
+app.delete('/api/competition/me', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const { paperPlayerIds } = await competitionManager.deleteUserAccount(user.id);
+    for (const playerId of paperPlayerIds) {
+      try {
+        await manager.finalizeCompetitionPaperPlayer(playerId);
+      } catch (error) {
+        console.warn('[account] finalize paper player failed:', (error as Error).message);
+      }
+      manager.removePlayer(playerId);
+    }
+    await Promise.all([
+      unregisterAllPushDevices(user.id),
+      deleteUserRating(user.id),
+      anonymizeChatForUser(user.id),
+    ]);
+    invalidateBlobCache(`avatar:${user.id}`);
+    if (IS_SERVERLESS) await competitionManager.persist();
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression du compte impossible' });
   }
 });
 
@@ -2297,6 +2778,32 @@ app.post('/api/admin/promotion-image', requireAdmin, upload.single('image'), asy
   }
 });
 
+app.post('/api/admin/news-cover', requireAdmin, upload.single('image'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer?.length) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 1600, quality: 84 });
+    const id = crypto.randomUUID();
+    await competitionManager.putPrizeImage(id, optimized.mime, optimized.buffer);
+    invalidateBlobCache(`prize:${id}`);
+    res.json({ imageUrl: `/api/prize-images/${id}?v=${Date.now()}` });
+  } catch (error: any) {
+    console.error('[news-cover] upload failed:', error?.message);
+    res.status(500).json({ error: error.message || 'Upload impossible' });
+  }
+});
+
 // Bannière d'arène (visuel paysage mis en avant sur le leaderboard, ex. "CUP").
 // On NE détoure PAS le blanc (c'est une photo, pas un logo) et on garde un
 // grand côté pour un rendu net en pleine largeur. Stockée dans la même table
@@ -2339,6 +2846,94 @@ app.get('/api/prize-images/:id', async (req, res) => {
   } catch (error: any) {
     console.error(`[prize-image] read failed id=${id}:`, error?.message);
     res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
+});
+
+/* -------------------------------- ACTUALITÉS -------------------------------- */
+
+app.get('/api/news', async (req, res) => {
+  try {
+    const beforeValue = Number(req.query.before);
+    const limitValue = Number(req.query.limit);
+    const news = await newsStore.listPublicNews(
+      Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : Date.now() + 1,
+      Number.isFinite(limitValue) ? limitValue : 20,
+    );
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+    res.json({ news });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture des actualités impossible' });
+  }
+});
+
+app.get('/api/news/:id', async (req, res) => {
+  const article = await newsStore.getNews(String(req.params.id || ''));
+  if (!article) {
+    res.status(404).json({ error: 'Actualité introuvable' });
+    return;
+  }
+  res.json({ article });
+});
+
+app.get('/api/admin/news', requireAdmin, async (_req, res) => {
+  try {
+    res.json({ news: await newsStore.listAdminNews() });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Lecture des actualités impossible' });
+  }
+});
+
+async function notifyPublishedNews(
+  article: Awaited<ReturnType<typeof newsStore.createNews>>,
+): Promise<{ article: Awaited<ReturnType<typeof newsStore.createNews>>; notified: number }> {
+  if (!article.published || article.pushSentAt) return { article, notified: 0 };
+  const notified = await sendPushToAllDevices({
+    title: article.title,
+    body: article.summary || article.body.slice(0, 140),
+    kind: 'news',
+    data: { newsId: article.id },
+  });
+  return { article: await newsStore.markPushSent(article.id), notified };
+}
+
+app.post('/api/admin/news', requireAdmin, async (req, res) => {
+  try {
+    const created = await newsStore.createNews(req.body || {});
+    const { article, notified } = await notifyPublishedNews(created);
+    res.status(201).json({ article, notified });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Création impossible' });
+  }
+});
+
+app.patch('/api/admin/news/:id', requireAdmin, async (req, res) => {
+  try {
+    const updated = await newsStore.updateNews(String(req.params.id || ''), req.body || {});
+    const { article, notified } = await notifyPublishedNews(updated);
+    res.json({ article, notified });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Mise à jour impossible' });
+  }
+});
+
+app.post('/api/admin/news/:id/publish', requireAdmin, async (req, res) => {
+  try {
+    const published = await newsStore.updateNews(String(req.params.id || ''), { published: true });
+    // Une publication est un événement public : le push part exactement une
+    // fois, indépendamment de l'ancien checkbox admin.
+    const { article, notified } = await notifyPublishedNews(published);
+    res.json({ article, notified });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Publication impossible' });
+  }
+});
+
+app.delete('/api/admin/news/:id', requireAdmin, async (req, res) => {
+  try {
+    await newsStore.deleteNews(String(req.params.id || ''));
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Suppression impossible' });
   }
 });
 
@@ -2409,6 +3004,7 @@ async function maybeFinalizeEndedCompetitions(): Promise<void> {
 // finalise d'abord les arènes terminées pour que les emails de résultats
 // partent avec des classements définitifs.
 const competitionNotifier = new CompetitionNotifier(competitionManager);
+const competitionPushNotifier = new CompetitionPushNotifier(competitionManager);
 if (!IS_SERVERLESS) {
   const notifierTimer = setInterval(() => {
     void (async () => {
@@ -2419,6 +3015,14 @@ if (!IS_SERVERLESS) {
     });
   }, 60_000);
   if (typeof notifierTimer.unref === 'function') notifierTimer.unref();
+
+  const pushNotifierTimer = setInterval(() => {
+    void competitionPushNotifier.tick().catch((error) => {
+      console.error('[push notifier] loop error:', (error as Error)?.message);
+    });
+  }, 15_000);
+  if (typeof pushNotifierTimer.unref === 'function') pushNotifierTimer.unref();
+  setTimeout(() => void competitionPushNotifier.tick().catch(() => undefined), 2_000).unref?.();
 }
 
 // Envoi MANUEL de l'annonce « nouvelle arène » à tous les utilisateurs non
@@ -2599,13 +3203,15 @@ app.get('/api/competition/my-trades', async (req, res) => {
  */
 app.get('/api/competition/player/:userId', async (req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
-  const profile = competitionManager.getPublicPlayerProfile(String(req.params.userId || ''));
+  const userId = String(req.params.userId || '');
+  const profile = competitionManager.getPublicPlayerProfile(userId);
   if (!profile) {
     res.status(404).json({ error: 'Joueur introuvable' });
     return;
   }
   const { paperPlayerIds, ...rest } = profile;
-  res.json({ ...rest, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
+  const rating = await syncUserRating(userId, competitionManager.getUserArenaResults(userId)).catch(() => null);
+  res.json({ ...rest, rating, stats: aggregateStatsForPlayerIds(paperPlayerIds) });
 });
 
 app.get('/api/competition/global-leaderboard', async (req, res) => {
@@ -2619,6 +3225,7 @@ app.get('/api/competition/global-leaderboard', async (req, res) => {
         userId: p.userId,
         name: p.name,
         avatarUrl: p.avatarUrl,
+        country: p.country,
         badges: p.badges,
         pnlUsd: p.pnlUsd,
         arenas: p.arenas,
@@ -2707,12 +3314,46 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     ? aggregateStatsForPlayerIds(competitionManager.getPaperPlayerIdsForUserStats(user.id))
     : null;
   const myBadges = user ? competitionManager.getUserBadges(user.id) : [];
+  const myRating = user
+    ? await syncUserRating(user.id, competitionManager.getUserArenaResults(user.id))
+    : null;
+  const claimablePayouts = user ? competitionManager.countClaimablePayoutsForUser(user.id) : 0;
+  const myTeam = user ? competitionManager.getUserTeam(user.id) : null;
   res.json({
     user,
     publicCompetitions,
     myCompetitions,
     myStats,
     myBadges,
+    myRating,
+    claimablePayouts,
+    myTeam,
+  });
+});
+
+/**
+ * Classement mondial BTF Rating (Arena Points). Public : sert l'onglet Rank.
+ * Les identités (nom/avatar) sont résolues via les participations connues.
+ */
+app.get('/api/competition/rating-leaderboard', async (_req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const rows = await getRatingLeaderboard(100);
+  const identities = new Map(
+    competitionManager.listUserParticipations().map((participation) => [participation.userId, participation]),
+  );
+  res.json({
+    rows: rows.map((row, index) => {
+      const identity = identities.get(row.userId);
+      return {
+        rank: index + 1,
+        userId: row.userId,
+        name: identity?.name || 'Trader BTF',
+        avatarUrl: identity?.avatarUrl ?? null,
+        country: identity?.country ?? null,
+        points: row.points,
+        division: row.division,
+      };
+    }),
   });
 });
 
@@ -2737,6 +3378,146 @@ app.post('/api/competition/join', async (req, res) => {
     res.json({ ok: true, competitionId: competition.id });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Join impossible' });
+  }
+});
+
+app.get('/api/competition/teams/mine', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  res.json({ team: competitionManager.getUserTeam(user.id) });
+});
+
+app.post('/api/competition/teams', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.createTeam(user.id, req.body?.name);
+    await competitionManager.persist();
+    res.status(201).json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Création d’équipe impossible' });
+  }
+});
+
+app.post('/api/competition/teams/join', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.joinTeamByCode(user.id, req.body?.code);
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Invitation invalide' });
+  }
+});
+
+app.post('/api/competition/teams/:id/kick', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.kickTeamMember(user.id, String(req.params.id || ''), String(req.body?.userId || ''));
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Exclusion impossible' });
+  }
+});
+
+app.post('/api/competition/teams/:id/leave', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    const team = competitionManager.leaveTeam(user.id, String(req.params.id || ''));
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Départ impossible' });
+  }
+});
+
+app.post('/api/competition/teams/:id/image', upload.single('image'), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'Fichier image requis' });
+    return;
+  }
+  try {
+    let buffer = req.file.buffer;
+    if (!buffer && req.file.path) {
+      buffer = await fs.promises.readFile(req.file.path);
+      fs.promises.unlink(req.file.path).catch(() => undefined);
+    }
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'Fichier image illisible' });
+      return;
+    }
+    const optimized = await optimizeUploadedImage(buffer, { maxSide: 512, quality: 80 });
+    const team = await competitionManager.setTeamImageBlob(
+      user.id,
+      String(req.params.id || ''),
+      optimized.mime,
+      optimized.buffer,
+    );
+    invalidateBlobCache(`team-image:${req.params.id}`);
+    await competitionManager.persist();
+    res.json({ team });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Badge d’équipe impossible à modifier' });
+  }
+});
+
+app.get('/api/team-images/:teamId', async (req, res) => {
+  const teamId = String(req.params.teamId);
+  try {
+    await sendImageBlob(
+      res,
+      `team-image:${teamId}`,
+      () => competitionManager.getTeamImageBlob(teamId),
+      String(req.query.w || ''),
+    );
+  } catch (error: any) {
+    console.error(`[team-images] failed teamId=${teamId}:`, error?.message);
+    res.status(500).json({ error: error.message || 'Lecture impossible' });
+  }
+});
+
+app.post('/api/competition/teams/:id/register', async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Session invalide' });
+    return;
+  }
+  try {
+    await refreshCompetitionStoreIfServerless();
+    const competition = competitionManager.registerTeamToCompetition(
+      user.id,
+      String(req.params.id || ''),
+      String(req.body?.competitionId || ''),
+      req.body?.sponsorAccountId,
+    );
+    await competitionManager.persist();
+    res.json({ ok: true, competitionId: competition.id });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Inscription d’équipe impossible' });
   }
 });
 
@@ -2837,11 +3618,174 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     const competitionId = String(req.params.id || '');
     await syncCompetitionResultsForCompetition(competitionId);
     const data = competitionManager.getPublicLeaderboard(competitionId);
+    if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
     res.json(data);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
   }
 });
+
+/**
+ * Historique PnL pour le mode spectateur : séries échantillonnées (~30 s)
+ * du PnL % du top 10, plus l'identité des traders suivis pour tracer les
+ * courbes avec avatars côté client.
+ */
+app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
+  try {
+    const competitionId = String(req.params.id || '');
+    await syncCompetitionResultsForCompetition(competitionId);
+    const data = competitionManager.getPublicLeaderboard(competitionId);
+    if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
+    // Toujours terminer la série par un point « maintenant » issu du
+    // leaderboard courant : la courbe est visible dès les premiers polls
+    // au lieu d'attendre plusieurs échantillons throttlés.
+    const samples = getPnlHistoryWithLivePoint(competitionId, data.leaderboard);
+    const tracked = new Set(samples.flatMap((sample) => sample.rows.map((row) => row.userId)));
+    res.json({
+      status: data.competition.status,
+      samples,
+      moments: getPnlMoments(competitionId),
+      traders: data.leaderboard
+        .filter((row) => tracked.has(row.userId))
+        .map((row) => ({
+          userId: row.userId,
+          name: row.name,
+          avatarUrl: row.avatarUrl,
+          rank: row.rank,
+          pnlPercent: row.pnlPercent,
+          breached: row.breached,
+        })),
+    });
+  } catch (error: any) {
+    res.status(404).json({ error: error.message || 'Historique introuvable' });
+  }
+});
+
+/** Champion of the Week : vainqueur de la dernière Friday Night Arena terminée. */
+app.get('/api/competition/champion-of-week', async (_req, res) => {
+  try {
+    await refreshCompetitionStoreIfServerless();
+    res.json({ champion: competitionManager.getChampionOfTheWeek() });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Champion introuvable' });
+  }
+});
+
+// Échantillonneur d'arrière-plan : construit l'historique PnL des arènes live
+// même sans spectateur connecté. Serveur persistant uniquement (Railway) —
+// en serverless, l'échantillonnage se fait au fil des GET leaderboard.
+if (!process.env.NETLIFY) {
+  setInterval(() => {
+    void (async () => {
+      const publicCompetitions = competitionManager.listPublicCompetitions();
+      prunePnlHistories(new Set(publicCompetitions.map((competition) => competition.id)));
+      for (const competition of publicCompetitions) {
+        if (competition.status !== 'live') continue;
+        try {
+          await syncCompetitionResultsForCompetition(competition.id);
+          maybeRecordPnlSample(competition.id, competitionManager.getPublicLeaderboard(competition.id).leaderboard);
+        } catch {
+          // Arène retirée ou sync impossible : on passe.
+        }
+      }
+    })();
+  }, 30_000);
+}
+
+// Scheduler des arènes programmées : Blitz quotidiennes (London/NY/Crypto)
+// et FRIDAY NIGHT ARENA hebdomadaire. Serveur persistant uniquement — la
+// création est idempotente (scheduleKey persistée), donc un redémarrage ou
+// plusieurs instances ne créent pas de doublons.
+if (!process.env.NETLIFY) {
+  const runScheduler = () => {
+    void ensureScheduledArenas(competitionManager).catch((error) => {
+      console.warn('[arenaScheduler] échec de création des arènes programmées :', error?.message || error);
+    });
+  };
+  setTimeout(runScheduler, 10_000);
+  setInterval(runScheduler, 10 * 60_000);
+}
+
+// Joueurs simulés (staging uniquement) : peuplent l'arène de test avec des
+// trajectoires PnL en marche aléatoire pour visualiser la course au PnL en
+// mode spectateur. Jamais actif en production : MOBILE_STAGING_TEST_MODE.
+if (MOBILE_STAGING_TEST_MODE && !process.env.NETLIFY) {
+  const SIM_BOTS = [
+    { userId: 'sim-bot-nova', name: 'NovaQuant', drift: 0.06, vol: 0.55 },
+    { userId: 'sim-bot-wolf', name: 'KryptoWolf', drift: 0.03, vol: 0.85 },
+    { userId: 'sim-bot-lisa', name: 'Lisa.eth', drift: 0.02, vol: 0.35 },
+    { userId: 'sim-bot-scalp', name: 'ScalpKing', drift: -0.01, vol: 0.95 },
+    { userId: 'sim-bot-moon', name: 'MoonRider', drift: 0.04, vol: 0.6 },
+    { userId: 'sim-bot-zen', name: 'ZenTrader', drift: 0.01, vol: 0.25 },
+    { userId: 'sim-bot-degen', name: 'DegenMax', drift: -0.03, vol: 1.15 },
+  ];
+  // État de marche aléatoire par arène puis par bot : chaque arène a sa
+  // propre course (un bot peut gagner la Blitz et perdre la Friday Night).
+  const simStateByCompetition = new Map<string, Map<string, { pnlPercent: number; tradesCount: number }>>();
+
+  const simulateCompetitionTick = (competitionId: string) => {
+    const liveRows = competitionManager.getPublicLeaderboard(competitionId).leaderboard;
+    let states = simStateByCompetition.get(competitionId);
+    if (!states) {
+      states = new Map();
+      simStateByCompetition.set(competitionId, states);
+    }
+
+    const updates = SIM_BOTS.map((bot) => {
+      let state = states.get(bot.userId);
+      if (!state) {
+        // Reprise après redéploiement : on repart du PnL persisté pour
+        // éviter un saut visuel, sinon départ dispersé autour de 0.
+        const existing = liveRows.find((row) => row.userId === bot.userId);
+        state = existing
+          ? { pnlPercent: existing.pnlPercent, tradesCount: Math.max(1, existing.tradesCount) }
+          : { pnlPercent: (Math.random() - 0.35) * 6, tradesCount: 1 + Math.floor(Math.random() * 8) };
+        states.set(bot.userId, state);
+      }
+      state.pnlPercent = Math.max(-14, Math.min(28, state.pnlPercent + bot.drift + (Math.random() - 0.5) * bot.vol));
+      if (Math.random() < 0.4) state.tradesCount += 1;
+      return {
+        userId: bot.userId,
+        name: bot.name,
+        pnlPercent: Number(state.pnlPercent.toFixed(3)),
+        pnlUsd: Number(((state.pnlPercent / 100) * 10_000).toFixed(2)),
+        tradesCount: state.tradesCount,
+      };
+    });
+
+    competitionManager.applySimulatedResults(competitionId, updates);
+    maybeRecordPnlSample(competitionId, competitionManager.getPublicLeaderboard(competitionId).leaderboard);
+  };
+
+  const runSimulatedPlayersTick = () => {
+    try {
+      // Arène de test ARTEMTEST + toutes les arènes programmées (Blitz /
+      // Friday Night) en cours : le rituel complet est visible en staging,
+      // y compris le Champion of the Week à la fin de la Friday Night.
+      const targets = competitionManager
+        .listAdminCompetitions()
+        .filter((item) => item.status === 'live'
+          && (item.title === 'MOBILE STAGING - TRADING TEST' || item.format != null));
+      for (const competition of targets) {
+        try {
+          simulateCompetitionTick(competition.id);
+        } catch {
+          // Arène retirée entre-temps : on passe.
+        }
+      }
+      for (const competitionId of simStateByCompetition.keys()) {
+        if (!targets.some((competition) => competition.id === competitionId)) {
+          simStateByCompetition.delete(competitionId);
+        }
+      }
+    } catch {
+      // Store indisponible : on réessaie au prochain tick.
+    }
+  };
+
+  setTimeout(runSimulatedPlayersTick, 5_000);
+  setInterval(runSimulatedPlayersTick, 20_000);
+}
 
 // --- Admin APIs for competitions ---
 
@@ -2894,6 +3838,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       sponsor,
       sponsorReferralUrl,
       seasonId,
+      entryMode: req.body?.entryMode,
     });
     await competitionManager.persist();
     res.json({ ok: true, competition });
@@ -2997,6 +3942,7 @@ app.post('/api/admin/payouts', requireAdmin, async (req, res) => {
       paidAt: paidAt == null || paidAt === '' ? undefined : Number(paidAt),
     });
     await competitionManager.persist();
+    notifyPayoutAvailable(payout);
     res.json({ ok: true, payout });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Creation payout impossible' });
@@ -3024,6 +3970,19 @@ function payoutRankLabel(rank?: number | null): string {
   if (r === 3) return '3e';
   if (Number.isFinite(r) && r > 0) return `#${r}`;
   return '—';
+}
+
+function notifyPayoutAvailable(payout: { id?: string; userId: string; amount: number; currency: string; competitionId?: string | null }): void {
+  const amountLabel = payoutAmountLabel(payout.amount, payout.currency);
+  void sendPushToUser(payout.userId, {
+    title: 'Payout à réclamer',
+    body: `${amountLabel} t’attendent. Ouvre l’app pour claim tes gains.`,
+    kind: 'payout',
+    competitionId: payout.competitionId || undefined,
+    data: { payoutId: payout.id || undefined },
+  }).catch((error) => {
+    console.warn('[payout] push failed:', (error as Error)?.message || error);
+  });
 }
 
 function payoutAmountLabel(amount: number, currency: string): string {
@@ -3122,6 +4081,25 @@ app.post('/api/admin/competitions/result', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/spectate/:id', async (req, res) => {
+  try {
+    const competitionId = String(req.params.id || '').trim();
+    await syncCompetitionResultsForCompetition(competitionId);
+    const data = competitionManager.getPublicLeaderboard(competitionId);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const publicUrl = `${origin}/spectate/${encodeURIComponent(competitionId)}`;
+    res.setHeader('Cache-Control', 'no-cache');
+    res.type('html').send(renderPublicSpectatePage({
+      competition: data.competition,
+      leaderboard: data.leaderboard,
+      publicUrl,
+      appUrl: (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim(),
+    }));
+  } catch {
+    res.status(404).type('html').send('<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width"><body style="margin:0;background:#07070a;color:#fff;font-family:Arial;display:grid;place-items:center;min-height:100vh"><main style="text-align:center"><h1>Arène introuvable</h1><p style="color:#8d8791">Cette compétition n’existe pas ou n’est plus publique.</p><a href="https://btfarena.com" style="color:#ff536b">BTF Arena</a></main></body></html>');
+  }
+});
+
 // Middleware d'erreur Express global : doit être enregistré APRÈS toutes les
 // routes. Capture toute erreur synchrone ou rejet propagé via next(err) afin
 // de renvoyer une réponse JSON propre au lieu de laisser la connexion pendre
@@ -3176,8 +4154,11 @@ if (!process.env.NETLIFY) {
           { pair: 'SOL/USD', source: 'binance' },
           { pair: 'XRP/USD', source: 'binance' },
           { pair: 'BNB/USD', source: 'binance' },
+          { pair: 'TRX/USD', source: 'binance' },
         ],
-        [1],
+        // Le mobile ouvre en 5m ; préchauffer aussi 15m évite les cold starts
+        // lors des changements de timeframe les plus fréquents.
+        [1, 5, 15],
       );
 
       // Démarrage du pipeline iTick : subscribe aux 11 instruments prod,

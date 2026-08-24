@@ -1,0 +1,24 @@
+.player-profile-page { display: grid; gap: 12px; }
+.public-profile-hero { min-height: 130px; padding: 18px; display: flex; align-items: center; gap: 15px; border: 1px solid rgba(255,70,92,.2); border-radius: 13px; background: radial-gradient(circle at 90% 0,rgba(238,36,60,.22),transparent 48%),rgba(255,255,255,.025); }
+.public-profile-rank { margin-left: auto; display: grid; justify-items: center; gap: 4px; }
+.public-profile-rank img, .public-profile-rank .division-badge-image { width: 72px; height: auto; filter: drop-shadow(0 10px 18px rgba(238,36,60,.28)); }
+.public-profile-rank em { color: #cfc9d2; font-size: 9px; font-style: normal; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.public-profile-hero > .public-profile-copy { min-width: 0; display: grid; gap: 4px; }
+.public-profile-hero small { color: #ff7d8c; font-size: 10px; font-weight: 700; letter-spacing: .11em; }
+.public-profile-hero h3 { margin: 0; overflow: hidden; font: 800 32px/1 'Barlow Condensed',sans-serif; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.public-profile-hero .country-flag { margin-left: 8px; font-style: normal; font-size: .62em; vertical-align: middle; }
+.public-profile-hero strong { font-size: 15px; }
+.public-profile-title { width: fit-content; padding: 4px 8px; border: 1px solid #4d4650; border-radius: 99px; color: #bbb4be; font-size: 9px; font-style: normal; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
+.public-profile-title.rarity-rare { border-color: rgba(210,128,72,.45); color: #d9905f; }
+.public-profile-title.rarity-epic { border-color: rgba(245,190,69,.45); color: #f5c65f; }
+.public-profile-title.rarity-legendary { border-color: rgba(114,221,255,.45); color: #85e3ff; }
+.public-socials { display: flex; flex-wrap: wrap; gap: 7px; }
+.public-socials a, .public-socials span { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.03); color: #d3cdd5; font-size: 11px; font-weight: 700; text-decoration: none; text-transform: uppercase; }
+.public-profile-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; }
+.public-profile-stats > div { min-width: 0; min-height: 65px; padding: 8px 4px; display: grid; place-items: center; align-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); text-align: center; }
+.public-profile-stats strong { max-width: 100%; overflow: hidden; font: 700 16px 'Barlow Condensed',sans-serif; text-overflow: ellipsis; }
+.public-profile-stats small { color: #918a94; font-size: 9px; text-transform: uppercase; }
+.public-payouts { margin-top: 12px; display: grid; gap: 7px; }
+.public-payouts > div { padding: 10px 2px; display: flex; justify-content: space-between; border-top: 1px solid var(--line); }
+.public-payouts strong { font: 700 15px 'Barlow Condensed',sans-serif; }
+.public-payouts small { color: #837d86; font-size: 8px; }

@@ -1,6 +1,7 @@
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 
 const FUTURES_REST_BASE = 'https://fapi.binance.com';
+const SPOT_REST_BASE = 'https://api.binance.com';
 const MAX_CANDLES = 50000;
 const DEFAULT_LOOKBACK_DAYS = 30;
 const INTRADAY_DEFAULT_BARS = 10000;
@@ -21,10 +22,10 @@ export function pairToBinanceSymbol(pair: string): string | null {
   return `${base}USDT`;
 }
 
-async function requestJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${FUTURES_REST_BASE}${path}`);
+async function requestJson<T>(path: string, base = FUTURES_REST_BASE): Promise<T> {
+  const response = await fetch(`${base}${path}`);
   if (!response.ok) {
-    throw new Error(`Binance Futures API ${response.status}`);
+    throw new Error(`Binance API ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -80,19 +81,16 @@ export async function getTickers(): Promise<Record<string, number>> {
   return Object.fromEntries(Object.entries(stats).map(([symbol, ticker]) => [symbol, ticker.markPrice]));
 }
 
-export async function getOhlcCandles(
-  pair: string,
-  interval = 1,
-  opts: OhlcQueryOptions = {},
-): Promise<OhlcCandle[]> {
-  const symbol = pairToBinanceSymbol(pair);
-  if (!symbol) throw new Error('Pair non supportee pour historique Binance');
-
+function resolveKlineWindow(interval: number, opts: OhlcQueryOptions): {
+  intervalKey: string;
+  fromSec: number;
+  toSec: number;
+  targetCount: number;
+} {
   const safeInterval = INTERVAL_MAP[interval] ? interval : 1;
   const intervalKey = INTERVAL_MAP[safeInterval];
   const intervalSec = safeInterval * 60;
   const nowSec = Math.floor(Date.now() / 1000);
-
   const toSec = opts.to && opts.to > 0 ? opts.to : nowSec;
   const thirtyDayBars = Math.ceil((DEFAULT_LOOKBACK_DAYS * 24 * 60) / safeInterval);
   const defaultCount = safeInterval <= 5
@@ -106,21 +104,33 @@ export async function getOhlcCandles(
         ? Math.ceil((toSec - opts.from) / intervalSec) + 2
         : defaultCount,
   );
-
-  // countBack has priority over TV's `from` (often years in the past on first load).
   const fromSec = opts.countBack && opts.countBack > 0
     ? Math.max(0, toSec - targetCount * intervalSec)
     : opts.from && opts.from > 0
       ? opts.from
       : Math.max(0, toSec - targetCount * intervalSec);
+  return { intervalKey, fromSec, toSec, targetCount };
+}
 
+async function fetchKlines(
+  pair: string,
+  interval: number,
+  opts: OhlcQueryOptions,
+  base: string,
+  path: string,
+): Promise<OhlcCandle[]> {
+  const symbol = pairToBinanceSymbol(pair);
+  if (!symbol) throw new Error('Pair non supportee pour historique Binance');
+
+  const { intervalKey, fromSec, toSec, targetCount } = resolveKlineWindow(interval, opts);
   const byTime = new Map<number, OhlcCandle>();
   let endMs = toSec * 1000 - 1;
 
   while (byTime.size < targetCount && endMs > fromSec * 1000) {
     const limit = Math.min(1500, targetCount - byTime.size);
     const rows = await requestJson<unknown[]>(
-      `/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${intervalKey}&limit=${limit}&endTime=${endMs}`,
+      `${path}?symbol=${encodeURIComponent(symbol)}&interval=${intervalKey}&limit=${limit}&endTime=${endMs}`,
+      base,
     );
     if (!Array.isArray(rows) || rows.length === 0) break;
 
@@ -140,4 +150,21 @@ export async function getOhlcCandles(
   }
 
   return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
+/** Spot USDT — même venue que le live iTick region BA. Tick TRX plus fin que le perp. */
+export async function getSpotOhlcCandles(
+  pair: string,
+  interval = 1,
+  opts: OhlcQueryOptions = {},
+): Promise<OhlcCandle[]> {
+  return fetchKlines(pair, interval, opts, SPOT_REST_BASE, '/api/v3/klines');
+}
+
+export async function getOhlcCandles(
+  pair: string,
+  interval = 1,
+  opts: OhlcQueryOptions = {},
+): Promise<OhlcCandle[]> {
+  return fetchKlines(pair, interval, opts, FUTURES_REST_BASE, '/fapi/v1/klines');
 }

@@ -15,6 +15,7 @@ import CompetitionSettings from './components/CompetitionSettings';
 import CompetitionPayouts from './components/CompetitionPayouts';
 import CompetitionAdmin from './components/CompetitionAdmin';
 import PromotionsAdmin from './components/PromotionsAdmin';
+import NewsAdmin from './components/NewsAdmin';
 import PayoutsAdmin from './components/PayoutsAdmin';
 import PayoutRequestsAdmin from './components/PayoutRequestsAdmin';
 import EmailAdminPage from './components/EmailAdminPage';
@@ -91,6 +92,7 @@ function AppRoutes() {
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}`} element={<AdminPanel />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/arenes`} element={<CompetitionAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/promotions`} element={<PromotionsAdmin />} />}
+        {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/news`} element={<NewsAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/payouts`} element={<PayoutsAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/payout-requests`} element={<PayoutRequestsAdmin />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/emails`} element={<EmailAdminPage />} />}

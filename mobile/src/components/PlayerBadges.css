@@ -1,0 +1,74 @@
+.player-badges { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.player-badges__item {
+  min-height: 88px;
+  padding: 10px 8px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .03);
+  color: inherit;
+  text-align: center;
+}
+.player-badges__item img { height: 52px; width: auto; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .4)); }
+.player-badges__item strong { color: #eee9ef; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.player-badges__empty { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+.player-badges__hint { margin: 10px 0 0; color: #6d6772; font-size: 8px; font-weight: 700; letter-spacing: .14em; text-align: center; text-transform: uppercase; }
+
+.badge-showcase {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px calc(28px + env(safe-area-inset-bottom));
+  overflow: auto;
+  background: rgba(0, 0, 0, .82);
+  backdrop-filter: blur(10px);
+}
+.badge-showcase__glow { position: absolute; inset: 0; pointer-events: none; }
+.badge-showcase__card { position: relative; width: min(100%, 360px); display: grid; justify-items: center; text-align: center; }
+.badge-showcase__stage { position: relative; width: 240px; height: 240px; display: grid; place-items: center; }
+.badge-showcase__spark { position: absolute; border-radius: 50%; }
+.badge-showcase__ring { position: absolute; width: 200px; height: 200px; border: 2px solid; border-radius: 50%; }
+.badge-showcase__stage img { position: relative; z-index: 1; height: 168px; width: auto; object-fit: contain; }
+.badge-showcase__card h3 { margin: 8px 0 0; font: 800 32px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.badge-showcase__card > span {
+  margin-top: 10px;
+  padding: 5px 10px;
+  border: 1px solid rgba(61, 222, 127, .4);
+  border-radius: 999px;
+  background: rgba(61, 222, 127, .1);
+  color: #72eaa2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.badge-showcase__copy {
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .04);
+  text-align: left;
+}
+.badge-showcase__copy small { color: #71717a; font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.badge-showcase__copy p { margin: 8px 0 0; color: #d4d4d8; font-size: 13px; line-height: 1.5; }
+.badge-showcase__card > button {
+  margin-top: 16px;
+  min-height: 42px;
+  padding: 0 22px;
+  border: 1px solid rgba(255, 255, 255, .15);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .05);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}

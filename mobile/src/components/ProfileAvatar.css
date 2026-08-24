@@ -1,0 +1,47 @@
+.profile-xp-avatar {
+  --frame-a: #57515c;
+  --frame-b: #27232b;
+  /* Carré aux coins biseautés, style hexagonal gaming */
+  --hex: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+  position: relative;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  filter:
+    drop-shadow(0 7px 14px rgba(0, 0, 0, .35))
+    drop-shadow(0 0 6px color-mix(in srgb, var(--frame-a) 38%, transparent));
+}
+.profile-xp-avatar.is-sm { width: 52px; height: 52px; }
+.profile-xp-avatar.is-lg { width: 82px; height: 82px; }
+
+/* Cadre : couche de fond dégradée découpée en hexagone */
+.profile-xp-avatar__frame {
+  position: absolute;
+  inset: 0;
+  clip-path: var(--hex);
+  background: linear-gradient(160deg, var(--frame-a), var(--frame-b) 52%, var(--frame-a));
+  pointer-events: none;
+}
+.profile-xp-avatar__frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .32), transparent 42%);
+  opacity: .5;
+}
+
+.profile-xp-avatar__image {
+  position: absolute;
+  inset: 3px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  clip-path: var(--hex);
+  background: linear-gradient(135deg, #dc263e, #711423);
+  color: #fff;
+  font: 900 18px 'Barlow Condensed', sans-serif;
+}
+.profile-xp-avatar.is-lg .profile-xp-avatar__image { inset: 4px; font-size: 26px; }
+.profile-xp-avatar__image img { width: 100%; height: 100%; object-fit: cover; }
+
