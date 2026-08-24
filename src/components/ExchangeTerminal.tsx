@@ -2918,13 +2918,7 @@ function Td({ children, className = '' }: { children?: ReactNode; className?: st
 /* ------------------------------------------------------------------ COMPETITION BANNER */
 
 function formatCountdown(target: number): string {
-  const delta = target - Date.now();
-  if (delta <= 0) return '00:00:00';
-  const totalSec = Math.floor(delta / 1000);
-  const hours = Math.floor(totalSec / 3600);
-  const mins = Math.floor((totalSec % 3600) / 60);
-  const secs = totalSec % 60;
-  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  return formatDHMS(target - Date.now());
 }
 
 function CompetitionBanner({ ctx }: { ctx: { id: string; title: string; mode: 'paper' | 'real'; startAt?: number; endAt?: number; status?: 'registration' | 'starting_soon' | 'live' | 'ended'; rank?: number | null; participants?: number; pnlPercent?: number } }) {

@@ -726,6 +726,38 @@ export async function sendGlobalChatMessage(
   return data.message
 }
 
+export type ChatReportReason = 'harassment' | 'hate' | 'spam' | 'sexual' | 'violence' | 'other'
+
+export async function getBlockedChatUserIds(token: string): Promise<string[]> {
+  const data = await apiFetch<{ blockedUserIds?: string[] }>('/api/competition/chat/blocks', undefined, token)
+  return Array.isArray(data.blockedUserIds) ? data.blockedUserIds : []
+}
+
+export async function blockChatUser(token: string, userId: string): Promise<void> {
+  await apiFetch(`/api/competition/chat/users/${encodeURIComponent(userId)}/block`, {
+    method: 'POST',
+  }, token)
+}
+
+export async function unblockChatUser(token: string, userId: string): Promise<void> {
+  await apiFetch(`/api/competition/chat/users/${encodeURIComponent(userId)}/block`, {
+    method: 'DELETE',
+  }, token)
+}
+
+export async function reportGlobalChatMessage(
+  token: string,
+  messageId: string,
+  reason: ChatReportReason,
+  details?: string,
+): Promise<void> {
+  await apiFetch(`/api/competition/chat/messages/${encodeURIComponent(messageId)}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason, details }),
+  }, token)
+}
+
 export async function uploadChatImage(token: string, file: File): Promise<string> {
   const form = new FormData()
   form.append('image', file, file.name || 'photo.jpg')

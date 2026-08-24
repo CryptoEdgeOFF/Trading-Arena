@@ -4,16 +4,23 @@ import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import {
   apiAssetUrl,
+  blockChatUser,
+  getBlockedChatUserIds,
   getGlobalChatMessages,
   globalChatWebSocketUrl,
+  reportGlobalChatMessage,
   sendGlobalChatMessage,
+  unblockChatUser,
   uploadChatImage,
+  type ChatReportReason,
   type GlobalChatMessage,
   type SessionUser,
 } from '../lib/api'
 import { compressImage } from '../lib/imageCompress'
 import { useI18n } from '../i18n'
 import './GlobalChat.css'
+
+const REPORT_REASONS: ChatReportReason[] = ['harassment', 'hate', 'spam', 'sexual', 'violence', 'other']
 
 function mergeMessages(current: GlobalChatMessage[], incoming: GlobalChatMessage[]) {
   const byId = new Map(current.map((message) => [message.id, message]))
@@ -82,6 +89,12 @@ export function GlobalChat({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pendingPhoto, setPendingPhoto] = useState<{ file: File; previewUrl: string } | null>(null)
   const [viewerUrl, setViewerUrl] = useState<string | null>(null)
+  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set())
+  const [actionMessage, setActionMessage] = useState<GlobalChatMessage | null>(null)
+  const [reportReason, setReportReason] = useState<ChatReportReason | null>(null)
+  const [moderationOpen, setModerationOpen] = useState(false)
+  const [moderationBusy, setModerationBusy] = useState(false)
+  const [moderationStatus, setModerationStatus] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -108,6 +121,20 @@ export function GlobalChat({
     const poll = window.setInterval(() => void loadLatest(), 12_000)
     return () => window.clearInterval(poll)
   }, [loadLatest])
+
+  useEffect(() => {
+    if (!token || !user) {
+      setBlockedUserIds(new Set())
+      return
+    }
+    let active = true
+    void getBlockedChatUserIds(token)
+      .then((ids) => {
+        if (active) setBlockedUserIds(new Set(ids))
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [token, user])
 
   useEffect(() => () => {
     if (longPressTimerRef.current != null) window.clearTimeout(longPressTimerRef.current)
@@ -316,14 +343,69 @@ export function GlobalChat({
     setPickerOpen(true)
   }
 
+  async function blockSelectedUser() {
+    if (!token || !actionMessage || actionMessage.userId === user?.id || moderationBusy) return
+    if (!window.confirm(t('chat.blockConfirm', { name: actionMessage.name }))) return
+    setModerationBusy(true)
+    try {
+      await blockChatUser(token, actionMessage.userId)
+      setBlockedUserIds((current) => new Set([...current, actionMessage.userId]))
+      setModerationStatus(t('chat.blocked', { name: actionMessage.name }))
+      setActionMessage(null)
+      setReportReason(null)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t('chat.moderationError'))
+    } finally {
+      setModerationBusy(false)
+    }
+  }
+
+  async function unblockUser(userId: string) {
+    if (!token || moderationBusy) return
+    setModerationBusy(true)
+    try {
+      await unblockChatUser(token, userId)
+      setBlockedUserIds((current) => {
+        const next = new Set(current)
+        next.delete(userId)
+        return next
+      })
+      setModerationStatus(t('chat.unblocked'))
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t('chat.moderationError'))
+    } finally {
+      setModerationBusy(false)
+    }
+  }
+
+  async function submitReport() {
+    if (!token || !actionMessage || !reportReason || moderationBusy) return
+    setModerationBusy(true)
+    try {
+      await reportGlobalChatMessage(token, actionMessage.id, reportReason)
+      setModerationStatus(t('chat.reportSent'))
+      setActionMessage(null)
+      setReportReason(null)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : t('chat.moderationError'))
+    } finally {
+      setModerationBusy(false)
+    }
+  }
+
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => !blockedUserIds.has(message.userId)),
+    [blockedUserIds, messages],
+  )
+
   const traders = useMemo(() => {
     const seen = new Map<string, GlobalChatMessage>()
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]
+    for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
+      const message = visibleMessages[index]
       if (!seen.has(message.userId)) seen.set(message.userId, message)
     }
     return Array.from(seen.values())
-  }, [messages])
+  }, [visibleMessages])
 
   const canSend = Boolean(body.trim() || pendingPhoto) && !sending
 
@@ -344,16 +426,18 @@ export function GlobalChat({
           )}
           <span>{traders.length ? t('chat.traders', { count: traders.length }) : t('chat.community')}</span>
         </div>
+        <button className="global-chat__moderation-button" type="button" onClick={() => setModerationOpen(true)}
+          aria-label={t('chat.moderation')} title={t('chat.moderation')}>⚑</button>
       </header>
       <div className="global-chat__notice">{competitionId ? t('chat.arenaNotice') : t('chat.notice')}</div>
 
       <section className="global-chat__messages" aria-live="polite">
-        {messages.length > 0 && <button className="global-chat__older" type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? t('common.loading') : t('chat.older')}</button>}
+        {visibleMessages.length > 0 && <button className="global-chat__older" type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? t('common.loading') : t('chat.older')}</button>}
         {loading ? <div className="global-chat__state">{t('chat.loading')}</div>
-          : !messages.length ? <div className="global-chat__state"><strong>{t('chat.emptyTitle')}</strong><span>{t('chat.emptyLead')}</span></div>
-            : messages.map((message, index) => {
+          : !visibleMessages.length ? <div className="global-chat__state"><strong>{t('chat.emptyTitle')}</strong><span>{t('chat.emptyLead')}</span></div>
+            : visibleMessages.map((message, index) => {
               const mine = Boolean(user && message.userId === user.id)
-              const previous = messages[index - 1]
+              const previous = visibleMessages[index - 1]
               const grouped = !message.replyTo && previous?.userId === message.userId && message.createdAt - previous.createdAt < 5 * 60_000
               const imageSrc = message.imageUrl ? apiAssetUrl(message.imageUrl) : ''
               return <article key={message.id} id={`chat-message-${message.id}`}
@@ -380,12 +464,22 @@ export function GlobalChat({
                   )}
                   {message.body ? <p>{message.body}</p> : null}
                 </div>
+                {!mine && token && <button className="global-chat__message-actions" type="button"
+                  aria-label={t('chat.messageActions')}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setReportReason(null)
+                    setActionMessage(message)
+                  }}>•••</button>}
               </article>
             })}
         <div ref={bottomRef} />
       </section>
 
       {error && <div className="global-chat__error">{error}</div>}
+      {moderationStatus && <button className="global-chat__moderation-status" type="button"
+        onClick={() => setModerationStatus('')}>{moderationStatus} ×</button>}
       {!token || !user ? (
         <button className="global-chat__guest" type="button" onClick={() => onAuth?.()}>
           {t('chat.loginToWrite')}
@@ -424,6 +518,74 @@ export function GlobalChat({
             <button type="button" onClick={() => void pickPhoto('camera')}>{t('chat.takePhoto')}</button>
             <button type="button" onClick={() => void pickPhoto('gallery')}>{t('chat.chooseGallery')}</button>
             <button type="button" className="is-cancel" onClick={() => setPickerOpen(false)}>{t('common.close')}</button>
+          </div>
+        </div>
+      )}
+
+      {actionMessage && (
+        <div className="global-chat__sheet" onClick={() => { setActionMessage(null); setReportReason(null) }}>
+          <div className="global-chat__sheet-card global-chat__moderation-sheet" onClick={(event) => event.stopPropagation()}>
+            <div className="global-chat__sheet-title">
+              <strong>{actionMessage.name}</strong>
+              <small>{t('chat.moderationSafe')}</small>
+            </div>
+            {!reportReason ? (
+              <>
+                <button type="button" onClick={() => {
+                  setReplyTo(actionMessage)
+                  setActionMessage(null)
+                }}>{t('chat.reply')}</button>
+                <button type="button" className="is-danger" onClick={() => setReportReason('harassment')}>
+                  {t('chat.report')}
+                </button>
+                <button type="button" className="is-danger" disabled={moderationBusy} onClick={() => void blockSelectedUser()}>
+                  {t('chat.blockUser', { name: actionMessage.name })}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="global-chat__report-reasons" role="group" aria-label={t('chat.reportReason')}>
+                  {REPORT_REASONS.map((reason) => (
+                    <button key={reason} type="button" className={reportReason === reason ? 'is-selected' : ''}
+                      onClick={() => setReportReason(reason)}>{t(`chat.reportReasons.${reason}`)}</button>
+                  ))}
+                </div>
+                <button type="button" className="is-danger" disabled={!reportReason || moderationBusy}
+                  onClick={() => void submitReport()}>{moderationBusy ? t('common.loading') : t('chat.sendReport')}</button>
+                <button type="button" onClick={() => setReportReason(null)}>{t('common.back')}</button>
+              </>
+            )}
+            <button type="button" className="is-cancel" onClick={() => {
+              setActionMessage(null)
+              setReportReason(null)
+            }}>{t('common.close')}</button>
+          </div>
+        </div>
+      )}
+
+      {moderationOpen && (
+        <div className="global-chat__sheet" onClick={() => setModerationOpen(false)}>
+          <div className="global-chat__sheet-card global-chat__moderation-sheet" onClick={(event) => event.stopPropagation()}>
+            <div className="global-chat__sheet-title">
+              <strong>{t('chat.moderation')}</strong>
+              <small>{t('chat.moderationLead')}</small>
+            </div>
+            <a className="global-chat__contact" href="mailto:contact.cryptoedge@gmail.com?subject=Modération%20du%20chat%20BTF">
+              {t('chat.contactModeration')}
+            </a>
+            <div className="global-chat__blocked-list">
+              <strong>{t('chat.blockedUsers', { count: blockedUserIds.size })}</strong>
+              {Array.from(blockedUserIds).map((blockedId) => {
+                const blockedMessage = messages.find((message) => message.userId === blockedId)
+                return <div key={blockedId}>
+                  <span>{blockedMessage?.name || t('chat.blockedUser')}</span>
+                  <button type="button" disabled={moderationBusy} onClick={() => void unblockUser(blockedId)}>
+                    {t('chat.unblock')}
+                  </button>
+                </div>
+              })}
+            </div>
+            <button type="button" className="is-cancel" onClick={() => setModerationOpen(false)}>{t('common.close')}</button>
           </div>
         </div>
       )}

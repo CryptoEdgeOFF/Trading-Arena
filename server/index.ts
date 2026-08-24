@@ -53,7 +53,18 @@ import {
 import { optimizeUploadedImage, transparentizeWhiteBackground } from './imageOptimize.js';
 import { invalidateBlobCache } from './blobCache.js';
 import { sendImageBlob } from './serveImageBlob.js';
-import { anonymizeChatForUser, createGlobalChatMessage, getChatImage, listGlobalChatMessages, putChatImage } from './globalChatStore.js';
+import {
+  anonymizeChatForUser,
+  blockChatUser,
+  createGlobalChatMessage,
+  getChatImage,
+  listBlockedChatUserIds,
+  listGlobalChatMessages,
+  putChatImage,
+  reportGlobalChatMessage,
+  unblockChatUser,
+  type ChatReportReason,
+} from './globalChatStore.js';
 import { deleteUserRating, getRatingLeaderboard, syncUserRating } from './ratingStore.js';
 import { getPnlHistoryWithLivePoint, getPnlMoments, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
 import { countryFromPhone } from './phoneCountry.js';
@@ -64,6 +75,11 @@ import { shouldNotifyCompletedLimit } from './notificationRules.js';
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
+const MODERATION_CONTACT_EMAIL = (
+  process.env.MODERATION_EMAIL
+  || process.env.PRIZE_CONTACT_EMAIL
+  || 'contact.cryptoedge@gmail.com'
+).trim();
 // permessage-deflate compresses every WS frame natively. With state:patch
 // payloads being mostly repetitive JSON keys, gzip typically yields a 3-5x
 // reduction on the wire. We tune it to favor latency over CPU: small window,
@@ -2438,20 +2454,19 @@ app.post('/api/competition/me/push-test', async (req, res) => {
 
 app.get('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 120, key: 'global-chat-read' }), async (req, res) => {
   const room = String(req.query.competitionId || '').trim() || null;
+  const viewer = await getCompetitionUser(req);
   // Lecture ouverte pour les salles d'arène (spectateurs non connectés).
   // Le chat global reste authentifié.
-  if (!room) {
-    const user = await getCompetitionUser(req);
-    if (!user) {
-      res.status(401).json({ error: 'Connexion requise' });
-      return;
-    }
+  if (!room && !viewer) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
   }
   const beforeValue = Number(String(req.query.before || ''));
   const messages = await listGlobalChatMessages({
     before: Number.isFinite(beforeValue) && beforeValue > 0 ? beforeValue : undefined,
     limit: 80,
     competitionId: room,
+    viewerUserId: viewer?.id,
   });
   res.json({ messages });
 });
@@ -2475,6 +2490,80 @@ app.post('/api/competition/chat/messages', rateLimit({ windowMs: 60_000, max: 20
     res.status(201).json({ message });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message || 'Message invalide' });
+  }
+});
+
+app.get('/api/competition/chat/blocks', rateLimit({ windowMs: 60_000, max: 60, key: 'global-chat-blocks-read' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  const blockedUserIds = await listBlockedChatUserIds(user.id);
+  res.json({ blockedUserIds });
+});
+
+app.post('/api/competition/chat/users/:userId/block', rateLimit({ windowMs: 60_000, max: 20, key: 'global-chat-block' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  try {
+    await blockChatUser(user.id, String(req.params.userId || '').trim());
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Blocage impossible' });
+  }
+});
+
+app.delete('/api/competition/chat/users/:userId/block', rateLimit({ windowMs: 60_000, max: 20, key: 'global-chat-unblock' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  await unblockChatUser(user.id, String(req.params.userId || '').trim());
+  res.json({ ok: true });
+});
+
+app.post('/api/competition/chat/messages/:messageId/report', rateLimit({ windowMs: 60_000, max: 10, key: 'global-chat-report' }), async (req, res) => {
+  const user = await getCompetitionUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Connexion requise' });
+    return;
+  }
+  try {
+    const created = await reportGlobalChatMessage({
+      reporterUserId: user.id,
+      messageId: String(req.params.messageId || '').trim(),
+      reason: String(req.body?.reason || '') as ChatReportReason,
+      details: req.body?.details,
+    });
+    if (created) {
+      const messageId = String(req.params.messageId || '').trim();
+      const reason = String(req.body?.reason || '').trim();
+      void sendNotificationEmail(
+        MODERATION_CONTACT_EMAIL,
+        `[Modération] Nouveau signalement chat — ${reason}`,
+        {
+          eyebrow: 'SÉCURITÉ DU CHAT',
+          heading: 'Un message a été signalé',
+          bodyLines: [
+            `Signalé par ${user.name} (${user.email}).`,
+            `Message : ${messageId}`,
+            `Motif : ${reason}`,
+            'Le signalement est enregistré avec le statut pending dans comp_chat_reports.',
+          ],
+          highlight: 'À examiner rapidement',
+        },
+      ).catch((error) => {
+        console.warn('[chat moderation] notification email failed:', error?.message || error);
+      });
+    }
+    res.status(created ? 201 : 200).json({ ok: true, duplicate: !created });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message || 'Signalement impossible' });
   }
 });
 
