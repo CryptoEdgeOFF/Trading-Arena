@@ -231,10 +231,10 @@ function buildDefaultSeasons(): LeaderboardSeason[] {
       rewardTitleKey: 'seasons.summer2026.rewardTitle',
       rewardDescKey: 'seasons.summer2026.rewardDesc',
       theme: 'summer',
-      bannerImage: '/assets/Seasons/Summer Season BTF Arena.png',
-      shirtImage: '/assets/badges/Summer Season Shirt BTF Arena.png',
-      arenaImage: '/assets/pictures/arena3d.png',
-      homeBannerImage: '/assets/pictures/SummerSeasonBannerHomeBTfarena.png',
+      bannerImage: '/assets/Seasons/summer-season-ranking.webp',
+      shirtImage: '/assets/badges/summer-season-shirt.webp',
+      arenaImage: '/assets/pictures/arena3d.webp',
+      homeBannerImage: '/assets/pictures/summer-season-home.webp',
     },
     {
       id: 'autumn-2026',
@@ -250,7 +250,7 @@ function buildDefaultSeasons(): LeaderboardSeason[] {
       theme: 'autumn',
       bannerImage: null,
       shirtImage: null,
-      arenaImage: '/assets/pictures/arena3d.png',
+      arenaImage: '/assets/pictures/arena3d.webp',
       homeBannerImage: null,
     },
   ];
@@ -2398,7 +2398,7 @@ export class CompetitionManager {
    * partir des trades dans index.ts).
    * Si `seasonId` est fourni, seules les arènes de cette saison comptent.
    */
-  listUserParticipations(options?: { seasonId?: string | null }): Array<{
+  listUserParticipations(options?: { seasonId?: string | null; includeBadges?: boolean }): Array<{
     userId: string;
     name: string;
     avatarUrl: string | null;
@@ -2408,8 +2408,12 @@ export class CompetitionManager {
     arenas: number;
     paperPlayerIds: string[];
   }> {
+    const rows = this.listUserParticipationsCore(options);
+    if (options?.includeBadges === false) {
+      return rows.map((row) => ({ ...row, badges: [] }));
+    }
     const badges = this.getAllUserBadges();
-    return this.listUserParticipationsCore(options).map((row) => ({
+    return rows.map((row) => ({
       ...row,
       badges: badges.get(row.userId) ?? [],
     }));

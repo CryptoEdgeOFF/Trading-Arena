@@ -246,17 +246,17 @@ export function RankScreen({
               {
                 src: encodeURI(
                   selectedSeason?.championBadge === 'autumn-champion'
-                    ? '/assets/badges/Automn Season BTF Arena Badge.png'
-                    : '/assets/badges/Summer Season BTF Arena Badge.png',
+                    ? '/assets/badges/autumn-season-badge.webp'
+                    : '/assets/badges/summer-season-badge.webp',
                 ),
                 label: t('rank.seasonPrizeBadge'),
               },
               {
-                src: encodeURI(selectedSeason?.shirtImage || '/assets/badges/Summer Season Shirt BTF Arena.png'),
+                src: encodeURI(selectedSeason?.shirtImage || '/assets/badges/summer-season-shirt.webp'),
                 label: t('rank.seasonPrizeShirt'),
               },
               {
-                src: encodeURI(selectedSeason?.arenaImage || '/assets/pictures/arena3d.png'),
+                src: encodeURI(selectedSeason?.arenaImage || '/assets/pictures/arena3d.webp'),
                 label: t('rank.seasonPrizeParis'),
               },
             ].map((prize) => (

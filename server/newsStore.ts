@@ -170,6 +170,10 @@ export async function listAdminNews(): Promise<NewsArticle[]> {
   return result.rows.map(rowToArticle);
 }
 
+function toPublicListArticle(article: NewsArticle): NewsArticle {
+  return { ...article, body: '', bodyEn: '' };
+}
+
 export async function listPublicNews(before = Date.now() + 1, limit = 20): Promise<NewsArticle[]> {
   const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
   const db = getPool();
@@ -177,17 +181,20 @@ export async function listPublicNews(before = Date.now() + 1, limit = 20): Promi
     return [...memory.values()]
       .filter((article) => article.published && (article.publishedAt || 0) < before)
       .sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0))
-      .slice(0, safeLimit);
+      .slice(0, safeLimit)
+      .map(toPublicListArticle);
   }
   await ensureTable();
   const result = await db.query(
-    `select * from comp_news
+    `select id, title, summary, title_en, summary_en, cover_url, published, featured,
+            published_at, push_sent_at, created_at, updated_at
+     from comp_news
      where published = true and published_at < $1
      order by published_at desc
      limit $2`,
     [before, safeLimit],
   );
-  return result.rows.map(rowToArticle);
+  return result.rows.map((row) => toPublicListArticle(rowToArticle(row)));
 }
 
 export async function getNews(id: string, includeDraft = false): Promise<NewsArticle | null> {

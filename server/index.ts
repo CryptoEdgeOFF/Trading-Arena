@@ -3312,33 +3312,41 @@ app.get('/api/competition/player/:userId', async (req, res) => {
 app.get('/api/competition/global-leaderboard', async (req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
   const scope = String(req.query.scope || '').trim();
+  const lite = String(req.query.fields || '').trim() === 'lite' || req.query.lite === '1';
 
   const buildRows = (participations: ReturnType<typeof competitionManager.listUserParticipations>) => {
     const rows = participations.map((p) => {
-      const stats = aggregateStatsForPlayerIds(p.paperPlayerIds);
+      const stats = lite ? null : aggregateStatsForPlayerIds(p.paperPlayerIds);
       return {
         userId: p.userId,
         name: p.name,
         avatarUrl: p.avatarUrl,
         country: p.country,
-        badges: p.badges,
+        badges: lite ? undefined : p.badges,
         pnlUsd: p.pnlUsd,
         arenas: p.arenas,
-        stats,
+        ...(stats ? { stats } : {}),
       };
     });
     rows.sort((a, b) => {
-      const aActive = a.stats.closedTrades > 0 ? 1 : 0;
-      const bActive = b.stats.closedTrades > 0 ? 1 : 0;
-      if (aActive !== bActive) return bActive - aActive;
+      if (!lite) {
+        const aActive = a.stats && a.stats.closedTrades > 0 ? 1 : 0;
+        const bActive = b.stats && b.stats.closedTrades > 0 ? 1 : 0;
+        if (aActive !== bActive) return bActive - aActive;
+      }
       return b.pnlUsd - a.pnlUsd;
     });
     return rows;
   };
 
+  res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+
   // Classement all-time : toutes les arènes (hors qualifications), toutes saisons.
   if (scope === 'all') {
-    res.json({ scope: 'all', rows: buildRows(competitionManager.listUserParticipations()) });
+    res.json({
+      scope: 'all',
+      rows: buildRows(competitionManager.listUserParticipations({ includeBadges: !lite })),
+    });
     return;
   }
 
@@ -3370,12 +3378,16 @@ app.get('/api/competition/global-leaderboard', async (req, res) => {
       arenaImage: season.arenaImage ?? null,
       status: inferSeasonStatus(season),
     },
-    rows: buildRows(competitionManager.listUserParticipations({ seasonId: season.id })),
+    rows: buildRows(competitionManager.listUserParticipations({
+      seasonId: season.id,
+      includeBadges: !lite,
+    })),
   });
 });
 
 app.get('/api/competition/seasons', async (_req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
+  res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
   const seasons = competitionManager.listSeasons().map((season) => ({
     id: season.id,
     slug: season.slug,
@@ -3452,11 +3464,12 @@ async function ensureRatingsBackfilled(): Promise<void> {
 
 app.get('/api/competition/rating-leaderboard', async (_req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
-  await ensureRatingsBackfilled();
+  void ensureRatingsBackfilled();
   const rows = await getRatingLeaderboard(100);
   const identities = new Map(
-    competitionManager.listUserParticipations().map((participation) => [participation.userId, participation]),
+    competitionManager.listUserParticipations({ includeBadges: false }).map((participation) => [participation.userId, participation]),
   );
+  res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
   res.json({
     rows: rows.map((row, index) => {
       const identity = identities.get(row.userId);

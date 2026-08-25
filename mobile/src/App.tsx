@@ -168,7 +168,7 @@ function ArenaCard({
   return (
     <motion.article className={`arena-card is-${competition.status}`} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
       <img className="arena-card__banner"
-        src={competition.bannerImageUrl ? apiAssetUrl(competition.bannerImageUrl) : '/assets/pictures/BTF ARENA SEO.png'} alt="" />
+        src={competition.bannerImageUrl ? apiAssetUrl(competition.bannerImageUrl) : '/assets/pictures/btf-arena-seo.webp'} alt="" />
       <div className="arena-card__shade" />
       <div className="arena-card__glow" />
       <div className="arena-card__top">

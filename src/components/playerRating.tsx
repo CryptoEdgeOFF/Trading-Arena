@@ -96,6 +96,10 @@ export function DivisionBadge({ division, size = 96 }: { division: RatingDivisio
     <img
       src={src}
       alt={division.label}
+      width={size}
+      height={size}
+      loading="lazy"
+      decoding="async"
       style={{ width: size, height: 'auto', filter: 'drop-shadow(0 10px 24px rgba(0,0,0,.6))' }}
       onError={() => setBroken(true)}
       draggable={false}

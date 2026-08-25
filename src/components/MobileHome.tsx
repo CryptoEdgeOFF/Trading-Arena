@@ -11,7 +11,7 @@ import {
 import { countryFlag } from '../lib/country';
 import { localizeNews } from '../lib/newsLocale';
 import { hasUnreadNews } from '../lib/newsRead';
-import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
+import { newsCoverUrl, resolveMediaUrl, withDisplayWidth } from '../utils/imageUrl';
 import { formatDHMS } from '../utils/formatters';
 import type { CompeteSessionUser } from '../lib/competeSession';
 
@@ -66,11 +66,13 @@ function MobileArenaCard({
   const { t } = useTranslation();
   const countdown = useCountdown(arena.status === 'live' ? arena.endAt : arena.startAt);
   const pnl = arena.myEntry?.pnlUsd ?? 0;
-  const banner = resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena-live-red.webp';
+  const banner = withDisplayWidth(resolveMediaUrl(arena.bannerImageUrl), 720)
+    || resolveMediaUrl(arena.bannerImageUrl)
+    || '/assets/pictures/arena-live-red.webp';
 
   return (
     <article className="mobile-arena-card">
-      <img className="mobile-arena-card__banner" src={banner} alt="" />
+      <img className="mobile-arena-card__banner" src={banner} alt="" loading="lazy" decoding="async" />
       <div className="mobile-arena-card__shade" />
       <div className="mobile-arena-card__top">
         <span className="mobile-arena-card__live"><i />{t('status.live')}</span>
@@ -298,7 +300,7 @@ export default function MobileHome({
       {season && (
         <Link to="/compete/rank#season" className="mobile-home-season">
           <div className="mobile-home-season__banner">
-            <img src={season.homeBannerImage || '/assets/pictures/Traderpng.webp'} alt="" />
+            <img src={season.homeBannerImage || '/assets/pictures/Traderpng.webp'} alt="" loading="lazy" decoding="async" />
             <div className="mobile-home-season__copy">
               <span>{t('homeSeason.live')}</span>
               <h2>{seasonLead}<br /><em>{seasonTail}</em></h2>

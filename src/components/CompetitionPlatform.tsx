@@ -25,7 +25,8 @@ import {
   type PlayerRating,
 } from './playerRating';
 import { formatDHMS } from '../utils/formatters';
-import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
+import { newsCoverUrl, resolveMediaUrl, withDisplayWidth } from '../utils/imageUrl';
+import { fetchPublicNews } from '../lib/publicNews';
 import { localizeNews } from '../lib/newsLocale';
 import { getSponsor, normalizeSponsorAccountId } from '../lib/sponsors';
 import { countryFlag } from '../lib/country';
@@ -567,13 +568,9 @@ export default function CompetitionPlatform() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch('/api/news?limit=2')
-      .then(async (response) => {
-        if (!response.ok) throw new Error('unavailable');
-        return response.json() as Promise<{ news?: HomeNewsArticle[] }>;
-      })
-      .then((payload) => {
-        if (!cancelled) setLatestNews(Array.isArray(payload.news) ? payload.news : []);
+    void fetchPublicNews(2)
+      .then((news) => {
+        if (!cancelled) setLatestNews(news as HomeNewsArticle[]);
       })
       .catch(() => undefined);
     return () => {
@@ -1097,9 +1094,10 @@ export default function CompetitionPlatform() {
         {spotlightArena && (
           <section className="relative isolate overflow-hidden border-y border-white/[0.06]">
             {spotlightArena.bannerImageUrl && (
-              <img
+              <OptimizedImage
                 src={resolveMediaUrl(spotlightArena.bannerImageUrl)}
                 alt=""
+                displayWidth={1280}
                 className="absolute inset-0 h-full w-full object-cover opacity-40 grayscale"
               />
             )}
@@ -1181,7 +1179,7 @@ export default function CompetitionPlatform() {
           </section>
         )}
 
-        <SummerSeasonHomeSection />
+        <SummerSeasonHomeSection seasons={seasons} />
 
         {!session && <ProcessSection />}
 
@@ -1303,31 +1301,13 @@ export default function CompetitionPlatform() {
 type HomeSeasonInfo = SeasonInfo;
 
 /** Annonce sur la page d'accueil : la saison en cours + lien vers le leaderboard. */
-function SummerSeasonHomeSection() {
+function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
   const { t } = useTranslation();
-  const [season, setSeason] = useState<HomeSeasonInfo | null>(null);
+  const season = seasons.find((item) => item.status === 'active')
+    || seasons.find((item) => item.isActive)
+    || null;
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/competition/seasons')
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        const list = (data.seasons as HomeSeasonInfo[]) || [];
-        const active =
-          list.find((s) => s.id === data.activeSeasonId) ||
-          list.find((s) => s.status === 'active') ||
-          list.find((s) => s.isActive) ||
-          null;
-        if (active && active.status === 'active') setSeason(active);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!season) return null;
+  if (!season || season.status !== 'active') return null;
 
   const seasonName = t(season.nameKey);
   const daysLeft = Math.max(0, Math.ceil((season.endAt - Date.now()) / 86_400_000));
@@ -1337,21 +1317,10 @@ function SummerSeasonHomeSection() {
 
   return (
     <section className="relative isolate overflow-hidden py-14 sm:py-16">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_75%_at_78%_45%,rgba(245,158,11,0.13),transparent_62%),linear-gradient(180deg,transparent,rgba(5,5,7,0.78)_86%)]" />
-      <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-gradient-to-r from-transparent via-amber-300/18 to-transparent" />
-
-      {season.homeBannerImage && (
-        <motion.img
-          aria-hidden="true"
-          src={encodeURI(season.homeBannerImage)}
-          draggable={false}
-          className="pointer-events-none absolute right-[-16%] top-1/2 hidden w-[68%] max-w-[880px] -translate-y-1/2 select-none object-contain opacity-[0.34] saturate-[1.12] [mask-image:linear-gradient(90deg,transparent_0%,black_22%,black_70%,transparent_100%)] lg:block"
-          initial={{ opacity: 0, x: 80, scale: 1.04 }}
-          whileInView={{ opacity: 0.34, x: 0, scale: 1 }}
-          viewport={{ once: true, margin: '-120px' }}
-          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
-        />
-      )}
+      <div className="pointer-events-none absolute inset-0 bg-[#08070a]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/25 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-amber-300/15 to-transparent" />
+      <div className="pointer-events-none absolute left-1/2 top-0 h-64 w-[42rem] -translate-x-1/2 rounded-full bg-amber-400/[0.07] blur-3xl" />
 
       <div className="relative mx-auto grid max-w-7xl items-center gap-8 px-6 md:px-10 lg:grid-cols-[0.84fr_1.16fr]">
         <motion.div
@@ -1414,6 +1383,8 @@ function SummerSeasonHomeSection() {
                 src={encodeURI(season.homeBannerImage)}
                 alt={seasonName}
                 draggable={false}
+                loading="lazy"
+                decoding="async"
                 className="block w-full select-none object-contain"
               />
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#050507]/65 via-transparent to-amber-200/10" />
@@ -1423,7 +1394,7 @@ function SummerSeasonHomeSection() {
 
           <motion.img
             aria-hidden="true"
-            src="/assets/badges/Summer Season BTF Arena Badge.png"
+            src="/assets/badges/summer-season-badge.webp"
             draggable={false}
             className="absolute -right-4 -top-8 hidden h-24 w-24 object-contain drop-shadow-[0_18px_40px_rgba(245,158,11,0.5)] md:block lg:h-32 lg:w-32"
             animate={{ y: [0, 10, 0], rotate: [2, -3, 2] }}
@@ -1439,17 +1410,17 @@ function SummerSeasonHomeSection() {
             {
               src: season.championBadge
                 ? getBadgeVisual(season.championBadge).src
-                : encodeURI('/assets/badges/Summer Season BTF Arena Badge.png'),
+                : encodeURI('/assets/badges/summer-season-badge.webp'),
               label: t('homeSeason.prizeBadge'),
               hint: t('globalLeaderboard.prize.badgeHint'),
             },
             {
-              src: encodeURI(season.shirtImage || '/assets/badges/Summer Season Shirt BTF Arena.png'),
+              src: encodeURI(season.shirtImage || '/assets/badges/summer-season-shirt.webp'),
               label: t('homeSeason.prizeShirt'),
               hint: t('globalLeaderboard.prize.shirtTag'),
             },
             {
-              src: encodeURI(season.arenaImage || '/assets/pictures/arena3d.png'),
+              src: encodeURI(season.arenaImage || '/assets/pictures/arena3d.webp'),
               label: t('homeSeason.prizeArena'),
               hint: t('globalLeaderboard.prize.arenaDesc'),
             },
@@ -1467,6 +1438,8 @@ function SummerSeasonHomeSection() {
                 src={prize.src}
                 alt=""
                 draggable={false}
+                loading="lazy"
+                decoding="async"
                 className="relative z-10 mx-auto h-36 w-auto select-none object-contain sm:h-44"
                 style={{ filter: 'drop-shadow(0 0 22px rgba(245,158,11,0.45))' }}
                 animate={{ y: [0, -7, 0] }}
@@ -2012,7 +1985,9 @@ function MyCompetitionCard({
   const startReached = !isLive && !isEnded && Date.now() >= competition.startAt;
   const canTrade = (competition.canTrade ?? isLive) || startReached;
   const sponsor = getSponsor(competition.sponsor);
-  const banner = resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/BTF ARENA SEO.png';
+  const banner = withDisplayWidth(resolveMediaUrl(competition.bannerImageUrl), 720)
+    || resolveMediaUrl(competition.bannerImageUrl)
+    || '/assets/pictures/btf-arena-seo.webp';
   const prized = hasPrize(competition.cashPrize);
   const prizeTitle = getPrizeTitle(competition.cashPrize);
   const prizeImage = competition.cashPrize?.imageUrl || competition.cashPrize?.items?.[0]?.imageUrl || '';
@@ -2207,7 +2182,9 @@ function PublicCompetitionCard({
   const canJoin = competition.canJoin ?? (competition.status === 'registration');
   const sponsor = getSponsor(competition.sponsor);
   const accent = sponsor?.accent ?? '#dc2626';
-  const banner = resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/BTF ARENA SEO.png';
+  const banner = withDisplayWidth(resolveMediaUrl(competition.bannerImageUrl), 720)
+    || resolveMediaUrl(competition.bannerImageUrl)
+    || '/assets/pictures/btf-arena-seo.webp';
   const prized = hasPrize(competition.cashPrize);
   return (
     <motion.article

@@ -9,6 +9,7 @@ import { markNewsRead } from '../lib/newsRead';
 import { localizeNews } from '../lib/newsLocale';
 import { youtubeVideoId } from '../lib/youtube';
 import { newsCoverUrl } from '../utils/imageUrl';
+import { fetchPublicNews } from '../lib/publicNews';
 
 type NewsArticle = {
   id: string;
@@ -91,13 +92,11 @@ export default function CompetitionNewsPage() {
             markNewsRead(Number(data.article?.publishedAt || data.article?.createdAt || Date.now()));
           }
         } else {
-          const response = await fetch('/api/news?limit=40');
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || t('news.loadError'));
+          const news = await fetchPublicNews(40);
           if (active) {
-            setNews(data.news || []);
+            setNews(news as NewsArticle[]);
             setArticle(null);
-            const latest = data.news?.[0];
+            const latest = news[0];
             markNewsRead(Number(latest?.publishedAt || latest?.createdAt || Date.now()));
           }
         }

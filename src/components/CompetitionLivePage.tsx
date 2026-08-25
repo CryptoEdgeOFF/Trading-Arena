@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import CompeteHeader from './CompeteHeader';
 import Seo from './Seo';
 import { formatDHMS } from '../utils/formatters';
+import OptimizedImage from './OptimizedImage';
 import { resolveMediaUrl } from '../utils/imageUrl';
 
 type Arena = {
@@ -36,9 +37,10 @@ function ArenaCard({ arena, featured = false }: { arena: Arena; featured?: boole
 
   return (
     <article className={`group relative overflow-hidden border border-white/[0.09] bg-[#0a0a0e] ${featured ? 'min-h-[430px] rounded-3xl' : 'min-h-[290px] rounded-2xl'}`}>
-      <img
-        src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.png'}
+      <OptimizedImage
+        src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
         alt=""
+        displayWidth={featured ? 1280 : 720}
         className="absolute inset-0 h-full w-full object-cover opacity-60 transition duration-700 group-hover:scale-[1.035] group-hover:opacity-75"
       />
       <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-[#050507]/55 to-black/10" />
@@ -77,9 +79,10 @@ function ArchiveMiniCard({ arena }: { arena: Arena }) {
       className="group flex w-[210px] shrink-0 snap-start flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0b0b10] transition-colors hover:border-white/20"
     >
       <div className="relative h-20 overflow-hidden">
-        <img
-          src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.png'}
+        <OptimizedImage
+          src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
           alt=""
+          displayWidth={420}
           className="h-full w-full object-cover opacity-80 grayscale-[40%] transition duration-500 group-hover:scale-105 group-hover:grayscale-0"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b10] to-transparent" />
@@ -171,7 +174,7 @@ export default function CompetitionLivePage() {
           </>
         ) : (
           <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0e] px-6 py-20 text-center">
-            <img src="/assets/pictures/arena3d.png" alt="" className="absolute inset-0 h-full w-full object-contain opacity-20" />
+            <img src="/assets/pictures/arena3d.webp" alt="" className="absolute inset-0 h-full w-full object-contain opacity-20" loading="lazy" decoding="async" />
             <div className="relative"><div className="micro text-[10px] text-[#ef233c]">{t('livePage.weeklyArena')}</div><h2 className="display mt-2 text-3xl font-black uppercase text-white">{t('livePage.emptyTitle')}</h2><p className="mt-2 text-sm text-[#77717a]">{t('livePage.emptyLead')}</p></div>
           </div>
         )}

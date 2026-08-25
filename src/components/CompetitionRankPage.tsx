@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
@@ -62,6 +62,7 @@ export default function CompetitionRankPage() {
   const [now, setNow] = useState(Date.now());
   const [visibleCount, setVisibleCount] = useState(20);
   const [seasonVisibleCount, setSeasonVisibleCount] = useState(10);
+  const loadedSeasonIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,12 +70,13 @@ export default function CompetitionRankPage() {
 
     void (async () => {
       try {
-        const [ratingResponse, bootstrapResponse, seasonsResponse] = await Promise.all([
+        const [ratingResponse, bootstrapResponse, seasonsResponse, seasonBoardResponse] = await Promise.all([
           fetch('/api/competition/rating-leaderboard'),
           token
             ? fetch('/api/competition/bootstrap', { headers: { Authorization: `Bearer ${token}` } })
             : Promise.resolve(null),
           fetch('/api/competition/seasons'),
+          fetch('/api/competition/global-leaderboard?season=summer-2026&fields=lite'),
         ]);
         if (cancelled) return;
         if (ratingResponse.ok) {
@@ -95,6 +97,9 @@ export default function CompetitionRankPage() {
             setCurrentUserId(payload.user?.id ? String(payload.user.id) : null);
           }
         }
+        const seasonBoard = seasonBoardResponse.ok
+          ? await seasonBoardResponse.json() as { season?: { id?: string }; rows?: SeasonRow[] }
+          : null;
         if (seasonsResponse.ok) {
           const payload = await seasonsResponse.json() as {
             seasons?: SeasonSummary[];
@@ -110,6 +115,13 @@ export default function CompetitionRankPage() {
             if (!cancelled) {
               setSeason(selected);
               setSelectedSeasonId(selected.id);
+            }
+            if (seasonBoard && (seasonBoard.season?.id || 'summer-2026') === selected.id) {
+              if (!cancelled) {
+                setSeasonRows(Array.isArray(seasonBoard.rows) ? seasonBoard.rows : []);
+                setSeasonLoading(false);
+                loadedSeasonIdRef.current = selected.id;
+              }
             }
           } else if (!cancelled) {
             setSeasonLoading(false);
@@ -131,17 +143,21 @@ export default function CompetitionRankPage() {
 
   useEffect(() => {
     if (!selectedSeasonId) return;
+    setSeason(seasons.find((item) => item.id === selectedSeasonId) || null);
+    if (loadedSeasonIdRef.current === selectedSeasonId) return;
     let cancelled = false;
     setSeasonVisibleCount(10);
     setSeasonLoading(true);
-    setSeason(seasons.find((item) => item.id === selectedSeasonId) || null);
-    void fetch(`/api/competition/global-leaderboard?season=${encodeURIComponent(selectedSeasonId)}`)
+    void fetch(`/api/competition/global-leaderboard?season=${encodeURIComponent(selectedSeasonId)}&fields=lite`)
       .then(async (response) => {
         if (!response.ok) throw new Error('unavailable');
         return response.json() as Promise<{ rows?: SeasonRow[] }>;
       })
       .then((payload) => {
-        if (!cancelled) setSeasonRows(Array.isArray(payload.rows) ? payload.rows : []);
+        if (!cancelled) {
+          setSeasonRows(Array.isArray(payload.rows) ? payload.rows : []);
+          loadedSeasonIdRef.current = selectedSeasonId;
+        }
       })
       .catch(() => {
         if (!cancelled) setSeasonRows([]);
@@ -175,13 +191,14 @@ export default function CompetitionRankPage() {
         >
           <div className="relative h-40 w-full overflow-hidden sm:h-48 md:h-56">
             <video
-              src="/assets/Videos/major-paris-web.mp4"
+              src={isMobileWeb ? '/assets/Videos/major-paris-mobile.mp4' : '/assets/Videos/major-paris-web.mp4'}
               className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"
               autoPlay
               muted
               loop
               playsInline
-              preload="metadata"
+              preload="none"
+              poster="/assets/Seasons/summer-season-ranking.webp"
               disablePictureInPicture
               tabIndex={-1}
             />
@@ -267,6 +284,8 @@ export default function CompetitionRankPage() {
               <img
                 src={encodeURI(season?.bannerImage || '/assets/Seasons/summer-season-ranking.webp')}
                 alt=""
+                fetchPriority="high"
+                decoding="async"
                 className="block aspect-[2/1] h-auto w-full object-cover object-center lg:absolute lg:inset-0 lg:h-full lg:aspect-auto"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#09090c]/70 via-transparent to-transparent" />
@@ -400,15 +419,15 @@ export default function CompetitionRankPage() {
               {
                 src: season?.championBadge
                   ? getBadgeVisual(season.championBadge).src
-                  : encodeURI('/assets/badges/Summer Season BTF Arena Badge.png'),
+                  : encodeURI('/assets/badges/summer-season-badge.webp'),
                 label: t('rating.seasonPrizeBadge'),
               },
               {
-                src: encodeURI(season?.shirtImage || '/assets/badges/Summer Season Shirt BTF Arena.png'),
+                src: encodeURI(season?.shirtImage || '/assets/badges/summer-season-shirt.webp'),
                 label: t('rating.seasonPrizeShirt'),
               },
               {
-                src: encodeURI(season?.arenaImage || '/assets/pictures/arena3d.png'),
+                src: encodeURI(season?.arenaImage || '/assets/pictures/arena3d.webp'),
                 label: t('rating.seasonPrizeParis'),
               },
             ].map((prize, index) => (
@@ -421,6 +440,8 @@ export default function CompetitionRankPage() {
                   src={prize.src}
                   alt=""
                   draggable={false}
+                  loading="lazy"
+                  decoding="async"
                   className="relative z-10 mx-auto h-20 w-auto select-none object-contain sm:h-24"
                   style={{ filter: 'drop-shadow(0 0 22px rgba(245,179,0,0.45))' }}
                   animate={{ y: [0, -5, 0] }}

@@ -12,6 +12,7 @@ import {
   type CompeteSessionUser,
 } from '../lib/competeSession';
 import { NEWS_READ_EVENT, hasUnreadNews, markNewsRead } from '../lib/newsRead';
+import { fetchPublicNews } from '../lib/publicNews';
 import { useIsMobileWeb } from '../lib/mobileWeb';
 
 const ARENAS_ICON = (
@@ -213,10 +214,9 @@ export default function CompeteHeader({
       if (cancelled) return;
       setUnreadNews(hasUnreadNews(latestNewsAtRef.current || null));
     }
-    void fetch('/api/news?limit=1')
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        const latest = data?.news?.[0];
+    void fetchPublicNews(1)
+      .then((news) => {
+        const latest = news[0];
         latestNewsAtRef.current = Number(latest?.publishedAt || latest?.createdAt || 0) || 0;
         syncUnread();
       })
