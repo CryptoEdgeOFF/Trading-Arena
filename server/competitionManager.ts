@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
 import { countryFromPhone } from './phoneCountry.js';
-import { DRAWDOWN_WARNING_RATIO, drawdownBufferConsumedRatio } from './notificationRules.js';
+import { drawdownBufferConsumedRatio, shouldWarnDailyDrawdown } from './notificationRules.js';
+import { hydratePnlHistory } from './pnlHistoryStore.js';
 
 export interface CompetitionUser {
   id: string;
@@ -373,6 +374,12 @@ export interface Competition {
    * d'idempotence : une occurrence programmée n'est créée qu'une seule fois.
    */
   scheduleKey?: string | null;
+  /** Course PnL persistée (réalisé + latent) depuis le départ de l'arène. */
+  pnlRace?: {
+    samples: Array<{ t: number; rows: Array<{ userId: string; pnlPercent: number }> }>;
+    moments?: Array<{ t: number; type: 'leader' | 'top3'; userId: string }>;
+    lastSampleAt?: number;
+  };
 }
 
 export type CompetitionStatus = 'registration' | 'starting_soon' | 'live' | 'ended';
@@ -511,6 +518,15 @@ function canJoinCompetition(competition: CompetitionTiming, now = Date.now()): b
 
 function canTradeCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
   return now >= competition.startAt && now <= competition.endAt;
+}
+
+/** Allume les feeds prix 10 min avant le départ pour que le 1er tick soit prêt. */
+export const MARKET_FEED_WARMUP_MS = 10 * 60_000;
+
+function needsMarketFeed(competition: CompetitionTiming, now = Date.now()): boolean {
+  if (now > competition.endAt) return false;
+  if (now >= competition.startAt) return true;
+  return competition.startAt - now <= MARKET_FEED_WARMUP_MS;
 }
 
 function isTeamCompetition(competition: Pick<Competition, 'entryMode'>): boolean {
@@ -1112,6 +1128,7 @@ export class CompetitionManager {
         ...competition,
         executionMode: competition.executionMode === 'real' ? 'real' : 'paper',
       });
+      hydratePnlHistory(competition.id, competition.pnlRace);
     }
     this.migrateCompetitionSeasonIds();
     if (hadNoSeasonsInStore) this.save();
@@ -2083,6 +2100,14 @@ export class CompetitionManager {
     }));
   }
 
+  /** True s’il existe une arène live ou dont le départ est dans moins de 10 min. */
+  needsLiveMarketData(now = Date.now()): boolean {
+    for (const competition of this.competitions.values()) {
+      if (needsMarketFeed(competition, now)) return true;
+    }
+    return false;
+  }
+
   listPublicCompetitions(): Array<{
     id: string;
     title: string;
@@ -2258,12 +2283,39 @@ export class CompetitionManager {
     ));
   }
 
+  setPnlRace(
+    competitionId: string,
+    snapshot: {
+      samples: Array<{ t: number; rows: Array<{ userId: string; pnlPercent: number }> }>;
+      moments?: Array<{ t: number; type: 'leader' | 'top3'; userId: string }>;
+      lastSampleAt?: number;
+    },
+  ): void {
+    const competition = this.competitions.get(competitionId);
+    if (!competition || !snapshot.samples.length) return;
+    competition.pnlRace = {
+      samples: snapshot.samples,
+      moments: snapshot.moments || [],
+      lastSampleAt: snapshot.lastSampleAt,
+    };
+    if (this.pool) void this.persist();
+    else this.save();
+  }
+
   getPaperPlayerIdsForCompetition(competitionId: string): string[] {
     const competition = this.competitions.get(competitionId);
     if (!competition) return [];
     return competition.entries
       .map((entry) => entry.paperPlayerId)
       .filter((playerId): playerId is string => Boolean(playerId));
+  }
+
+  getCompetitionPaperPlayers(competitionId: string): Array<{ userId: string; paperPlayerId: string }> {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return [];
+    return competition.entries
+      .filter((entry): entry is typeof entry & { paperPlayerId: string } => Boolean(entry.paperPlayerId))
+      .map((entry) => ({ userId: entry.userId, paperPlayerId: entry.paperPlayerId }));
   }
 
   getPushContextForPaperPlayer(paperPlayerId: string): {
@@ -2469,6 +2521,18 @@ export class CompetitionManager {
     return this.getAllUserBadges().get(userId) ?? [];
   }
 
+  /** Tous les joueurs qui ont au moins une arène terminée (pour backfill rating). */
+  listEndedArenaUserIds(): string[] {
+    const ids = new Set<string>();
+    for (const competition of this.competitions.values()) {
+      if (inferCompetitionStatus(competition) !== 'ended') continue;
+      for (const entry of competition.entries) {
+        if (entry.userId) ids.add(entry.userId);
+      }
+    }
+    return [...ids];
+  }
+
   /**
    * Résultats finaux d'un user sur les arènes TERMINÉES, pour le BTF Rating :
    * rang, nombre de participants classés (rank > 0) et breach éventuel.
@@ -2665,7 +2729,7 @@ export class CompetitionManager {
             updateEvent = { newlyBreached: true, competitionId: competition.id };
           } else {
             const consumedRatio = drawdownBufferConsumedRatio(entry.dailyBaselineEquity, equity, limit);
-            if (consumedRatio >= DRAWDOWN_WARNING_RATIO && entry.dailyDrawdownWarnedDayKey !== dayKey) {
+            if (shouldWarnDailyDrawdown(consumedRatio, entry.dailyDrawdownWarnedDayKey, dayKey)) {
               entry.dailyDrawdownWarnedDayKey = dayKey;
               updateEvent = {
                 newlyBreached: false,

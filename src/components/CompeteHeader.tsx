@@ -11,10 +11,22 @@ import {
   writeCachedCompeteUser,
   type CompeteSessionUser,
 } from '../lib/competeSession';
+import { NEWS_READ_EVENT, hasUnreadNews, markNewsRead } from '../lib/newsRead';
+import { useIsMobileWeb } from '../lib/mobileWeb';
 
 const ARENAS_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M3 9l9-6 9 6M5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9" />
+  </svg>
+);
+const LIVE_ICON = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 12h.01M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13m13-13a9 9 0 0 1 0 13" />
+  </svg>
+);
+const TRADE_ICON = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 19V9m0 0L2.5 11.5M5 9l2.5 2.5M19 5v10m0 0 2.5-2.5M19 15l-2.5-2.5M10 7h4m-4 5h4m-4 5h4" />
   </svg>
 );
 const JOURNAL_ICON = (
@@ -22,14 +34,19 @@ const JOURNAL_ICON = (
     <path d="M3 17l5-6 4 3 6-8M3 21h18" />
   </svg>
 );
-const LEADERBOARD_ICON = (
+const RANK_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M4 20V10M10 20V4M16 20v-6M20 20H4" />
+    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21 1.18.54 2.03 2.03 2.03 3.79M18 2H6v7a6 6 0 0 0 12 0V2Z" />
   </svg>
 );
 const BONUS_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M20 12v8H4v-8M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85" />
+  </svg>
+);
+const NEWS_ICON = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 4h14v16H5V4Zm3 4h8M8 12h8m-8 4h5" />
   </svg>
 );
 const PROFILE_ICON = (
@@ -56,22 +73,25 @@ const LOGOUT_ICON = (
   </svg>
 );
 
-/** Scroll doux vers une section de la home en tenant compte du header sticky. */
-function scrollToSection(targetId: string) {
-  const target = document.getElementById(targetId);
-  if (!target) return;
-  const header = document.querySelector('.compete-header') as HTMLElement | null;
-  const headerOffset = (header?.offsetHeight ?? 64) + 8;
-  const top = window.scrollY + target.getBoundingClientRect().top - headerOffset;
-  window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
-}
-
 interface NavItemDef {
   to: string;
   icon: ReactNode;
   label: string;
   active: boolean;
+  unread?: boolean;
   onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+}
+
+function NewsBell() {
+  const { t } = useTranslation();
+  return (
+    <span className="relative ml-0.5 inline-flex h-4 w-4 items-center justify-center text-[#ff5268]" aria-label={t('header.unreadNews')} title={t('header.unreadNews')}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 22a2.2 2.2 0 0 0 2.2-2.2h-4.4A2.2 2.2 0 0 0 12 22Zm8-6v-5a8 8 0 1 0-16 0v5l-1.8 1.8A1 1 0 0 0 3 15h18a1 1 0 0 0 .8-1.6L20 16Z" />
+      </svg>
+      <i className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[#ef233c] shadow-[0_0_8px_rgba(239,35,60,0.9)]" />
+    </span>
+  );
 }
 
 function NavItem({ item }: { item: NavItemDef }) {
@@ -80,25 +100,24 @@ function NavItem({ item }: { item: NavItemDef }) {
       to={item.to}
       onClick={item.onClick}
       aria-current={item.active ? 'page' : undefined}
-      className={`group relative isolate flex shrink-0 items-center gap-2 overflow-hidden rounded-xl border px-3 py-2 text-[10px] font-bold uppercase tracking-[0.13em] transition-all duration-200 sm:px-3.5 sm:text-[11px] ${
+      className={`group relative flex shrink-0 items-center gap-2 px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.14em] transition-colors duration-200 sm:text-[11px] ${
         item.active
-          ? 'border-[#dc2626]/55 bg-[#dc2626]/15 text-white shadow-[0_8px_24px_-14px_rgba(220,38,38,0.9)]'
-          : 'border-white/[0.08] bg-gradient-to-b from-white/[0.07] to-white/[0.015] text-[#a5a5b0] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:-translate-y-0.5 hover:border-[#dc2626]/55 hover:text-white hover:shadow-[0_10px_28px_-14px_rgba(220,38,38,0.85)]'
+          ? 'text-white'
+          : 'text-[#77717a] hover:text-white'
       }`}
     >
-      {!item.active && (
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-[radial-gradient(circle_at_50%_140%,rgba(220,38,38,0.5),transparent_72%)] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-      )}
+      <span className={`absolute inset-x-3 bottom-0 h-px origin-left bg-[#ef233c] transition-transform duration-200 ${item.active ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-100'}`} />
       <span
-        className={`flex h-5 w-5 items-center justify-center rounded-lg ring-1 ring-inset transition-colors duration-200 ${
+        className={`flex h-5 w-5 items-center justify-center transition-colors duration-200 ${
           item.active
-            ? 'bg-[#dc2626]/30 text-white ring-[#dc2626]/45'
-            : 'bg-[#dc2626]/15 text-[#fca5a5] ring-[#dc2626]/20 group-hover:bg-[#dc2626]/30 group-hover:text-white group-hover:ring-[#dc2626]/45'
+            ? 'text-[#ff5268]'
+            : 'text-[#625d65] group-hover:text-[#ff5268]'
         }`}
       >
         {item.icon}
       </span>
       <span className="whitespace-nowrap">{item.label}</span>
+      {item.unread && <NewsBell />}
     </Link>
   );
 }
@@ -112,18 +131,19 @@ function MobileNavItem({ item, onNavigate }: { item: NavItemDef; onNavigate: () 
         item.onClick?.(event);
         onNavigate();
       }}
-      className={`flex items-center gap-3 rounded-xl px-3 py-3 text-xs font-bold uppercase tracking-[0.12em] transition-colors ${
+      className={`flex items-center gap-3 rounded-[3px] px-3 py-3 text-xs font-extrabold italic uppercase tracking-[0.12em] transition-colors ${
         item.active ? 'bg-[#dc2626]/15 text-white' : 'text-[#b8b8c2] hover:bg-white/[0.04] hover:text-white'
       }`}
     >
       <span
-        className={`flex h-8 w-8 items-center justify-center rounded-lg ring-1 ring-inset transition-colors ${
+        className={`flex h-8 w-8 items-center justify-center rounded-[3px] ring-1 ring-inset transition-colors ${
           item.active ? 'bg-[#dc2626]/30 text-white ring-[#dc2626]/45' : 'bg-[#dc2626]/12 text-[#fca5a5] ring-[#dc2626]/20'
         }`}
       >
         {item.icon}
       </span>
       <span>{item.label}</span>
+      {item.unread && <NewsBell />}
       {item.active && (
         <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#dc2626] shadow-[0_0_10px_rgba(220,38,38,0.9)]" />
       )}
@@ -151,12 +171,15 @@ export default function CompeteHeader({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const isMobileWeb = useIsMobileWeb();
   const [cachedUser, setCachedUser] = useState<CompeteSessionUser | null>(() =>
     userProp !== undefined ? userProp : readCachedCompeteUser(),
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [unreadNews, setUnreadNews] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const latestNewsAtRef = useRef(0);
 
   // Si le parent ne pilote pas la session, on garde la version cache à jour.
   useEffect(() => {
@@ -179,6 +202,31 @@ export default function CompeteHeader({
     setMenuOpen(false);
     setMobileOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (pathname.startsWith('/compete/news')) markNewsRead();
+  }, [pathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+    function syncUnread() {
+      if (cancelled) return;
+      setUnreadNews(hasUnreadNews(latestNewsAtRef.current || null));
+    }
+    void fetch('/api/news?limit=1')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        const latest = data?.news?.[0];
+        latestNewsAtRef.current = Number(latest?.publishedAt || latest?.createdAt || 0) || 0;
+        syncUnread();
+      })
+      .catch(() => undefined);
+    window.addEventListener(NEWS_READ_EVENT, syncUnread);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(NEWS_READ_EVENT, syncUnread);
+    };
+  }, []);
 
   // Bloque le scroll de la page tant que le drawer mobile est ouvert.
   useEffect(() => {
@@ -210,52 +258,70 @@ export default function CompeteHeader({
     {
       to: '/compete',
       icon: ARENAS_ICON,
-      label: t('header.arenas'),
+      label: t('header.play'),
       active: isHome,
+    },
+    {
+      to: '/compete/live',
+      icon: LIVE_ICON,
+      label: t('header.live'),
+      active: pathname.startsWith('/compete/live'),
+    },
+    {
+      to: '/trade',
+      icon: TRADE_ICON,
+      label: t('header.trade'),
+      active: pathname.startsWith('/trade'),
       onClick: (event) => {
-        if (isHome) {
-          event.preventDefault();
-          scrollToSection('arenas');
-        }
+        event.preventDefault();
+        navigate('/trade');
       },
     },
     {
-      to: '/compete/global-leaderboard',
-      icon: LEADERBOARD_ICON,
-      label: t('user.globalLeaderboard'),
-      active: pathname.startsWith('/compete/global-leaderboard'),
+      to: '/compete/rank',
+      icon: RANK_ICON,
+      label: t('rating.navLabel'),
+      active: pathname.startsWith('/compete/rank'),
+    },
+    {
+      to: user ? `/compete/player/${user.id}` : '/compete#signup',
+      icon: PROFILE_ICON,
+      label: t('header.profile'),
+      active: pathname.startsWith('/compete/player/') || pathname.startsWith('/compete/settings') || pathname.startsWith('/compete/payouts'),
     },
   ];
-  if (user) {
-    items.push({
+
+  const secondaryItems: NavItemDef[] = [
+    {
+      to: '/compete/news',
+      icon: NEWS_ICON,
+      label: t('header.news'),
+      active: pathname.startsWith('/compete/news'),
+      unread: unreadNews,
+    },
+    ...(user ? [{
       to: '/compete/journal',
       icon: JOURNAL_ICON,
       label: t('user.tradeJournal'),
       active: pathname.startsWith('/compete/journal'),
-    });
-  }
-  items.push({
-    to: '/compete/bonus',
-    icon: BONUS_ICON,
-    label: t('bonus.navLabel'),
-    active: pathname.startsWith('/compete/bonus'),
-  });
-  if (user) {
-    items.push({
-      to: `/compete/player/${user.id}`,
-      icon: PROFILE_ICON,
-      label: t('user.publicProfile'),
-      active: pathname.startsWith('/compete/player/'),
-    });
-  }
+    }] : []),
+    {
+      to: '/compete/bonus',
+      icon: BONUS_ICON,
+      label: t('bonus.navLabel'),
+      active: pathname.startsWith('/compete/bonus'),
+    },
+  ];
+
+  if (isMobileWeb) return null;
 
   return (
     <header
-      className="compete-header sticky top-0 z-50 bg-[#050507]/95 backdrop-blur-xl sm:bg-[#050507]/80 sm:px-5 sm:pt-3"
+      className="compete-header sticky top-0 z-50 border-b border-white/[0.07] bg-[#050507]/88 backdrop-blur-2xl"
       style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
     >
-      <div className="relative z-10 mx-auto flex max-w-7xl items-center justify-between gap-2 border-b border-white/10 bg-[#050507] px-3 py-2 shadow-[0_18px_60px_-42px_rgba(220,38,38,0.65)] sm:rounded-2xl sm:border sm:border-white/10 sm:bg-[#060609]/85 sm:px-4 sm:py-3 sm:backdrop-blur-2xl md:px-6">
-        <Link to="/compete" className="group flex shrink-0 items-center">
+      <div className="relative z-10 mx-auto flex max-w-[1440px] items-center justify-between gap-2 px-4 py-2.5 md:px-8">
+        <Link to="/compete" className="group flex shrink-0 items-center gap-2" title="BTF Arena">
           <img
             src="/assets/pictures/BTF_ARENA_logo.png"
             alt="BTF Arena"
@@ -264,7 +330,7 @@ export default function CompeteHeader({
         </Link>
 
         {/* Navigation principale (desktop) */}
-        <nav className="hidden items-center gap-2 rounded-2xl border border-white/[0.06] bg-[#08080b]/60 p-1.5 lg:flex">
+        <nav className="hidden items-center gap-1 lg:flex">
           {items.map((item) => (
             <NavItem key={item.to} item={item} />
           ))}
@@ -272,6 +338,15 @@ export default function CompeteHeader({
 
         {/* Menu compte desktop (un seul point d'entrée) */}
         <div className="hidden shrink-0 items-center gap-2 lg:flex">
+          <Link
+            to="/compete/news"
+            className={`inline-flex items-center gap-1 px-3 py-2 font-['Barlow_Condensed',sans-serif] text-[11px] font-black italic uppercase tracking-[0.14em] transition-colors ${
+              pathname.startsWith('/compete/news') ? 'text-white' : 'text-[#b8b8c2] hover:text-white'
+            }`}
+          >
+            {t('header.news')}
+            {unreadNews && <NewsBell />}
+          </Link>
           <LanguageSwitcher />
           {user ? (
             <div ref={menuRef} className="relative">
@@ -297,12 +372,50 @@ export default function CompeteHeader({
               {menuOpen && (
                 <div
                   role="menu"
-                  className="absolute right-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-2xl border border-[#232329] bg-[#08080b] p-1.5 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.95)]"
+                  className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-2xl border border-[#232329] bg-[#08080b] p-1.5 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.95)]"
                 >
                   <div className="border-b border-white/5 px-3 py-2">
                     <div className="micro text-[9px] text-[#71717a]">{t('header.account')}</div>
                     <div className="truncate text-sm font-semibold text-white">{user.name}</div>
                   </div>
+                  <Link
+                    to={`/compete/player/${user.id}`}
+                    onClick={() => setMenuOpen(false)}
+                    role="menuitem"
+                    className="mt-1.5 flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    {PROFILE_ICON}
+                    {t('user.publicProfile')}
+                  </Link>
+                  <Link
+                    to="/compete/news"
+                    onClick={() => setMenuOpen(false)}
+                    role="menuitem"
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    {NEWS_ICON}
+                    {t('header.news')}
+                    {unreadNews && <NewsBell />}
+                  </Link>
+                  <Link
+                    to="/compete/journal"
+                    onClick={() => setMenuOpen(false)}
+                    role="menuitem"
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    {JOURNAL_ICON}
+                    {t('user.tradeJournal')}
+                  </Link>
+                  <Link
+                    to="/compete/bonus"
+                    onClick={() => setMenuOpen(false)}
+                    role="menuitem"
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    {BONUS_ICON}
+                    {t('bonus.navLabel')}
+                  </Link>
+                  <div className="my-1.5 h-px bg-white/[0.06]" />
                   <Link
                     to="/compete/settings"
                     onClick={() => setMenuOpen(false)}
@@ -398,6 +511,12 @@ export default function CompeteHeader({
                 {items.map((item) => (
                   <MobileNavItem key={item.to} item={item} onNavigate={() => setMobileOpen(false)} />
                 ))}
+                <div className="mx-3 mb-0.5 mt-2 text-[9px] font-bold uppercase tracking-[0.18em] text-[#5f5f68]">
+                  {t('header.discover')}
+                </div>
+                {secondaryItems.map((item) => (
+                  <MobileNavItem key={item.to} item={item} onNavigate={() => setMobileOpen(false)} />
+                ))}
               </nav>
 
               <div className="my-2 h-px bg-white/[0.06]" />
@@ -411,6 +530,14 @@ export default function CompeteHeader({
 
               {user ? (
                 <div className="flex flex-col gap-1">
+                  <Link
+                    to={`/compete/player/${user.id}`}
+                    onClick={() => setMobileOpen(false)}
+                    className="flex items-center gap-3 rounded-xl px-3 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[#b8b8c2] transition-colors hover:bg-[#dc2626]/10 hover:text-white"
+                  >
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04] text-[#a5a5b0]">{PROFILE_ICON}</span>
+                    {t('user.publicProfile')}
+                  </Link>
                   <Link
                     to="/compete/settings"
                     onClick={() => setMobileOpen(false)}

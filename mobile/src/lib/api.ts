@@ -10,6 +10,14 @@ export function apiAssetUrl(value?: string | null): string {
   return `${API_BASE_URL}${value.startsWith('/') ? value : `/${value}`}`
 }
 
+export function newsCoverAssetUrl(value?: string | null, variant: 'full' | 'card' = 'full'): string {
+  if (!value) return ''
+  const path = value.split('?')[0]
+  const match = path.match(/^(\/news\/[a-z0-9-]+?)(?:-640|-og)?\.webp$/i)
+  const next = match && variant === 'card' ? `${match[1]}-640.webp` : value
+  return apiAssetUrl(next)
+}
+
 export type PublicCompetition = {
   id: string
   title: string
@@ -97,6 +105,9 @@ export type NewsArticle = {
   title: string
   summary: string
   body: string
+  titleEn?: string
+  summaryEn?: string
+  bodyEn?: string
   coverUrl: string
   featured: boolean
   publishedAt: number

@@ -2,6 +2,8 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, use
 import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import ArenaSwitcher from './ArenaSwitcher';
+import CompeteHeader from './CompeteHeader';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
@@ -3058,9 +3060,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return { token: 'demo-token', player: { id: 'tradingview-demo', name: 'TradingView Demo', color: '#dc2626', avatar: null } };
     }
     const platform = getTerminalPlatformFromUrl();
+    const competitionId = getCompetitionIdFromUrl();
+    if (platform === 'compete' && !competitionId) return null;
     const token = readPaperSessionToken(platform);
     const cached = readPaperBootstrapCache();
-    const competitionId = getCompetitionIdFromUrl();
     if (token && cached && isPaperBootstrapCacheValid(cached, platform, token, competitionId)) {
       return { token: cached.token, player: cached.player as SessionPlayer };
     }
@@ -3072,6 +3075,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   // simply sees a loading state instead of a brief error popup.
   const [bootstrapping, setBootstrapping] = useState(() => {
     if (demoMode) return false;
+    if (getTerminalPlatformFromUrl() === 'compete' && !getCompetitionIdFromUrl()) return false;
     return Boolean(readPaperSessionToken(getTerminalPlatformFromUrl()));
   });
   const [accessCode, setAccessCode] = useState('');
@@ -3593,6 +3597,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useEffect(() => {
     if (demoMode) return;
+    if (terminalPlatform === 'compete' && !urlCompetitionId) {
+      setSession(null);
+      setLivePlayer(null);
+      setLiveMarket(null);
+      setLiveCanTrade(null);
+      setBootstrapping(false);
+      return;
+    }
     const token = readPaperSessionToken(terminalPlatform);
     if (!token) {
       setSession(null);
@@ -4456,6 +4468,24 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       error={leaderboardError}
     />
   );
+
+  const showArenaPicker = !demoMode && !liveMode && !urlCompetitionId;
+  if (showArenaPicker) {
+    return (
+      <div
+        className="terminal flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden bg-[#050507] text-[12px] text-[#e0e2ea]"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        <CompeteHeader />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ArenaSwitcher variant="page" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

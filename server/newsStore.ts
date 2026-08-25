@@ -6,6 +6,9 @@ export interface NewsArticle {
   title: string;
   summary: string;
   body: string;
+  titleEn: string;
+  summaryEn: string;
+  bodyEn: string;
   coverUrl: string;
   published: boolean;
   featured: boolean;
@@ -19,6 +22,9 @@ export interface NewsInput {
   title?: unknown;
   summary?: unknown;
   body?: unknown;
+  titleEn?: unknown;
+  summaryEn?: unknown;
+  bodyEn?: unknown;
   coverUrl?: unknown;
   published?: unknown;
   featured?: unknown;
@@ -63,6 +69,9 @@ async function ensureTable(): Promise<void> {
       )
     `).then(async () => {
       await db.query('create index if not exists idx_comp_news_public on comp_news(published, published_at desc)');
+      await db.query('alter table comp_news add column if not exists title_en text not null default \'\'');
+      await db.query('alter table comp_news add column if not exists summary_en text not null default \'\'');
+      await db.query('alter table comp_news add column if not exists body_en text not null default \'\'');
     });
   }
   await ready;
@@ -74,6 +83,9 @@ function rowToArticle(row: Record<string, unknown>): NewsArticle {
     title: String(row.title || ''),
     summary: String(row.summary || ''),
     body: String(row.body || ''),
+    titleEn: String(row.title_en || ''),
+    summaryEn: String(row.summary_en || ''),
+    bodyEn: String(row.body_en || ''),
     coverUrl: String(row.cover_url || ''),
     published: Boolean(row.published),
     featured: Boolean(row.featured),
@@ -95,6 +107,9 @@ function build(input: NewsInput, previous?: NewsArticle): NewsArticle {
     title: '',
     summary: '',
     body: '',
+    titleEn: '',
+    summaryEn: '',
+    bodyEn: '',
     coverUrl: '',
     published: false,
     featured: false,
@@ -109,6 +124,9 @@ function build(input: NewsInput, previous?: NewsArticle): NewsArticle {
     title: input.title === undefined ? base.title : normalizeText(input.title, 180),
     summary: input.summary === undefined ? base.summary : normalizeText(input.summary, 420),
     body: input.body === undefined ? base.body : normalizeText(input.body, 30_000),
+    titleEn: input.titleEn === undefined ? base.titleEn : normalizeText(input.titleEn, 180),
+    summaryEn: input.summaryEn === undefined ? base.summaryEn : normalizeText(input.summaryEn, 420),
+    bodyEn: input.bodyEn === undefined ? base.bodyEn : normalizeText(input.bodyEn, 30_000),
     coverUrl: input.coverUrl === undefined ? base.coverUrl : normalizeText(input.coverUrl, 1_000),
     featured: input.featured === undefined ? base.featured : Boolean(input.featured),
     published,
@@ -129,14 +147,16 @@ async function upsert(article: NewsArticle): Promise<void> {
   await ensureTable();
   await db.query(`
     insert into comp_news
-      (id, title, summary, body, cover_url, published, featured, published_at, push_sent_at, created_at, updated_at)
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      (id, title, summary, body, title_en, summary_en, body_en, cover_url, published, featured, published_at, push_sent_at, created_at, updated_at)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     on conflict (id) do update set
       title=excluded.title, summary=excluded.summary, body=excluded.body,
+      title_en=excluded.title_en, summary_en=excluded.summary_en, body_en=excluded.body_en,
       cover_url=excluded.cover_url, published=excluded.published, featured=excluded.featured,
       published_at=excluded.published_at, push_sent_at=excluded.push_sent_at, updated_at=excluded.updated_at
   `, [
-    article.id, article.title, article.summary, article.body, article.coverUrl,
+    article.id, article.title, article.summary, article.body,
+    article.titleEn, article.summaryEn, article.bodyEn, article.coverUrl,
     article.published, article.featured, article.publishedAt, article.pushSentAt,
     article.createdAt, article.updatedAt,
   ]);

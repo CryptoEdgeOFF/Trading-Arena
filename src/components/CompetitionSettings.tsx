@@ -153,7 +153,10 @@ export default function CompetitionSettings() {
         style={{ paddingTop: 'max(0px, env(safe-area-inset-top))' }}
       >
         <div className="mx-auto flex max-w-4xl items-center justify-between px-5 py-3 md:px-10 md:py-4">
-          <Link to="/compete" className="ghost-cta px-3 py-2 text-xs uppercase tracking-[0.14em]">
+          <Link
+            to={user ? `/compete/player/${user.id}` : '/compete'}
+            className="ghost-cta px-3 py-2 text-xs uppercase tracking-[0.14em]"
+          >
             {t('settings.backToArena')}
           </Link>
           <span className="micro text-[10px] text-[#dc2626]">{t('settings.settings')}</span>

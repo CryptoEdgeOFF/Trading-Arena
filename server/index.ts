@@ -21,6 +21,7 @@ import * as itick from './itick.js';
 import * as itickCandles from './itickCandles.js';
 import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair, registerItickCrypto, cryptoCodes as itickCryptoCodes } from './itickInstruments.js';
 import { startItickToPaperBridge } from './itickToPaperBridge.js';
+import { configureLiveMarketNeed, isLiveMarketNeeded } from './liveMarketNeeded.js';
 import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine.js';
 import { CompetitionManager, inferSeasonStatus } from './competitionManager.js';
 import { CompetitionNotifier } from './competitionNotifications.js';
@@ -65,12 +66,12 @@ import {
   unblockChatUser,
   type ChatReportReason,
 } from './globalChatStore.js';
-import { deleteUserRating, getRatingLeaderboard, syncUserRating } from './ratingStore.js';
-import { getPnlHistoryWithLivePoint, getPnlMoments, maybeRecordPnlSample, prunePnlHistories } from './pnlHistoryStore.js';
+import { deleteUserRating, getRatingLeaderboard, syncManyUserRatings, syncUserRating } from './ratingStore.js';
+import { getPnlHistoryWithLivePoint, getPnlMoments, hasPnlHistory, maybeRecordPnlSample, prunePnlHistories, reconstructPnlHistoryFromTrades, setPnlHistoryPersistHandler } from './pnlHistoryStore.js';
 import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
 import { renderPublicSpectatePage } from './publicSpectatePage.js';
-import { shouldNotifyCompletedLimit } from './notificationRules.js';
+import { buildTradingPushPayload, shouldNotifyCompletedLimit, shouldSendNewsPush, tradingClosePushKind } from './notificationRules.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -286,6 +287,10 @@ app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets'), 
   immutable: true,
   maxAge: '7d',
 }));
+app.use('/news', express.static(path.join(process.cwd(), 'public', 'news'), {
+  immutable: true,
+  maxAge: '7d',
+}));
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -305,6 +310,9 @@ app.get('/uploads/:filename', (req, res) => {
 
 const clients = new Set<WebSocket>();
 const competitionManager = new CompetitionManager();
+setPnlHistoryPersistHandler((competitionId, snapshot) => {
+  competitionManager.setPnlRace(competitionId, snapshot);
+});
 const pushRuntimeStartedAt = Date.now();
 const pushedTradeIds = new Set<string>();
 chatWss.on('connection', (ws, req) => {
@@ -490,20 +498,29 @@ async function sendTradingPushNotifications(player: NonNullable<ReturnType<typeo
       const openOrderIds = new Set(player.openOrders.map((order) => order.id));
       if (!shouldNotifyCompletedLimit(trade, openOrderIds)) continue;
       const parentOrderId = trade.orderId || trade.id;
-      await sendPushToUser(context.userId, {
-        title: 'Ordre limite exécuté',
-        body: `${trade.side === 'long' ? 'Achat' : 'Vente'} ${trade.pair} exécuté à ${trade.price.toLocaleString('fr-FR')}.`,
+      const payload = buildTradingPushPayload({
         kind: 'order_filled',
+        pair: trade.pair,
+        side: trade.side,
+        price: trade.price,
+      });
+      await sendPushToUser(context.userId, {
+        ...payload,
         competitionId: context.competitionId,
         data: { pair: trade.pair, price: trade.price, side: trade.side, orderId: parentOrderId },
       });
       continue;
     }
-    const isTakeProfit = trade.closeReason === 'take-profit';
+    const closeKind = tradingClosePushKind(trade.closeReason);
+    if (!closeKind) continue;
+    const payload = buildTradingPushPayload({
+      kind: closeKind,
+      pair: trade.pair,
+      price: trade.price,
+      pnl: trade.pnl,
+    });
     await sendPushToUser(context.userId, {
-      title: isTakeProfit ? 'Take Profit touché' : 'Stop Loss touché',
-      body: `${trade.pair} clôturé à ${trade.price.toLocaleString('fr-FR')} · PnL ${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)} $.`,
-      kind: isTakeProfit ? 'take_profit' : 'stop_loss',
+      ...payload,
       competitionId: context.competitionId,
       data: { pair: trade.pair, price: trade.price, pnl: trade.pnl },
     });
@@ -523,10 +540,13 @@ async function sendDrawdownWarning(update: {
   const warning = update.drawdownWarning;
   if (!warning) return;
   const remaining = Math.max(0, warning.equity - warning.limitEquity);
-  await sendPushToUser(warning.userId, {
-    title: 'Attention au Daily Drawdown',
-    body: `Tu as consommé 80 % de ta limite dans ${warning.competitionTitle}. Il te reste ${remaining.toFixed(2)} $.`,
+  const payload = buildTradingPushPayload({
     kind: 'drawdown_warning',
+    competitionTitle: warning.competitionTitle,
+    remaining,
+  });
+  await sendPushToUser(warning.userId, {
+    ...payload,
     competitionId: update.competitionId,
     data: {
       equity: warning.equity,
@@ -558,6 +578,75 @@ function broadcastMarketTicks(pairs: string[]): void {
   clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
+}
+
+const CRYPTO_PREWARM_PAIRS = [
+  { pair: 'BTC/USD', source: 'binance' as const },
+  { pair: 'ETH/USD', source: 'binance' as const },
+  { pair: 'SOL/USD', source: 'binance' as const },
+  { pair: 'XRP/USD', source: 'binance' as const },
+  { pair: 'BNB/USD', source: 'binance' as const },
+  { pair: 'TRX/USD', source: 'binance' as const },
+];
+
+let marketFeedsArmed = false;
+let itickHistoricalBackfillStarted = false;
+
+configureLiveMarketNeed({
+  competitionNeed: () => competitionManager.needsLiveMarketData(),
+  extraNeed: () => manager.isStarted(),
+});
+
+function armItickSubscriptions(): void {
+  if (!itick.isConfigured()) {
+    console.warn('[itick] ITICK_TOKEN absent — feed désactivé');
+    return;
+  }
+  registerItickCrypto(CRYPTO_LIVE_PAIRS);
+  const subs = itickSymbolsByAsset();
+  const cryptoCodeList = itickCryptoCodes();
+  if (cryptoCodeList.length > 0) subs.crypto = cryptoCodeList;
+  itick.itickFeed.setSubscriptions(subs);
+  itickCandles.startLiveBuilder();
+  startItickToPaperBridge(
+    (quotes) => manager.applyItickMarketTicks(quotes),
+    (pairs) => broadcastMarketTicks(pairs),
+  );
+  if (!itickHistoricalBackfillStarted) {
+    itickHistoricalBackfillStarted = true;
+    void itickCandles.backfillAll().catch((err) => {
+      console.warn('[itickCandles] backfillAll KO:', (err as Error).message);
+    });
+  }
+  const summary = Object.entries(subs)
+    .map(([asset, codes]) => `${asset}:${codes?.length ?? 0}`)
+    .join(' ');
+  console.log(`[itick] feed armé — ${summary}`);
+}
+
+async function startLiveMarketFeeds(): Promise<void> {
+  await manager.ensurePublicMarketFeed();
+  engineCandlesCache.prewarm(CRYPTO_PREWARM_PAIRS, [1, 5, 15]);
+  armItickSubscriptions();
+}
+
+function stopLiveMarketFeeds(): void {
+  try { itick.itickFeed.setSubscriptions({}); } catch { /* noop */ }
+  try { itick.itickFeed.disconnect(); } catch { /* noop */ }
+  try { manager.pausePublicMarketFeed(); } catch { /* noop */ }
+}
+
+async function syncLiveMarketFeeds(): Promise<void> {
+  const needed = isLiveMarketNeeded();
+  if (needed && !marketFeedsArmed) {
+    marketFeedsArmed = true;
+    console.log('[market] feeds ON — arène live ou départ dans moins de 10 min');
+    await startLiveMarketFeeds();
+  } else if (!needed && marketFeedsArmed) {
+    marketFeedsArmed = false;
+    console.log('[market] feeds OFF — aucune compétition en cours');
+    stopLiveMarketFeeds();
+  }
 }
 
 /**
@@ -850,6 +939,7 @@ async function finalizeEndedCompetitions(): Promise<void> {
     await finalizingEndedCompetitions;
   } finally {
     finalizingEndedCompetitions = null;
+    void syncLiveMarketFeeds();
   }
 }
 
@@ -1678,6 +1768,7 @@ app.post('/api/event/start', requireAdmin, async (_req, res) => {
   }
   try {
     await manager.startEvent();
+    await syncLiveMarketFeeds();
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Impossible de lancer l’événement' });
     return;
@@ -1687,6 +1778,7 @@ app.post('/api/event/start', requireAdmin, async (_req, res) => {
 
 app.post('/api/event/stop', requireAdmin, async (_req, res) => {
   await manager.stopEvent();
+  void syncLiveMarketFeeds();
   res.json({ ok: true });
 });
 
@@ -1800,7 +1892,7 @@ app.get('/api/paper/candles', async (req, res) => {
     if (isItickPair(pair)) {
       // getCandles backfill lazy (scroll gauche) via ensureScrollHistory.
       let itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
-      if (itickBars.length === 0) {
+        if (itickBars.length === 0 && isLiveMarketNeeded()) {
         const nowSec = Math.floor(Date.now() / 1000);
         const targetTo = candleOpts.to ?? nowSec;
         const targetFrom = candleOpts.from ?? targetTo - interval * 60 * (candleOpts.countBack ?? 500);
@@ -1814,7 +1906,7 @@ app.get('/api/paper/candles', async (req, res) => {
       if (itickBars.length > 0) {
         candles = itickBars;
         source = 'itick';
-      } else {
+      } else if (isLiveMarketNeeded()) {
         // Dernier recours : Hyperliquid direct si on a un coin xyz pour
         // cette pair. Évite une 400 si iTick est complètement injoignable.
         try {
@@ -1823,6 +1915,8 @@ app.get('/api/paper/candles', async (req, res) => {
         } catch {
           candles = [];
         }
+      } else {
+        candles = [];
       }
     } else if (pairDef?.source === 'kraken_futures' || pairToBinanceSymbol(pair)) {
       // Crypto : store Postgres persistant (cryptoCandlesStore) avec backfill
@@ -1848,7 +1942,7 @@ app.get('/api/paper/candles', async (req, res) => {
         candles = await engineCandlesCache.getCachedCandles(pair, interval, 'kraken', candleOpts);
       } catch (err) {
         console.warn(`[candles] cache miss ${pair}, direct Kraken:`, (err as Error).message);
-        candles = await kraken.getOhlcCandles(pair, interval);
+        candles = isLiveMarketNeeded() ? await kraken.getOhlcCandles(pair, interval) : [];
       }
       source = 'kraken';
     }
@@ -2277,6 +2371,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
         if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
       }
       await competitionManager.persist();
+      void syncLiveMarketFeeds();
     }
     res.json({ ...result, testCompetitionId });
   } catch (error: any) {
@@ -2886,7 +2981,7 @@ app.get('/api/admin/news', requireAdmin, async (_req, res) => {
 async function notifyPublishedNews(
   article: Awaited<ReturnType<typeof newsStore.createNews>>,
 ): Promise<{ article: Awaited<ReturnType<typeof newsStore.createNews>>; notified: number }> {
-  if (!article.published || article.pushSentAt) return { article, notified: 0 };
+  if (!shouldSendNewsPush(article)) return { article, notified: 0 };
   const notified = await sendPushToAllDevices({
     title: article.title,
     body: article.summary || article.body.slice(0, 140),
@@ -3335,8 +3430,29 @@ app.get('/api/competition/bootstrap', async (req, res) => {
  * Classement mondial BTF Rating (Arena Points). Public : sert l'onglet Rank.
  * Les identités (nom/avatar) sont résolues via les participations connues.
  */
+let ratingBackfillAt = 0;
+let ratingBackfillInFlight: Promise<void> | null = null;
+const RATING_BACKFILL_EVERY_MS = 5 * 60_000;
+
+async function ensureRatingsBackfilled(): Promise<void> {
+  if (Date.now() - ratingBackfillAt < RATING_BACKFILL_EVERY_MS) return;
+  if (ratingBackfillInFlight) return ratingBackfillInFlight;
+  ratingBackfillInFlight = (async () => {
+    const userIds = competitionManager.listEndedArenaUserIds();
+    await syncManyUserRatings(userIds.map((userId) => ({
+      userId,
+      results: competitionManager.getUserArenaResults(userId),
+    })));
+    ratingBackfillAt = Date.now();
+  })().finally(() => {
+    ratingBackfillInFlight = null;
+  });
+  return ratingBackfillInFlight;
+}
+
 app.get('/api/competition/rating-leaderboard', async (_req, res) => {
   if (IS_SERVERLESS) await competitionManager.refresh();
+  await ensureRatingsBackfilled();
   const rows = await getRatingLeaderboard(100);
   const identities = new Map(
     competitionManager.listUserParticipations().map((participation) => [participation.userId, participation]),
@@ -3618,7 +3734,9 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     const competitionId = String(req.params.id || '');
     await syncCompetitionResultsForCompetition(competitionId);
     const data = competitionManager.getPublicLeaderboard(competitionId);
-    if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
+    if (data.competition.status === 'live') {
+      maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
+    }
     res.json(data);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
@@ -3635,7 +3753,39 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
     const competitionId = String(req.params.id || '');
     await syncCompetitionResultsForCompetition(competitionId);
     const data = competitionManager.getPublicLeaderboard(competitionId);
-    if (data.competition.status === 'live') maybeRecordPnlSample(competitionId, data.leaderboard);
+    if (data.competition.status === 'live') {
+      maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
+    }
+    if (!hasPnlHistory(competitionId)) {
+      const paperByUser = new Map(
+        competitionManager.getCompetitionPaperPlayers(competitionId).map((link) => [link.userId, link.paperPlayerId]),
+      );
+      const startingBalance = manager.getCompetitionStartingBalance();
+      const tracked = data.leaderboard.filter((row) => row.rank > 0).slice(0, 40);
+      reconstructPnlHistoryFromTrades(
+        competitionId,
+        data.competition.startAt,
+        data.competition.endAt,
+        startingBalance,
+        tracked.map((row) => {
+          const paperPlayerId = paperByUser.get(row.userId);
+          const player = paperPlayerId ? manager.getPlayerById(paperPlayerId) : null;
+          return {
+            userId: row.userId,
+            trades: (player?.trades || []).map((trade) => ({
+              time: trade.time,
+              action: trade.action,
+              pnl: trade.pnl,
+            })),
+            openPositions: (player?.openPositions || []).map((position) => ({
+              openedAt: position.openedAt || data.competition.startAt,
+              pnl: position.pnl,
+            })),
+            finalPnlPercent: row.pnlPercent,
+          };
+        }),
+      );
+    }
     // Toujours terminer la série par un point « maintenant » issu du
     // leaderboard courant : la courbe est visible dès les premiers polls
     // au lieu d'attendre plusieurs échantillons throttlés.
@@ -3683,13 +3833,15 @@ if (!process.env.NETLIFY) {
         if (competition.status !== 'live') continue;
         try {
           await syncCompetitionResultsForCompetition(competition.id);
-          maybeRecordPnlSample(competition.id, competitionManager.getPublicLeaderboard(competition.id).leaderboard);
+          maybeRecordPnlSample(competition.id, competitionManager.getPublicLeaderboard(competition.id).leaderboard, {
+            startAt: competition.startAt,
+          });
         } catch {
           // Arène retirée ou sync impossible : on passe.
         }
       }
     })();
-  }, 30_000);
+  }, 10_000);
 }
 
 // Scheduler des arènes programmées : Blitz quotidiennes (London/NY/Crypto)
@@ -3754,7 +3906,8 @@ if (MOBILE_STAGING_TEST_MODE && !process.env.NETLIFY) {
     });
 
     competitionManager.applySimulatedResults(competitionId, updates);
-    maybeRecordPnlSample(competitionId, competitionManager.getPublicLeaderboard(competitionId).leaderboard);
+    const next = competitionManager.getPublicLeaderboard(competitionId);
+    maybeRecordPnlSample(competitionId, next.leaderboard, { startAt: next.competition.startAt });
   };
 
   const runSimulatedPlayersTick = () => {
@@ -3841,6 +3994,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       entryMode: req.body?.entryMode,
     });
     await competitionManager.persist();
+    void syncLiveMarketFeeds();
     res.json({ ok: true, competition });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Creation competition impossible' });
@@ -3872,6 +4026,7 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);
     await competitionManager.persist();
+    void syncLiveMarketFeeds();
     res.json({ ok: true, competition });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Mise a jour competition impossible' });
@@ -4130,7 +4285,7 @@ const serverReady = Promise.all([
       await competitionManager.persist();
     }
   }
-  await manager.ensurePublicMarketFeed();
+  await syncLiveMarketFeeds();
   // PnL compétition live : recalcul à chaque GET /api/competition/leaderboard/:id
   // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes
   // dans le moteur paper pour SL/TP et ticks — sans mark-to-market de masse.
@@ -4141,51 +4296,12 @@ if (!process.env.NETLIFY) {
   serverReady.then(() => {
     server.listen(PORT, () => {
       console.log(`BTF Server running on http://localhost:${PORT}`);
-      // Préchauffer le top des pairs crypto avec le **fast path** (1500
-      // bars chacun = 1 round-trip Binance ~300 ms). Le background fill
-      // jusqu'à 40k bars se déclenche ensuite tout seul dans
-      // `engineCandlesCache.startFetch`. On garde une liste réduite pour
-      // ne pas saturer le rate limit Binance Futures (~1200 req/min) au
-      // boot Railway.
-      engineCandlesCache.prewarm(
-        [
-          { pair: 'BTC/USD', source: 'binance' },
-          { pair: 'ETH/USD', source: 'binance' },
-          { pair: 'SOL/USD', source: 'binance' },
-          { pair: 'XRP/USD', source: 'binance' },
-          { pair: 'BNB/USD', source: 'binance' },
-          { pair: 'TRX/USD', source: 'binance' },
-        ],
-        // Le mobile ouvre en 5m ; préchauffer aussi 15m évite les cold starts
-        // lors des changements de timeframe les plus fréquents.
-        [1, 5, 15],
-      );
-
-      // Démarrage du pipeline iTick : subscribe aux 11 instruments prod,
-      // branche le live tick → candle builder, lance le backfill
-      // historique en background, et alimente le paper engine.
-      // Plan pro = 600 calls/min, 6 WS, 500 subs.
-      if (itick.isConfigured()) {
-        // Enregistre les pairs crypto pour le mapping code↔pair du bridge,
-        // puis ajoute le cluster crypto (region BA = spot Binance =
-        // TradingView) aux subscriptions forex/indices.
-        registerItickCrypto(CRYPTO_LIVE_PAIRS);
-        const subs = itickSymbolsByAsset();
-        const cryptoCodeList = itickCryptoCodes();
-        if (cryptoCodeList.length > 0) subs.crypto = cryptoCodeList;
-        itick.itickFeed.setSubscriptions(subs);
-        itickCandles.startLiveBuilder();
-        startItickToPaperBridge(
-          (quotes) => manager.applyItickMarketTicks(quotes),
-          (pairs) => broadcastMarketTicks(pairs),
-        );
-        const summary = Object.entries(subs)
-          .map(([asset, codes]) => `${asset}:${codes?.length ?? 0}`)
-          .join(' ');
-        console.log(`[itick] feed armé — ${summary}`);
-      } else {
-        console.warn('[itick] ITICK_TOKEN absent — feed désactivé');
-      }
+      const marketTimer = setInterval(() => {
+        void syncLiveMarketFeeds().catch((error) => {
+          console.warn('[market] sync KO:', (error as Error).message);
+        });
+      }, 30_000);
+      if (typeof marketTimer.unref === 'function') marketTimer.unref();
     });
 
     // Ferme proprement la connexion WS iTick au shutdown (tsx watch

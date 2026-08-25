@@ -11,6 +11,9 @@ interface NewsArticle {
   title: string;
   summary: string;
   body: string;
+  titleEn?: string;
+  summaryEn?: string;
+  bodyEn?: string;
   coverUrl: string;
   published: boolean;
   featured: boolean;
@@ -24,6 +27,9 @@ interface NewsDraft {
   title: string;
   summary: string;
   body: string;
+  titleEn: string;
+  summaryEn: string;
+  bodyEn: string;
   coverUrl: string;
   published: boolean;
   featured: boolean;
@@ -34,6 +40,9 @@ const EMPTY_DRAFT: NewsDraft = {
   title: '',
   summary: '',
   body: '',
+  titleEn: '',
+  summaryEn: '',
+  bodyEn: '',
   coverUrl: '',
   published: false,
   featured: false,
@@ -45,6 +54,9 @@ function toDraft(article: NewsArticle): NewsDraft {
     title: article.title,
     summary: article.summary,
     body: article.body,
+    titleEn: article.titleEn || '',
+    summaryEn: article.summaryEn || '',
+    bodyEn: article.bodyEn || '',
     coverUrl: article.coverUrl,
     published: article.published,
     featured: article.featured,
@@ -87,6 +99,18 @@ function NewsFields({
       <label>
         <span className="news-admin-label">Contenu *</span>
         <textarea className="admin-input min-h-64" maxLength={30000} value={draft.body} onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} placeholder={'Rédige l’annonce ici.\n\nLes paragraphes et les liens https://… seront conservés.'} />
+      </label>
+      <label>
+        <span className="news-admin-label">Title EN</span>
+        <input className="admin-input" maxLength={180} value={draft.titleEn} onChange={(event) => setDraft((current) => ({ ...current, titleEn: event.target.value }))} placeholder="English title" />
+      </label>
+      <label>
+        <span className="news-admin-label">Summary EN</span>
+        <textarea className="admin-input min-h-20" maxLength={420} value={draft.summaryEn} onChange={(event) => setDraft((current) => ({ ...current, summaryEn: event.target.value }))} placeholder="English card text" />
+      </label>
+      <label>
+        <span className="news-admin-label">Content EN</span>
+        <textarea className="admin-input min-h-64" maxLength={30000} value={draft.bodyEn} onChange={(event) => setDraft((current) => ({ ...current, bodyEn: event.target.value }))} placeholder="English article body" />
       </label>
       <div>
         <span className="news-admin-label">Image de couverture</span>
@@ -187,6 +211,9 @@ export default function NewsAdmin() {
           title: current.title,
           summary: current.summary,
           body: current.body,
+          titleEn: current.titleEn,
+          summaryEn: current.summaryEn,
+          bodyEn: current.bodyEn,
           coverUrl: current.coverUrl,
           featured: current.featured,
           published: false,

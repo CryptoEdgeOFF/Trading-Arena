@@ -1,6 +1,7 @@
 import * as kraken from './kraken.js';
 import * as cryptoCandles from './cryptoCandles.js';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
+import { isLiveMarketNeeded } from './liveMarketNeeded.js';
 
 /**
  * In-memory candle cache for crypto pairs whose history is fetched from
@@ -167,10 +168,11 @@ export async function getCachedCandles(
   let series = cache.get(k);
 
   if (!series) {
+    if (!isLiveMarketNeeded()) return [];
     let pending = inflightFetches.get(k);
     if (!pending) pending = startFetch(pair, interval, source);
     series = await pending;
-  } else if (Date.now() - series.fetchedAt > STALE_REFRESH_MS) {
+  } else if (Date.now() - series.fetchedAt > STALE_REFRESH_MS && isLiveMarketNeeded()) {
     if (!inflightFetches.has(k)) {
       // Background refresh — never propagate failures to callers.
       startFetch(pair, interval, source).catch((err) => {

@@ -10,6 +10,14 @@ export function drawdownBufferConsumedRatio(
   return (baselineEquity - equity) / availableBuffer;
 }
 
+export function shouldWarnDailyDrawdown(
+  consumedRatio: number,
+  warnedDayKey: string | null | undefined,
+  dayKey: string,
+): boolean {
+  return consumedRatio >= DRAWDOWN_WARNING_RATIO && warnedDayKey !== dayKey;
+}
+
 export function shouldNotifyCompletedLimit(
   trade: { id: string; orderId?: string; action: string; orderType: string },
   openOrderIds: ReadonlySet<string>,
@@ -18,6 +26,58 @@ export function shouldNotifyCompletedLimit(
   return !openOrderIds.has(trade.orderId || trade.id);
 }
 
+export function tradingClosePushKind(
+  closeReason: string | undefined,
+): 'take_profit' | 'stop_loss' | null {
+  if (closeReason === 'take-profit') return 'take_profit';
+  if (closeReason === 'stop-loss') return 'stop_loss';
+  return null;
+}
+
 export function isPodiumLoss(previousRank: number | undefined, nextRank: number): boolean {
   return Boolean(previousRank && previousRank <= 3 && nextRank > 3);
+}
+
+export function shouldAnnounceNewArenaPush(input: {
+  initialized: boolean;
+  isPublic: boolean;
+  alreadyNotified: boolean;
+  status: string;
+}): boolean {
+  return input.initialized && input.isPublic && !input.alreadyNotified && input.status !== 'ended';
+}
+
+export function shouldSendNewsPush(article: { published?: boolean; pushSentAt?: number | null }): boolean {
+  return Boolean(article.published) && !article.pushSentAt;
+}
+
+export function buildTradingPushPayload(input: {
+  kind: 'order_filled' | 'take_profit' | 'stop_loss' | 'drawdown_warning';
+  pair?: string;
+  side?: 'long' | 'short';
+  price?: number;
+  pnl?: number;
+  competitionTitle?: string;
+  remaining?: number;
+}): { title: string; body: string; kind: typeof input.kind } {
+  if (input.kind === 'order_filled') {
+    return {
+      kind: input.kind,
+      title: 'Ordre limite exécuté',
+      body: `${input.side === 'long' ? 'Achat' : 'Vente'} ${input.pair} exécuté à ${Number(input.price || 0).toLocaleString('fr-FR')}.`,
+    };
+  }
+  if (input.kind === 'drawdown_warning') {
+    return {
+      kind: input.kind,
+      title: 'Attention au Daily Drawdown',
+      body: `Tu as consommé 80 % de ta limite dans ${input.competitionTitle}. Il te reste ${Number(input.remaining || 0).toFixed(2)} $.`,
+    };
+  }
+  const isTakeProfit = input.kind === 'take_profit';
+  return {
+    kind: input.kind,
+    title: isTakeProfit ? 'Take Profit touché' : 'Stop Loss touché',
+    body: `${input.pair} clôturé à ${Number(input.price || 0).toLocaleString('fr-FR')} · PnL ${Number(input.pnl || 0) >= 0 ? '+' : ''}${Number(input.pnl || 0).toFixed(2)} $.`,
+  };
 }

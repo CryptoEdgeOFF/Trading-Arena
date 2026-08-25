@@ -175,6 +175,22 @@ export async function syncUserRating(userId: string, results: ArenaRatingResult[
   return getUserRating(userId);
 }
 
+/** Recalcule le ledger pour une liste de joueurs. Idempotent. */
+export async function syncManyUserRatings(
+  entries: Array<{ userId: string; results: ArenaRatingResult[] }>,
+): Promise<number> {
+  const chunkSize = 8;
+  let synced = 0;
+  for (let index = 0; index < entries.length; index += chunkSize) {
+    const chunk = entries.slice(index, index + chunkSize);
+    await Promise.all(chunk.map(async (entry) => {
+      await syncUserRating(entry.userId, entry.results);
+      synced += 1;
+    }));
+  }
+  return synced;
+}
+
 async function listUserEvents(userId: string): Promise<RatingEvent[]> {
   const db = getPool();
   if (!db) {

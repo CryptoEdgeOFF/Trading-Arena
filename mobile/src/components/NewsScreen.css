@@ -28,6 +28,8 @@
 .news-detail__body { display: grid; gap: 13px; }
 .news-detail__body p { margin: 0; color: #ded8e0; font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .news-detail__body a { color: #ff6275; text-decoration: underline; }
+.news-embed { overflow: hidden; border: 1px solid #28252c; border-radius: 14px; background: #000; }
+.news-embed iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; }
 @media (max-width: 360px) {
   .news-card { grid-template-columns: 92px minmax(0,1fr); }
 }

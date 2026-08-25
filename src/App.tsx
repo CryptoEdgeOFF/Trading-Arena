@@ -1,16 +1,20 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Navigate, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Outlet, Routes, Route, useLocation } from 'react-router-dom';
+import { MobileWebProvider, useIsMobileWeb } from './lib/mobileWeb';
+import MobileWebShell from './components/MobileWebShell';
 import ExchangeTerminal from './components/ExchangeTerminal';
 import ExchangeTerminalRedesign from './components/ExchangeTerminalRedesign';
 import DemoTradingPage from './components/DemoTradingPage';
 import Dashboard from './components/Dashboard';
 import LiveAccessGate from './components/LiveAccessGate';
 import CompetitionPlatform from './components/CompetitionPlatform';
+import CompetitionLivePage from './components/CompetitionLivePage';
 import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderboard';
-import CompetitionGlobalLeaderboard from './components/CompetitionGlobalLeaderboard';
 import TradeLiveBonus from './components/TradeLiveBonus';
 import CompetitionTradeJournal from './components/CompetitionTradeJournal';
 import CompetitionPlayerProfile from './components/CompetitionPlayerProfile';
+import CompetitionRankPage from './components/CompetitionRankPage';
+import CompetitionNewsPage from './components/CompetitionNewsPage';
 import CompetitionSettings from './components/CompetitionSettings';
 import CompetitionPayouts from './components/CompetitionPayouts';
 import CompetitionAdmin from './components/CompetitionAdmin';
@@ -42,10 +46,22 @@ function TradeTerminalRedesignRoute() {
   return <ExchangeTerminalRedesign key={location.search} />;
 }
 
+function CompeteAppChrome() {
+  const isMobile = useIsMobileWeb();
+  if (!isMobile) return <Outlet />;
+  return (
+    <MobileWebShell>
+      <Outlet />
+    </MobileWebShell>
+  );
+}
+
 function AppRoutes() {
   const location = useLocation();
+  const isMobile = useIsMobileWeb();
   const lockScroll = SCROLL_LOCK_PATTERN.test(location.pathname);
-  const hideFooter = HIDE_FOOTER_PATTERN.test(location.pathname);
+  const hideFooter = HIDE_FOOTER_PATTERN.test(location.pathname)
+    || (isMobile && (location.pathname.startsWith('/compete') || location.pathname === '/trade'));
 
   useEffect(() => {
     document.body.classList.toggle('app-scroll-lock', lockScroll);
@@ -103,17 +119,23 @@ function AppRoutes() {
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />
         <Route path="/live-dashboard" element={<Dashboard />} />
         <Route path="/trader" element={<LiveAccessGate />} />
-        <Route path="/trade" element={<TradeTerminalRoute />} />
+        <Route element={<CompeteAppChrome />}>
+          <Route path="/trade" element={<TradeTerminalRoute />} />
+          <Route path="/compete" element={<CompetitionPlatform />} />
+          <Route path="/compete/live" element={<CompetitionLivePage />} />
+          <Route path="/compete/rank" element={<CompetitionRankPage />} />
+          <Route path="/compete/settings" element={<CompetitionSettings />} />
+          <Route path="/compete/payouts" element={<CompetitionPayouts />} />
+          <Route path="/compete/leaderboard/:id" element={<CompetitionPublicLeaderboard />} />
+          <Route path="/compete/global-leaderboard" element={<Navigate to="/compete/rank#season" replace />} />
+          <Route path="/compete/bonus" element={<TradeLiveBonus />} />
+          <Route path="/compete/news" element={<CompetitionNewsPage />} />
+          <Route path="/compete/news/:id" element={<CompetitionNewsPage />} />
+          <Route path="/compete/journal" element={<CompetitionTradeJournal />} />
+          <Route path="/compete/player/:userId" element={<CompetitionPlayerProfile />} />
+        </Route>
         <Route path="/trade-v2" element={<TradeTerminalRedesignRoute />} />
         <Route path="/trade-demo" element={<DemoTradingPage />} />
-        <Route path="/compete" element={<CompetitionPlatform />} />
-        <Route path="/compete/settings" element={<CompetitionSettings />} />
-        <Route path="/compete/payouts" element={<CompetitionPayouts />} />
-        <Route path="/compete/leaderboard/:id" element={<CompetitionPublicLeaderboard />} />
-        <Route path="/compete/global-leaderboard" element={<CompetitionGlobalLeaderboard />} />
-        <Route path="/compete/bonus" element={<TradeLiveBonus />} />
-        <Route path="/compete/journal" element={<CompetitionTradeJournal />} />
-        <Route path="/compete/player/:userId" element={<CompetitionPlayerProfile />} />
         <Route path="/cgu" element={<LegalPage type="cgu" />} />
         <Route path="/confidentialite" element={<LegalPage type="confidentialite" />} />
         <Route path="/mentions-legales" element={<LegalPage type="mentions" />} />
@@ -129,7 +151,9 @@ function AppRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AppRoutes />
+      <MobileWebProvider>
+        <AppRoutes />
+      </MobileWebProvider>
     </BrowserRouter>
   );
 }

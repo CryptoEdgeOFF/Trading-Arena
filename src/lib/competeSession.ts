@@ -7,6 +7,7 @@ export interface CompeteSessionUser {
   name: string;
   phone?: string | null;
   phoneVerifiedAt?: number | null;
+  country?: string | null;
   avatarUrl?: string | null;
   socials?: {
     x?: string;
@@ -51,6 +52,8 @@ export function readCachedCompeteUser(): CompeteSessionUser | null {
   }
 }
 
+export const COMPETE_SESSION_EVENT = 'btf-compete-session';
+
 export function writeCachedCompeteUser(user: CompeteSessionUser | null): void {
   try {
     if (user) window.localStorage.setItem(COMPETE_SESSION_USER_KEY, JSON.stringify(user));
@@ -58,4 +61,5 @@ export function writeCachedCompeteUser(user: CompeteSessionUser | null): void {
   } catch {
     // ignore quota errors
   }
+  window.dispatchEvent(new Event(COMPETE_SESSION_EVENT));
 }

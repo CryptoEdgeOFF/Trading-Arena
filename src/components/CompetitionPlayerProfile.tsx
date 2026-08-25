@@ -5,8 +5,12 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import CompeteHeader from './CompeteHeader';
+import MobileAccountActions from './MobileAccountActions';
+import { useIsMobileWeb } from '../lib/mobileWeb';
+import { readCachedCompeteUser } from '../lib/competeSession';
 import { AvatarImage } from './OptimizedImage';
 import { BadgeCollection, NameBadges, type UserBadge } from './playerBadges';
+import { RatingCard, type PlayerRating } from './playerRating';
 import { formatCompactSigned } from './competeMetrics';
 import PayoutCertificate, { type PayoutCertificateHandle } from './PayoutCertificate';
 
@@ -55,6 +59,7 @@ interface PlayerProfile {
   arenas: PlayerArena[];
   payouts?: PlayerPayout[];
   stats: PlayerStats;
+  rating?: PlayerRating | null;
 }
 
 function getInitials(name: string): string {
@@ -238,6 +243,8 @@ function PayoutViewerModal({
 export default function CompetitionPlayerProfile() {
   const { t } = useTranslation();
   const { userId } = useParams();
+  const isMobileWeb = useIsMobileWeb();
+  const isOwnProfile = Boolean(userId && readCachedCompeteUser()?.id === userId);
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -324,6 +331,25 @@ export default function CompetitionPlayerProfile() {
                   </div>
                 </div>
               </motion.div>
+
+              {isMobileWeb && isOwnProfile && (
+                <div className="mt-5">
+                  <MobileAccountActions />
+                </div>
+              )}
+
+              {profile.rating && (
+                <motion.div
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.04, ease: [0.22, 1, 0.36, 1] }}
+                  className="mt-6"
+                >
+                  <Link to="/compete/rank" className="block">
+                    <RatingCard rating={profile.rating} />
+                  </Link>
+                </motion.div>
+              )}
 
               <motion.div
                 initial={{ opacity: 0, y: 14 }}

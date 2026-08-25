@@ -1186,9 +1186,13 @@ export class PlayerManager {
     }
   }
 
-  /** Démarre le flux prix crypto (Binance/Kraken) pour les charts, always-on. */
+  /** Démarre le flux prix crypto (Binance/Kraken) pour les charts d’arène live. */
   async ensurePublicMarketFeed(): Promise<void> {
     await this.paperEngine.ensureMarketFeed();
+  }
+
+  pausePublicMarketFeed(): void {
+    this.paperEngine.pauseMarketFeed();
   }
 
   shutdownMarketFeed(): void {
@@ -1199,11 +1203,8 @@ export class PlayerManager {
    * Applique des prix iTick au paper engine. Source unique pour les
    * pairs forex / commodities / indices (PAPER_PAIRS source='itick').
    *
-   * On ignore volontairement `isPaperMarketActive()` : le streaming de
-   * prix pour les consommateurs du chart ne doit pas dépendre d'une
-   * compétition active. Les ticks iTick sont de la donnée de marché
-   * pure (pas d'état joueur), donc l'application always-on garde le
-   * chart vivant pour les viewers et survit aux restarts Railway.
+   * Utilisé seulement quand une arène (ou l’événement LIVE) a besoin
+   * de prix. Sans compétition en cours, le feed iTick est coupé.
    */
   applyItickMarketTicks(quotes: Record<string, ExternalQuote>): string[] {
     return this.paperEngine.applyItickQuotes(quotes);

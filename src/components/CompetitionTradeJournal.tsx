@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import CompeteHeader from './CompeteHeader';
+import { useIsMobileWeb } from '../lib/mobileWeb';
 import { formatCompactSigned } from './competeMetrics';
 import ShareCardModal from './ShareCardModal';
 import { readCachedCompeteUser } from '../lib/competeSession';
@@ -251,6 +252,9 @@ function StatBox({ label, value, tone = 'neutral' }: { label: string; value: str
 
 export default function CompetitionTradeJournal() {
   const { t } = useTranslation();
+  const isMobileWeb = useIsMobileWeb();
+  const ownProfileId = readCachedCompeteUser()?.id;
+  const profileBack = ownProfileId ? `/compete/player/${ownProfileId}` : '/compete';
   const [trades, setTrades] = useState<JournalTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(false);
@@ -350,6 +354,11 @@ export default function CompetitionTradeJournal() {
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
             className="border-b border-[#1a1a20] pb-5"
           >
+            {isMobileWeb && (
+              <Link to={profileBack} className="mb-3 inline-flex text-xs font-bold uppercase tracking-[0.14em] text-[#8b8490]">
+                ← {t('journal.back')}
+              </Link>
+            )}
             <div className="micro text-[10px] text-[#dc2626]">{t('journal.eyebrow')}</div>
             <h1 className="display mt-1 text-3xl font-bold text-white md:text-4xl">{t('journal.title')}</h1>
             <p className="mt-2 text-sm text-[#71717a]">{t('journal.subtitle')}</p>
