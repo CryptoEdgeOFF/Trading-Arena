@@ -253,6 +253,9 @@ body.app-scroll-lock {
   min-height: 0;
   background-color: transparent;
   scroll-padding-top: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .compete .display { font-family: 'Rajdhani', sans-serif; letter-spacing: -0.01em; }

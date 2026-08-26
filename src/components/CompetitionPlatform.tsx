@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -2250,10 +2251,14 @@ function JoinCompetitionModal({
     (needsSponsorId && !sponsorId.trim()) ||
     sponsorIdFormatInvalid;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={onClose}>
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/70 backdrop-blur-md"
+      onClick={onClose}
+    >
+      <div className="flex min-h-dvh items-end justify-center sm:items-center sm:p-4">
       <div
-        className="compete compete-modal relative w-full max-w-lg overflow-hidden rounded-2xl border bg-gradient-to-b from-[#140a14] to-[#0a0a0d] p-7"
+        className="compete compete-modal relative max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl border bg-gradient-to-b from-[#140a14] to-[#0a0a0d] p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:max-h-[min(90dvh,880px)] sm:rounded-2xl sm:p-7"
         style={{ borderColor: `${accent}4d`, boxShadow: `0 30px 80px -20px ${accent}66` }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -2299,7 +2304,7 @@ function JoinCompetitionModal({
                   <img
                     src={sponsor.platformImageUrl}
                     alt={sponsor.name}
-                    className="block w-full object-cover"
+                    className="block h-36 w-full object-cover object-top sm:h-auto sm:max-h-56"
                     loading="lazy"
                   />
                 </div>
@@ -2563,6 +2568,8 @@ function JoinCompetitionModal({
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
