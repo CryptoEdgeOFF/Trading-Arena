@@ -5,6 +5,7 @@ import MobileWebShell from './components/MobileWebShell';
 import ExchangeTerminal from './components/ExchangeTerminal';
 import ExchangeTerminalRedesign from './components/ExchangeTerminalRedesign';
 import DemoTradingPage from './components/DemoTradingPage';
+import PlayerTerminalReview from './components/PlayerTerminalReview';
 import Dashboard from './components/Dashboard';
 import LiveAccessGate from './components/LiveAccessGate';
 import CompetitionPlatform from './components/CompetitionPlatform';
@@ -29,12 +30,12 @@ import ReplayLeaderboardPreview from './components/ReplayLeaderboardPreview';
 import FeedTest from './components/FeedTest';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
-import { ADMIN_ENABLED, ADMIN_PATH, ADMIN_PATH_REGEX } from './lib/adminPath';
+import { ADMIN_ENABLED, ADMIN_PATH, ADMIN_PATH_REGEX, TERMINAL_REVIEW_PATH } from './lib/adminPath';
 import { trackPageView } from './lib/analytics';
 
 const ADMIN_SEG = ADMIN_PATH_REGEX ? `|${ADMIN_PATH_REGEX}` : '';
-const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
-const HIDE_FOOTER_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
+const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trade-review|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
+const HIDE_FOOTER_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trade-review|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
 
 function TradeTerminalRoute() {
   const location = useLocation();
@@ -114,6 +115,8 @@ function AppRoutes() {
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/emails`} element={<EmailAdminPage />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay`} element={<ReplayViewer />} />}
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}/replay-standings`} element={<ReplayViewer standingsOnly />} />}
+        {ADMIN_ENABLED && <Route path={TERMINAL_REVIEW_PATH} element={<PlayerTerminalReview />} />}
+        <Route path="/trade-review" element={<PlayerTerminalReview />} />
         <Route path="/feed-test" element={<FeedTest />} />
         {import.meta.env.DEV && <Route path="/replay-lb-preview" element={<ReplayLeaderboardPreview />} />}
         <Route path="/btf-live-arena-2026" element={<Dashboard />} />

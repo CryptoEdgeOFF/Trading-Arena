@@ -3979,6 +3979,84 @@ app.post('/api/competition/arena-config', requireAdmin, async (req, res) => {
   }
 });
 
+/**
+ * Relit le terminal paper d'un joueur sur une arène (défaut : dernière
+ * terminée). Admin only — journal complet d'un autre compte.
+ */
+app.get('/api/admin/competition/player-terminal', requireAdmin, async (req, res) => {
+  if (IS_SERVERLESS) await competitionManager.refresh();
+  const name = String(req.query.name || 'SnorkyFab').trim();
+  const userIdQuery = String(req.query.userId || '').trim();
+  const competitionId = String(req.query.competitionId || '').trim();
+
+  const user = userIdQuery
+    ? competitionManager.getUserById(userIdQuery)
+    : competitionManager.findUserByDisplayName(name);
+  if (!user) {
+    res.status(404).json({ error: `Joueur introuvable : ${userIdQuery || name}` });
+    return;
+  }
+
+  const arenas = competitionManager.listUserReviewArenas(user.id);
+  if (arenas.length === 0) {
+    res.status(404).json({ error: `${user.name} n'a aucune arène (hors qualification)` });
+    return;
+  }
+
+  const ended = arenas.filter((arena) => arena.status === 'ended');
+  const selected = (competitionId && arenas.find((arena) => arena.id === competitionId))
+    || ended[0]
+    || arenas[0];
+
+  const paperPlayer = selected.paperPlayerId
+    ? manager.getPlayerById(selected.paperPlayerId)
+    : null;
+  const startingBalance = manager.getCompetitionStartingBalance();
+  const fallbackBalance = startingBalance + selected.pnlUsd;
+  const player = paperPlayer
+    ? publicPlayer(paperPlayer)
+    : {
+        id: selected.paperPlayerId || `missing-${user.id}`,
+        name: user.name,
+        color: '#dc2626',
+        avatar: user.avatarUrl || null,
+        active: false,
+        initialBalance: startingBalance,
+        currentBalance: fallbackBalance,
+        availableMargin: fallbackBalance,
+        usedMargin: 0,
+        feesPaid: 0,
+        pnl: selected.pnlUsd,
+        pnlPercent: selected.pnlPercent,
+        tradeCount: selected.tradesCount,
+        trades: [],
+        openPositions: [],
+        openOrders: [],
+        rank: selected.rank || 1,
+        previousRank: selected.rank || 1,
+        badges: [],
+        winStreak: 0,
+        longestPositionMinutes: 0,
+        biggestTradePnl: 0,
+        bestTradePercent: 0,
+        lastUpdate: Date.now(),
+        connected: false,
+      };
+
+  res.json({
+    user: {
+      id: user.id,
+      name: user.name,
+      avatarUrl: user.avatarUrl || null,
+    },
+    competition: selected,
+    arenas,
+    player,
+    startingBalance,
+    missingPaper: !paperPlayer,
+  });
+});
+
 app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
   await syncAllCompetitionResults();
   res.json({

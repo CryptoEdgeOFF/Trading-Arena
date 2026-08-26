@@ -14,6 +14,8 @@ import { hasUnreadNews } from '../lib/newsRead';
 import { newsCoverUrl, resolveMediaUrl, withDisplayWidth } from '../utils/imageUrl';
 import { formatDHMS } from '../utils/formatters';
 import type { CompeteSessionUser } from '../lib/competeSession';
+import HomeSeasonBoard from './HomeSeasonBoard';
+import HomeBonusBanner from './HomeBonusBanner';
 
 type HomeNews = {
   id: string;
@@ -104,7 +106,7 @@ export default function MobileHome({
   totalPnl,
   arenas,
   latestNews,
-  season,
+  season: _season,
   authSlot,
   onRefresh,
   onTrade,
@@ -129,9 +131,6 @@ export default function MobileHome({
   const greeting = hour >= 18 || hour < 5 ? t('home.greetingEvening') : t('home.greetingMorning');
   const unread = hasUnreadNews(latestNews[0]?.publishedAt || latestNews[0]?.createdAt);
   const locale = i18n.language.startsWith('fr') ? 'fr-FR' : 'en-US';
-  const seasonName = season ? t(season.nameKey) : '';
-  const [seasonLead, ...seasonTailParts] = seasonName.split(' ');
-  const seasonTail = seasonTailParts.join(' ') || seasonName;
 
   const newsBell = (
     <Link to="/compete/news" className="mobile-home__news" aria-label={t('home.openNews')}>
@@ -297,19 +296,8 @@ export default function MobileHome({
         </section>
       )}
 
-      {season && (
-        <Link to="/compete/rank#season" className="mobile-home-season">
-          <div className="mobile-home-season__banner">
-            <img src={season.homeBannerImage || '/assets/pictures/Traderpng.webp'} alt="" loading="lazy" decoding="async" />
-            <div className="mobile-home-season__copy">
-              <span>{t('homeSeason.live')}</span>
-              <h2>{seasonLead}<br /><em>{seasonTail}</em></h2>
-              <p>{t('homeSeason.tagline')}</p>
-            </div>
-          </div>
-          <div className="mobile-home-season__cta">{t('homeSeason.ctaShort')} ›</div>
-        </Link>
-      )}
+      <HomeSeasonBoard />
+      <HomeBonusBanner compact />
 
       {!user && authSlot && (
         <div id="signup">{authSlot}</div>

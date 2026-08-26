@@ -3191,6 +3191,70 @@ export class CompetitionManager {
     };
   }
 
+  findUserByDisplayName(name: string): CompetitionUser | null {
+    return this.findUserByName(name);
+  }
+
+  getUserById(userId: string): CompetitionUser | null {
+    const user = this.users.get(userId);
+    if (!user || user.deletedAt) return null;
+    return user;
+  }
+
+  /**
+   * Arènes (hors qualification) d'un joueur, pour relire son terminal paper.
+   * Tri : fin la plus récente d'abord.
+   */
+  listUserReviewArenas(userId: string): Array<{
+    id: string;
+    title: string;
+    status: CompetitionStatus;
+    startAt: number;
+    endAt: number;
+    paperPlayerId: string | null;
+    rank: number | null;
+    pnlUsd: number;
+    pnlPercent: number;
+    tradesCount: number;
+    participants: number;
+  }> {
+    const out: Array<{
+      id: string;
+      title: string;
+      status: CompetitionStatus;
+      startAt: number;
+      endAt: number;
+      paperPlayerId: string | null;
+      rank: number | null;
+      pnlUsd: number;
+      pnlPercent: number;
+      tradesCount: number;
+      participants: number;
+    }> = [];
+    for (const competition of this.competitions.values()) {
+      if (isQualificationCompetition(competition.title)) continue;
+      const entry = competition.entries.find((item) => item.userId === userId);
+      if (!entry) continue;
+      const ranked = sortAndRankLeaderboard(competition.entries.slice());
+      const myRanked = ranked.find((item) => item.userId === userId);
+      out.push({
+        id: competition.id,
+        title: competition.title,
+        status: inferCompetitionStatus(competition),
+        startAt: competition.startAt,
+        endAt: competition.endAt,
+        paperPlayerId: entry.paperPlayerId || null,
+        rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
+        pnlUsd: Number(entry.pnlUsd) || 0,
+        pnlPercent: Number(entry.pnlPercent) || 0,
+        tradesCount: Math.max(0, Math.floor(Number(entry.tradesCount) || 0)),
+        participants: competition.entries.length,
+      });
+    }
+    out.sort((a, b) => b.endAt - a.endAt || b.startAt - a.startAt);
+    return out;
+  }
+
   deleteCompetition(id: string): { paperPlayerIds: string[] } {
     const competition = this.competitions.get(id);
     if (!competition) throw new Error('Competition introuvable');

@@ -38,6 +38,7 @@ import {
 } from './lib/session'
 import { AuthSheet } from './components/AuthSheet'
 import { DealsScreen } from './components/DealsScreen'
+import { HomeBonusCard } from './components/HomeBonusCard'
 import { DIVISION_BOUNDS, DivisionBadge, DivisionCard, divisionDisplayName } from './components/DivisionCard'
 import { GlobalChat } from './components/GlobalChat'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
@@ -240,7 +241,7 @@ function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => vo
   return (
     <section className="home-season">
       <div className="home-season__banner">
-        <img src="/assets/pictures/trader-silhouette.jpg" alt="" />
+        <img src="/assets/Seasons/summer-season-ranking.webp" alt="" />
         <div className="home-season__banner-text">
           <span>{t('season.eyebrow')}</span>
           <h2>{t('season.title')}<br /><em>{t('season.titleEm')}</em></h2>
@@ -466,6 +467,7 @@ function HomeScreen({
   onNews,
   onRank,
   onPayouts,
+  onDeals,
   unreadNews,
   claimablePayouts,
 }: {
@@ -482,6 +484,7 @@ function HomeScreen({
   onNews: () => void
   onRank: () => void
   onPayouts: () => void
+  onDeals: () => void
   unreadNews: number
   claimablePayouts: number
 }) {
@@ -605,6 +608,7 @@ function HomeScreen({
       </section>}
 
       <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
+      <HomeBonusCard onOpen={onDeals} />
     </div>
   )
 }
@@ -868,6 +872,7 @@ function App() {
               }}
               onRank={() => selectTab('rank')}
               onPayouts={() => selectTab('payouts')}
+              onDeals={() => selectTab('deals')}
               unreadNews={unreadNewsCount}
               claimablePayouts={dashboard?.claimablePayouts || 0}
             />

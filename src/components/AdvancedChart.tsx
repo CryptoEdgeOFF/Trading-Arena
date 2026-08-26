@@ -115,6 +115,8 @@ export interface AdvancedChartProps {
   isMobile?: boolean;
   /** Optional bridge for high-frequency market:tick WS events (bypasses React market state). */
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
+  /** Unix seconds — cadre le graphique sur une arène passée (revue de trades). */
+  focusRangeSec?: { from: number; to: number } | null;
 }
 
 const TV_RESOLUTION_TO_MIN: Record<string, number> = {
@@ -373,6 +375,7 @@ export default function AdvancedChart({
   onClosePosition,
   isMobile = false,
   chartLiveTickRef,
+  focusRangeSec = null,
 }: AdvancedChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const widgetContainerRef = useRef<HTMLDivElement | null>(null);
@@ -427,6 +430,7 @@ export default function AdvancedChart({
   const onClosePositionRef = useRef(onClosePosition);
   const onPairChangeRef = useRef(onPairChange);
   const onIntervalChangeRef = useRef(onIntervalChange);
+  const focusRangeRef = useRef(focusRangeSec);
   const positionsRef = useRef<Position[]>([]);
   const ordersRef = useRef<PendingOrder[]>([]);
   // Live refs for the drag handler so it can read the most recent mark
@@ -481,6 +485,9 @@ export default function AdvancedChart({
   useEffect(() => {
     onIntervalChangeRef.current = onIntervalChange;
   }, [onIntervalChange]);
+  useEffect(() => {
+    focusRangeRef.current = focusRangeSec;
+  }, [focusRangeSec]);
   useEffect(() => {
     tickerRef.current = ticker;
   }, [ticker]);
@@ -566,6 +573,21 @@ export default function AdvancedChart({
           setChartReady(true);
 
           const chart = widget.activeChart();
+          const applyFocus = () => {
+            const range = focusRangeRef.current;
+            if (!range || range.to <= range.from) return;
+            try {
+              chart.setVisibleRange({ from: range.from, to: range.to });
+            } catch {
+              // ignore
+            }
+          };
+          applyFocus();
+          try {
+            chart.dataReady(applyFocus);
+          } catch {
+            // ignore
+          }
           chart.onIntervalChanged().subscribe(null, (newRes: ResolutionString) => {
             const minutes = TV_RESOLUTION_TO_MIN[String(newRes)];
             if (minutes && onIntervalChangeRef.current) {
@@ -840,6 +862,29 @@ export default function AdvancedChart({
       // ignore
     }
   }, [intervalMinutes, chartReady]);
+
+  useEffect(() => {
+    const widget = widgetRef.current;
+    if (!widget || !chartReady || !focusRangeSec) return;
+    try {
+      const chart = widget.activeChart();
+      if (focusRangeSec.to <= focusRangeSec.from) return;
+      void chart.setVisibleRange({ from: focusRangeSec.from, to: focusRangeSec.to });
+      const prices = (trades ?? [])
+        .filter((trade) => trade.pair === pair && trade.price > 0)
+        .map((trade) => trade.price);
+      if (prices.length) {
+        const minP = Math.min(...prices);
+        const maxP = Math.max(...prices);
+        const pad = Math.max((maxP - minP) * 0.08, Math.abs(maxP) * 0.001);
+        const scale = chart.getPanes()?.[0]?.getMainSourcePriceScale();
+        scale?.setAutoScale(false);
+        scale?.setVisiblePriceRange({ from: minP - pad, to: maxP + pad });
+      }
+    } catch {
+      // ignore
+    }
+  }, [chartReady, focusRangeSec, intervalMinutes, pair, trades]);
 
   // High-frequency ticks from market:tick WS → chart datafeed (no React re-render).
   useEffect(() => {
@@ -1343,7 +1388,7 @@ export default function AdvancedChart({
   }, [pair, position, positions, pendingOrders, orderPreview, intervalMinutes, chartReady, riskPlacement]);
 
   const fillMarkers = useMemo(() => {
-    const fromTrades = chartTradeMarkers(trades, pair, intervalMinutes);
+    const fromTrades = chartTradeMarkers(trades, pair, intervalMinutes, 400);
     const extras: ChartTradeMarker[] = [];
     const known = new Set(fromTrades.map((marker) => marker.key));
     for (const pos of positions ?? (position ? [position] : [])) {

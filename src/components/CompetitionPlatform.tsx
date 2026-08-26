@@ -7,6 +7,8 @@ import i18n from '../i18n';
 import Seo from './Seo';
 import CompeteHeader from './CompeteHeader';
 import MobileHome from './MobileHome';
+import HomeSeasonBoard from './HomeSeasonBoard';
+import HomeBonusBanner from './HomeBonusBanner';
 import { useIsMobileWeb } from '../lib/mobileWeb';
 import {
   AnimatedNumber,
@@ -1132,53 +1134,6 @@ export default function CompetitionPlatform() {
           </section>
         )}
 
-        {latestNews.length > 0 && (
-          <section className="mx-auto max-w-7xl px-5 pt-8 sm:px-8 md:px-10">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="micro text-[10px] text-[#dc2626]">{t('news.homeBanner')}</span>
-              <Link to="/compete/news" className="micro text-[10px] text-[#8b8490] transition-colors hover:text-white">
-                {t('news.homeAll')} →
-              </Link>
-            </div>
-            <div className={`grid gap-3 ${latestNews.length > 1 ? 'md:grid-cols-2' : ''}`}>
-              {latestNews.map((article) => {
-                const localized = localizeNews(article, i18n.language);
-                return (
-                  <Link
-                    key={article.id}
-                    to={`/compete/news/${article.id}`}
-                    className="group relative flex min-h-[92px] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0b10] transition-colors hover:border-white/20"
-                  >
-                    {article.coverUrl && (
-                      <OptimizedImage
-                        src={newsCoverUrl(article.coverUrl, 'card') || article.coverUrl}
-                        alt={localized.title}
-                        displayWidth={360}
-                        width={360}
-                        height={200}
-                        sizes="160px"
-                        className="h-full w-[132px] shrink-0 object-cover sm:w-[160px]"
-                      />
-                    )}
-                    <span className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3 sm:px-5">
-                      <small className="micro text-[9px] text-[#dc2626]">
-                        {article.featured ? `${t('news.featured')} · ` : ''}
-                        {new Date(article.publishedAt || article.createdAt).toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })}
-                      </small>
-                      <strong className="display mt-1 line-clamp-2 text-lg font-black uppercase italic leading-tight text-white sm:text-xl">
-                        {localized.title}
-                      </strong>
-                      {localized.summary && (
-                        <em className="mt-1 line-clamp-1 text-xs not-italic text-[#8b8490]">{localized.summary}</em>
-                      )}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
         <SummerSeasonHomeSection seasons={seasons} />
 
         {!session && <ProcessSection />}
@@ -1246,35 +1201,54 @@ export default function CompetitionPlatform() {
           )}
         </section>
 
-        {/* TRADE LIVE BONUS — accès aux liens d'affiliation / promos partenaires */}
-        <section className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
-          <Link
-            to="/compete/bonus"
-            className="group relative block overflow-hidden rounded-3xl border border-[#dc2626]/25 bg-gradient-to-br from-[#1a0709] via-[#0c0508] to-[#0a0a0d] p-6 transition-colors hover:border-[#dc2626]/55 md:p-9"
-          >
-            <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#dc2626]/20 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
-            <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-start gap-4">
-                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#dc2626]/30 bg-[#dc2626]/12 text-[#fca5a5]">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M20 12v8H4v-8M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85" />
-                  </svg>
-                </span>
-                <div>
-                  <div className="micro text-[10px] text-[#dc2626]">{t('bonus.eyebrow')}</div>
-                  <h2 className="display mt-1 text-2xl font-bold text-white sm:text-3xl">{t('bonus.title')}</h2>
-                  <p className="mt-2 max-w-xl text-sm text-[#b8b8c2]">{t('bonus.homeSub')}</p>
-                </div>
-              </div>
-              <span className="blood-cta flex shrink-0 items-center justify-center gap-2 px-6 py-4 text-sm uppercase tracking-[0.14em]">
-                {t('bonus.homeCta')}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M5 12h14M13 6l6 6-6 6" />
-                </svg>
-              </span>
+        {latestNews.length > 0 && (
+          <section className="mx-auto max-w-7xl px-5 pt-16 sm:px-8 md:px-10">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="micro text-[10px] text-[#dc2626]">{t('news.homeBanner')}</span>
+              <Link to="/compete/news" className="micro text-[10px] text-[#8b8490] transition-colors hover:text-white">
+                {t('news.homeAll')} →
+              </Link>
             </div>
-          </Link>
-        </section>
+            <div className={`grid gap-3 ${latestNews.length > 1 ? 'md:grid-cols-2' : ''}`}>
+              {latestNews.map((article) => {
+                const localized = localizeNews(article, i18n.language);
+                return (
+                  <Link
+                    key={article.id}
+                    to={`/compete/news/${article.id}`}
+                    className="group relative flex min-h-[92px] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0b10] transition-colors hover:border-white/20"
+                  >
+                    {article.coverUrl && (
+                      <OptimizedImage
+                        src={newsCoverUrl(article.coverUrl, 'card') || article.coverUrl}
+                        alt={localized.title}
+                        displayWidth={360}
+                        width={360}
+                        height={200}
+                        sizes="160px"
+                        className="h-full w-[132px] shrink-0 object-cover sm:w-[160px]"
+                      />
+                    )}
+                    <span className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3 sm:px-5">
+                      <small className="micro text-[9px] text-[#dc2626]">
+                        {article.featured ? `${t('news.featured')} · ` : ''}
+                        {new Date(article.publishedAt || article.createdAt).toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })}
+                      </small>
+                      <strong className="display mt-1 line-clamp-2 text-lg font-black uppercase italic leading-tight text-white sm:text-xl">
+                        {localized.title}
+                      </strong>
+                      {localized.summary && (
+                        <em className="mt-1 line-clamp-1 text-xs not-italic text-[#8b8490]">{localized.summary}</em>
+                      )}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        <HomeBonusBanner />
 
       </main>
       )}
@@ -1302,157 +1276,17 @@ type HomeSeasonInfo = SeasonInfo;
 
 /** Annonce sur la page d'accueil : la saison en cours + lien vers le leaderboard. */
 function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
-  const { t } = useTranslation();
   const season = seasons.find((item) => item.status === 'active')
     || seasons.find((item) => item.isActive)
     || null;
 
   if (!season || season.status !== 'active') return null;
 
-  const seasonName = t(season.nameKey);
-  const daysLeft = Math.max(0, Math.ceil((season.endAt - Date.now()) / 86_400_000));
-  const isLastDay = daysLeft <= 1;
-  const [seasonLead, ...seasonTailParts] = seasonName.split(' ');
-  const seasonTail = seasonTailParts.join(' ') || seasonName;
-
   return (
-    <section className="relative isolate overflow-hidden py-14 sm:py-16">
+    <section className="relative isolate overflow-hidden py-6 sm:py-8">
       <div className="pointer-events-none absolute inset-0 bg-[#08070a]" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/25 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-amber-300/15 to-transparent" />
-      <div className="pointer-events-none absolute left-1/2 top-0 h-64 w-[42rem] -translate-x-1/2 rounded-full bg-amber-400/[0.07] blur-3xl" />
-
-      <div className="relative mx-auto grid max-w-7xl items-center gap-8 px-6 md:px-10 lg:grid-cols-[0.84fr_1.16fr]">
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-100px' }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-          className="relative z-10"
-        >
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="micro inline-flex items-center gap-2 text-[10px] text-amber-300/90">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300 opacity-70" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-300" />
-              </span>
-              {t('homeSeason.live')}
-            </span>
-            <span className="h-px w-8 bg-amber-300/35" />
-            <span className="num text-[10px] uppercase tracking-[0.18em] text-[#8f846c]">
-              {isLastDay ? t('homeSeason.lastDayLabel') : t('seasons.daysLeft', { count: daysLeft })}
-            </span>
-          </div>
-
-          <h2 className="display mt-4 max-w-xl text-[clamp(2.4rem,7.2vw,5.8rem)] font-black uppercase leading-[0.86] tracking-[-0.04em] text-white">
-            <span className="block text-white/95">{seasonLead}</span>
-            <span className="block bg-gradient-to-r from-amber-200 via-orange-300 to-[#dc2626] bg-clip-text text-transparent">
-              {seasonTail}
-            </span>
-          </h2>
-
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-[#aaa18f] sm:text-base">
-            {t('homeSeason.tagline')}
-          </p>
-
-          <div className="mt-6 flex flex-wrap items-center gap-4">
-            <Link
-              to="/compete/rank#season"
-              className="group/link inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-amber-200 transition-colors hover:text-white"
-            >
-              <span className="h-px w-10 bg-gradient-to-r from-amber-300 to-transparent transition-all duration-300 group-hover/link:w-14" />
-              {t('homeSeason.ctaShort')}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </svg>
-            </Link>
-          </div>
-        </motion.div>
-
-        <Link to="/compete/rank#season" className="relative block lg:min-h-[320px]" aria-label={t('homeSeason.cta')}>
-          {season.homeBannerImage && (
-            <motion.div
-              initial={{ opacity: 0, y: 20, rotate: -1.5 }}
-              whileInView={{ opacity: 1, y: 0, rotate: -1.5 }}
-              viewport={{ once: true, margin: '-100px' }}
-              transition={{ duration: 0.8, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
-              whileHover={{ rotate: 0, scale: 1.015 }}
-              className="relative ml-auto max-w-2xl overflow-hidden rounded-[2rem] shadow-[0_44px_120px_-52px_rgba(245,158,11,0.74)] ring-1 ring-amber-200/18"
-            >
-              <img
-                src={encodeURI(season.homeBannerImage)}
-                alt={seasonName}
-                draggable={false}
-                loading="lazy"
-                decoding="async"
-                className="block w-full select-none object-contain"
-              />
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#050507]/65 via-transparent to-amber-200/10" />
-              <div className="pointer-events-none absolute inset-0 rounded-[2rem] ring-1 ring-inset ring-white/10" />
-            </motion.div>
-          )}
-
-          <motion.img
-            aria-hidden="true"
-            src="/assets/badges/summer-season-badge.webp"
-            draggable={false}
-            className="absolute -right-4 -top-8 hidden h-24 w-24 object-contain drop-shadow-[0_18px_40px_rgba(245,158,11,0.5)] md:block lg:h-32 lg:w-32"
-            animate={{ y: [0, 10, 0], rotate: [2, -3, 2] }}
-            transition={{ duration: 6.5, repeat: Infinity, ease: 'easeInOut' }}
-          />
-        </Link>
-      </div>
-
-      <div className="relative mx-auto mt-10 max-w-7xl px-6 md:px-10">
-        <div className="micro text-[10px] text-amber-300/90">{t('homeSeason.prizesLabel')}</div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
-          {[
-            {
-              src: season.championBadge
-                ? getBadgeVisual(season.championBadge).src
-                : encodeURI('/assets/badges/summer-season-badge.webp'),
-              label: t('homeSeason.prizeBadge'),
-              hint: t('globalLeaderboard.prize.badgeHint'),
-            },
-            {
-              src: encodeURI(season.shirtImage || '/assets/badges/summer-season-shirt.webp'),
-              label: t('homeSeason.prizeShirt'),
-              hint: t('globalLeaderboard.prize.shirtTag'),
-            },
-            {
-              src: encodeURI(season.arenaImage || '/assets/pictures/arena3d.webp'),
-              label: t('homeSeason.prizeArena'),
-              hint: t('globalLeaderboard.prize.arenaDesc'),
-            },
-          ].map((prize, index) => (
-            <motion.article
-              key={prize.label}
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: '-80px' }}
-              transition={{ duration: 0.55, delay: index * 0.08, ease: [0.22, 1, 0.36, 1] }}
-              className="group relative overflow-hidden rounded-2xl border border-amber-200/15 bg-black/30 px-4 py-5 text-center"
-            >
-              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(245,158,11,0.16),transparent_62%)] opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
-              <motion.img
-                src={prize.src}
-                alt=""
-                draggable={false}
-                loading="lazy"
-                decoding="async"
-                className="relative z-10 mx-auto h-36 w-auto select-none object-contain sm:h-44"
-                style={{ filter: 'drop-shadow(0 0 22px rgba(245,158,11,0.45))' }}
-                animate={{ y: [0, -7, 0] }}
-                transition={{ duration: 3.2 + index * 0.2, repeat: Infinity, ease: 'easeInOut', delay: index * 0.35 }}
-              />
-              <strong className="relative z-10 mt-3 block text-sm font-bold uppercase tracking-[0.1em] text-white">
-                {prize.label}
-              </strong>
-              <p className="relative z-10 mt-1 text-[11px] font-semibold text-amber-200/80">{prize.hint}</p>
-            </motion.article>
-          ))}
-        </div>
-        <p className="mt-3 text-[11px] text-white/50">{t('globalLeaderboard.prize.winnerNote')}</p>
+      <div className="relative mx-auto max-w-7xl px-6 md:px-10">
+        <HomeSeasonBoard />
       </div>
     </section>
   );

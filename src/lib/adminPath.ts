@@ -39,6 +39,9 @@ export const PAYOUTS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/payouts` : '/c
 /** Route d'admin des demandes de payout, ex. `/ctrl-…/payout-requests`. */
 export const PAYOUT_REQUESTS_ADMIN_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/payout-requests` : '/compete';
 
+/** Relire le terminal paper d'un joueur (bulles B/S + historique). */
+export const TERMINAL_REVIEW_PATH = ADMIN_ENABLED ? `/${ADMIN_PATH}/terminal-review` : '/trade-review';
+
 /** Version échappée pour insertion dans une RegExp. */
 export const ADMIN_PATH_REGEX = ADMIN_PATH
   ? ADMIN_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
