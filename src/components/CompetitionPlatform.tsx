@@ -1932,7 +1932,7 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count, stats, badges, rating }: 
         </div>
 
         <Link
-          to="/compete/rank"
+          to="/compete/rank#rating"
           className="group relative mx-auto flex w-[200px] shrink-0 flex-col items-center text-center lg:mx-0 lg:-mr-2 lg:w-[220px]"
           style={{ perspective: 520 }}
         >

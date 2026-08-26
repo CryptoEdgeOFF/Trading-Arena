@@ -345,7 +345,7 @@ export default function CompetitionPlayerProfile() {
                   transition={{ duration: 0.5, delay: 0.04, ease: [0.22, 1, 0.36, 1] }}
                   className="mt-6"
                 >
-                  <Link to="/compete/rank" className="block">
+                  <Link to="/compete/rank#rating" className="block">
                     <RatingCard rating={profile.rating} />
                   </Link>
                 </motion.div>

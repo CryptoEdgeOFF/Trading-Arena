@@ -193,7 +193,7 @@ export default function MobileHome({
                   <small>{t('home.profitFactor')}</small>
                   <strong>{stats?.profitFactor == null ? '—' : stats.profitFactor.toFixed(2)}</strong>
                 </button>
-                <button type="button" onClick={() => navigate('/compete/rank')}>
+                <button type="button" onClick={() => navigate('/compete/rank#rating')}>
                   <small>{t('home.worldRank')}</small>
                   <strong>
                     {rating?.worldRank != null
@@ -203,14 +203,14 @@ export default function MobileHome({
                 </button>
               </div>
               {rating && (
-                <Link className="mobile-player-card__badge" to="/compete/rank" aria-label={t('rating.kicker')}>
+                <Link className="mobile-player-card__badge" to="/compete/rank#rating" aria-label={t('rating.kicker')}>
                   <DivisionBadge division={rating.division} size={96} />
                 </Link>
               )}
             </div>
 
             {rating && (
-              <Link className="mobile-player-card__progress" to="/compete/rank">
+              <Link className="mobile-player-card__progress" to="/compete/rank#rating">
                 <span>
                   <strong>
                     {divisionDisplayName(rating.division)}
