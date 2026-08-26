@@ -642,6 +642,11 @@ body.mobile-web-active {
   color: #d9d4dc;
 }
 
+.mobile-home__join {
+  display: grid;
+  gap: 10px;
+}
+
 .mobile-home__arenas {
   display: flex;
   gap: 10px;
@@ -654,6 +659,12 @@ body.mobile-web-active {
 
 .mobile-home__arenas::-webkit-scrollbar {
   display: none;
+}
+
+.mobile-arena-card.is-join {
+  flex: none;
+  width: 100%;
+  min-height: 188px;
 }
 
 .mobile-arena-card {
@@ -719,6 +730,29 @@ body.mobile-web-active {
   border-radius: 50%;
   background: #ef233c;
   box-shadow: 0 0 8px #ef233c;
+}
+
+.mobile-arena-card__live.is-open {
+  color: #86efac;
+}
+
+.mobile-arena-card__live.is-open i {
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+}
+
+.mobile-arena-card__joined {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  border-radius: 3px;
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  font: italic 800 8px 'Barlow Condensed', sans-serif;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .mobile-arena-card h3 {

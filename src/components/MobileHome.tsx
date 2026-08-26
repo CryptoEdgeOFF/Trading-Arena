@@ -38,6 +38,8 @@ type HomeArena = {
   startAt: number;
   endAt: number;
   bannerImageUrl?: string | null;
+  canJoin?: boolean;
+  joined?: boolean;
   myEntry?: { pnlUsd: number; pnlPercent: number };
 };
 
@@ -58,11 +60,15 @@ function useCountdown(target: number): string {
 
 function MobileArenaCard({
   arena,
+  variant = 'live',
   onTrade,
+  onJoin,
   onLeaderboard,
 }: {
   arena: HomeArena;
-  onTrade: (id: string) => void;
+  variant?: 'live' | 'join';
+  onTrade?: (id: string) => void;
+  onJoin?: (id: string) => void;
   onLeaderboard: (id: string) => void;
 }) {
   const { t } = useTranslation();
@@ -71,27 +77,38 @@ function MobileArenaCard({
   const banner = withDisplayWidth(resolveMediaUrl(arena.bannerImageUrl), 720)
     || resolveMediaUrl(arena.bannerImageUrl)
     || '/assets/pictures/arena-live-red.webp';
+  const joining = variant === 'join';
 
   return (
-    <article className="mobile-arena-card">
+    <article className={`mobile-arena-card${joining ? ' is-join' : ''}`}>
       <img className="mobile-arena-card__banner" src={banner} alt="" loading="lazy" decoding="async" />
       <div className="mobile-arena-card__shade" />
       <div className="mobile-arena-card__top">
-        <span className="mobile-arena-card__live"><i />{t('status.live')}</span>
+        <span className={`mobile-arena-card__live${joining ? ' is-open' : ''}`}>
+          <i />{joining ? t('home.openForJoin') : t('status.live')}
+        </span>
       </div>
       <h3>{arena.title}</h3>
       <div className="mobile-arena-card__meta">
         <div>
-          <small>{t('spotlight.endsIn')}</small>
+          <small>{joining ? t('home.startsIn') : t('spotlight.endsIn')}</small>
           <strong>{countdown}</strong>
-          {arena.myEntry && (
+          {arena.myEntry && !joining && (
             <strong className={pnl >= 0 ? 'is-profit' : 'is-loss'}>
               {pnl >= 0 ? '+' : ''}{pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })} $
             </strong>
           )}
         </div>
         <div className="mobile-arena-card__actions">
-          <button type="button" onClick={() => onTrade(arena.id)}>{t('header.trade')}</button>
+          {joining ? (
+            arena.joined ? (
+              <span className="mobile-arena-card__joined">{t('publicCard.joined')}</span>
+            ) : (
+              <button type="button" onClick={() => onJoin?.(arena.id)}>{t('spotlight.join')}</button>
+            )
+          ) : (
+            <button type="button" onClick={() => onTrade?.(arena.id)}>{t('header.trade')}</button>
+          )}
           <button type="button" onClick={() => onLeaderboard(arena.id)}>{t('common.leaderboard')}</button>
         </div>
       </div>
@@ -105,11 +122,13 @@ export default function MobileHome({
   stats,
   totalPnl,
   arenas,
+  joinableArenas,
   latestNews,
   season: _season,
   authSlot,
   onRefresh,
   onTrade,
+  onJoin,
   onLeaderboard,
 }: {
   user: CompeteSessionUser | null;
@@ -117,11 +136,13 @@ export default function MobileHome({
   stats: { profitFactor: number | null } | null;
   totalPnl: number;
   arenas: HomeArena[];
+  joinableArenas: HomeArena[];
   latestNews: HomeNews[];
   season: HomeSeason | null;
   authSlot?: ReactNode;
   onRefresh: () => void;
   onTrade: (competitionId: string) => void;
+  onJoin: (competitionId: string) => void;
   onLeaderboard: (competitionId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
@@ -244,25 +265,21 @@ export default function MobileHome({
         </section>
       )}
 
-      {user && liveArenas.length > 0 && (
+      {joinableArenas.length > 0 && (
         <section>
           <div className="mobile-home__section-title">
             <div>
               <span>{t('home.competitions')}</span>
-              <h2>{t('home.current')}</h2>
+              <h2>{t('home.openForJoin')}</h2>
             </div>
-            <button type="button" onClick={onRefresh} aria-label={t('common.refresh')}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" />
-              </svg>
-            </button>
           </div>
-          <div className="mobile-home__arenas">
-            {liveArenas.map((arena) => (
+          <div className="mobile-home__join">
+            {joinableArenas.map((arena) => (
               <MobileArenaCard
                 key={arena.id}
                 arena={arena}
-                onTrade={onTrade}
+                variant="join"
+                onJoin={onJoin}
                 onLeaderboard={onLeaderboard}
               />
             ))}
@@ -296,7 +313,40 @@ export default function MobileHome({
         </section>
       )}
 
-      <HomeSeasonBoard />
+      {user && liveArenas.length > 0 && (
+        <section>
+          <div className="mobile-home__section-title">
+            <div>
+              <span>{t('home.competitions')}</span>
+              <h2>{t('home.current')}</h2>
+            </div>
+            <button type="button" onClick={onRefresh} aria-label={t('common.refresh')}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" />
+              </svg>
+            </button>
+          </div>
+          <div className="mobile-home__arenas">
+            {liveArenas.map((arena) => (
+              <MobileArenaCard
+                key={arena.id}
+                arena={arena}
+                onTrade={onTrade}
+                onLeaderboard={onLeaderboard}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <div className="mobile-home__section-title">
+          <div>
+            <span>{t('sections.seasonEyebrow')}</span>
+          </div>
+        </div>
+        <HomeSeasonBoard />
+      </section>
       <HomeBonusBanner compact />
 
       {!user && authSlot && (

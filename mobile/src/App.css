@@ -517,6 +517,19 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-guest-hero p { margin: 17px 0 0; color: #99939d; font-size: 10px; line-height: 1.55; }
 .home-guest-hero > button { min-height: 44px; margin-top: 17px; padding: 0 14px; display: flex; align-items: center; gap: 18px; border: 1px solid rgba(255,85,104,.45); border-radius: 6px; background: var(--red); color: #fff; font-size: 9px; font-weight: 800; }
 .home-guest-hero > button.home-global-link { min-height: 34px; margin-top: 7px; border-color: var(--line); background: #151319; color: #aaa4ad; }
+.home-join-list { display: grid; gap: 10px; }
+.home-join-list .arena-card { flex: none; width: 100%; min-height: 176px; }
+
+.home-news { display: grid; gap: 8px; }
+.home-news__head { display: flex; align-items: center; justify-content: space-between; }
+.home-news__head span { color: var(--red-bright); font: 700 9px/1 Manrope, sans-serif; letter-spacing: .2em; text-transform: uppercase; }
+.home-news__head button { border: 0; background: none; color: #8b8490; font-size: 10px; font-weight: 700; }
+.home-news__card { display: flex; min-height: 78px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: #0b0b10; color: inherit; text-align: left; padding: 0; }
+.home-news__card img { width: 92px; height: 100%; object-fit: cover; }
+.home-news__card > span { display: flex; min-width: 0; flex: 1; flex-direction: column; justify-content: center; padding: 10px 12px; }
+.home-news__card small { color: #dc2626; font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.home-news__card strong { display: -webkit-box; overflow: hidden; margin-top: 4px; font: italic 800 16px/1.1 'Barlow Condensed', sans-serif; text-transform: uppercase; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
 .home-arena-section { min-width: 0; }
 .home-arena-section .section-title { position:relative; margin-bottom:10px; padding-bottom:9px; border-bottom:1px solid rgba(255,255,255,.07); }
 .home-arena-section .section-title::after { content:''; position:absolute; left:0; bottom:-1px; width:54px; height:1px; background:linear-gradient(90deg,#ff465c,transparent); box-shadow:0 0 8px rgba(238,36,60,.45); }

@@ -1,13 +1,19 @@
 .home-season-board {
   overflow: hidden;
-  border: 1px solid rgba(255, 70, 92, 0.2);
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 18px;
-  background: linear-gradient(180deg, #130a0e, #0b090d 58%);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
 }
 
 .home-season-board__banner {
   position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #0b090d;
 }
 
 .home-season-board__banner img {
@@ -208,9 +214,17 @@
 
 .home-season-board__more b { font-size: 14px; }
 
+.home-season-board__rank {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(8, 7, 10, 0.55);
+}
+
 .home-season-board__prizes {
   padding: 10px 12px 12px;
-  border-top: 1px solid rgba(255, 210, 87, 0.16);
+  border: 1px solid rgba(255, 210, 87, 0.16);
+  border-radius: 14px;
   background: linear-gradient(180deg, rgba(255, 210, 87, 0.06), transparent);
 }
 
@@ -261,10 +275,12 @@
   .home-season-board {
     display: grid;
     grid-template-columns: 1.15fr 0.95fr;
-    grid-template-rows: auto auto;
+    grid-template-rows: minmax(420px, auto) auto;
     align-items: stretch;
     width: 100%;
     max-width: none;
+    gap: 14px;
+    padding: 14px;
   }
 
   .home-season-board__banner {
@@ -287,7 +303,7 @@
 
   .home-season-board__prizes {
     grid-column: 1 / -1;
-    padding: 14px 18px 16px;
+    padding: 14px 16px 16px;
   }
 
   .home-season-board__prizes img {
@@ -310,7 +326,6 @@
   .home-season-board__rank {
     display: flex;
     flex-direction: column;
-    padding-bottom: 8px;
   }
 
   .home-season-board__podium {

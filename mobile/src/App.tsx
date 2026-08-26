@@ -13,6 +13,7 @@ import {
   getGlobalLeaderboard,
   getLeaderboardSeasons,
   getNewsPage,
+  newsCoverAssetUrl,
   getPnlHistory,
   getPromotions,
   logoutSession,
@@ -23,6 +24,7 @@ import {
   type GlobalLeaderboardRow,
   type LeaderboardRow,
   type MyCompetition,
+  type NewsArticle,
   type PlayerRating,
   type PnlHistorySample,
   type PnlHistoryTrader,
@@ -465,6 +467,7 @@ function HomeScreen({
   onGlobalLeaderboard,
   onProfile,
   onNews,
+  onOpenArticle,
   onRank,
   onPayouts,
   onDeals,
@@ -482,6 +485,7 @@ function HomeScreen({
   onGlobalLeaderboard: () => void
   onProfile: () => void
   onNews: () => void
+  onOpenArticle: (articleId: string) => void
   onRank: () => void
   onPayouts: () => void
   onDeals: () => void
@@ -496,8 +500,29 @@ function HomeScreen({
   const active = competitions
     .filter((competition) => competition.status === 'live' && mineById.has(competition.id))
     .sort((a, b) => a.endAt - b.endAt)
+  const openForJoin = competitions
+    .filter((competition) => (
+      competition.entryMode !== 'team'
+      && competition.status !== 'ended'
+      && competition.status !== 'live'
+      && (competition.status === 'registration' || competition.canJoin === true)
+    ))
+    .sort((a, b) => a.startAt - b.startAt)
   const hour = new Date().getHours()
   const greeting = hour >= 18 || hour < 5 ? t('home.greetingEvening') : t('home.greetingMorning')
+  const [latestNews, setLatestNews] = useState<NewsArticle[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    void getNewsPage(undefined, 2)
+      .then((result) => {
+        if (!cancelled) setLatestNews(result.news.slice(0, 2))
+      })
+      .catch(() => {
+        if (!cancelled) setLatestNews([])
+      })
+    return () => { cancelled = true }
+  }, [])
 
   return (
     <div className="home-dashboard">
@@ -589,6 +614,52 @@ function HomeScreen({
           <p>{t('home.guestLead')}</p>
           <button type="button" onClick={onAuth}>{t('common.login')} <Icon name="arrow" size={17} /></button>
           <button className="home-global-link" type="button" onClick={onGlobalLeaderboard}>{t('home.guestGlobal')}</button>
+        </section>
+      )}
+
+      {openForJoin.length > 0 && (
+        <section className="home-arena-section">
+          <div className="section-title">
+            <div><span>{t('home.competitions')}</span><h2>{t('home.openForJoin')}</h2></div>
+          </div>
+          <div className="home-join-list">
+            {openForJoin.map((competition) => (
+              <ArenaCard
+                key={competition.id}
+                competition={competition}
+                mine={mineById.get(competition.id)}
+                joined={mineById.has(competition.id)}
+                onJoin={onJoin}
+                onTrade={onTrade}
+                onLeaderboard={onLeaderboard}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {latestNews.length > 0 && (
+        <section className="home-news">
+          <div className="home-news__head">
+            <span>{t('news.homeBanner')}</span>
+            <button type="button" onClick={onNews}>{t('news.homeAll')} →</button>
+          </div>
+          {latestNews.map((article) => {
+            const english = locale.startsWith('en')
+            const title = english && article.titleEn ? article.titleEn : article.title
+            return (
+              <button key={article.id} type="button" className="home-news__card" onClick={() => onOpenArticle(article.id)}>
+                {article.coverUrl && <img src={newsCoverAssetUrl(article.coverUrl, 'card')} alt="" />}
+                <span>
+                  <small>
+                    {article.featured ? t('news.featured') : ''}
+                    {new Date(article.publishedAt || article.createdAt).toLocaleDateString(locale, { day: 'numeric', month: 'short' })}
+                  </small>
+                  <strong>{title}</strong>
+                </span>
+              </button>
+            )
+          })}
         </section>
       )}
 
@@ -868,6 +939,10 @@ function App() {
               onProfile={() => selectTab('profile')}
               onNews={() => {
                 setInitialNewsId('')
+                selectTab('news')
+              }}
+              onOpenArticle={(articleId) => {
+                setInitialNewsId(articleId)
                 selectTab('news')
               }}
               onRank={() => selectTab('rank')}

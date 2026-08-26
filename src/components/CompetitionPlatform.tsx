@@ -987,6 +987,22 @@ export default function CompetitionPlatform() {
             bannerImageUrl: competition.bannerImageUrl,
             myEntry: competition.myEntry,
           }))}
+          joinableArenas={joinablePublicCompetitions
+            .filter((competition) => (
+              competition.status !== 'live'
+              && (competition.status === 'registration' || competition.canJoin === true)
+            ))
+            .sort((a, b) => a.startAt - b.startAt)
+            .map((competition) => ({
+              id: competition.id,
+              title: competition.title,
+              status: competition.status,
+              startAt: competition.startAt,
+              endAt: competition.endAt,
+              bannerImageUrl: competition.bannerImageUrl,
+              canJoin: competition.canJoin,
+              joined: myCompetitions.some((entry) => entry.id === competition.id),
+            }))}
           latestNews={latestNews}
           season={activeSeason}
           authSlot={authPanel}
@@ -994,6 +1010,14 @@ export default function CompetitionPlatform() {
           onTrade={(competitionId) => {
             const competition = myCompetitions.find((entry) => entry.id === competitionId);
             if (competition) void startCompetitionTrading(competition);
+          }}
+          onJoin={(competitionId) => {
+            const competition = publicCompetitions.find((entry) => entry.id === competitionId);
+            if (!session) {
+              document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth' });
+              return;
+            }
+            if (competition) openJoinModal(competition);
           }}
           onLeaderboard={(competitionId) => navigate(`/compete/leaderboard/${competitionId}`)}
         />
@@ -1134,13 +1158,9 @@ export default function CompetitionPlatform() {
           </section>
         )}
 
-        <SummerSeasonHomeSection seasons={seasons} />
-
-        {!session && <ProcessSection />}
-
         {/* MES COMPETITIONS */}
         {session && (
-          <section className="mx-auto max-w-7xl px-6 pt-6 md:px-10">
+          <section className="mx-auto max-w-7xl px-6 pt-10 md:px-10">
             <SectionHeader eyebrow={t('sections.myCompetitionsEyebrow')} title={t('sections.activeArenasTitle')} />
             {activeMyCompetitions.length === 0 ? (
               <div className="glass-card mt-6 p-10 text-center">
@@ -1200,6 +1220,10 @@ export default function CompetitionPlatform() {
             </div>
           )}
         </section>
+
+        <SummerSeasonHomeSection seasons={seasons} />
+
+        {!session && <ProcessSection />}
 
         {latestNews.length > 0 && (
           <section className="mx-auto max-w-7xl px-5 pt-16 sm:px-8 md:px-10">
@@ -1276,6 +1300,7 @@ type HomeSeasonInfo = SeasonInfo;
 
 /** Annonce sur la page d'accueil : la saison en cours + lien vers le leaderboard. */
 function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
+  const { t } = useTranslation();
   const season = seasons.find((item) => item.status === 'active')
     || seasons.find((item) => item.isActive)
     || null;
@@ -1283,9 +1308,14 @@ function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
   if (!season || season.status !== 'active') return null;
 
   return (
-    <section className="relative isolate overflow-hidden py-6 sm:py-8">
-      <div className="pointer-events-none absolute inset-0 bg-[#08070a]" />
-      <div className="relative mx-auto max-w-7xl px-6 md:px-10">
+    <section className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
+      <div className="border-b border-[#1a1a20] pb-5">
+        <div className="flex items-center gap-2">
+          <span className="h-px w-6 bg-[#dc2626]" />
+          <div className="micro text-[10px] text-[#dc2626]">{t('sections.seasonEyebrow')}</div>
+        </div>
+      </div>
+      <div className="mt-6">
         <HomeSeasonBoard />
       </div>
     </section>
@@ -1364,7 +1394,7 @@ function StepIcon({ type }: { type: string }) {
   );
 }
 
-function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title: string; sub?: string }) {
+function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title?: string; sub?: string }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -1377,7 +1407,7 @@ function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title: string
         <span className="h-px w-6 bg-[#dc2626]" />
         <div className="micro text-[10px] text-[#dc2626]">{eyebrow}</div>
       </div>
-      <h2 className="display mt-2 text-2xl font-bold text-white sm:text-3xl md:text-4xl">{title}</h2>
+      {title && <h2 className="display mt-2 text-2xl font-bold text-white sm:text-3xl md:text-4xl">{title}</h2>}
       {sub && <p className="mt-2 text-sm text-[#b8b8c2]">{sub}</p>}
     </motion.div>
   );
