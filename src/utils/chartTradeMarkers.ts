@@ -1,0 +1,154 @@
+export type ChartTradeFill = {
+  id: string;
+  pair: string;
+  side: 'long' | 'short';
+  action: 'open' | 'close' | 'update';
+  price: number;
+  time: number;
+  size?: number;
+};
+
+export type ChartTradeMarker = {
+  key: string;
+  timeSec: number;
+  price: number;
+  direction: 'buy' | 'sell';
+  color: string;
+  text: string;
+  tooltip: string;
+  stack: number;
+};
+
+const BUY_COLOR = '#18c98e';
+const SELL_COLOR = '#f43f6e';
+
+function isBuyFill(trade: ChartTradeFill): boolean {
+  return (trade.action === 'open' && trade.side === 'long')
+    || (trade.action === 'close' && trade.side === 'short');
+}
+
+function toUnixSec(time: number): number {
+  if (!Number.isFinite(time) || time <= 0) return 0;
+  return time > 1e12 ? Math.floor(time / 1000) : Math.floor(time);
+}
+
+export function snapBarTime(timeSec: number, intervalMinutes: number): number {
+  const sec = Math.max(60, Math.round(intervalMinutes) * 60);
+  return Math.floor(timeSec / sec) * sec;
+}
+
+export function tvTimeToSec(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value > 1e12 ? value / 1000 : value;
+}
+
+export function resolutionToMinutes(resolution: string | undefined, fallback = 1): number {
+  const value = String(resolution || '');
+  if (value === '1D' || value === 'D' || value === '1d') return 1440;
+  if (value === '3D') return 4320;
+  if (value === '1W' || value === 'W') return 10080;
+  if (value === '1M') return 43200;
+  const minutes = Number.parseInt(value, 10);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : fallback;
+}
+
+type TimeScaleLike = {
+  width: () => number;
+  barSpacing: () => number;
+  rightOffset: () => number;
+  coordinateToTime?: (x: number) => number | null;
+};
+
+type ChartTimeApi = {
+  getTimeScale?: () => TimeScaleLike;
+  resolution?: () => string;
+  getVisibleBarsRange?: () => { from: number; to: number } | null;
+  getVisibleRange?: () => { from: number; to: number };
+};
+
+/**
+ * X du plot TradingView (0 = bord gauche de l'échelle de temps).
+ * On part de la dernière bougie réelle : getVisibleRange() inclut
+ * l'espace vide à droite et décale les pastilles vers la gauche.
+ */
+export function timeSecToPlotX(
+  chart: ChartTimeApi,
+  timeSec: number,
+  fallbackIntervalMinutes = 1,
+): number | null {
+  if (!Number.isFinite(timeSec) || timeSec <= 0) return null;
+  const scale = chart.getTimeScale?.();
+  if (!scale) return null;
+  const width = scale.width();
+  const spacing = scale.barSpacing();
+  if (!(width > 0) || !(spacing > 0.2)) return null;
+  const rightOffset = scale.rightOffset();
+  const lastBarX = width - rightOffset * spacing;
+  const intervalSec = resolutionToMinutes(chart.resolution?.(), fallbackIntervalMinutes) * 60;
+
+  let lastBarTime = 0;
+  try {
+    const bars = chart.getVisibleBarsRange?.();
+    if (bars && Number.isFinite(bars.to)) lastBarTime = tvTimeToSec(bars.to);
+  } catch {
+    lastBarTime = 0;
+  }
+  if (!lastBarTime) {
+    try {
+      const visible = chart.getVisibleRange?.();
+      if (visible && Number.isFinite(visible.to)) {
+        lastBarTime = tvTimeToSec(visible.to) - rightOffset * intervalSec;
+      }
+    } catch {
+      lastBarTime = 0;
+    }
+  }
+  if (!lastBarTime && scale.coordinateToTime) {
+    const probed = scale.coordinateToTime(Math.max(0, lastBarX));
+    if (probed != null) lastBarTime = tvTimeToSec(probed);
+  }
+  if (!lastBarTime) return null;
+
+  // lastBarX est le bord droit du slot ; la bougie est dessinée au centre.
+  const xLocal = lastBarX - ((lastBarTime - timeSec) / intervalSec) * spacing - spacing / 2;
+  if (xLocal < -spacing * 2 || xLocal > width + spacing * 2) return null;
+  return xLocal;
+}
+
+/** Fills du pair courant → icônes B/S à coller sur la bougie. */
+export function chartTradeMarkers(
+  trades: ChartTradeFill[] | undefined,
+  pair: string,
+  intervalMinutes = 1,
+): ChartTradeMarker[] {
+  if (!trades?.length || !pair) return [];
+  const markers: ChartTradeMarker[] = [];
+  const stacks = new Map<string, number>();
+  for (const trade of trades) {
+    if (trade.pair !== pair || trade.action === 'update') continue;
+    if (!(trade.price > 0)) continue;
+    const rawTime = toUnixSec(trade.time);
+    if (rawTime <= 0) continue;
+    const timeSec = snapBarTime(rawTime, intervalMinutes);
+    const buy = isBuyFill(trade);
+    const stackKey = `${timeSec}:${buy ? 'buy' : 'sell'}`;
+    const stack = stacks.get(stackKey) ?? 0;
+    stacks.set(stackKey, stack + 1);
+    markers.push({
+      key: `fill:${trade.id}:${trade.action}`,
+      timeSec,
+      price: trade.price,
+      direction: buy ? 'buy' : 'sell',
+      color: buy ? BUY_COLOR : SELL_COLOR,
+      text: buy ? 'B' : 'S',
+      tooltip: `${buy ? 'Buy' : 'Sell'} · ${trade.price}`,
+      stack,
+    });
+    if (markers.length >= 80) break;
+  }
+  return markers;
+}
+
+export function tradeMarkersSignature(markers: ChartTradeMarker[]): string {
+  return markers.map((marker) => `${marker.key}:${marker.timeSec}:${marker.price}`).join('|');
+}

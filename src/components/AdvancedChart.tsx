@@ -6,9 +6,10 @@ import type {
   ILineDataSourceApi,
   ResolutionString,
 } from '../charting_library/charting_library';
-import type { MarketTicker, Position } from '../stores/useGameStore';
+import type { MarketTicker, Position, Trade } from '../stores/useGameStore';
 import { fmtMarketPrice, isValidRiskPrice, roundPriceForCategory } from '../utils/positionSizing';
 import { pnlToAccountCcy } from '../utils/positionPnl';
+import { chartTradeMarkers, snapBarTime, timeSecToPlotX, type ChartTradeMarker } from '../utils/chartTradeMarkers';
 
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js';
 
@@ -91,6 +92,7 @@ export interface AdvancedChartProps {
   position?: Position;
   positions?: Position[];
   pendingOrders?: PendingOrder[];
+  trades?: Trade[];
   orderPreview?: ChartOrderPreview | null;
   intervalMinutes: number;
   onIntervalChange?: (minutes: number) => void;
@@ -357,6 +359,7 @@ export default function AdvancedChart({
   position,
   positions,
   pendingOrders,
+  trades,
   orderPreview,
   intervalMinutes,
   onIntervalChange,
@@ -384,6 +387,7 @@ export default function AdvancedChart({
   // shapes when several effect runs queue up while the previous async create
   // is still pending (typing fast in TP/SL fields, dragging, etc.).
   const pendingCreatesRef = useRef<Set<string>>(new Set());
+  const fillMarkElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   // Latest desired snapshot (by key). Updated synchronously at the start of
   // each line-sync effect run. Read by the in-flight createShape resolver
   // so the just-created line jumps to the most recent price even if the
@@ -1338,6 +1342,44 @@ export default function AdvancedChart({
     });
   }, [pair, position, positions, pendingOrders, orderPreview, intervalMinutes, chartReady, riskPlacement]);
 
+  const fillMarkers = useMemo(() => {
+    const fromTrades = chartTradeMarkers(trades, pair, intervalMinutes);
+    const extras: ChartTradeMarker[] = [];
+    const known = new Set(fromTrades.map((marker) => marker.key));
+    for (const pos of positions ?? (position ? [position] : [])) {
+      if (pos.pair !== pair || !pos.openedAt) continue;
+      const key = `pos:${pos.id}:open`;
+      if (known.has(key) || known.has(`fill:${pos.id}:open`)) continue;
+      const buy = pos.side === 'long';
+      extras.push({
+        key,
+        timeSec: snapBarTime(pos.openedAt > 1e12 ? pos.openedAt / 1000 : pos.openedAt, intervalMinutes),
+        price: pos.entryPrice,
+        direction: buy ? 'buy' : 'sell',
+        color: buy ? '#18c98e' : '#f43f6e',
+        text: buy ? 'B' : 'S',
+        tooltip: `${buy ? 'Buy' : 'Sell'} · ${pos.entryPrice}`,
+        stack: 0,
+      });
+    }
+    return extras.length ? [...fromTrades, ...extras] : fromTrades;
+  }, [intervalMinutes, pair, position, positions, trades]);
+
+  useEffect(() => {
+    if (!chartReady) return;
+    try {
+      const chart = widgetRef.current?.activeChart();
+      const shapes = (chart as { getAllShapes?: () => Array<{ id: EntityId; name?: string }> })?.getAllShapes?.() || [];
+      for (const shape of shapes) {
+        if (shape.name === 'arrow_up' || shape.name === 'arrow_down') {
+          try { chart?.removeEntity(shape.id); } catch { /* ignore */ }
+        }
+      }
+    } catch {
+      // leftover drawings only
+    }
+  }, [chartReady, pair]);
+
   // ---- Coordinate conversion price ↔ pixel Y in container space ----
   // TradingView Charting Library Standalone renders the chart inside an
   // <iframe>, so we have to look both in the container's direct DOM AND
@@ -1382,41 +1424,82 @@ export default function AdvancedChart({
   const getPaneRect = useCallback(() => {
     const container = containerRef.current;
     if (!container) return null;
+    const cRect = container.getBoundingClientRect();
+    let chart;
+    try {
+      chart = widgetRef.current?.activeChart();
+    } catch {
+      chart = undefined;
+    }
+    const tsWidth = chart?.getTimeScale?.()?.width() || 0;
     const canvases = collectCanvases(container);
-    if (!canvases.length) return null;
-    // Pick the canvas with the largest area, ignoring tiny / hidden ones.
+    let plotCanvas: HTMLCanvasElement | null = null;
+    let bestWidthDiff = Infinity;
     let largest: HTMLCanvasElement | null = null;
     let maxArea = 0;
-    for (const c of canvases) {
-      const r = rectInTopViewport(c);
+    for (const canvas of canvases) {
+      const r = rectInTopViewport(canvas);
+      if (r.width <= 40 || r.height <= 40) continue;
       const area = r.width * r.height;
-      if (area > maxArea && r.width > 40 && r.height > 40) {
+      if (area > maxArea) {
         maxArea = area;
-        largest = c;
+        largest = canvas;
+      }
+      if (tsWidth > 40) {
+        const diff = Math.abs(r.width - tsWidth);
+        if (diff < bestWidthDiff && r.width > tsWidth * 0.75) {
+          bestWidthDiff = diff;
+          plotCanvas = canvas;
+        }
       }
     }
-    if (!largest) return null;
-    const cRect = container.getBoundingClientRect();
-    const lRect = rectInTopViewport(largest);
-    let paneHeight = lRect.height;
+
+    const plotRect = plotCanvas && bestWidthDiff < 48 ? rectInTopViewport(plotCanvas) : null;
+    let hostRect = plotRect
+      || (largest ? rectInTopViewport(largest) : null);
+    if (!hostRect) {
+      const iframe = container.querySelector('iframe');
+      if (iframe) hostRect = rectInTopViewport(iframe);
+      else if (widgetContainerRef.current) hostRect = widgetContainerRef.current.getBoundingClientRect();
+    }
+    if (!hostRect || hostRect.width < 40 || hostRect.height < 40) return null;
+
+    let paneHeight = hostRect.height;
+    let paneWidth = tsWidth > 40 ? Math.min(tsWidth, hostRect.width) : hostRect.width;
+    let topPad = 0;
     try {
-      const chart = widgetRef.current?.activeChart();
-      const firstPane = chart?.getPanes()[0];
-      const tvPaneHeight = firstPane?.getHeight();
+      const panes = chart?.getPanes() ?? [];
+      const tvPaneHeight = panes[0]?.getHeight();
       if (Number.isFinite(tvPaneHeight) && tvPaneHeight && tvPaneHeight > 40) {
-        paneHeight = Math.min(tvPaneHeight, lRect.height);
+        paneHeight = Math.min(tvPaneHeight, hostRect.height);
+      }
+      if (!plotRect) {
+        let panesHeight = 0;
+        for (const pane of panes) panesHeight += pane.getHeight() || 0;
+        const leftover = hostRect.height - panesHeight;
+        if (leftover > 20 && leftover < hostRect.height * 0.5) {
+          topPad = Math.max(0, leftover - 28);
+        }
       }
     } catch {
-      // ignore: fallback to canvas height
+      // dimensions iframe / canvas déjà mesurées
     }
-    const top = lRect.top - cRect.top;
+
+    const top = hostRect.top - cRect.top + topPad;
+    // L'origine X de getTimeScale() est le bord gauche du plot, pas de l'iframe
+    // (toolbar à gauche, axe des prix à droite).
+    const matchedPlot = Boolean(plotRect);
+    const priceScaleWidth = matchedPlot ? 0 : Math.min(86, Math.max(0, hostRect.width - paneWidth));
+    const left = matchedPlot
+      ? hostRect.left - cRect.left
+      : hostRect.left - cRect.left + Math.max(0, hostRect.width - paneWidth - priceScaleWidth);
     return {
       top,
       bottom: top + paneHeight,
-      left: lRect.left - cRect.left,
-      right: lRect.right - cRect.left,
+      left,
+      right: left + paneWidth,
       height: paneHeight,
-      width: lRect.width,
+      width: paneWidth,
     };
   }, [collectCanvases]);
 
@@ -1456,6 +1539,20 @@ export default function AdvancedChart({
     },
     [getPaneRect, getPriceRange],
   );
+
+  const timeToX = useCallback((timeSec: number): number | null => {
+    const rect = getPaneRect();
+    if (!rect) return null;
+    let chart;
+    try {
+      chart = widgetRef.current?.activeChart();
+    } catch {
+      return null;
+    }
+    if (!chart) return null;
+    const xLocal = timeSecToPlotX(chart, timeSec, intervalMinutes);
+    return xLocal == null ? null : rect.left + xLocal;
+  }, [getPaneRect, intervalMinutes]);
 
   const yToPrice = useCallback(
     (yInContainer: number): number | null => {
@@ -1546,6 +1643,25 @@ export default function AdvancedChart({
           el.style.pointerEvents = 'auto';
           index += 1;
         }
+        for (const marker of fillMarkers) {
+          const el = fillMarkElementsRef.current.get(marker.key);
+          if (!el) continue;
+          const x = timeToX(marker.timeSec);
+          const y = priceToY(marker.price);
+          if (x == null || y == null || !rect) {
+            el.style.opacity = '0';
+            continue;
+          }
+          const yOffset = marker.direction === 'buy' ? 11 : -11;
+          const xOffset = marker.stack * 10;
+          const left = x + xOffset;
+          const top = y + yOffset;
+          const offscreen = left < rect.left - 8 || left > rect.right + 8
+            || top < rect.top - 8 || top > rect.bottom + 8;
+          el.style.left = `${left}px`;
+          el.style.top = `${top}px`;
+          el.style.opacity = offscreen ? '0' : '1';
+        }
       }
       raf = requestAnimationFrame(step);
     };
@@ -1554,7 +1670,7 @@ export default function AdvancedChart({
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-  }, [overlayButtons, getPaneRect, priceToY]);
+  }, [fillMarkers, getPaneRect, overlayButtons, priceToY, timeToX]);
 
   // ---- Drag interaction on overlay buttons ----
   const beginDragSession = useCallback(
@@ -1935,6 +2051,21 @@ export default function AdvancedChart({
           cursor: draggingKey ? 'row-resize' : undefined,
         }}
       >
+        {fillMarkers.map((marker) => (
+          <div
+            key={marker.key}
+            ref={(el) => {
+              if (el) fillMarkElementsRef.current.set(marker.key, el);
+              else fillMarkElementsRef.current.delete(marker.key);
+            }}
+            title={marker.tooltip}
+            className="tv-fill-mark"
+            data-side={marker.direction}
+            style={{ background: marker.color }}
+          >
+            {marker.text}
+          </div>
+        ))}
         {overlayButtons.map((btn) => {
           const isPreview = Boolean(btn.meta.isPreview);
           const isDragInvalid = dragInvalidRef.current.get(btn.key) === true;

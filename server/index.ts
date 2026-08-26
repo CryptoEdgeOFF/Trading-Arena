@@ -594,7 +594,7 @@ let itickHistoricalBackfillStarted = false;
 
 configureLiveMarketNeed({
   competitionNeed: () => competitionManager.needsLiveMarketData(),
-  extraNeed: () => manager.isStarted(),
+  extraNeed: () => manager.isStarted() || !IS_PRODUCTION,
 });
 
 function armItickSubscriptions(): void {
