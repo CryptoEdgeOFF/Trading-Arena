@@ -3,12 +3,14 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import CompeteHeader from './CompeteHeader';
+import { JoinCompetitionModal } from './CompetitionPlatform';
 import { useIsMobileWeb } from '../lib/mobileWeb';
 import Seo from './Seo';
 import { AvatarImage } from './OptimizedImage';
 import { getBadgeVisual, type UserBadge } from './playerBadges';
 import { formatDHMS } from '../utils/formatters';
 import { countryFlag } from '../lib/country';
+import { getSponsor, normalizeSponsorAccountId } from '../lib/sponsors';
 import {
   DIVISIONS,
   DIVISION_COLORS,
@@ -28,6 +30,21 @@ type SeasonRow = {
   country?: string | null;
   pnlUsd: number;
   arenas: number;
+};
+
+type JoinableArena = {
+  id: string;
+  title: string;
+  code: string;
+  startAt: number;
+  endAt: number;
+  registrationEndsAt?: number;
+  dailyDrawdownPercent?: number | null;
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
+  canJoin?: boolean;
+  sponsor?: string | null;
+  sponsorReferralUrl?: string | null;
+  bannerImageUrl?: string | null;
 };
 
 type SeasonSummary = {
@@ -73,6 +90,12 @@ export default function CompetitionRankPage() {
   const [now, setNow] = useState(Date.now());
   const [visibleCount, setVisibleCount] = useState(20);
   const [seasonVisibleCount, setSeasonVisibleCount] = useState(() => (window.matchMedia('(max-width: 767px)').matches ? 10 : 20));
+  const [joinableArenas, setJoinableArenas] = useState<JoinableArena[]>([]);
+  const [joinTarget, setJoinTarget] = useState<JoinableArena | null>(null);
+  const [joinCode, setJoinCode] = useState('');
+  const [joinSponsorId, setJoinSponsorId] = useState('');
+  const [joinError, setJoinError] = useState('');
+  const [joinBusy, setJoinBusy] = useState(false);
   const loadedSeasonIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -81,13 +104,14 @@ export default function CompetitionRankPage() {
 
     void (async () => {
       try {
-        const [ratingResponse, bootstrapResponse, seasonsResponse, seasonBoardResponse] = await Promise.all([
+        const [ratingResponse, bootstrapResponse, seasonsResponse, seasonBoardResponse, publicResponse] = await Promise.all([
           fetch('/api/competition/rating-leaderboard'),
           token
             ? fetch('/api/competition/bootstrap', { headers: { Authorization: `Bearer ${token}` } })
             : Promise.resolve(null),
           fetch('/api/competition/seasons'),
           fetch('/api/competition/global-leaderboard?season=summer-2026&fields=lite'),
+          fetch('/api/competition/public').catch(() => null),
         ]);
         if (cancelled) return;
         if (ratingResponse.ok) {
@@ -114,6 +138,17 @@ export default function CompetitionRankPage() {
               });
             }
           }
+        }
+        if (publicResponse?.ok) {
+          const payload = await publicResponse.json() as { competitions?: JoinableArena[] };
+          const arenas = (Array.isArray(payload.competitions) ? payload.competitions : [])
+            .filter((arena) => (
+              arena.status !== 'ended'
+              && arena.status !== 'live'
+              && (arena.status === 'registration' || arena.canJoin === true)
+            ))
+            .sort((a, b) => a.startAt - b.startAt);
+          if (!cancelled) setJoinableArenas(arenas);
         }
         const seasonBoard = seasonBoardResponse.ok
           ? await seasonBoardResponse.json() as { season?: { id?: string }; rows?: SeasonRow[] }
@@ -212,6 +247,68 @@ export default function CompetitionRankPage() {
         }
       : null);
 
+  function openJoin(arena: JoinableArena) {
+    const token = window.localStorage.getItem(SESSION_KEY);
+    if (!token) {
+      navigate('/compete#signup');
+      return;
+    }
+    setJoinTarget(arena);
+    setJoinCode('');
+    setJoinSponsorId('');
+    setJoinError('');
+  }
+
+  async function submitJoin() {
+    const token = window.localStorage.getItem(SESSION_KEY);
+    if (!token || !joinTarget) return;
+    const sponsor = getSponsor(joinTarget.sponsor);
+    if (sponsor?.requiresAccountId) {
+      if (!joinSponsorId.trim()) {
+        setJoinError(
+          sponsor.accountIdType === 'email'
+            ? t('sponsor.missingEmail', { name: sponsor.name })
+            : t('sponsor.missingId', { name: sponsor.name }),
+        );
+        return;
+      }
+      if (sponsor.validateAccountId && !sponsor.validateAccountId(joinSponsorId)) {
+        setJoinError(
+          sponsor.accountIdType === 'email'
+            ? t('sponsor.emailInvalid')
+            : t('sponsor.idInvalid', { name: sponsor.name, example: sponsor.accountIdExample || '' }),
+        );
+        return;
+      }
+    }
+    setJoinBusy(true);
+    setJoinError('');
+    try {
+      const response = await fetch('/api/competition/join', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          code: joinCode,
+          competitionId: joinTarget.id,
+          ...(sponsor?.requiresAccountId
+            ? { sponsorAccountId: normalizeSponsorAccountId(joinSponsorId, sponsor) }
+            : {}),
+        }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || t('authErrors.join'));
+      setJoinTarget(null);
+      setJoinableArenas((current) => current.filter((arena) => arena.id !== joinTarget.id));
+    } catch (err: unknown) {
+      setJoinError(err instanceof Error ? err.message : t('common.unknownError'));
+    } finally {
+      setJoinBusy(false);
+    }
+  }
+
   return (
     <div className="compete min-h-dvh-safe bg-[#050507]">
       <Seo title={t('rating.seoTitle')} description={t('rating.seoDesc')} path="/compete/rank" />
@@ -241,6 +338,43 @@ export default function CompetitionRankPage() {
             {t('rating.tabHint')}
           </p>
         </div>
+
+        {showSeason && joinableArenas.length > 0 && (
+          <section className={isMobileWeb ? 'mb-4' : 'mb-5'}>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="h-px w-6 bg-[#dc2626]" />
+              <div className="micro text-[10px] text-[#dc2626]">{t('home.openForJoin')}</div>
+            </div>
+            <div className="grid gap-3">
+              {joinableArenas.map((arena) => {
+                const sponsor = getSponsor(arena.sponsor);
+                return (
+                  <button
+                    key={arena.id}
+                    type="button"
+                    onClick={() => openJoin(arena)}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-[#0b0b10] px-4 py-3 text-left transition-colors hover:border-white/25"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <small className="micro text-[9px] text-[#86efac]">{t('home.openForJoin')}</small>
+                      <strong className="display mt-0.5 block truncate text-lg font-black uppercase text-white">
+                        {arena.title}
+                      </strong>
+                      {sponsor && (
+                        <em className="mt-0.5 block text-[11px] not-italic text-[#8b8490]">
+                          {t('sponsor.sponsoredBy', { name: sponsor.name })}
+                        </em>
+                      )}
+                    </span>
+                    <span className="blood-cta shrink-0 px-3 py-2 text-[10px] uppercase tracking-[0.12em]">
+                      {t('spotlight.join')}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* ——— PARIS MAJOR ——— */}
         {showSeason && (
@@ -728,6 +862,19 @@ export default function CompetitionRankPage() {
         </section>
         )}
       </main>
+      {joinTarget && (
+        <JoinCompetitionModal
+          competition={joinTarget}
+          code={joinCode}
+          onCode={setJoinCode}
+          sponsorId={joinSponsorId}
+          onSponsorId={setJoinSponsorId}
+          error={joinError}
+          busy={joinBusy}
+          onClose={() => { setJoinTarget(null); setJoinError(''); }}
+          onSubmit={() => { void submitJoin(); }}
+        />
+      )}
     </div>
   );
 }

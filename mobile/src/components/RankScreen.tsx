@@ -8,8 +8,10 @@ import {
   type GlobalLeaderboardRow,
   type LeaderboardSeason,
   type PlayerRating,
+  type PublicCompetition,
   type RatingLeaderboardRow,
 } from '../lib/api'
+import { getSponsor } from '../lib/sponsors'
 import { DivisionBadge, DivisionCard, DIVISION_BOUNDS, divisionDisplayName } from './DivisionCard'
 import { PlayerName } from './PlayerName'
 import { TraderPhoto } from './ProfileAvatar'
@@ -113,10 +115,14 @@ function formatSeasonClock(ms: number, dayUnit: string) {
 export function RankScreen({
   currentUserId,
   rating,
+  competitions = [],
+  onJoin,
   onOpenPlayer,
 }: {
   currentUserId?: string
   rating?: PlayerRating | null
+  competitions?: PublicCompetition[]
+  onJoin?: (competition: PublicCompetition) => void
   onOpenPlayer: (userId: string) => void
 }) {
   const { t, locale, lang } = useI18n()
@@ -186,6 +192,14 @@ export function RankScreen({
     id,
     label: id.charAt(0).toUpperCase() + id.slice(1),
   }))
+  const joinableArenas = competitions
+    .filter((competition) => (
+      competition.entryMode !== 'team'
+      && competition.status !== 'ended'
+      && competition.status !== 'live'
+      && (competition.status === 'registration' || competition.canJoin === true)
+    ))
+    .sort((a, b) => a.startAt - b.startAt)
   const selectedSeason = seasons.find(({ id }) => id === selectedSeasonId)
   const seasonRemaining = selectedSeason && selectedSeason.endAt > now
     ? formatSeasonClock(selectedSeason.endAt - now, lang === 'fr' ? 'j' : 'd')
@@ -206,6 +220,24 @@ export function RankScreen({
           {t('rank.tabRating')}
         </button>
       </div>
+
+      {pane === 'season' && joinableArenas.length > 0 && onJoin && (
+        <section className="rank-join">
+          <small>{t('home.openForJoin')}</small>
+          {joinableArenas.map((arena) => {
+            const sponsor = getSponsor(arena.sponsor)
+            return (
+              <button key={arena.id} type="button" onClick={() => onJoin(arena)}>
+                <span>
+                  <strong>{arena.title}</strong>
+                  {sponsor && <em>{t('join.introSubtitle', { name: sponsor.name })}</em>}
+                </span>
+                <b>{t('arena.join')}</b>
+              </button>
+            )
+          })}
+        </section>
+      )}
 
       {pane === 'season' && (
       <section className="rank-paris">

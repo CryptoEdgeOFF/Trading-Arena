@@ -1,4 +1,11 @@
 .rank-screen { display:grid; gap:12px; align-content:start; }
+.rank-join { display:grid; gap:8px; }
+.rank-join > small { color:#86efac; font:700 9px/1 Manrope,sans-serif; letter-spacing:.18em; text-transform:uppercase; }
+.rank-join > button { min-height:64px; padding:12px 14px; display:flex; align-items:center; gap:12px; border:1px solid rgba(255,255,255,.1); border-radius:14px; background:#0b0b10; color:inherit; text-align:left; }
+.rank-join > button span { min-width:0; flex:1; display:grid; gap:3px; }
+.rank-join > button strong { overflow:hidden; font:800 16px/1.1 'Barlow Condensed',sans-serif; text-transform:uppercase; text-overflow:ellipsis; white-space:nowrap; }
+.rank-join > button em { color:#8b8490; font-size:10px; font-style:normal; }
+.rank-join > button b { padding:8px 10px; border-radius:6px; background:var(--red); color:#fff; font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
 .rank-tabs { position:sticky; top:0; z-index:5; display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px; border:1px solid rgba(255,255,255,.08); border-radius:12px; background:rgba(8,7,10,.94); }
 .rank-tabs button { min-height:34px; border:0; border-radius:8px; background:transparent; color:#9a96a0; font-size:11px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; }
 .rank-tabs button.is-active { background:#fff; color:#111; }

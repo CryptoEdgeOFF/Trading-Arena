@@ -969,6 +969,8 @@ function App() {
             <RankScreen
               currentUserId={dashboard?.user?.id}
               rating={dashboard?.myRating}
+              competitions={leaderboardCompetitions}
+              onJoin={(competition) => token ? setJoiningArena(competition) : setShowAuth(true)}
               onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
                 setPlayerBackTab('rank')

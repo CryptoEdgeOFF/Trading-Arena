@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MouseEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -437,6 +437,7 @@ function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: 
 
 export default function CompetitionPlatform() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const isMobileWeb = useIsMobileWeb();
   // Initialise the session synchronously from localStorage so authenticated
@@ -889,6 +890,43 @@ export default function CompetitionPlatform() {
     () => publicCompetitions.filter((competition) => competition.status !== 'ended' && competition.entryMode !== 'team'),
     [publicCompetitions],
   );
+
+  useEffect(() => {
+    const arenaId = searchParams.get('arena');
+    const joinFirst = searchParams.get('join') === '1';
+    if (!arenaId && !joinFirst) return;
+    if (publicCompetitions.length === 0) return;
+
+    const competition = arenaId
+      ? publicCompetitions.find((item) => item.id === arenaId)
+      : publicCompetitions.find((item) => (
+        item.status !== 'ended'
+        && item.entryMode !== 'team'
+        && (item.status === 'registration' || item.canJoin === true)
+      ));
+
+    if (!competition || competition.status === 'ended') {
+      const next = new URLSearchParams(searchParams);
+      next.delete('arena');
+      next.delete('join');
+      setSearchParams(next, { replace: true });
+      return;
+    }
+
+    if (!session) {
+      document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+
+    setJoinTarget(competition);
+    setJoinCode('');
+    setJoinSponsorId('');
+    setJoinError('');
+    const next = new URLSearchParams(searchParams);
+    next.delete('arena');
+    next.delete('join');
+    setSearchParams(next, { replace: true });
+  }, [publicCompetitions, searchParams, session, setSearchParams]);
   const spotlightArena = useMemo(() => {
     const live = joinablePublicCompetitions
       .filter((competition) => competition.status === 'live')
@@ -2185,10 +2223,21 @@ function PublicCompetitionCard({
   );
 }
 
-function JoinCompetitionModal({
+export function JoinCompetitionModal({
   competition, code, onCode, sponsorId, onSponsorId, error, busy, onClose, onSubmit,
 }: {
-  competition: CompetitionPublic;
+  competition: {
+    id: string;
+    title: string;
+    code: string;
+    startAt: number;
+    endAt: number;
+    registrationEndsAt?: number;
+    dailyDrawdownPercent?: number | null;
+    status: 'registration' | 'starting_soon' | 'live' | 'ended';
+    sponsor?: string | null;
+    sponsorReferralUrl?: string | null;
+  };
   code: string;
   onCode: (value: string) => void;
   sponsorId: string;

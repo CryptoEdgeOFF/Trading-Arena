@@ -256,7 +256,7 @@ export default function ArenaSwitcher({
         <div className="rounded-xl border border-white/[0.08] bg-[#121014] px-4 py-6 text-center">
           <p className="text-[13px] text-[#9a94a3]">{t('terminal.arenaEmpty')}</p>
           <a
-            href="/compete"
+            href="/compete?join=1"
             className="mt-3 inline-flex rounded-lg bg-[#dc2626] px-4 py-2 text-[12px] font-bold uppercase tracking-[0.12em] text-white"
           >
             {t('terminal.arenaJoinCta')}
