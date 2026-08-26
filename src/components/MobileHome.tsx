@@ -11,7 +11,7 @@ import {
 import { countryFlag } from '../lib/country';
 import { localizeNews } from '../lib/newsLocale';
 import { hasUnreadNews } from '../lib/newsRead';
-import { newsCoverUrl, resolveMediaUrl, withDisplayWidth } from '../utils/imageUrl';
+import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
 import { formatDHMS } from '../utils/formatters';
 import type { CompeteSessionUser } from '../lib/competeSession';
 import HomeSeasonBoard from './HomeSeasonBoard';
@@ -74,8 +74,7 @@ function MobileArenaCard({
   const { t } = useTranslation();
   const countdown = useCountdown(arena.status === 'live' ? arena.endAt : arena.startAt);
   const pnl = arena.myEntry?.pnlUsd ?? 0;
-  const banner = withDisplayWidth(resolveMediaUrl(arena.bannerImageUrl), 720)
-    || resolveMediaUrl(arena.bannerImageUrl)
+  const banner = resolveMediaUrl(arena.bannerImageUrl)
     || '/assets/pictures/arena-live-red.webp';
   const joining = variant === 'join';
 

@@ -28,7 +28,7 @@ import {
   type PlayerRating,
 } from './playerRating';
 import { formatDHMS } from '../utils/formatters';
-import { newsCoverUrl, resolveMediaUrl, withDisplayWidth } from '../utils/imageUrl';
+import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
 import { fetchPublicNews } from '../lib/publicNews';
 import { localizeNews } from '../lib/newsLocale';
 import { getSponsor, normalizeSponsorAccountId } from '../lib/sponsors';
@@ -157,14 +157,6 @@ interface SeasonInfo {
   championBadge?: UserBadge;
   shirtImage?: string | null;
   arenaImage?: string | null;
-}
-
-function matchSeason(seasons: SeasonInfo[], startAt: number, seasonId?: string | null): SeasonInfo | null {
-  if (seasonId) {
-    const matched = seasons.find((season) => season.id === seasonId);
-    if (matched) return matched;
-  }
-  return seasons.find((season) => startAt >= season.startAt && startAt <= season.endAt) || null;
 }
 
 type HomeNewsArticle = {
@@ -341,19 +333,6 @@ function getPrizeTitle(prize: CashPrize | null | undefined): string {
 function hasPrize(prize: CashPrize | null | undefined): prize is CashPrize {
   return Boolean(
     prize && (prize.label || prize.imageUrl || prize.total > 0 || (prize.items && prize.items.length > 0)),
-  );
-}
-
-function CashPrizePill({ prize }: { prize: CashPrize | null | undefined }) {
-  if (!hasPrize(prize)) return null;
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/8 px-2 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-amber-200/90">
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="8" r="6" />
-        <path d="M8.21 13.89L7 22l5-3 5 3-1.21-8.11" />
-      </svg>
-      {getPrizeTitle(prize)}
-    </span>
   );
 }
 
@@ -887,8 +866,15 @@ export default function CompetitionPlatform() {
     [myCompetitions],
   );
   const joinablePublicCompetitions = useMemo(
-    () => publicCompetitions.filter((competition) => competition.status !== 'ended' && competition.entryMode !== 'team'),
-    [publicCompetitions],
+    () => {
+      const joinedIds = new Set(myCompetitions.map((competition) => competition.id));
+      return publicCompetitions.filter((competition) => (
+        competition.status !== 'ended'
+        && competition.entryMode !== 'team'
+        && !joinedIds.has(competition.id)
+      ));
+    },
+    [myCompetitions, publicCompetitions],
   );
 
   useEffect(() => {
@@ -927,20 +913,6 @@ export default function CompetitionPlatform() {
     next.delete('join');
     setSearchParams(next, { replace: true });
   }, [publicCompetitions, searchParams, session, setSearchParams]);
-  const spotlightArena = useMemo(() => {
-    const live = joinablePublicCompetitions
-      .filter((competition) => competition.status === 'live')
-      .sort((a, b) => a.endAt - b.endAt)[0];
-    if (live) return live;
-    return joinablePublicCompetitions
-      .filter((competition) => competition.status === 'registration' || competition.status === 'starting_soon')
-      .sort((a, b) => a.startAt - b.startAt)[0] || null;
-  }, [joinablePublicCompetitions]);
-  const spotlightCountdown = useCountdown(
-    spotlightArena
-      ? (spotlightArena.status === 'live' ? spotlightArena.endAt : spotlightArena.startAt)
-      : Date.now(),
-  );
   // Les stats du profil n'incluent pas les arènes de qualification (ex. BTF
   // QUALIFICATIONS) — cohérent avec le leaderboard global.
   const statsCompetitions = useMemo(
@@ -1156,46 +1128,7 @@ export default function CompetitionPlatform() {
           </div>
         </section>
 
-        {spotlightArena && (
-          <section className="relative isolate overflow-hidden border-y border-white/[0.06]">
-            {spotlightArena.bannerImageUrl && (
-              <OptimizedImage
-                src={resolveMediaUrl(spotlightArena.bannerImageUrl)}
-                alt=""
-                displayWidth={1280}
-                className="absolute inset-0 h-full w-full object-cover opacity-40 grayscale"
-              />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-r from-[#050507] via-[#050507]/88 to-[#050507]/35" />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-transparent to-[#050507]/40" />
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#dc2626]/55 to-transparent" />
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="relative z-10 mx-auto flex max-w-[1440px] flex-col justify-end gap-6 px-5 py-10 sm:px-8 md:px-10 md:py-14 lg:flex-row lg:items-end lg:justify-between"
-            >
-              <div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusPill status={spotlightArena.status} />
-                  <span className="micro text-[10px] text-[#8f8992]">{t('spotlight.kicker')}</span>
-                </div>
-                <h2 className="display mt-4 text-3xl font-black uppercase text-white md:text-5xl">{spotlightArena.title}</h2>
-                <div className="mt-5 flex flex-wrap gap-6 text-sm text-[#a1a1aa]">
-                  <div><span className="micro block text-[9px] text-[#66616a]">{spotlightArena.status === 'live' ? t('spotlight.endsIn') : t('spotlight.startsIn')}</span><strong className="display text-2xl text-white">{spotlightCountdown}</strong></div>
-                  <div><span className="micro block text-[9px] text-[#66616a]">{t('spotlight.traders')}</span><strong className="display text-2xl text-white">{spotlightArena.participants.toLocaleString(dateLocale())}</strong></div>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                {spotlightArena.status === 'live' && (
-                  <button type="button" className="ghost-cta px-5 py-3 text-sm" onClick={() => navigate(`/compete/leaderboard/${spotlightArena.id}`)}>{t('spotlight.watch')}</button>
-                )}
-                {!myCompetitions.some((entry) => entry.id === spotlightArena.id) && spotlightArena.canJoin !== false && (
-                  <button type="button" className="blood-cta px-5 py-3 text-sm" onClick={() => session ? openJoinModal(spotlightArena) : document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth' })}>{t('spotlight.join')}</button>
-                )}
-              </div>
-            </motion.div>
-          </section>
-        )}
+        {!session && <ProcessSection />}
 
         {/* MES COMPETITIONS */}
         {session && (
@@ -1215,13 +1148,13 @@ export default function CompetitionPlatform() {
                 </p>
               </div>
             ) : (
-              <div className="mt-6 grid gap-5 md:grid-cols-2">
-                {activeMyCompetitions.map((competition) => (
+              <div className="mt-6 grid gap-6">
+                {activeMyCompetitions.map((competition, idx) => (
                   <MyCompetitionCard
                     key={competition.id}
                     competition={competition}
-                    season={matchSeason(seasons, competition.startAt, competition.seasonId)}
                     busy={busy}
+                    index={idx}
                     onTrade={() => startCompetitionTrading(competition)}
                     onStart={refreshData}
                   />
@@ -1243,7 +1176,7 @@ export default function CompetitionPlatform() {
               {t('sections.publicEmpty')}
             </div>
           ) : (
-            <div className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-6 grid gap-6">
               {joinablePublicCompetitions.map((competition, idx) => {
                 const alreadyJoined = myCompetitions.some((entry) => entry.id === competition.id);
                 return (
@@ -1261,8 +1194,6 @@ export default function CompetitionPlatform() {
         </section>
 
         <SummerSeasonHomeSection seasons={seasons} />
-
-        {!session && <ProcessSection />}
 
         {latestNews.length > 0 && (
           <section className="mx-auto max-w-7xl px-5 pt-16 sm:px-8 md:px-10">
@@ -1868,36 +1799,206 @@ function UserSummary({ user, pnlUsd, avgPnlPct, count, stats, badges, rating }: 
   );
 }
 
+type ArenaEventCompetition = {
+  id: string;
+  title: string;
+  executionMode: 'paper' | 'real';
+  startAt: number;
+  endAt: number;
+  registrationEndsAt?: number;
+  dailyDrawdownPercent?: number | null;
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
+  canJoin?: boolean;
+  cashPrize?: CashPrize | null;
+  participants?: number;
+  sponsor?: string | null;
+  bannerImageUrl?: string | null;
+};
+
+function ArenaEventCard({
+  competition,
+  joined,
+  busy = false,
+  canTrade = false,
+  onJoin,
+  onTrade,
+  index,
+}: {
+  competition: ArenaEventCompetition;
+  joined: boolean;
+  busy?: boolean;
+  canTrade?: boolean;
+  onJoin?: () => void;
+  onTrade?: () => void;
+  index?: number;
+}) {
+  const { t } = useTranslation();
+  const isLive = competition.status === 'live';
+  const isEnded = competition.status === 'ended';
+  const canJoin = competition.canJoin ?? competition.status === 'registration';
+  const sponsor = getSponsor(competition.sponsor);
+  const accent = sponsor?.accent ?? '#dc2626';
+  const banner = resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/btf-arena-seo.webp';
+  const prize = getPrizeTitle(competition.cashPrize) || t('publicCard.freeEntry');
+  const countdown = useCountdown(isLive ? competition.endAt : competition.startAt);
+  const breakdown = competition.cashPrize?.breakdown?.slice(0, 3) || [];
+  const statusLabel = isLive
+    ? t('publicCard.liveNow')
+    : competition.status === 'registration' && canJoin
+      ? t('publicCard.arenaOpen')
+      : competition.status === 'starting_soon'
+        ? t('status.startingSoon')
+        : t('publicCard.arenaClosed');
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.06 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
+      className="arena-event-card group relative isolate w-full overflow-hidden rounded-3xl border bg-[#08080b]"
+      style={{ borderColor: `${accent}55`, boxShadow: `0 30px 90px -55px ${accent}` }}
+    >
+      <img
+        src={encodeURI(banner)}
+        alt=""
+        className="pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-full object-contain object-right opacity-45 transition duration-700 group-hover:scale-[1.025] group-hover:opacity-55 md:w-[62%]"
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+      />
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.98)_38%,rgba(8,8,11,.74)_67%,rgba(8,8,11,.35)_100%)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-[#08080b] to-transparent" />
+      <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+
+      <div className="relative p-5 sm:p-7 md:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span
+            className="micro inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[9px] text-white"
+            style={{ borderColor: `${accent}88`, backgroundColor: `${accent}22` }}
+          >
+            <i className={`h-1.5 w-1.5 rounded-full ${isEnded ? 'bg-zinc-500' : 'animate-pulse bg-[#ff435c] shadow-[0_0_12px_#ef233c]'}`} />
+            {statusLabel}
+          </span>
+          {sponsor && (
+            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/45 px-3 py-1.5 backdrop-blur-md">
+              <span className="micro text-[8px] text-[#77717a]">{t('sponsor.sponsoredBy', { name: sponsor.name })}</span>
+              <img src={sponsor.logoUrl} alt={sponsor.name} className="h-4 w-auto object-contain" />
+            </div>
+          )}
+        </div>
+
+        <div className="mt-7 grid items-end gap-7 md:grid-cols-[minmax(0,1.2fr)_minmax(210px,.8fr)]">
+          <div className="min-w-0">
+            <h3 className="display max-w-2xl text-3xl font-black uppercase leading-[0.92] text-white sm:text-4xl md:text-5xl">
+              {competition.title}
+            </h3>
+            <p className="mt-3 text-sm text-[#a1a1aa]">
+              {competition.executionMode === 'paper' ? t('publicCard.paperCompetition') : t('publicCard.realCompetition')}
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-x-6 gap-y-3 text-sm">
+              <span className="inline-flex items-center gap-2 text-[#d4d4d8]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
+                  <circle cx="9" cy="8" r="4" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M17 11a4 4 0 0 1 4.5 4v5" />
+                </svg>
+                <b className="font-semibold text-white">{competition.participants ?? 0}</b> {t('publicCard.registeredTraders')}
+              </span>
+              <span className="inline-flex items-center gap-2 text-[#d4d4d8]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" />
+                </svg>
+                {fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}
+              </span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-5 backdrop-blur-md">
+            <div className="micro text-[9px] text-[#f5b300]">{t('publicCard.prizeToWin')}</div>
+            <div className="display mt-1 text-4xl font-black uppercase leading-none text-white sm:text-5xl">{prize}</div>
+            {breakdown.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[#a1a1aa]">
+                {breakdown.map((item) => (
+                  <span key={item.rank}>
+                    {t('publicCard.place', { rank: item.rank })} <b className="text-[#ffe7a3]">{formatPrizeAmount(item.amount, competition.cashPrize?.currency || 'USD')}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+            {!isEnded && (
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <div className="micro text-[8px] text-[#77717a]">
+                  {isLive ? t('publicCard.endsIn') : t('publicCard.startsIn')}
+                </div>
+                <div className="num mt-1 text-2xl font-black tabular-nums text-white sm:text-3xl">{countdown}</div>
+                {!isLive && <div className="mt-1 text-[10px] text-[#77717a]">{fmtDateTime(competition.startAt)}</div>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-7 flex flex-col gap-4 border-t border-white/10 pt-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#8b8490]">
+            <span>{competition.executionMode === 'paper' ? t('mode.paper') : t('mode.real')}</span>
+            <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
+            <span>{t('publicCard.freeEntry')}</span>
+            {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+              <>
+                <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
+                <span>{t('publicCard.dailyDrawdown')} {competition.dailyDrawdownPercent}%</span>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {joined ? (
+              canTrade && onTrade ? (
+                <button type="button" onClick={onTrade} disabled={busy} className="blood-cta min-w-48 px-6 py-3.5 text-sm">
+                  {busy ? '...' : t('myCard.trade')}
+                </button>
+              ) : (
+                <span className="inline-flex min-w-48 items-center justify-center gap-2 rounded-xl border border-[#10b981]/35 bg-[#10b981]/12 px-6 py-3.5 text-xs font-black uppercase tracking-[0.13em] text-[#6ee7b7]">
+                  ✓ {t('publicCard.youAreJoined')}
+                </span>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={onJoin}
+                disabled={isEnded || !canJoin}
+                className="blood-cta min-w-52 px-7 py-3.5 text-sm"
+                style={!isEnded && canJoin ? { background: accent, boxShadow: `0 16px 42px -20px ${accent}` } : undefined}
+              >
+                {isEnded ? t('publicCard.arenaClosed') : !canJoin ? t('publicCard.joinClosed') : t('publicCard.joinArena')}
+              </button>
+            )}
+            <Link
+              to={joined ? `/compete/leaderboard/${competition.id}` : '/reglement'}
+              className="ghost-cta flex items-center justify-center px-5 py-3.5 text-xs uppercase tracking-[0.12em]"
+            >
+              {joined ? t('publicCard.viewArena') : t('publicCard.viewRules')} →
+            </Link>
+          </div>
+        </div>
+      </div>
+    </motion.article>
+  );
+}
+
 function MyCompetitionCard({
-  competition, season, busy, onTrade, onStart,
+  competition, busy, onTrade, onStart, index,
 }: {
   competition: CompetitionMine;
-  season: SeasonInfo | null;
   busy: boolean;
   onTrade: () => void;
   onStart?: () => void;
+  index?: number;
 }) {
-  const { t } = useTranslation();
-  const pnlPercent = competition.myEntry.pnlPercent;
-  const pnlUsd = competition.myEntry.pnlUsd;
-  const pos = pnlPercent >= 0;
   const isLive = competition.status === 'live';
   const isEnded = competition.status === 'ended';
-  const targetTs = isLive ? competition.endAt : competition.startAt;
-  const countdown = useCountdown(targetTs);
   const startReached = !isLive && !isEnded && Date.now() >= competition.startAt;
   const canTrade = (competition.canTrade ?? isLive) || startReached;
-  const sponsor = getSponsor(competition.sponsor);
-  const banner = withDisplayWidth(resolveMediaUrl(competition.bannerImageUrl), 720)
-    || resolveMediaUrl(competition.bannerImageUrl)
-    || '/assets/pictures/btf-arena-seo.webp';
-  const prized = hasPrize(competition.cashPrize);
-  const prizeTitle = getPrizeTitle(competition.cashPrize);
-  const prizeImage = competition.cashPrize?.imageUrl || competition.cashPrize?.items?.[0]?.imageUrl || '';
-  const seasonName = season ? t(season.nameKey) : '';
-  const summer = !season || season.theme === 'summer';
-
   const startSyncedRef = useRef(false);
+
   useEffect(() => {
     if (startReached && !startSyncedRef.current) {
       startSyncedRef.current = true;
@@ -1906,168 +2007,14 @@ function MyCompetitionCard({
   }, [startReached, onStart]);
 
   return (
-    <motion.article
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="group relative overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0b10] shadow-[0_24px_60px_-32px_rgba(0,0,0,0.9)]"
-    >
-      <div className="relative h-36 overflow-hidden sm:h-40">
-        <img
-          src={encodeURI(banner)}
-          alt=""
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-          loading="lazy"
-          decoding="async"
-        />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b0b10] via-[#0b0b10]/45 to-black/20" />
-        {isLive && <div className="hero-scanline" />}
-        <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
-          <StatusPill status={competition.status} />
-          <ModePill mode={competition.executionMode} />
-          {competition.breached && (
-            <span className="inline-flex items-center gap-1 rounded-md border border-[#ef4444]/55 bg-[#ef4444]/18 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[#fca5a5]">
-              {t('leaderboard.breached')}
-            </span>
-          )}
-        </div>
-        {seasonName && (
-          <span className={`absolute right-3 top-3 rounded-full border px-3 py-1 text-[9px] font-black uppercase tracking-[0.14em] backdrop-blur-md ${
-            summer
-              ? 'border-[#f5b300]/50 bg-black/55 text-[#f5b300]'
-              : 'border-orange-400/45 bg-black/55 text-orange-200'
-          }`}>
-            {seasonName}
-          </span>
-        )}
-        {sponsor && (
-          <div className="absolute bottom-3 right-3 rounded-md border border-white/15 bg-black/50 px-2 py-1 backdrop-blur-md">
-            <img src={sponsor.logoUrl} alt={sponsor.name} className="h-3.5 w-auto object-contain" />
-          </div>
-        )}
-      </div>
-
-      <div className="p-5 sm:p-6">
-        <h3 className="display break-words text-xl font-black uppercase leading-tight text-white sm:text-2xl">
-          {competition.title}
-        </h3>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#8b8b96]">
-          <span>{fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}</span>
-          {seasonName && (
-            <span className={summer ? 'text-[#f5b300]/80' : 'text-orange-200/80'}>
-              {t('myCard.countsFor', { season: seasonName })}
-            </span>
-          )}
-        </div>
-
-        {prized && (
-          <div className="mt-4 flex items-center gap-4 overflow-hidden rounded-2xl border border-[#f5b300]/40 bg-gradient-to-r from-[#f5b300]/18 via-[#241a05] to-[#120d08] p-3.5 sm:p-4">
-            {prizeImage ? (
-              <OptimizedImage
-                src={prizeImage}
-                alt={prizeTitle}
-                className="h-16 w-16 shrink-0 rounded-xl border border-[#f5b300]/30 object-cover sm:h-[4.5rem] sm:w-[4.5rem]"
-                displayWidth={144}
-              />
-            ) : (
-              <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border border-[#f5b300]/30 bg-[#241a05] text-[#f5b300] sm:h-[4.5rem] sm:w-[4.5rem]">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="8" r="6" />
-                  <path d="M8.21 13.89 7 22l5-3 5 3-1.21-8.11" />
-                </svg>
-              </span>
-            )}
-            <div className="min-w-0">
-              <div className="micro text-[10px] text-[#f5b300]">{t('prize.toWin')}</div>
-              <div className="display mt-0.5 truncate text-2xl font-black uppercase tracking-tight text-white sm:text-3xl">
-                {prizeTitle || t('leaderboard.rewardAlt')}
-              </div>
-              {competition.dailyDrawdownPercent ? (
-                <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#fca5a5]/80">
-                  {t('publicCard.dailyDrawdown')} {competition.dailyDrawdownPercent}%
-                </div>
-              ) : null}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
-          <div className={`metric ${pos ? 'metric-pos' : 'metric-neg'}`}>
-            <div className="metric-label">{t('myCard.myPnl')}</div>
-            <div className={`metric-value ${pos ? 'is-pos' : 'is-neg'}`} style={{ fontSize: 'clamp(1.35rem, 5vw, 1.85rem)' }}>
-              <AnimatedNumber value={pnlPercent} format={(v) => formatPercent(v)} />
-              <span className="unit">%</span>
-            </div>
-            <span className={`pnl-pill mt-1 ${pos ? 'up' : 'down'}`}>
-              <AnimatedNumber value={pnlUsd} format={(v) => formatCompactSigned(v)} />
-              <span className="text-[#71717a]">USD</span>
-            </span>
-          </div>
-          <div className="metric">
-            <div className="metric-label">{competition.rank && competition.rank > 0 ? t('myCard.rank') : t('myCard.trades')}</div>
-            <div className="metric-value" style={{ fontSize: 'clamp(1.35rem, 5vw, 1.85rem)' }}>
-              {competition.rank && competition.rank > 0
-                ? `#${competition.rank}`
-                : <AnimatedNumber value={competition.myEntry.tradesCount} format={(v) => formatCompactUnsigned(v)} />}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:gap-3">
-          <div className="metric">
-            <div className="metric-label">{isLive ? t('myCard.endsIn') : isEnded ? t('myCard.statusLabel') : t('myCard.startsIn')}</div>
-            <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4vw, 1.25rem)' }}>
-              {isEnded ? t('myCard.ended') : countdown}
-            </div>
-          </div>
-          {competition.rank && competition.rank > 0 ? (
-            <div className="metric">
-              <div className="metric-label">{t('myCard.trades')}</div>
-              <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4vw, 1.25rem)' }}>
-                <AnimatedNumber value={competition.myEntry.tradesCount} format={(v) => formatCompactUnsigned(v)} />
-              </div>
-            </div>
-          ) : (
-            <div className="metric">
-              <div className="metric-label">{t('archived.participants')}</div>
-              <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4vw, 1.25rem)' }}>
-                {competition.participants ?? '—'}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <ScheduleInfo
-          startAt={competition.startAt}
-          registrationEndsAt={competition.registrationEndsAt}
-          status={competition.status}
-          className="mt-3"
-        />
-
-        <div className="mt-5 grid gap-2.5 sm:grid-cols-[2.2fr_1fr]">
-          <button
-            type="button"
-            onClick={onTrade}
-            disabled={busy || isEnded || !canTrade}
-            className="blood-cta px-6 py-4 text-base sm:text-lg"
-          >
-            {busy
-              ? '...'
-              : isEnded
-                ? t('myCard.arenaClosed')
-                : !canTrade
-                  ? t('myCard.opensIn', { countdown })
-                  : t('myCard.trade')}
-          </button>
-          <Link
-            to={`/compete/leaderboard/${competition.id}`}
-            className="ghost-cta flex items-center justify-center px-4 py-3 text-xs uppercase tracking-[0.16em] sm:py-4"
-          >
-            {t('myCard.leaderboard')}
-          </Link>
-        </div>
-      </div>
-    </motion.article>
+    <ArenaEventCard
+      competition={competition}
+      joined
+      busy={busy}
+      canTrade={canTrade}
+      onTrade={onTrade}
+      index={index}
+    />
   );
 }
 
@@ -2079,147 +2026,13 @@ function PublicCompetitionCard({
   onJoin: () => void;
   index?: number;
 }) {
-  const { t } = useTranslation();
-  const isEnded = competition.status === 'ended';
-  const isLive = competition.status === 'live';
-  const canJoin = competition.canJoin ?? (competition.status === 'registration');
-  const sponsor = getSponsor(competition.sponsor);
-  const accent = sponsor?.accent ?? '#dc2626';
-  const banner = withDisplayWidth(resolveMediaUrl(competition.bannerImageUrl), 720)
-    || resolveMediaUrl(competition.bannerImageUrl)
-    || '/assets/pictures/btf-arena-seo.webp';
-  const prized = hasPrize(competition.cashPrize);
   return (
-    <motion.article
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5, delay: 0.05 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
-      className="tilt-card group relative z-0 flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0b10] shadow-[0_24px_60px_-32px_rgba(0,0,0,0.9)] hover:z-30 hover:border-white/15"
-      style={sponsor ? { borderColor: `${accent}55` } : undefined}
-    >
-      {/* —— Bannière —— */}
-      <div className="relative h-36 overflow-hidden sm:h-40">
-        <img
-          src={encodeURI(banner)}
-          alt={competition.title}
-          className="h-full w-full object-cover transition-transform duration-[600ms] ease-out group-hover:scale-[1.06]"
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-        />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b0b10] via-[#0b0b10]/25 to-transparent" />
-        {isLive && <div className="hero-scanline" />}
-
-        {/* Pastille mode (haut gauche) */}
-        <span className="absolute left-3 top-3 flex flex-wrap items-center gap-1.5">
-          <ModePill mode={competition.executionMode} />
-        </span>
-
-        {/* Statut (haut droite) */}
-        <span className="absolute right-3 top-3"><StatusPill status={competition.status} /></span>
-
-        {/* Sponsor (bas droite sur la bannière) */}
-        {sponsor && (
-          <div
-            className="absolute bottom-2.5 right-2.5 flex items-center rounded-md border px-2 py-1 backdrop-blur-md"
-            style={{ borderColor: `${accent}80`, backgroundColor: 'rgba(0,0,0,0.45)' }}
-          >
-            <img src={sponsor.logoUrl} alt={sponsor.name} className="h-3.5 w-auto object-contain" />
-          </div>
-        )}
-      </div>
-
-      {/* —— Corps —— */}
-      <div className="flex flex-1 flex-col p-4">
-        <h3 className="display break-words text-base font-bold uppercase leading-tight text-white sm:text-[17px]">
-          {competition.title}
-        </h3>
-        {sponsor && (
-          <div className="mt-0.5 text-[10px] font-medium" style={{ color: sponsor.accentSoft }}>
-            {t('sponsor.sponsoredBy', { name: sponsor.name })}
-          </div>
-        )}
-
-        <div className="mt-3 space-y-2">
-          {/* Dotation / entrée */}
-          <div className="flex items-center gap-2 text-[12px]">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${prized ? 'text-amber-400' : 'text-[#6b6b76]'}`} aria-hidden="true">
-              <circle cx="12" cy="8" r="6" /><path d="M8.21 13.89L7 22l5-3 5 3-1.21-8.11" />
-            </svg>
-            {prized ? (
-              <span className="truncate font-bold text-amber-300">{getPrizeTitle(competition.cashPrize)}</span>
-            ) : (
-              <span className="font-semibold text-[#34d399]">{t('publicCard.freeEntry')}</span>
-            )}
-          </div>
-          {/* Période */}
-          <div className="flex items-center gap-2 text-[12px] text-[#a1a1aa]">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#71717a]" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
-            </svg>
-            <span className="truncate">{fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}</span>
-          </div>
-          {/* En ligne + nombre de traders */}
-          <div className="flex items-center gap-2 text-[12px] text-[#a1a1aa]">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#71717a]" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20" />
-            </svg>
-            <span className="truncate">{t('publicCard.online')}</span>
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-[#cfcfd6]">
-              <AnimatedNumber value={competition.participants} format={(v) => formatCompactUnsigned(v)} />
-              <span className="text-[#71717a]">{t('publicCard.traders')}</span>
-            </span>
-          </div>
-        </div>
-
-        <ScheduleInfo
-          startAt={competition.startAt}
-          registrationEndsAt={competition.registrationEndsAt}
-          status={competition.status}
-          className="mt-3"
-        />
-
-        {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
-          <div className="mt-3">
-            <DrawdownRule percent={competition.dailyDrawdownPercent} />
-          </div>
-        )}
-
-        {/* —— Actions —— */}
-        <div className="mt-auto flex items-stretch gap-2 pt-4">
-          {alreadyJoined ? (
-            <span className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#10b981]/30 bg-[#10b981]/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#34d399]">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-              {t('publicCard.joined')}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={onJoin}
-              disabled={isEnded || !canJoin}
-              className="blood-cta flex-1 px-4 py-3 text-sm"
-              style={sponsor && canJoin ? { background: accent, boxShadow: `0 16px 40px -18px ${accent}` } : undefined}
-            >
-              {isEnded
-                ? t('publicCard.arenaClosed')
-                : !canJoin
-                  ? t('publicCard.joinClosed')
-                  : t('publicCard.join')}
-            </button>
-          )}
-          <Link
-            to={`/compete/leaderboard/${competition.id}`}
-            aria-label={t('publicCard.leaderboard')}
-            title={t('publicCard.leaderboard')}
-            className="flex w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-[#a1a1aa] transition-colors hover:border-white/20 hover:text-white"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-            </svg>
-          </Link>
-        </div>
-      </div>
-    </motion.article>
+    <ArenaEventCard
+      competition={competition}
+      joined={alreadyJoined}
+      onJoin={onJoin}
+      index={index}
+    />
   );
 }
 

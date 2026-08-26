@@ -10,6 +10,7 @@ import {
   readCachedCompeteUser,
   type CompeteSessionUser,
 } from '../lib/competeSession';
+import { useIsMobileWeb } from '../lib/mobileWeb';
 import './ArenaChat.css';
 
 type ArenaChatMessage = {
@@ -37,6 +38,7 @@ export default function ArenaChat({
 }) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const isMobileWeb = useIsMobileWeb();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ArenaChatMessage[]>([]);
   const [body, setBody] = useState('');
@@ -171,117 +173,146 @@ export default function ArenaChat({
     }
   }
 
+  const panel = (
+    <aside className={`arena-chat-panel${isMobileWeb ? '' : ' is-float'}`}>
+      <header>
+        <div>
+          <span>{t('arenaChat.kicker')}</span>
+          <strong>{title}</strong>
+        </div>
+        <button type="button" onClick={() => setOpen(false)} aria-label={isMobileWeb ? t('common.close') : t('arenaChat.collapse')}>
+          {isMobileWeb ? '×' : '–'}
+        </button>
+      </header>
+      <div className="arena-chat-notice">{t('arenaChat.notice')}</div>
+
+      <section className="arena-chat-messages" aria-live="polite">
+        {loading ? (
+          <div className="arena-chat-state">{t('common.loading')}</div>
+        ) : messages.length === 0 ? (
+          <div className="arena-chat-state">
+            <strong>{t('arenaChat.emptyTitle')}</strong>
+            <span>{t('arenaChat.emptyLead')}</span>
+          </div>
+        ) : messages.map((message) => {
+          const mine = user?.id === message.userId;
+          return (
+            <article key={message.id} className={mine ? 'is-mine' : ''}>
+              <button type="button" onClick={() => navigate(`/compete/player/${message.userId}`)}>
+                {message.avatarUrl
+                  ? <AvatarImage src={message.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" sizePx={32} />
+                  : <span>{message.name.slice(0, 2).toUpperCase()}</span>}
+              </button>
+              <div>
+                <header>
+                  <strong>{message.name}</strong>
+                  <time>{new Date(message.createdAt).toLocaleTimeString(i18n.resolvedLanguage === 'fr' ? 'fr-FR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
+                </header>
+                {message.imageUrl && (
+                  <button className="arena-chat-photo" type="button" onClick={() => setViewer(resolveMediaUrl(message.imageUrl) || message.imageUrl || '')}>
+                    <img src={resolveMediaUrl(message.imageUrl)} alt={t('arenaChat.photo')} />
+                  </button>
+                )}
+                {message.body && <p>{message.body}</p>}
+              </div>
+            </article>
+          );
+        })}
+        <div ref={bottomRef} />
+      </section>
+
+      {error && <div className="arena-chat-error">{error}</div>}
+      {!token || !user ? (
+        <button className="arena-chat-login" type="button" onClick={() => navigate('/compete#signup')}>
+          {t('arenaChat.loginToWrite')}
+        </button>
+      ) : (
+        <form onSubmit={(event) => { event.preventDefault(); void send(); }}>
+          {preview && (
+            <div className="arena-chat-preview">
+              <img src={preview} alt="" />
+              <button type="button" onClick={clearPhoto}>×</button>
+            </div>
+          )}
+          <div className="arena-chat-composer">
+            <button type="button" onClick={() => inputRef.current?.click()} aria-label={t('arenaChat.attach')}>＋</button>
+            <input
+              ref={inputRef}
+              hidden
+              type="file"
+              accept="image/*"
+              onChange={(event) => {
+                choosePhoto(event.target.files?.[0]);
+                event.target.value = '';
+              }}
+            />
+            <textarea
+              rows={1}
+              maxLength={600}
+              value={body}
+              placeholder={t('arenaChat.placeholder')}
+              onChange={(event) => setBody(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <button type="submit" disabled={sending || (!body.trim() && !photo)}>{sending ? '…' : '➤'}</button>
+          </div>
+        </form>
+      )}
+    </aside>
+  );
+
   return (
     <>
-      <button
-        type="button"
-        className="arena-chat-btn"
-        onClick={() => setOpen(true)}
-        aria-label={t('arenaChat.open')}
-      >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
-        </svg>
-        {t('arenaChat.open')}
-      </button>
-      {open && createPortal(
-        <>
-        <div className="arena-chat-backdrop" onMouseDown={() => setOpen(false)}>
-          <aside className="arena-chat-panel" onMouseDown={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <span>{t('arenaChat.kicker')}</span>
-                <strong>{title}</strong>
-              </div>
-              <button type="button" onClick={() => setOpen(false)} aria-label={t('common.close')}>×</button>
-            </header>
-            <div className="arena-chat-notice">{t('arenaChat.notice')}</div>
-
-            <section className="arena-chat-messages" aria-live="polite">
-              {loading ? (
-                <div className="arena-chat-state">{t('common.loading')}</div>
-              ) : messages.length === 0 ? (
-                <div className="arena-chat-state">
-                  <strong>{t('arenaChat.emptyTitle')}</strong>
-                  <span>{t('arenaChat.emptyLead')}</span>
-                </div>
-              ) : messages.map((message) => {
-                const mine = user?.id === message.userId;
-                return (
-                  <article key={message.id} className={mine ? 'is-mine' : ''}>
-                    <button type="button" onClick={() => navigate(`/compete/player/${message.userId}`)}>
-                      {message.avatarUrl
-                        ? <AvatarImage src={message.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" sizePx={32} />
-                        : <span>{message.name.slice(0, 2).toUpperCase()}</span>}
-                    </button>
-                    <div>
-                      <header>
-                        <strong>{message.name}</strong>
-                        <time>{new Date(message.createdAt).toLocaleTimeString(i18n.resolvedLanguage === 'fr' ? 'fr-FR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
-                      </header>
-                      {message.imageUrl && (
-                        <button className="arena-chat-photo" type="button" onClick={() => setViewer(resolveMediaUrl(message.imageUrl) || message.imageUrl || '')}>
-                          <img src={resolveMediaUrl(message.imageUrl)} alt={t('arenaChat.photo')} />
-                        </button>
-                      )}
-                      {message.body && <p>{message.body}</p>}
-                    </div>
-                  </article>
-                );
-              })}
-              <div ref={bottomRef} />
-            </section>
-
-            {error && <div className="arena-chat-error">{error}</div>}
-            {!token || !user ? (
-              <button className="arena-chat-login" type="button" onClick={() => navigate('/compete#signup')}>
-                {t('arenaChat.loginToWrite')}
-              </button>
-            ) : (
-              <form onSubmit={(event) => { event.preventDefault(); void send(); }}>
-                {preview && (
-                  <div className="arena-chat-preview">
-                    <img src={preview} alt="" />
-                    <button type="button" onClick={clearPhoto}>×</button>
-                  </div>
-                )}
-                <div className="arena-chat-composer">
-                  <button type="button" onClick={() => inputRef.current?.click()} aria-label={t('arenaChat.attach')}>＋</button>
-                  <input
-                    ref={inputRef}
-                    hidden
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => {
-                      choosePhoto(event.target.files?.[0]);
-                      event.target.value = '';
-                    }}
-                  />
-                  <textarea
-                    rows={1}
-                    maxLength={600}
-                    value={body}
-                    placeholder={t('arenaChat.placeholder')}
-                    onChange={(event) => setBody(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        void send();
-                      }
-                    }}
-                  />
-                  <button type="submit" disabled={sending || (!body.trim() && !photo)}>{sending ? '…' : '➤'}</button>
-                </div>
-              </form>
-            )}
-          </aside>
-        </div>
-
-      {viewer && (
-        <button className="arena-chat-lightbox" type="button" onClick={() => setViewer('')}>
-          <img src={viewer} alt={t('arenaChat.photo')} />
+      {isMobileWeb && (
+        <button
+          type="button"
+          className="arena-chat-btn"
+          onClick={() => setOpen(true)}
+          aria-label={t('arenaChat.open')}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
+          </svg>
+          {t('arenaChat.open')}
         </button>
       )}
+      {createPortal(
+        <>
+          {isMobileWeb ? (
+            open ? (
+              <div className="arena-chat-backdrop" onMouseDown={() => setOpen(false)}>
+                <div onMouseDown={(event) => event.stopPropagation()}>{panel}</div>
+              </div>
+            ) : null
+          ) : (
+            <div className={`arena-chat-dock${open ? ' is-open' : ''}`}>
+              {!open && (
+                <button
+                  type="button"
+                  className="arena-chat-tab"
+                  onClick={() => setOpen(true)}
+                  aria-expanded={false}
+                  aria-label={t('arenaChat.open')}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
+                  </svg>
+                  <span>{t('arenaChat.tab')}</span>
+                </button>
+              )}
+              {open && panel}
+            </div>
+          )}
+          {viewer && (
+            <button className="arena-chat-lightbox" type="button" onClick={() => setViewer('')}>
+              <img src={viewer} alt={t('arenaChat.photo')} />
+            </button>
+          )}
         </>,
         document.body,
       )}

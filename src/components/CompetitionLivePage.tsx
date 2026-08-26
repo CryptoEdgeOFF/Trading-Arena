@@ -7,6 +7,7 @@ import Seo from './Seo';
 import { formatDHMS } from '../utils/formatters';
 import OptimizedImage from './OptimizedImage';
 import { resolveMediaUrl } from '../utils/imageUrl';
+import { COMPETE_SESSION_KEY } from '../lib/competeSession';
 
 type Arena = {
   id: string;
@@ -29,14 +30,21 @@ function useCountdown(target: number) {
   return formatDHMS(target - now, i18n.language.startsWith('fr') ? 'j' : 'd');
 }
 
-function ArenaCard({ arena, featured = false }: { arena: Arena; featured?: boolean }) {
+function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; featured?: boolean; joined?: boolean }) {
   const { t, i18n } = useTranslation();
   const isLive = arena.status === 'live';
   const countdown = useCountdown(isLive ? arena.endAt : arena.startAt);
-  const destination = isLive ? `/compete/leaderboard/${arena.id}` : `/compete?arena=${arena.id}`;
+  const destination = joined || isLive
+    ? `/compete/leaderboard/${arena.id}`
+    : `/compete?arena=${arena.id}`;
+  const cta = joined
+    ? t('myCard.leaderboard')
+    : isLive
+      ? t('spotlight.watch')
+      : t('spotlight.join');
 
   return (
-    <article className={`group relative overflow-hidden border border-white/[0.09] bg-[#0a0a0e] ${featured ? 'min-h-[430px] rounded-3xl' : 'min-h-[290px] rounded-2xl'}`}>
+    <article className={`group relative overflow-hidden border border-white/[0.09] bg-[#0a0a0e] ${featured ? 'min-h-[240px] rounded-2xl sm:min-h-[280px]' : 'min-h-[200px] rounded-2xl'}`}>
       <OptimizedImage
         src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
         alt=""
@@ -44,26 +52,26 @@ function ArenaCard({ arena, featured = false }: { arena: Arena; featured?: boole
         className="absolute inset-0 h-full w-full object-cover opacity-60 transition duration-700 group-hover:scale-[1.035] group-hover:opacity-75"
       />
       <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-[#050507]/55 to-black/10" />
-      <div className="absolute inset-x-0 top-0 flex items-center justify-between p-5">
+      <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4">
         <span className={`micro inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[9px] ${isLive ? 'border-[#ef233c]/55 bg-[#ef233c]/15 text-white' : 'border-white/15 bg-black/45 text-[#d4d4d8]'}`}>
           {isLive && <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff314d] shadow-[0_0_10px_#ef233c]" />}
           {isLive ? t('status.live') : arena.status === 'starting_soon' ? t('status.startingSoon') : t('status.registration')}
         </span>
         <span className="micro text-[9px] text-white/65">{arena.participants} {t('spotlight.traders')}</span>
       </div>
-      <div className="absolute inset-x-0 bottom-0 p-5 sm:p-7">
+      <div className="absolute inset-x-0 bottom-0 p-4 sm:p-5">
         <div className="micro text-[9px] text-[#ff5268]">{t('livePage.weeklyArena')}</div>
-        <h2 className={`display mt-1 font-black uppercase italic text-white ${featured ? 'text-4xl md:text-6xl' : 'text-3xl'}`}>{arena.title}</h2>
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-4 border-t border-white/10 pt-4">
+        <h2 className={`display mt-1 font-black uppercase italic text-white ${featured ? 'text-2xl md:text-4xl' : 'text-xl'}`}>{arena.title}</h2>
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-white/10 pt-3">
           <div>
             <span className="micro block text-[8px] text-[#77717a]">{isLive ? t('spotlight.endsIn') : t('spotlight.startsIn')}</span>
-            <strong className="num mt-1 block text-xl font-black text-white">{countdown}</strong>
+            <strong className="num mt-1 block text-lg font-black text-white">{countdown}</strong>
             <small className="mt-1 block text-[10px] text-[#77717a]">
               {new Date(arena.startAt).toLocaleString(i18n.language, { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC
             </small>
           </div>
-          <Link to={destination} className="blood-cta px-5 py-3 text-[10px] uppercase tracking-[0.14em]">
-            {isLive ? t('spotlight.watch') : t('spotlight.join')} →
+          <Link to={destination} className="blood-cta px-4 py-2.5 text-[10px] uppercase tracking-[0.14em]">
+            {cta} →
           </Link>
         </div>
       </div>
@@ -102,9 +110,21 @@ function ArchiveMiniCard({ arena }: { arena: Arena }) {
   );
 }
 
+function readCachedJoinedIds(): string[] {
+  try {
+    const raw = window.localStorage.getItem('btf-comp-mine-cache');
+    if (!raw) return [];
+    const list = JSON.parse(raw) as Array<{ id?: string }>;
+    return Array.isArray(list) ? list.map((item) => item.id).filter((id): id is string => Boolean(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function CompetitionLivePage() {
   const { t } = useTranslation();
   const [arenas, setArenas] = useState<Arena[]>([]);
+  const [joinedIds, setJoinedIds] = useState<Set<string>>(() => new Set(readCachedJoinedIds()));
   const [loading, setLoading] = useState(true);
   const [archivesOpen, setArchivesOpen] = useState(false);
 
@@ -122,6 +142,24 @@ export default function CompetitionLivePage() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+
+    const token = window.localStorage.getItem(COMPETE_SESSION_KEY);
+    if (token) {
+      void fetch('/api/competition/mine', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(async (response) => {
+          if (!response.ok) return null;
+          return response.json() as Promise<{ competitions?: Array<{ id?: string }> }>;
+        })
+        .then((payload) => {
+          if (cancelled || !payload) return;
+          const ids = (payload.competitions || []).map((item) => item.id).filter((id): id is string => Boolean(id));
+          setJoinedIds(new Set(ids));
+        })
+        .catch(() => undefined);
+    }
+
     return () => {
       cancelled = true;
     };
@@ -163,12 +201,12 @@ export default function CompetitionLivePage() {
         ) : featured ? (
           <>
             <motion.div initial={{ opacity: 0, scale: 0.985 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.08 }}>
-              <ArenaCard arena={featured} featured />
+              <ArenaCard arena={featured} featured joined={joinedIds.has(featured.id)} />
             </motion.div>
             {active.length > 1 && (
               <section className="mt-10">
                 <div className="mb-4 flex items-center gap-3"><span className="h-px flex-1 bg-white/10" /><h2 className="micro text-[10px] text-[#a1a1aa]">{t('livePage.upcoming')}</h2><span className="h-px flex-1 bg-white/10" /></div>
-                <div className="grid gap-4 md:grid-cols-2">{active.slice(1).map((arena) => <ArenaCard key={arena.id} arena={arena} />)}</div>
+                <div className="grid gap-4 md:grid-cols-2">{active.slice(1).map((arena) => <ArenaCard key={arena.id} arena={arena} joined={joinedIds.has(arena.id)} />)}</div>
               </section>
             )}
           </>

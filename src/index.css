@@ -961,13 +961,32 @@ body.app-scroll-lock {
   box-shadow: 0 50px 100px -34px rgba(0, 0, 0, 0.92);
   z-index: 30;
 }
+
+.compete .arena-event-card {
+  transform: perspective(1600px) rotateX(0.6deg) rotateY(-1.5deg);
+  transform-origin: center left;
+  transition:
+    transform 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.35s ease,
+    box-shadow 0.55s ease;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+.compete .arena-event-card:hover {
+  transform: perspective(1600px) rotateX(0deg) rotateY(0deg) translateY(-4px);
+  box-shadow: 0 42px 100px -55px rgba(220, 38, 38, 0.65);
+}
 @media (max-width: 640px) {
   .compete .tilt-card { transform: perspective(1100px) rotateY(-9deg); }
   .compete .tilt-card:hover { transform: translateY(-6px) scale(1.03); }
+  .compete .arena-event-card,
+  .compete .arena-event-card:hover { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .compete .tilt-card,
-  .compete .tilt-card:hover { transform: none; transition: none; }
+  .compete .tilt-card:hover,
+  .compete .arena-event-card,
+  .compete .arena-event-card:hover { transform: none; transition: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

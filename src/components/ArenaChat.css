@@ -133,3 +133,56 @@
   border-color: rgba(255, 70, 92, .7);
   background: rgba(225, 29, 56, .22);
 }
+
+.arena-chat-dock {
+  position: fixed;
+  right: 18px;
+  bottom: 22px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.arena-chat-dock > * {
+  pointer-events: auto;
+}
+
+.arena-chat-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 70, 92, .45);
+  border-radius: 999px;
+  background: rgba(9, 9, 13, .92);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .4);
+  color: #fff;
+  font: 800 11px/1 'Barlow Condensed', sans-serif;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  backdrop-filter: blur(12px);
+}
+
+.arena-chat-tab:hover {
+  border-color: rgba(255, 70, 92, .75);
+  background: rgba(225, 29, 56, .22);
+}
+
+.arena-chat-panel.is-float {
+  width: min(380px, calc(100vw - 36px));
+  height: min(640px, calc(100vh - 110px));
+  border: 1px solid rgba(255, 70, 92, .28);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+}
+
+.arena-chat-panel.is-float > header {
+  padding: 14px 14px 12px;
+}
+
+.arena-chat-panel.is-float > header strong {
+  font-size: 17px;
+}
