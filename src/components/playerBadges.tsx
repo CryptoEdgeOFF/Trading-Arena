@@ -44,7 +44,7 @@ const BADGE_DEFS: Record<UserBadge, BadgeDef> = {
     particles: ['#ef4444', '#dc2626', '#f87171', '#ffffff'],
   },
   'summer-champion': {
-    src: '/assets/badges/Summer Season BTF Arena Badge.png',
+    src: '/assets/badges/summer-season-badge.webp',
     nameKey: 'badges.summerChampion',
     descKey: 'badges.summerChampionDesc',
     longDescKey: 'badges.summerChampionLong',
@@ -52,7 +52,7 @@ const BADGE_DEFS: Record<UserBadge, BadgeDef> = {
     particles: ['#fbbf24', '#f59e0b', '#fde68a', '#ffffff'],
   },
   'autumn-champion': {
-    src: '/assets/badges/Automn Season BTF Arena Badge.png',
+    src: '/assets/badges/autumn-season-badge.webp',
     nameKey: 'badges.autumnChampion',
     descKey: 'badges.autumnChampionDesc',
     longDescKey: 'badges.autumnChampionLong',

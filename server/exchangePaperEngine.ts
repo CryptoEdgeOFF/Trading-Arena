@@ -472,9 +472,8 @@ export class PaperTradingEngine {
   }
 
   /**
-   * Démarre (ou maintient) le flux prix crypto Kraken/Binance pour les
-   * charts, même sans compétition active. Les pairs iTick restent gérées
-   * par le bridge iTick côté index.ts.
+   * Démarre (ou maintient) le flux prix crypto Kraken/Binance.
+   * Appelé seulement quand une arène est live / imminente.
    */
   async ensureMarketFeed(): Promise<void> {
     if (this.marketFeedActive) return;
@@ -814,6 +813,11 @@ export class PaperTradingEngine {
     this.playersRef = [];
     this.liveEventIds.clear();
     this.pairIndexDirty = true;
+  }
+
+  /** Coupe le feed marché sans vider les joueurs d’arène. */
+  pauseMarketFeed(): void {
+    this.stopMarketFeed();
   }
 
   /** Arrête tout, y compris le feed marché (shutdown serveur). */

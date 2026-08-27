@@ -3,7 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
 import { countryFromPhone } from './phoneCountry.js';
-import { DRAWDOWN_WARNING_RATIO, drawdownBufferConsumedRatio } from './notificationRules.js';
+import { drawdownBufferConsumedRatio, shouldWarnDailyDrawdown } from './notificationRules.js';
+import { hydratePnlHistory } from './pnlHistoryStore.js';
 
 export interface CompetitionUser {
   id: string;
@@ -230,10 +231,10 @@ function buildDefaultSeasons(): LeaderboardSeason[] {
       rewardTitleKey: 'seasons.summer2026.rewardTitle',
       rewardDescKey: 'seasons.summer2026.rewardDesc',
       theme: 'summer',
-      bannerImage: '/assets/Seasons/Summer Season BTF Arena.png',
-      shirtImage: '/assets/badges/Summer Season Shirt BTF Arena.png',
-      arenaImage: '/assets/pictures/arena3d.png',
-      homeBannerImage: '/assets/pictures/SummerSeasonBannerHomeBTfarena.png',
+      bannerImage: '/assets/Seasons/summer-season-ranking.webp',
+      shirtImage: '/assets/badges/summer-season-shirt.webp',
+      arenaImage: '/assets/pictures/arena3d.webp',
+      homeBannerImage: '/assets/pictures/summer-season-home.webp',
     },
     {
       id: 'autumn-2026',
@@ -249,7 +250,7 @@ function buildDefaultSeasons(): LeaderboardSeason[] {
       theme: 'autumn',
       bannerImage: null,
       shirtImage: null,
-      arenaImage: '/assets/pictures/arena3d.png',
+      arenaImage: '/assets/pictures/arena3d.webp',
       homeBannerImage: null,
     },
   ];
@@ -358,6 +359,10 @@ export interface Competition {
   notifiedNewArenaAt?: number | null;
   /** Timestamp d'envoi du push « nouvelle arène disponible » (anti-doublon). */
   notifiedNewArenaPushAt?: number | null;
+  /** Timestamp d'envoi du rappel 24 h aux non-inscrits (anti-doublon). */
+  notifiedRegisterReminder24hAt?: number | null;
+  /** Timestamp d'envoi du rappel J+2 aux inscrits sans trade (anti-doublon). */
+  notifiedNoTradeReminderAt?: number | null;
   /** Saison du leaderboard global à laquelle cette arène contribue. */
   seasonId?: string | null;
   /**
@@ -373,6 +378,12 @@ export interface Competition {
    * d'idempotence : une occurrence programmée n'est créée qu'une seule fois.
    */
   scheduleKey?: string | null;
+  /** Course PnL persistée (réalisé + latent) depuis le départ de l'arène. */
+  pnlRace?: {
+    samples: Array<{ t: number; rows: Array<{ userId: string; pnlPercent: number }> }>;
+    moments?: Array<{ t: number; type: 'leader' | 'top3'; userId: string }>;
+    lastSampleAt?: number;
+  };
 }
 
 export type CompetitionStatus = 'registration' | 'starting_soon' | 'live' | 'ended';
@@ -511,6 +522,15 @@ function canJoinCompetition(competition: CompetitionTiming, now = Date.now()): b
 
 function canTradeCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
   return now >= competition.startAt && now <= competition.endAt;
+}
+
+/** Allume les feeds prix 10 min avant le départ pour que le 1er tick soit prêt. */
+export const MARKET_FEED_WARMUP_MS = 10 * 60_000;
+
+function needsMarketFeed(competition: CompetitionTiming, now = Date.now()): boolean {
+  if (now > competition.endAt) return false;
+  if (now >= competition.startAt) return true;
+  return competition.startAt - now <= MARKET_FEED_WARMUP_MS;
 }
 
 function isTeamCompetition(competition: Pick<Competition, 'entryMode'>): boolean {
@@ -1112,6 +1132,7 @@ export class CompetitionManager {
         ...competition,
         executionMode: competition.executionMode === 'real' ? 'real' : 'paper',
       });
+      hydratePnlHistory(competition.id, competition.pnlRace);
     }
     this.migrateCompetitionSeasonIds();
     if (hadNoSeasonsInStore) this.save();
@@ -2083,6 +2104,14 @@ export class CompetitionManager {
     }));
   }
 
+  /** True s’il existe une arène live ou dont le départ est dans moins de 10 min. */
+  needsLiveMarketData(now = Date.now()): boolean {
+    for (const competition of this.competitions.values()) {
+      if (needsMarketFeed(competition, now)) return true;
+    }
+    return false;
+  }
+
   listPublicCompetitions(): Array<{
     id: string;
     title: string;
@@ -2258,12 +2287,39 @@ export class CompetitionManager {
     ));
   }
 
+  setPnlRace(
+    competitionId: string,
+    snapshot: {
+      samples: Array<{ t: number; rows: Array<{ userId: string; pnlPercent: number }> }>;
+      moments?: Array<{ t: number; type: 'leader' | 'top3'; userId: string }>;
+      lastSampleAt?: number;
+    },
+  ): void {
+    const competition = this.competitions.get(competitionId);
+    if (!competition || !snapshot.samples.length) return;
+    competition.pnlRace = {
+      samples: snapshot.samples,
+      moments: snapshot.moments || [],
+      lastSampleAt: snapshot.lastSampleAt,
+    };
+    if (this.pool) void this.persist();
+    else this.save();
+  }
+
   getPaperPlayerIdsForCompetition(competitionId: string): string[] {
     const competition = this.competitions.get(competitionId);
     if (!competition) return [];
     return competition.entries
       .map((entry) => entry.paperPlayerId)
       .filter((playerId): playerId is string => Boolean(playerId));
+  }
+
+  getCompetitionPaperPlayers(competitionId: string): Array<{ userId: string; paperPlayerId: string }> {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return [];
+    return competition.entries
+      .filter((entry): entry is typeof entry & { paperPlayerId: string } => Boolean(entry.paperPlayerId))
+      .map((entry) => ({ userId: entry.userId, paperPlayerId: entry.paperPlayerId }));
   }
 
   getPushContextForPaperPlayer(paperPlayerId: string): {
@@ -2346,7 +2402,7 @@ export class CompetitionManager {
    * partir des trades dans index.ts).
    * Si `seasonId` est fourni, seules les arènes de cette saison comptent.
    */
-  listUserParticipations(options?: { seasonId?: string | null }): Array<{
+  listUserParticipations(options?: { seasonId?: string | null; includeBadges?: boolean }): Array<{
     userId: string;
     name: string;
     avatarUrl: string | null;
@@ -2356,8 +2412,12 @@ export class CompetitionManager {
     arenas: number;
     paperPlayerIds: string[];
   }> {
+    const rows = this.listUserParticipationsCore(options);
+    if (options?.includeBadges === false) {
+      return rows.map((row) => ({ ...row, badges: [] }));
+    }
     const badges = this.getAllUserBadges();
-    return this.listUserParticipationsCore(options).map((row) => ({
+    return rows.map((row) => ({
       ...row,
       badges: badges.get(row.userId) ?? [],
     }));
@@ -2467,6 +2527,18 @@ export class CompetitionManager {
 
   getUserBadges(userId: string): UserBadge[] {
     return this.getAllUserBadges().get(userId) ?? [];
+  }
+
+  /** Tous les joueurs qui ont au moins une arène terminée (pour backfill rating). */
+  listEndedArenaUserIds(): string[] {
+    const ids = new Set<string>();
+    for (const competition of this.competitions.values()) {
+      if (inferCompetitionStatus(competition) !== 'ended') continue;
+      for (const entry of competition.entries) {
+        if (entry.userId) ids.add(entry.userId);
+      }
+    }
+    return [...ids];
   }
 
   /**
@@ -2665,7 +2737,7 @@ export class CompetitionManager {
             updateEvent = { newlyBreached: true, competitionId: competition.id };
           } else {
             const consumedRatio = drawdownBufferConsumedRatio(entry.dailyBaselineEquity, equity, limit);
-            if (consumedRatio >= DRAWDOWN_WARNING_RATIO && entry.dailyDrawdownWarnedDayKey !== dayKey) {
+            if (shouldWarnDailyDrawdown(consumedRatio, entry.dailyDrawdownWarnedDayKey, dayKey)) {
               entry.dailyDrawdownWarnedDayKey = dayKey;
               updateEvent = {
                 newlyBreached: false,
@@ -3123,6 +3195,70 @@ export class CompetitionManager {
     };
   }
 
+  findUserByDisplayName(name: string): CompetitionUser | null {
+    return this.findUserByName(name);
+  }
+
+  getUserById(userId: string): CompetitionUser | null {
+    const user = this.users.get(userId);
+    if (!user || user.deletedAt) return null;
+    return user;
+  }
+
+  /**
+   * Arènes (hors qualification) d'un joueur, pour relire son terminal paper.
+   * Tri : fin la plus récente d'abord.
+   */
+  listUserReviewArenas(userId: string): Array<{
+    id: string;
+    title: string;
+    status: CompetitionStatus;
+    startAt: number;
+    endAt: number;
+    paperPlayerId: string | null;
+    rank: number | null;
+    pnlUsd: number;
+    pnlPercent: number;
+    tradesCount: number;
+    participants: number;
+  }> {
+    const out: Array<{
+      id: string;
+      title: string;
+      status: CompetitionStatus;
+      startAt: number;
+      endAt: number;
+      paperPlayerId: string | null;
+      rank: number | null;
+      pnlUsd: number;
+      pnlPercent: number;
+      tradesCount: number;
+      participants: number;
+    }> = [];
+    for (const competition of this.competitions.values()) {
+      if (isQualificationCompetition(competition.title)) continue;
+      const entry = competition.entries.find((item) => item.userId === userId);
+      if (!entry) continue;
+      const ranked = sortAndRankLeaderboard(competition.entries.slice());
+      const myRanked = ranked.find((item) => item.userId === userId);
+      out.push({
+        id: competition.id,
+        title: competition.title,
+        status: inferCompetitionStatus(competition),
+        startAt: competition.startAt,
+        endAt: competition.endAt,
+        paperPlayerId: entry.paperPlayerId || null,
+        rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
+        pnlUsd: Number(entry.pnlUsd) || 0,
+        pnlPercent: Number(entry.pnlPercent) || 0,
+        tradesCount: Math.max(0, Math.floor(Number(entry.tradesCount) || 0)),
+        participants: competition.entries.length,
+      });
+    }
+    out.sort((a, b) => b.endAt - a.endAt || b.startAt - a.startAt);
+    return out;
+  }
+
   deleteCompetition(id: string): { paperPlayerIds: string[] } {
     const competition = this.competitions.get(id);
     if (!competition) throw new Error('Competition introuvable');
@@ -3132,6 +3268,93 @@ export class CompetitionManager {
     this.competitions.delete(id);
     this.save();
     return { paperPlayerIds };
+  }
+
+  async removeCompetitionParticipants(
+    id: string,
+    userIds: string[],
+    reason: string,
+  ): Promise<{ removed: Array<{ userId: string; paperPlayerId: string | null }> }> {
+    const competition = this.competitions.get(id);
+    if (!competition) throw new Error('Competition introuvable');
+
+    const targets = new Set(userIds.map((value) => String(value || '').trim()).filter(Boolean));
+    if (!targets.size) throw new Error('Aucun participant fourni');
+
+    const entries = competition.entries.filter((entry) => targets.has(entry.userId));
+    const found = new Set(entries.map((entry) => entry.userId));
+    const missing = [...targets].filter((userId) => !found.has(userId));
+    if (missing.length) throw new Error(`Participant(s) absent(s) de cette competition: ${missing.join(', ')}`);
+
+    const linkedPayout = Array.from(this.payouts.values()).find((payout) => (
+      payout.competitionId === id && targets.has(payout.userId)
+    ));
+    if (linkedPayout) {
+      throw new Error('Suppression refusee: un payout est deja lie a cette participation');
+    }
+
+    if (this.pool) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(`
+          create table if not exists comp_removed_participations (
+            id text primary key,
+            competition_id text not null,
+            user_id text not null,
+            paper_player_id text,
+            entry_data jsonb not null,
+            player_data jsonb,
+            reason text not null,
+            removed_at timestamptz not null default now(),
+            unique (competition_id, user_id)
+          )
+        `);
+        for (const entry of entries) {
+          await client.query(`
+            insert into comp_removed_participations (
+              id, competition_id, user_id, paper_player_id, entry_data, player_data, reason
+            )
+            values (
+              $1, $2, $3, $4, $5::jsonb,
+              (select data from comp_paper_players where id = $4),
+              $6
+            )
+            on conflict (competition_id, user_id) do update set
+              paper_player_id = excluded.paper_player_id,
+              entry_data = excluded.entry_data,
+              player_data = excluded.player_data,
+              reason = excluded.reason,
+              removed_at = now()
+          `, [
+            crypto.randomUUID(),
+            id,
+            entry.userId,
+            entry.paperPlayerId || null,
+            JSON.stringify(entry),
+            reason,
+          ]);
+        }
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    competition.entries = competition.entries.filter((entry) => !targets.has(entry.userId));
+    competition.updatedAt = Date.now();
+    this.competitions.set(id, competition);
+    await this.persist();
+
+    return {
+      removed: entries.map((entry) => ({
+        userId: entry.userId,
+        paperPlayerId: entry.paperPlayerId || null,
+      })),
+    };
   }
 
   updateCompetition(id: string, patch: Partial<{
@@ -3354,6 +3577,8 @@ export class CompetitionManager {
     notifiedEndedAt: number | null;
     notifiedNewArenaAt: number | null;
     notifiedNewArenaPushAt: number | null;
+    notifiedRegisterReminder24hAt: number | null;
+    notifiedNoTradeReminderAt: number | null;
   }> {
     return Array.from(this.competitions.values()).map((competition) => ({
       id: competition.id,
@@ -3368,6 +3593,8 @@ export class CompetitionManager {
       notifiedEndedAt: competition.notifiedEndedAt ?? null,
       notifiedNewArenaAt: competition.notifiedNewArenaAt ?? null,
       notifiedNewArenaPushAt: competition.notifiedNewArenaPushAt ?? null,
+      notifiedRegisterReminder24hAt: competition.notifiedRegisterReminder24hAt ?? null,
+      notifiedNoTradeReminderAt: competition.notifiedNoTradeReminderAt ?? null,
     }));
   }
 
@@ -3377,13 +3604,19 @@ export class CompetitionManager {
   }
 
   /** Marque une notification comme envoyée (persisté, anti-doublon). */
-  markCompetitionNotified(competitionId: string, kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush'): void {
+  markCompetitionNotified(
+    competitionId: string,
+    kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush' | 'registerReminder24h' | 'noTradeReminder',
+  ): void {
     const competition = this.competitions.get(competitionId);
     if (!competition) return;
-    if (kind === 'startSoon') competition.notifiedStartSoonAt = Date.now();
-    else if (kind === 'ended') competition.notifiedEndedAt = Date.now();
-    else if (kind === 'newArena') competition.notifiedNewArenaAt = Date.now();
-    else competition.notifiedNewArenaPushAt = Date.now();
+    const now = Date.now();
+    if (kind === 'startSoon') competition.notifiedStartSoonAt = now;
+    else if (kind === 'ended') competition.notifiedEndedAt = now;
+    else if (kind === 'newArena') competition.notifiedNewArenaAt = now;
+    else if (kind === 'newArenaPush') competition.notifiedNewArenaPushAt = now;
+    else if (kind === 'registerReminder24h') competition.notifiedRegisterReminder24hAt = now;
+    else competition.notifiedNoTradeReminderAt = now;
     this.competitions.set(competition.id, competition);
     this.save();
   }
@@ -3410,6 +3643,14 @@ export class CompetitionManager {
       }
       if (!competition.notifiedNewArenaAt && status === 'ended') {
         competition.notifiedNewArenaAt = now;
+        dirty = true;
+      }
+      if (!competition.notifiedRegisterReminder24hAt && (status === 'live' || status === 'ended')) {
+        competition.notifiedRegisterReminder24hAt = now;
+        dirty = true;
+      }
+      if (!competition.notifiedNoTradeReminderAt && (status === 'ended' || (status === 'live' && now - competition.startAt >= 3 * 24 * 60 * 60 * 1000))) {
+        competition.notifiedNoTradeReminderAt = now;
         dirty = true;
       }
 
@@ -3451,22 +3692,28 @@ export class CompetitionManager {
     };
   }
 
+  isUserInCompetition(competitionId: string, userId: string): boolean {
+    const competition = this.competitions.get(competitionId);
+    return Boolean(competition?.entries.some((entry) => entry.userId === userId));
+  }
+
   getNewArenaPayload(competitionId: string): {
     title: string;
     startAt: number;
     endAt: number;
     cashPrize: CashPrize | null;
     sponsor: string | null;
-    recipients: Array<{ name: string; email: string }>;
+    recipients: Array<{ id: string; name: string; email: string }>;
   } | null {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
     const alreadyIn = new Set(competition.entries.map((entry) => entry.userId));
-    const recipients: Array<{ name: string; email: string }> = [];
+    const recipients: Array<{ id: string; name: string; email: string }> = [];
     for (const user of this.users.values()) {
+      if (user.deletedAt) continue;
       if (alreadyIn.has(user.id)) continue;
       if (!user.email) continue;
-      recipients.push({ name: user.name || 'Trader', email: user.email });
+      recipients.push({ id: user.id, name: user.name || 'Trader', email: user.email });
     }
     return {
       title: competition.title,
@@ -3501,7 +3748,7 @@ export class CompetitionManager {
         return {
           userId: entry.userId,
           name: user?.name || 'Participant',
-          email: user?.email || '',
+          email: user && !user.deletedAt ? (user.email || '') : '',
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,

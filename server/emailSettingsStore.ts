@@ -23,6 +23,8 @@ export const EMAIL_KINDS = [
   'payout_request_admin',
   'payout_approved',
   'arena_start_soon',
+  'arena_register_reminder_24h',
+  'arena_no_trade_reminder',
   'arena_podium_lost',
   'arena_results',
 ] as const;
@@ -93,6 +95,18 @@ export const EMAIL_CATALOG: EmailKindMeta[] = [
     kind: 'arena_start_soon',
     label: 'Arène — bientôt en live',
     description: "Notification automatique aux inscrits quand une arène va démarrer. Texte dynamique (non éditable).",
+    fields: [],
+  },
+  {
+    kind: 'arena_register_reminder_24h',
+    label: 'Arène — rappel 24h aux non-inscrits',
+    description: "Envoi automatique 24 h avant le départ aux utilisateurs qui ne sont pas encore inscrits. Les inscrits sont exclus. Texte dynamique (non éditable).",
+    fields: [],
+  },
+  {
+    kind: 'arena_no_trade_reminder',
+    label: 'Arène — rappel J+2 sans trade',
+    description: "Envoi automatique 2 jours après le départ aux inscrits qui n’ont encore passé aucun trade. Texte dynamique (non éditable).",
     fields: [],
   },
   {

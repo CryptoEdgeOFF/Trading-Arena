@@ -19,6 +19,14 @@ import type { ShareCardData } from '../lib/shareCard';
 import Seo, { SITE_URL } from './Seo';
 import { formatDHMS } from '../utils/formatters';
 import { buildArenaEventJsonLd } from '../lib/structuredData';
+import ArenaChat from './ArenaChat';
+import PnlRaceChart, {
+  mergePnlSamples,
+  type PnlHistorySample,
+  type PnlHistoryTrader,
+  type PnlMoment,
+} from './PnlRaceChart';
+import './SpectateBroadcast.css';
 
 const REFRESH_MS = 2000;
 const SESSION_KEY = 'btf-comp-session';
@@ -146,8 +154,17 @@ export default function CompetitionPublicLeaderboard() {
   const [paused, setPaused] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [shareData, setShareData] = useState<ShareCardData | null>(null);
+  const [pnlHistory, setPnlHistory] = useState<{
+    samples: PnlHistorySample[];
+    traders: PnlHistoryTrader[];
+    moments?: PnlMoment[];
+  } | null>(null);
+  const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] });
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
+  const isLive = data?.competition.status === 'live';
+  const isEnded = data?.competition.status === 'ended';
+  const showRace = Boolean(isLive || isEnded);
 
   useEffect(() => {
     if (!id) return;
@@ -165,9 +182,13 @@ export default function CompetitionPublicLeaderboard() {
         const payload = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(payload.error || t('leaderboard.unavailable'));
-        setData(payload as LeaderboardResponse);
+        const next = payload as LeaderboardResponse;
+        setData(next);
         setLastRefresh(Date.now());
         setError('');
+        if (next.competition.status === 'live' && id) {
+          applyPnlSnapshot(id, next.leaderboard);
+        }
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : t('common.unknownError'));
       } finally {
@@ -184,6 +205,70 @@ export default function CompetitionPublicLeaderboard() {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [id, t]);
+
+  const applyPnlSnapshot = (competitionId: string, rows: LeaderboardRow[], moments?: PnlMoment[]) => {
+    const rankedRows = rows.filter((row) => row.rank > 0).sort((a, b) => a.rank - b.rank).slice(0, 40);
+    if (rankedRows.length === 0) return;
+    const now = Date.now();
+    const rowsSnapshot = rankedRows.map((row) => ({ userId: row.userId, pnlPercent: row.pnlPercent }));
+    const sample: PnlHistorySample = { t: now, rows: rowsSnapshot };
+    const traders: PnlHistoryTrader[] = rankedRows.map((row) => ({
+      userId: row.userId,
+      name: row.name,
+      avatarUrl: row.avatarUrl,
+      rank: row.rank,
+      pnlPercent: row.pnlPercent,
+      breached: row.breached,
+    }));
+    const buffer = pnlBufferRef.current;
+    const seed = buffer.competitionId === competitionId
+      ? [sample]
+      : [{ t: now - 30_000, rows: rowsSnapshot }, sample];
+    const merged = mergePnlSamples(
+      buffer.competitionId === competitionId ? buffer.samples : [],
+      seed,
+    );
+    pnlBufferRef.current = { competitionId, samples: merged };
+    setPnlHistory({ samples: merged, traders, moments });
+  };
+
+  useEffect(() => {
+    if (!id || !showRace) {
+      setPnlHistory(null);
+      pnlBufferRef.current = { competitionId: '', samples: [] };
+      return;
+    }
+    const competitionId = id;
+    let cancelled = false;
+
+    async function loadHistory() {
+      try {
+        const response = await fetch(`/api/competition/leaderboard/${competitionId}/pnl-history`);
+        if (!response.ok) return;
+        const payload = await response.json() as {
+          samples?: PnlHistorySample[];
+          traders?: PnlHistoryTrader[];
+          moments?: PnlMoment[];
+        };
+        if (cancelled || !payload.samples?.length || !payload.traders?.length) return;
+        const buffer = pnlBufferRef.current;
+        const merged = buffer.competitionId === competitionId
+          ? mergePnlSamples(buffer.samples, payload.samples)
+          : mergePnlSamples([], payload.samples);
+        pnlBufferRef.current = { competitionId, samples: merged };
+        setPnlHistory({ samples: merged, traders: payload.traders, moments: payload.moments });
+      } catch {
+        // Le snapshot leaderboard reste un fallback.
+      }
+    }
+
+    void loadHistory();
+    const timer = isLive ? window.setInterval(() => void loadHistory(), 10_000) : 0;
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [id, isLive, showRace]);
 
   useEffect(() => {
     const token = window.localStorage.getItem(SESSION_KEY);
@@ -312,6 +397,7 @@ export default function CompetitionPublicLeaderboard() {
                 <div>
                   <div className="flex flex-wrap items-center gap-3">
                     <StatusPill status={data.competition.status} />
+                    {id && <ArenaChat competitionId={id} title={data.competition.title} />}
                     <span className="flex items-center gap-2 rounded-full border border-[#dc2626]/30 bg-[#dc2626]/10 px-3 py-1 text-[11px] font-semibold text-[#fca5a5]">
                       <span className={`h-2 w-2 rounded-full ${paused ? 'bg-[#71717a]' : 'live-dot'}`} />
                       {paused ? t('leaderboard.paused') : t('leaderboard.live')}
@@ -422,6 +508,27 @@ export default function CompetitionPublicLeaderboard() {
                   </div>
                   <RankRow row={myRow} index={0} isMe compact />
                 </section>
+              )}
+
+              {showRace && pnlHistory && (
+                <motion.section
+                  initial={{ opacity: 0, y: 22 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                  className="spec-stage"
+                >
+                  <div className="spec-stage__frame">
+                    <i aria-hidden="true" />
+                    <span className="spec-stage__tag"><i />{t('spectateHud.feed')}</span>
+                    <PnlRaceChart
+                      samples={pnlHistory.samples}
+                      traders={pnlHistory.traders}
+                      moments={pnlHistory.moments}
+                      currentUserId={currentUserId}
+                      ended={isEnded}
+                    />
+                  </div>
+                </motion.section>
               )}
 
               {/* PODIUM */}

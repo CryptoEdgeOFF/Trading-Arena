@@ -1,4 +1,22 @@
-.rank-screen { display:grid; gap:15px; align-content:start; }
+.rank-screen { display:grid; gap:12px; align-content:start; }
+.rank-join { display:grid; gap:8px; }
+.rank-join > small { color:#86efac; font:700 9px/1 Manrope,sans-serif; letter-spacing:.18em; text-transform:uppercase; }
+.rank-join > button { min-height:64px; padding:12px 14px; display:flex; align-items:center; gap:12px; border:1px solid rgba(255,255,255,.1); border-radius:14px; background:#0b0b10; color:inherit; text-align:left; }
+.rank-join > button span { min-width:0; flex:1; display:grid; gap:3px; }
+.rank-join > button strong { overflow:hidden; font:800 16px/1.1 'Barlow Condensed',sans-serif; text-transform:uppercase; text-overflow:ellipsis; white-space:nowrap; }
+.rank-join > button em { color:#8b8490; font-size:10px; font-style:normal; }
+.rank-join > button b { padding:8px 10px; border-radius:6px; background:var(--red); color:#fff; font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+.rank-tabs { position:sticky; top:0; z-index:5; display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px; border:1px solid rgba(255,255,255,.08); border-radius:12px; background:rgba(8,7,10,.94); }
+.rank-tabs button { min-height:34px; border:0; border-radius:8px; background:transparent; color:#9a96a0; font-size:11px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; }
+.rank-tabs button.is-active { background:#fff; color:#111; }
+.rank-more { width:100%; min-height:40px; margin-top:2px; border:1px solid rgba(255,255,255,.1); border-radius:8px; background:rgba(255,255,255,.04); color:#fff; font-size:10px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; }
+.rank-divisions { display:flex; gap:7px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
+.rank-divisions::-webkit-scrollbar { display:none; }
+.rank-divisions article { width:58px; flex:none; padding:7px 4px; display:grid; justify-items:center; gap:4px; border:1px solid rgba(255,255,255,.08); border-radius:10px; background:#0b0b10; text-align:center; }
+.rank-divisions article.is-mine { border-color:rgba(238,36,60,.45); background:rgba(238,36,60,.08); }
+.rank-divisions img, .rank-divisions .division-badge-fallback { width:34px; height:34px; object-fit:contain; }
+.rank-divisions strong { font-size:8px; font-weight:900; text-transform:uppercase; }
+.rank-divisions small { color:#ff8b9a; font-size:7px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
 .rank-hero { position:relative; overflow:hidden; min-height:116px; padding:17px 16px; display:flex; align-items:flex-end; border:1px solid rgba(238,36,60,.3); border-radius:4px; clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px); background:radial-gradient(90% 120% at 100% 0,rgba(238,36,60,.24),transparent 58%),repeating-linear-gradient(115deg,rgba(255,255,255,.018) 0 2px,transparent 2px 7px),linear-gradient(160deg,#191118,#0b090d); isolation:isolate; }
 .rank-hero::after { content:''; position:absolute; top:-70%; bottom:-70%; left:-25%; width:42px; transform:rotate(17deg); background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent); animation:rank-sheen 5.8s ease-in-out infinite; }
 @keyframes rank-sheen { 0%,62% { left:-25%; } 100% { left:125%; } }
@@ -75,21 +93,18 @@
 .rank-points { color:#e6e1e8; font-size:10px; font-weight:900; text-align:right; }
 
 .rank-paris { position:relative; overflow:hidden; display:grid; grid-template-columns:minmax(0,1fr); border:1px solid rgba(255,70,92,.42); border-radius:4px; background:linear-gradient(140deg,#181015,#0a090c); box-shadow:0 16px 38px rgba(0,0,0,.38),0 0 28px rgba(238,36,60,.08); }
-.rank-paris__visual { position:relative; width:100%; aspect-ratio:16/9; overflow:hidden; padding:18px 15px; display:flex; flex-direction:column; justify-content:flex-end; background:#120c10; border-bottom:1px solid rgba(255,255,255,.08); }
+.rank-paris__visual { position:relative; width:100%; height:128px; overflow:hidden; padding:14px 15px; display:flex; flex-direction:column; justify-content:flex-end; background:#120c10; border-bottom:1px solid rgba(255,255,255,.08); }
 .rank-paris__visual::after { content:''; position:absolute; inset:0; z-index:1; background:linear-gradient(180deg,rgba(7,5,8,.08),rgba(7,5,8,.34) 42%,rgba(7,5,8,.94)),linear-gradient(90deg,rgba(238,36,60,.14),transparent); pointer-events:none; }
 .rank-paris__visual video { position:absolute; inset:0; z-index:0; width:100%; height:100%; object-fit:cover; object-position:center; opacity:.88; pointer-events:none; user-select:none; }
 .rank-paris__visual video::-webkit-media-controls { display:none !important; }
 .rank-paris__visual span, .rank-paris__visual strong, .rank-paris__visual em { position:relative; z-index:2; }
 .rank-paris__visual span { color:#ff6578; font:italic 900 15px 'Barlow Condensed',sans-serif; letter-spacing:.2em; }
-.rank-paris__visual strong { color:#fff; font:italic 900 42px/.78 'Barlow Condensed',sans-serif; text-transform:uppercase; text-shadow:0 0 24px rgba(238,36,60,.5); }
-.rank-paris__visual em { margin-top:10px; color:#d0c8d0; font-size:8px; font-style:normal; font-weight:900; letter-spacing:.18em; }
-.rank-paris__copy { padding:16px 15px 17px; background:linear-gradient(100deg,rgba(238,36,60,.08),transparent 65%); }
-.rank-paris__copy > small { color:#ff6578; font-size:8px; font-weight:900; letter-spacing:.18em; }
-.rank-paris__copy h3 { margin:5px 0 0; font:italic 900 26px/.9 'Barlow Condensed',sans-serif; text-transform:uppercase; }
-.rank-paris__copy p { margin:9px 0 12px; color:#aaa3ad; font-size:10px; line-height:1.5; }
-.rank-paris__copy > div { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
-.rank-paris__copy > div span { padding:3px 5px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03); color:#c1bac4; font-size:6.5px; font-weight:900; text-transform:uppercase; }
-.rank-paris__copy > div i { color:#ff5268; font-size:8px; font-style:normal; }
+.rank-paris__visual strong { color:#fff; font:italic 900 34px/.78 'Barlow Condensed',sans-serif; text-transform:uppercase; text-shadow:0 0 24px rgba(238,36,60,.5); }
+.rank-paris__copy { padding:11px 13px 12px; background:linear-gradient(100deg,rgba(238,36,60,.08),transparent 65%); }
+.rank-paris__copy p { margin:0 0 8px; color:#c4c4cc; font-size:12px; line-height:1.35; }
+.rank-paris__copy > div { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
+.rank-paris__copy > div span { padding:4px 7px; border:1px solid rgba(255,255,255,.08); border-radius:99px; background:rgba(255,255,255,.03); color:#9a96a0; font-size:8px; font-weight:900; text-transform:uppercase; }
+.rank-paris__copy > div span.is-final { border-color:rgba(255,210,87,.5); background:rgba(255,210,87,.12); color:#ffe7a3; }
 
 .rank-season-ranking { overflow:hidden; border:1px solid rgba(255,210,87,.25); border-radius:4px; background:#0d0c10; clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px); }
 .rank-season-ranking > header { padding:14px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid rgba(255,255,255,.08); background:linear-gradient(100deg,rgba(255,210,87,.1),transparent 70%); }
@@ -105,24 +120,25 @@
 .rank-season-tabs button.is-soon { opacity:.45; color:#6f6973; }
 .rank-season-tabs button em { margin-left:6px; font-style:normal; font-weight:800; text-transform:none; letter-spacing:0; color:#7a7480; }
 .rank-season-ranking__visual { position:relative; }
-.rank-season-ranking__banner { width:100%; aspect-ratio:2/1; display:block; object-fit:cover; border-bottom:1px solid rgba(255,255,255,.08); }
+.rank-season-ranking__banner { width:100%; height:auto; display:block; object-fit:contain; border-bottom:1px solid rgba(255,255,255,.08); }
 .rank-season-ranking__clock { position:absolute; left:10px; bottom:10px; display:inline-flex; align-items:center; gap:7px; padding:6px 10px; border:1px solid rgba(255,210,87,.45); border-radius:99px; background:rgba(0,0,0,.55); font-style:normal; }
 .rank-season-ranking__clock small { color:#ffd257; font-size:8px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
 .rank-season-ranking__clock b { color:#ffe7a3; font:800 12px/1 'Barlow Condensed',sans-serif; font-variant-numeric:tabular-nums; }
 .rank-season-prizes { padding: 10px 10px 4px; border-bottom: 1px solid rgba(255,210,87,.12); background: linear-gradient(180deg, rgba(255,210,87,.06), transparent); }
 .rank-season-prizes > small { display: block; margin-bottom: 8px; color: #ffd257; font-size: 8px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
 .rank-season-prizes > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
-.rank-season-prizes article { min-height: 92px; padding: 8px 6px; display: grid; justify-items: center; align-content: center; gap: 6px; border: 1px solid rgba(255,210,87,.18); border-radius: 10px; background: rgba(0,0,0,.28); text-align: center; }
-.rank-season-prizes img { height: 48px; width: auto; max-width: 100%; object-fit: contain; filter: drop-shadow(0 6px 12px rgba(245,179,0,.28)); }
+.rank-season-prizes article { min-height: 72px; padding: 6px 4px; display: grid; justify-items: center; align-content: center; gap: 5px; border: 1px solid rgba(255,210,87,.18); border-radius: 10px; background: rgba(0,0,0,.28); text-align: center; }
+.rank-season-prizes img { height: 36px; width: auto; max-width: 100%; object-fit: contain; filter: drop-shadow(0 6px 12px rgba(245,179,0,.28)); }
 .rank-season-prizes strong { color: #ffe7a3; font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
-.rank-season-ranking__me { margin:10px; padding:9px 11px; display:flex; align-items:center; justify-content:space-between; border:1px solid rgba(238,36,60,.3); border-radius:3px; background:linear-gradient(90deg,rgba(238,36,60,.14),rgba(255,210,87,.05)); box-shadow:inset 2px 0 #ff4655; }
+.rank-season-ranking__me { margin:10px 10px 18px; padding:9px 11px; display:flex; align-items:center; justify-content:space-between; border:1px solid rgba(238,36,60,.3); border-radius:3px; background:linear-gradient(90deg,rgba(238,36,60,.14),rgba(255,210,87,.05)); box-shadow:inset 2px 0 #ff4655; }
 .rank-season-ranking__me div { display:flex; align-items:baseline; gap:8px; }
 .rank-season-ranking__me small { color:#ff8998; font-size:7px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }
 .rank-season-ranking__me strong { color:#fff; font:italic 900 20px 'Barlow Condensed',sans-serif; }
 .rank-season-ranking__me > span { font-size:11px; font-weight:900; }
 .rank-season-ranking__me > span.positive { color:#54d68b; }
 .rank-season-ranking__me > span.negative { color:#ff6578; }
-.rank-season-ranking__rows { max-height:min(52vh, 420px); overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+.rank-season-ranking__rows { display:grid; }
+.rank-season-ranking__rows > .rank-more { width:calc(100% - 20px); margin:8px 10px 12px; }
 .rank-season-ranking__rows > button { width:100%; min-height:52px; padding:8px 11px; display:grid; grid-template-columns:28px 34px minmax(0,1fr) auto; align-items:center; gap:8px; border:0; border-bottom:1px solid #1b191e; background:transparent; color:inherit; text-align:left; }
 .rank-season-ranking__rows > button:last-child { border-bottom:0; }
 .rank-season-ranking__rows > button.is-paris { background:linear-gradient(90deg,rgba(255,210,87,.1),transparent 70%); box-shadow:inset 2px 0 #ffd257; }

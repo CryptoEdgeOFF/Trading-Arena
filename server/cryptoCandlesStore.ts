@@ -25,6 +25,7 @@ import { Pool } from 'pg';
 import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 import * as cryptoCandles from './cryptoCandles.js';
 import { isItickPair } from './itickInstruments.js';
+import { isLiveMarketNeeded } from './liveMarketNeeded.js';
 
 export const CRYPTO_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
 
@@ -236,7 +237,7 @@ export function updateLiveCandle(pair: string, price: number, tsMs: number): voi
 }
 
 async function flushDirty(): Promise<void> {
-  if (!pool) return;
+  if (!pool || !isLiveMarketNeeded()) return;
   for (const [key, series] of liveSeries.entries()) {
     if (series.dirty.size === 0) continue;
     const [pair, intervalStr] = key.split(':');
@@ -369,7 +370,7 @@ async function ensureHistory(
   countBack: number,
   fromSec: number | null,
 ): Promise<void> {
-  if (!pool) return;
+  if (!pool || !isLiveMarketNeeded()) return;
   const intervalSec = intervalMin * 60;
   const required = fromSec != null
     ? Math.max(countBack, Math.ceil((toSec - fromSec) / intervalSec) + 2)
@@ -463,7 +464,7 @@ function overlayLive(
 
 /** Réécrit les 1m récemment aplaties par le last-only avec l'OHLC spot officiel. */
 async function repairRecentOfficialBars(pair: string, intervalMin: number): Promise<void> {
-  if (!pool || intervalMin !== 1) return;
+  if (!pool || intervalMin !== 1 || !isLiveMarketNeeded()) return;
   const key = seriesKey(pair, intervalMin);
   const now = Date.now();
   if (now - (lastOfficialRepairAt.get(key) || 0) < OFFICIAL_REPAIR_MS) return;

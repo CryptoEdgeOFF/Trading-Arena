@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { apiAssetUrl, getNewsArticle, getNewsPage, type NewsArticle } from '../lib/api'
+import { getNewsArticle, getNewsPage, newsCoverAssetUrl, type NewsArticle } from '../lib/api'
 import { useI18n } from '../i18n'
 import './NewsScreen.css'
 
@@ -12,30 +12,74 @@ function articleDate(article: NewsArticle) {
   return article.publishedAt || article.createdAt
 }
 
+function localizeNews(article: NewsArticle, locale: string) {
+  const english = locale.startsWith('en')
+  return {
+    ...article,
+    title: english && article.titleEn ? article.titleEn : article.title,
+    summary: english && article.summaryEn ? article.summaryEn : article.summary,
+    body: english && article.bodyEn ? article.bodyEn : article.body,
+  }
+}
+
+function youtubeVideoId(url: string): string | null {
+  try {
+    const parsed = new URL(url.trim())
+    const host = parsed.hostname.replace(/^www\./, '')
+    if (host === 'youtu.be') {
+      const id = parsed.pathname.split('/').filter(Boolean)[0] || ''
+      return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null
+    }
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      const fromQuery = parsed.searchParams.get('v') || ''
+      if (/^[a-zA-Z0-9_-]{11}$/.test(fromQuery)) return fromQuery
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 function RichText({ text }: { text: string }) {
-  return <div className="news-detail__body">{text.split(/\n{2,}/).map((paragraph, index) => (
-    <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => (
-      /^https?:\/\//.test(part)
-        ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer">{part}</a>
-        : part
-    ))}</p>
-  ))}</div>
+  return <div className="news-detail__body">{text.split(/\n{2,}/).map((paragraph, index) => {
+    const youtubeId = youtubeVideoId(paragraph.trim())
+    if (youtubeId) {
+      return (
+        <div key={`${index}-${youtubeId}`} className="news-embed">
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${youtubeId}`}
+            title="YouTube"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+          />
+        </div>
+      )
+    }
+    return (
+      <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => (
+        /^https?:\/\//.test(part)
+          ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer">{part}</a>
+          : part
+      ))}</p>
+    )
+  })}</div>
 }
 
 function NewsDetail({ article, onClose }: { article: NewsArticle; onClose: () => void }) {
   const { t, locale } = useI18n()
+  const localized = localizeNews(article, locale)
   return (
     <article className="news-article">
       <header className="news-topline">
         <button type="button" onClick={onClose} aria-label={t('common.back')}>‹</button>
         <strong>{t('news.title')}</strong>
       </header>
-      {article.coverUrl && <img className="news-article__cover" src={apiAssetUrl(article.coverUrl)} alt="" />}
+      {article.coverUrl && <img className="news-article__cover" src={newsCoverAssetUrl(article.coverUrl)} alt={localized.title} />}
       <div className="news-article__content">
         <span>{article.featured ? t('news.featured') : ''}{formatDate(articleDate(article), locale)}</span>
-        <h2>{article.title}</h2>
-        {article.summary && <strong>{article.summary}</strong>}
-        <RichText text={article.body} />
+        <h2>{localized.title}</h2>
+        {localized.summary && <strong>{localized.summary}</strong>}
+        <RichText text={localized.body} />
       </div>
     </article>
   )
@@ -43,13 +87,14 @@ function NewsDetail({ article, onClose }: { article: NewsArticle; onClose: () =>
 
 function NewsCard({ article, index, onOpen }: { article: NewsArticle; index: number; onOpen: () => void }) {
   const { t, locale } = useI18n()
+  const localized = localizeNews(article, locale)
   return <motion.button className={`news-card ${article.featured ? 'is-featured' : ''}`} type="button" onClick={onOpen}
     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 6) * .035 }}>
-    {article.coverUrl && <img src={apiAssetUrl(article.coverUrl)} alt="" />}
+    {article.coverUrl && <img src={newsCoverAssetUrl(article.coverUrl, 'card')} alt={localized.title} />}
     <span className="news-card__content">
       <small>{article.featured ? t('news.featured') : ''}{formatDate(articleDate(article), locale)}</small>
-      <strong>{article.title}</strong>
-      <p>{article.summary || article.body}</p>
+      <strong>{localized.title}</strong>
+      <p>{localized.summary || localized.body}</p>
       <em>{t('news.read')} <b>›</b></em>
     </span>
   </motion.button>

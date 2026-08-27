@@ -8,9 +8,11 @@ import {
   type GlobalLeaderboardRow,
   type LeaderboardSeason,
   type PlayerRating,
+  type PublicCompetition,
   type RatingLeaderboardRow,
 } from '../lib/api'
-import { DivisionCard, divisionDisplayName } from './DivisionCard'
+import { getSponsor } from '../lib/sponsors'
+import { DivisionBadge, DivisionCard, DIVISION_BOUNDS, divisionDisplayName } from './DivisionCard'
 import { PlayerName } from './PlayerName'
 import { TraderPhoto } from './ProfileAvatar'
 import './RankScreen.css'
@@ -113,10 +115,14 @@ function formatSeasonClock(ms: number, dayUnit: string) {
 export function RankScreen({
   currentUserId,
   rating,
+  competitions = [],
+  onJoin,
   onOpenPlayer,
 }: {
   currentUserId?: string
   rating?: PlayerRating | null
+  competitions?: PublicCompetition[]
+  onJoin?: (competition: PublicCompetition) => void
   onOpenPlayer: (userId: string) => void
 }) {
   const { t, locale, lang } = useI18n()
@@ -127,6 +133,9 @@ export function RankScreen({
   const [ratingRows, setRatingRows] = useState<RatingLeaderboardRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [pane, setPane] = useState<'season' | 'rating'>('season')
+  const [seasonVisibleCount, setSeasonVisibleCount] = useState(10)
+  const [ratingVisibleCount, setRatingVisibleCount] = useState(20)
 
   useEffect(() => {
     let active = true
@@ -174,12 +183,23 @@ export function RankScreen({
 
   const mySeasonIndex = seasonRows.findIndex(({ userId }) => userId === currentUserId)
   const mySeasonRow = mySeasonIndex >= 0 ? seasonRows[mySeasonIndex] : null
-  const visibleSeasonRows = seasonRows.slice(0, 10)
-  const showMySeasonBelow = mySeasonIndex >= 10 && Boolean(mySeasonRow)
-  const ratingPodium = [ratingRows[1], ratingRows[0], ratingRows[2]].filter((row): row is RatingLeaderboardRow => Boolean(row))
-  const visibleRatingRows = ratingRows.slice(3, 10)
+  const visibleSeasonRows = seasonRows.slice(0, seasonVisibleCount)
+  const showMySeasonBelow = mySeasonIndex >= seasonVisibleCount && Boolean(mySeasonRow)
+  const visibleRatingRows = ratingRows.slice(0, ratingVisibleCount)
   const myRatingRow = ratingRows.find(({ userId }) => userId === currentUserId)
-  const showMyRatingBelow = Boolean(myRatingRow && (myRatingRow.rank || 0) > 10)
+  const showMyRatingBelow = Boolean(myRatingRow && (myRatingRow.rank || 0) > ratingVisibleCount)
+  const divisionStrip = Object.keys(DIVISION_BOUNDS).map((id) => ({
+    id,
+    label: id.charAt(0).toUpperCase() + id.slice(1),
+  }))
+  const joinableArenas = competitions
+    .filter((competition) => (
+      competition.entryMode !== 'team'
+      && competition.status !== 'ended'
+      && competition.status !== 'live'
+      && (competition.status === 'registration' || competition.canJoin === true)
+    ))
+    .sort((a, b) => a.startAt - b.startAt)
   const selectedSeason = seasons.find(({ id }) => id === selectedSeasonId)
   const seasonRemaining = selectedSeason && selectedSeason.endAt > now
     ? formatSeasonClock(selectedSeason.endAt - now, lang === 'fr' ? 'j' : 'd')
@@ -192,18 +212,51 @@ export function RankScreen({
 
   return (
     <div className="rank-screen">
+      <div className="rank-tabs">
+        <button type="button" className={pane === 'season' ? 'is-active' : ''} onClick={() => setPane('season')}>
+          {t('rank.tabSeason')}
+        </button>
+        <button type="button" className={pane === 'rating' ? 'is-active' : ''} onClick={() => setPane('rating')}>
+          {t('rank.tabRating')}
+        </button>
+      </div>
+
+      {pane === 'season' && joinableArenas.length > 0 && onJoin && (
+        <section className="rank-join">
+          <small>{t('home.openForJoin')}</small>
+          {joinableArenas.map((arena) => {
+            const sponsor = getSponsor(arena.sponsor)
+            return (
+              <button key={arena.id} type="button" onClick={() => onJoin(arena)}>
+                <span>
+                  <strong>{arena.title}</strong>
+                  {sponsor && <em>{t('join.introSubtitle', { name: sponsor.name })}</em>}
+                </span>
+                <b>{t('arena.join')}</b>
+              </button>
+            )
+          })}
+        </section>
+      )}
+
+      {pane === 'season' && (
       <section className="rank-paris">
         <div className="rank-paris__visual">
           <MajorVideo />
-          <span>PARIS</span><strong>MAJOR</strong><em>LIVE EVENT</em>
+          <span>PARIS</span><strong>MAJOR</strong>
         </div>
         <div className="rank-paris__copy">
-          <h3>{t('rank.parisTitle')}</h3>
-          <p>{t('rank.parisLead')}</p>
-          <div><span>{t('rank.parisStepOne')}</span><i>→</i><span>{t('rank.parisStepTwo')}</span><i>→</i><span>{t('rank.parisStepThree')}</span></div>
+          <p>{t('rank.parisLeadMobile')}</p>
+          <div>
+            <span>{t('rank.parisStepOne')}</span>
+            <span>{t('rank.parisStepTwo')}</span>
+            <span className="is-final">{t('rank.parisStepThree')}</span>
+          </div>
         </div>
       </section>
+      )}
 
+      {pane === 'season' && (
       <section className="rank-season-ranking">
         <header>
           <div><small>{t('rank.seasonKicker')}</small><h2>{t('rank.seasonTitle')}</h2></div>
@@ -246,17 +299,17 @@ export function RankScreen({
               {
                 src: encodeURI(
                   selectedSeason?.championBadge === 'autumn-champion'
-                    ? '/assets/badges/Automn Season BTF Arena Badge.png'
-                    : '/assets/badges/Summer Season BTF Arena Badge.png',
+                    ? '/assets/badges/autumn-season-badge.webp'
+                    : '/assets/badges/summer-season-badge.webp',
                 ),
                 label: t('rank.seasonPrizeBadge'),
               },
               {
-                src: encodeURI(selectedSeason?.shirtImage || '/assets/badges/Summer Season Shirt BTF Arena.png'),
+                src: encodeURI(selectedSeason?.shirtImage || '/assets/badges/summer-season-shirt.webp'),
                 label: t('rank.seasonPrizeShirt'),
               },
               {
-                src: encodeURI(selectedSeason?.arenaImage || '/assets/pictures/arena3d.png'),
+                src: encodeURI(selectedSeason?.arenaImage || '/assets/pictures/arena3d.webp'),
                 label: t('rank.seasonPrizeParis'),
               },
             ].map((prize) => (
@@ -269,7 +322,7 @@ export function RankScreen({
         </div>
         {mySeasonRow && (
           <div className="rank-season-ranking__me">
-            <div><small>{t('rank.yourSeasonRank')}</small><strong>#{mySeasonIndex + 1}</strong></div>
+            <div><small>{t('common.you')}</small><strong>#{mySeasonIndex + 1}</strong></div>
             <span className={mySeasonRow.pnlUsd >= 0 ? 'positive' : 'negative'}>{mySeasonRow.pnlUsd >= 0 ? '+' : ''}{mySeasonRow.pnlUsd.toFixed(2)} $</span>
           </div>
         )}
@@ -281,7 +334,7 @@ export function RankScreen({
                   <button key={row.userId} type="button" className={`${index === 0 ? 'is-paris is-rank-1' : ''} ${row.userId === currentUserId ? 'is-me' : ''}`} onClick={() => onOpenPlayer(row.userId)}>
                     <b>#{index + 1}</b>
                     <TraderPhoto avatarUrl={row.avatarUrl} name={row.name} />
-                    <div><strong><PlayerName name={row.name} country={row.country} /></strong><small>{t(row.arenas > 1 ? 'global.arenasPlural' : 'global.arenas', { count: row.arenas })}</small></div>
+                    <div><strong><PlayerName name={row.name} country={row.country} /></strong><small>{row.userId === currentUserId ? t('common.you') : t(row.arenas > 1 ? 'global.arenasPlural' : 'global.arenas', { count: row.arenas })}</small></div>
                     {index === 0 && <em>{t('rank.parisZone')}</em>}
                     <span className={row.pnlUsd >= 0 ? 'positive' : 'negative'}>{row.pnlUsd >= 0 ? '+' : ''}{row.pnlUsd.toFixed(2)} $</span>
                   </button>
@@ -297,28 +350,37 @@ export function RankScreen({
                     </button>
                   </>
                 )}
+                {seasonVisibleCount < seasonRows.length && (
+                  <button type="button" className="rank-more" onClick={() => setSeasonVisibleCount((count) => count + 10)}>
+                    {t('rank.loadMore')}
+                  </button>
+                )}
               </div>
             ) : <div className="rank-season-ranking__state">{t('global.empty')}</div>}
       </section>
+      )}
 
+      {pane === 'rating' && (
       <section className="rank-rating">
         <header>
           <div><small>{t('rank.kicker')}</small><h2>{t('rank.title')}</h2></div>
           <span className="ranking-scope-badge is-permanent">{t('rankingScope.permanent')}</span>
         </header>
         <p>{t('rank.lead')}</p>
-        {rating && <DivisionCard rating={rating} />}
-        {!loading && ratingPodium.length > 0 && (
-          <div className="rank-champions__podium">
-            {ratingPodium.map((row) => (
-              <button key={row.userId} type="button" className={`is-rank-${row.rank}`} onClick={() => onOpenPlayer(row.userId)}>
-                <b>#{row.rank}</b>
-                <span className="rank-champions__avatar"><TraderPhoto avatarUrl={row.avatarUrl} name={row.name} /></span>
-                <strong><PlayerName name={row.name} country={row.country} /></strong>
-                <em className={`is-${row.division.id}`}>{divisionDisplayName(row.division)}</em>
-                <small>{row.points.toLocaleString(locale)} pts</small>
-              </button>
-            ))}
+        {rating && <DivisionCard rating={rating} variant="compact" />}
+        <div className="rank-divisions">
+          {divisionStrip.map((division) => (
+            <article key={division.id} className={rating?.division.id === division.id ? 'is-mine' : ''}>
+              <DivisionBadge division={{ id: division.id, label: division.label, tier: 0 }} />
+              <strong>{division.label}</strong>
+              {rating?.division.id === division.id && <small>{t('common.you')}</small>}
+            </article>
+          ))}
+        </div>
+        {myRatingRow && (
+          <div className="rank-season-ranking__me">
+            <div><small>{t('common.you')}</small><strong>#{myRatingRow.rank}</strong></div>
+            <span>{myRatingRow.points.toLocaleString(locale)} pts</span>
           </div>
         )}
         {(visibleRatingRows.length > 0 || showMyRatingBelow) && (
@@ -349,6 +411,11 @@ export function RankScreen({
                 </article>
               </>
             )}
+            {ratingVisibleCount < ratingRows.length && (
+              <button type="button" className="rank-more" onClick={() => setRatingVisibleCount((count) => count + 20)}>
+                {t('rank.loadMore')}
+              </button>
+            )}
           </div>
         )}
         {!loading && ratingRows.length === 0 && (
@@ -358,6 +425,7 @@ export function RankScreen({
           </div>
         )}
       </section>
+      )}
     </div>
   )
 }

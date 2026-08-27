@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { MouseEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
-import { formatDHMS } from '../utils/formatters';
 import Seo from './Seo';
 import CompeteHeader from './CompeteHeader';
+import MobileHome from './MobileHome';
+import HomeSeasonBoard from './HomeSeasonBoard';
+import HomeBonusBanner from './HomeBonusBanner';
+import { useIsMobileWeb } from '../lib/mobileWeb';
 import {
   AnimatedNumber,
   MetricCard,
@@ -15,8 +19,20 @@ import {
   formatPercent,
 } from './competeMetrics';
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
-import { NameBadges, type UserBadge } from './playerBadges';
+import { NameBadges, getBadgeVisual, type UserBadge } from './playerBadges';
+import {
+  DIVISION_COLORS,
+  DivisionBadge,
+  divisionDisplayName,
+  divisionProgress,
+  type PlayerRating,
+} from './playerRating';
+import { formatDHMS } from '../utils/formatters';
+import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
+import { fetchPublicNews } from '../lib/publicNews';
+import { localizeNews } from '../lib/newsLocale';
 import { getSponsor, normalizeSponsorAccountId } from '../lib/sponsors';
+import { countryFlag } from '../lib/country';
 import { analytics } from '../lib/analytics';
 import { buildArenaItemListJsonLd } from '../lib/structuredData';
 import {
@@ -34,6 +50,7 @@ import {
 } from '../lib/competeSession';
 
 const SESSION_KEY = COMPETE_SESSION_KEY;
+const ENABLE_TEST_LOGIN = import.meta.env.DEV || import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true';
 
 function readCachedUser(): CompeteSessionUser | null {
   return readCachedCompeteUser();
@@ -98,6 +115,8 @@ interface CompetitionPublic {
   sponsor?: string | null;
   sponsorReferralUrl?: string | null;
   bannerImageUrl?: string | null;
+  entryMode?: 'solo' | 'team';
+  teamSize?: number | null;
 }
 
 interface CompetitionMine {
@@ -122,20 +141,37 @@ interface CompetitionMine {
   participants?: number;
   rank?: number | null;
   sponsor?: string | null;
+  seasonId?: string | null;
   bannerImageUrl?: string | null;
 }
 
-/** Arène terminée affichée dans l'historique (mes données de rang/PnL optionnelles). */
-interface EndedArena {
+interface SeasonInfo {
+  id: string;
+  nameKey: string;
+  startAt: number;
+  endAt: number;
+  isActive: boolean;
+  status: 'upcoming' | 'active' | 'ended';
+  theme?: string;
+  homeBannerImage?: string | null;
+  championBadge?: UserBadge;
+  shirtImage?: string | null;
+  arenaImage?: string | null;
+}
+
+type HomeNewsArticle = {
   id: string;
   title: string;
-  endAt: number;
-  cashPrize?: CashPrize | null;
-  participants?: number | null;
-  myEntry?: { pnlUsd: number; pnlPercent: number; tradesCount: number } | null;
-  rank?: number | null;
-  bannerImageUrl?: string | null;
-}
+  summary: string;
+  body: string;
+  titleEn?: string;
+  summaryEn?: string;
+  bodyEn?: string;
+  coverUrl: string;
+  featured: boolean;
+  publishedAt: number;
+  createdAt: number;
+};
 
 interface UserStats {
   closedTrades: number;
@@ -300,19 +336,6 @@ function hasPrize(prize: CashPrize | null | undefined): prize is CashPrize {
   );
 }
 
-function CashPrizePill({ prize }: { prize: CashPrize | null | undefined }) {
-  if (!hasPrize(prize)) return null;
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/8 px-2 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-amber-200/90">
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="8" r="6" />
-        <path d="M8.21 13.89L7 22l5-3 5 3-1.21-8.11" />
-      </svg>
-      {getPrizeTitle(prize)}
-    </span>
-  );
-}
-
 function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | undefined; compact?: boolean }) {
   const { t } = useTranslation();
   if (!hasPrize(prize)) return null;
@@ -393,7 +416,9 @@ function scrollToCompeteSection(event: MouseEvent<HTMLAnchorElement>, targetId: 
 
 export default function CompetitionPlatform() {
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { t, i18n } = useTranslation();
+  const isMobileWeb = useIsMobileWeb();
   // Initialise the session synchronously from localStorage so authenticated
   // users see their data immediately on refresh, without waiting for the
   // backend to come back. We then validate in the background and clear the
@@ -425,6 +450,9 @@ export default function CompetitionPlatform() {
   );
   const [myStats, setMyStats] = useState<UserStats | null>(null);
   const [myBadges, setMyBadges] = useState<UserBadge[]>([]);
+  const [myRating, setMyRating] = useState<PlayerRating | null>(null);
+  const [seasons, setSeasons] = useState<SeasonInfo[]>([]);
+  const [latestNews, setLatestNews] = useState<HomeNewsArticle[]>([]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -453,6 +481,7 @@ export default function CompetitionPlatform() {
       setMyCompetitions(mineComps);
       setMyStats((data.myStats as UserStats | null) ?? null);
       setMyBadges((data.myBadges as UserBadge[] | undefined) ?? []);
+      setMyRating((data.myRating as PlayerRating | null) ?? null);
       writeCachedJSON(PUBLIC_CACHE_KEY, publicComps);
       writeCachedJSON(MINE_CACHE_KEY, mineComps);
 
@@ -483,6 +512,12 @@ export default function CompetitionPlatform() {
     // Ne jamais réutiliser une ancienne clé unique qui pouvait contenir une session LIVE.
     window.localStorage.removeItem(LEGACY_PAPER_SESSION_KEY);
     void refreshData();
+    void fetch('/api/competition/seasons')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (Array.isArray(payload?.seasons)) setSeasons(payload.seasons as SeasonInfo[]);
+      })
+      .catch(() => undefined);
   }, [refreshData]);
 
   // Re-sync depuis le cache quand on revient sur l'onglet (ex. après Settings).
@@ -513,6 +548,18 @@ export default function CompetitionPlatform() {
   useEffect(() => {
     if (session?.user) writeCachedCompeteUser(session.user);
   }, [session?.user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPublicNews(2)
+      .then((news) => {
+        if (!cancelled) setLatestNews(news as HomeNewsArticle[]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function refreshPublicCompetitions() {
     const response = await fetch('/api/competition/public');
@@ -559,7 +606,7 @@ export default function CompetitionPlatform() {
       // Backdoor compte de test : si le pseudo magique est tapé dans
       // le champ email (intent login), on bypass complètement l'OTP.
       const trimmedEmail = email.trim();
-      if (intent === 'login' && trimmedEmail === 'ARTEMTEST987') {
+      if (ENABLE_TEST_LOGIN && intent === 'login' && trimmedEmail === 'ARTEMTEST987') {
         const response = await fetch('/api/competition/auth/test-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -729,20 +776,23 @@ export default function CompetitionPlatform() {
     setBusy(true);
     setJoinError('');
     try {
-      const response = await fetch('/api/competition/join', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.token}`,
+      const response = await fetch(
+        '/api/competition/join',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.token}`,
+          },
+          body: JSON.stringify({
+            code: joinCode,
+            competitionId: joinTarget.id,
+            ...(sponsor?.requiresAccountId
+              ? { sponsorAccountId: normalizeSponsorAccountId(joinSponsorId, sponsor) }
+              : {}),
+          }),
         },
-        body: JSON.stringify({
-          code: joinCode,
-          competitionId: joinTarget.id,
-          ...(sponsor?.requiresAccountId
-            ? { sponsorAccountId: normalizeSponsorAccountId(joinSponsorId, sponsor) }
-            : {}),
-        }),
-      });
+      );
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('authErrors.join'));
       if (data.competitionId !== joinTarget.id) {
@@ -753,7 +803,10 @@ export default function CompetitionPlatform() {
         competitionName: joinTarget.title,
         sponsor: joinTarget.sponsor ?? undefined,
       });
-      await Promise.all([refreshPublicCompetitions(), refreshMyCompetitions(session.token)]);
+      await Promise.all([
+        refreshPublicCompetitions(),
+        refreshMyCompetitions(session.token),
+      ]);
       closeJoinModal();
     } catch (err: any) {
       setJoinError(err.message || t('common.unknownError'));
@@ -812,45 +865,54 @@ export default function CompetitionPlatform() {
     () => myCompetitions.filter((competition) => competition.status !== 'ended'),
     [myCompetitions],
   );
-  const endedMyCompetitions = useMemo(
-    () => myCompetitions.filter((competition) => competition.status === 'ended'),
-    [myCompetitions],
-  );
   const joinablePublicCompetitions = useMemo(
-    () => publicCompetitions.filter((competition) => competition.status !== 'ended'),
-    [publicCompetitions],
+    () => {
+      const joinedIds = new Set(myCompetitions.map((competition) => competition.id));
+      return publicCompetitions.filter((competition) => (
+        competition.status !== 'ended'
+        && competition.entryMode !== 'team'
+        && !joinedIds.has(competition.id)
+      ));
+    },
+    [myCompetitions, publicCompetitions],
   );
-  // Toutes les arènes terminées : on part des arènes publiques closes (visibles
-  // par tout le monde) puis on enrichit avec les données perso (rang / PnL) pour
-  // celles que l'utilisateur a rejointes, et on ajoute ses arènes privées closes.
-  const endedArenas = useMemo<EndedArena[]>(() => {
-    const byId = new Map<string, EndedArena>();
-    for (const competition of publicCompetitions) {
-      if (competition.status !== 'ended') continue;
-      byId.set(competition.id, {
-        id: competition.id,
-        title: competition.title,
-        endAt: competition.endAt,
-        cashPrize: competition.cashPrize ?? null,
-        participants: competition.participants ?? null,
-        bannerImageUrl: competition.bannerImageUrl ?? null,
-      });
+
+  useEffect(() => {
+    const arenaId = searchParams.get('arena');
+    const joinFirst = searchParams.get('join') === '1';
+    if (!arenaId && !joinFirst) return;
+    if (publicCompetitions.length === 0) return;
+
+    const competition = arenaId
+      ? publicCompetitions.find((item) => item.id === arenaId)
+      : publicCompetitions.find((item) => (
+        item.status !== 'ended'
+        && item.entryMode !== 'team'
+        && (item.status === 'registration' || item.canJoin === true)
+      ));
+
+    if (!competition || competition.status === 'ended') {
+      const next = new URLSearchParams(searchParams);
+      next.delete('arena');
+      next.delete('join');
+      setSearchParams(next, { replace: true });
+      return;
     }
-    for (const competition of endedMyCompetitions) {
-      const existing = byId.get(competition.id);
-      byId.set(competition.id, {
-        id: competition.id,
-        title: competition.title,
-        endAt: competition.endAt,
-        cashPrize: competition.cashPrize ?? existing?.cashPrize ?? null,
-        participants: competition.participants ?? existing?.participants ?? null,
-        myEntry: competition.myEntry,
-        rank: competition.rank ?? null,
-        bannerImageUrl: competition.bannerImageUrl ?? existing?.bannerImageUrl ?? null,
-      });
+
+    if (!session) {
+      document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth' });
+      return;
     }
-    return [...byId.values()].sort((a, b) => b.endAt - a.endAt);
-  }, [publicCompetitions, endedMyCompetitions]);
+
+    setJoinTarget(competition);
+    setJoinCode('');
+    setJoinSponsorId('');
+    setJoinError('');
+    const next = new URLSearchParams(searchParams);
+    next.delete('arena');
+    next.delete('join');
+    setSearchParams(next, { replace: true });
+  }, [publicCompetitions, searchParams, session, setSearchParams]);
   // Les stats du profil n'incluent pas les arènes de qualification (ex. BTF
   // QUALIFICATIONS) — cohérent avec le leaderboard global.
   const statsCompetitions = useMemo(
@@ -878,6 +940,38 @@ export default function CompetitionPlatform() {
     return arenas.length > 0 ? buildArenaItemListJsonLd(arenas) : undefined;
   }, [publicCompetitions]);
 
+  const activeSeason = useMemo(
+    () => seasons.find((season) => season.status === 'active') || seasons.find((season) => season.isActive) || null,
+    [seasons],
+  );
+
+  const authPanel = !session ? (
+    <AuthPanel
+      intent={intent}
+      step={step}
+      email={email}
+      name={name}
+      phone={phone}
+      otp={otp}
+      smsOtp={smsOtp}
+      consent={consent}
+      busy={busy}
+      error={error}
+      pendingAuth={pendingAuth}
+      onSwitch={switchIntent}
+      onEmail={setEmail}
+      onName={setName}
+      onPhone={setPhone}
+      onConsent={setConsent}
+      onOtp={setOtp}
+      onSmsOtp={setSmsOtp}
+      onRequest={requestCode}
+      onVerify={verifyCode}
+      onVerifyPhone={verifyPhoneCode}
+      onBack={() => { setStep('request'); setError(''); }}
+    />
+  ) : null;
+
   return (
     <div className="compete min-h-dvh-safe bg-[#050507]">
       <Seo
@@ -889,28 +983,89 @@ export default function CompetitionPlatform() {
       />
       <CompeteHeader user={session?.user || null} onLogout={logout} />
 
+      {isMobileWeb ? (
+        <MobileHome
+          user={session?.user || null}
+          rating={myRating}
+          stats={myStats}
+          totalPnl={totalPnl}
+          arenas={activeMyCompetitions.map((competition) => ({
+            id: competition.id,
+            title: competition.title,
+            status: competition.status,
+            startAt: competition.startAt,
+            endAt: competition.endAt,
+            bannerImageUrl: competition.bannerImageUrl,
+            myEntry: competition.myEntry,
+          }))}
+          joinableArenas={joinablePublicCompetitions
+            .filter((competition) => (
+              competition.status !== 'live'
+              && (competition.status === 'registration' || competition.canJoin === true)
+            ))
+            .sort((a, b) => a.startAt - b.startAt)
+            .map((competition) => ({
+              id: competition.id,
+              title: competition.title,
+              status: competition.status,
+              startAt: competition.startAt,
+              endAt: competition.endAt,
+              bannerImageUrl: competition.bannerImageUrl,
+              canJoin: competition.canJoin,
+              joined: myCompetitions.some((entry) => entry.id === competition.id),
+            }))}
+          latestNews={latestNews}
+          season={activeSeason}
+          authSlot={authPanel}
+          onRefresh={() => { void refreshData(); }}
+          onTrade={(competitionId) => {
+            const competition = myCompetitions.find((entry) => entry.id === competitionId);
+            if (competition) void startCompetitionTrading(competition);
+          }}
+          onJoin={(competitionId) => {
+            const competition = publicCompetitions.find((entry) => entry.id === competitionId);
+            if (!session) {
+              document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth' });
+              return;
+            }
+            if (competition) openJoinModal(competition);
+          }}
+          onLeaderboard={(competitionId) => navigate(`/compete/leaderboard/${competitionId}`)}
+        />
+      ) : (
       <main className="compete-bg pb-8">
-        {/* HERO — pas de marge négative sur mobile : évite que le contenu passe sous le header / la barre d'URL Safari */}
-        <section id="signup" className="relative overflow-hidden pt-2 sm:-mt-[76px] sm:pt-[76px]">
-          {/* Background trader silhouette */}
-          <div aria-hidden className="pointer-events-none absolute inset-0 -z-0">
+        {/* HERO plein écran — pas de marge négative sur mobile : évite que le contenu passe sous le header / Safari */}
+        <section
+          id="signup"
+          className="relative isolate min-h-[min(92svh,920px)] overflow-hidden pt-2 sm:-mt-[76px] sm:pt-[76px]"
+        >
+          <div aria-hidden className="pointer-events-none absolute inset-0">
             <img
               src="/assets/pictures/Traderpng.webp"
               alt=""
-              className="absolute inset-y-0 right-0 h-full w-[92%] object-cover object-[right_top] opacity-65 md:w-[68%] lg:w-[58%]"
-              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover object-[72%_18%] opacity-55 sm:object-[78%_12%] sm:opacity-60"
+              loading="eager"
               decoding="async"
-              fetchPriority="low"
+              fetchPriority="high"
             />
-            <div className="absolute inset-0 bg-[radial-gradient(90%_60%_at_85%_30%,rgba(220,38,38,0.18),transparent_60%)]" />
-            <div className="absolute inset-0 bg-gradient-to-r from-[#050507] from-10% via-[#050507]/88 via-50% to-[#050507]/10" />
-            <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-[#050507] to-transparent" />
-            <div className="absolute inset-x-0 bottom-0 h-56 bg-gradient-to-t from-[#050507] to-transparent" />
+            <div className="absolute inset-0 bg-[radial-gradient(70%_70%_at_82%_28%,rgba(220,38,38,0.28),transparent_58%)]" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#050507] from-[18%] via-[#050507]/86 via-[52%] to-[#050507]/20" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-[#050507]/20 to-[#050507]/75" />
+            <div
+              className="absolute inset-0 opacity-[0.14]"
+              style={{
+                backgroundImage: 'linear-gradient(rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px)',
+                backgroundSize: '80px 80px',
+                maskImage: 'linear-gradient(90deg,#000 0%,transparent 72%)',
+              }}
+            />
+            <div className="hero-scanline" />
           </div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#dc2626]/70 to-transparent" />
 
-          <div className="relative z-10 mx-auto max-w-7xl px-5 pb-14 pt-14 sm:px-6 sm:pt-20 md:px-10 md:pb-20 md:pt-24 lg:pt-28">
-            <div className="grid gap-12 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-              <div>
+          <div className="relative z-10 mx-auto flex min-h-[inherit] max-w-[1440px] items-center px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24">
+            <div className={session ? 'grid w-full gap-8' : 'grid w-full gap-12 lg:grid-cols-[1.15fr_0.85fr] lg:items-center'}>
+              {!session && <div>
                 <motion.div
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -957,50 +1112,27 @@ export default function CompetitionPlatform() {
                     {t('hero.ctaHow')}
                   </a>
                 </motion.div>
-              </div>
+              </div>}
 
               {/* AUTH PANEL */}
-              <div className="grid gap-5">
+              <div className={session ? 'grid w-full gap-5' : 'grid gap-5'}>
                 {!session ? (
-                  <AuthPanel
-                    intent={intent}
-                    step={step}
-                    email={email}
-                    name={name}
-                    phone={phone}
-                    otp={otp}
-                    smsOtp={smsOtp}
-                    consent={consent}
-                    busy={busy}
-                    error={error}
-                    pendingAuth={pendingAuth}
-                    onSwitch={switchIntent}
-                    onEmail={setEmail}
-                    onName={setName}
-                    onPhone={setPhone}
-                    onConsent={setConsent}
-                    onOtp={setOtp}
-                    onSmsOtp={setSmsOtp}
-                    onRequest={requestCode}
-                    onVerify={verifyCode}
-                    onVerifyPhone={verifyPhoneCode}
-                    onBack={() => { setStep('request'); setError(''); }}
-                  />
+                  authPanel
                 ) : (
-                  <UserSummary user={session.user} pnlUsd={totalPnl} avgPnlPct={avgPnlPct} count={statsCompetitions.length} stats={myStats} badges={myBadges} />
+                  <>
+                    <UserSummary user={session.user} pnlUsd={totalPnl} avgPnlPct={avgPnlPct} count={statsCompetitions.length} stats={myStats} badges={myBadges} rating={myRating} />
+                  </>
                 )}
               </div>
             </div>
           </div>
         </section>
 
-        <SummerSeasonHomeSection />
-
-        <ProcessSection />
+        {!session && <ProcessSection />}
 
         {/* MES COMPETITIONS */}
         {session && (
-          <section className="mx-auto max-w-7xl px-6 pt-6 md:px-10">
+          <section className="mx-auto max-w-7xl px-6 pt-10 md:px-10">
             <SectionHeader eyebrow={t('sections.myCompetitionsEyebrow')} title={t('sections.activeArenasTitle')} />
             {activeMyCompetitions.length === 0 ? (
               <div className="glass-card mt-6 p-10 text-center">
@@ -1016,12 +1148,13 @@ export default function CompetitionPlatform() {
                 </p>
               </div>
             ) : (
-              <div className="mt-6 grid gap-5 md:grid-cols-2">
-                {activeMyCompetitions.map((competition) => (
+              <div className="mt-6 grid gap-6">
+                {activeMyCompetitions.map((competition, idx) => (
                   <MyCompetitionCard
                     key={competition.id}
                     competition={competition}
                     busy={busy}
+                    index={idx}
                     onTrade={() => startCompetitionTrading(competition)}
                     onStart={refreshData}
                   />
@@ -1043,7 +1176,7 @@ export default function CompetitionPlatform() {
               {t('sections.publicEmpty')}
             </div>
           ) : (
-            <div className="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-6 grid gap-6">
               {joinablePublicCompetitions.map((competition, idx) => {
                 const alreadyJoined = myCompetitions.some((entry) => entry.id === competition.id);
                 return (
@@ -1060,55 +1193,59 @@ export default function CompetitionPlatform() {
           )}
         </section>
 
-        {/* ARCHIVED ARENAS — toutes les arènes closes, même sans participation */}
-        {endedArenas.length > 0 && (
-          <section className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
-            <SectionHeader
-              eyebrow={t('sections.historyEyebrow')}
-              title={t('sections.historyTitle')}
-              sub={t('sections.historySub')}
-            />
-            <div className="-mx-6 mt-2 flex snap-x snap-mandatory gap-5 overflow-x-auto overflow-y-visible px-6 py-8 [perspective:1600px] [scrollbar-width:thin] md:mx-0 md:px-1">
-              {endedArenas.map((competition) => (
-                <div key={competition.id} className="w-[280px] shrink-0 snap-start sm:w-[300px]">
-                  <ArchivedCompetitionCard competition={competition} />
-                </div>
-              ))}
+        <SummerSeasonHomeSection seasons={seasons} />
+
+        {latestNews.length > 0 && (
+          <section className="mx-auto max-w-7xl px-5 pt-16 sm:px-8 md:px-10">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="micro text-[10px] text-[#dc2626]">{t('news.homeBanner')}</span>
+              <Link to="/compete/news" className="micro text-[10px] text-[#8b8490] transition-colors hover:text-white">
+                {t('news.homeAll')} →
+              </Link>
+            </div>
+            <div className={`grid gap-3 ${latestNews.length > 1 ? 'md:grid-cols-2' : ''}`}>
+              {latestNews.map((article) => {
+                const localized = localizeNews(article, i18n.language);
+                return (
+                  <Link
+                    key={article.id}
+                    to={`/compete/news/${article.id}`}
+                    className="group relative flex min-h-[92px] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0b10] transition-colors hover:border-white/20"
+                  >
+                    {article.coverUrl && (
+                      <OptimizedImage
+                        src={newsCoverUrl(article.coverUrl, 'card') || article.coverUrl}
+                        alt={localized.title}
+                        displayWidth={360}
+                        width={360}
+                        height={200}
+                        sizes="160px"
+                        className="h-full w-[132px] shrink-0 object-cover sm:w-[160px]"
+                      />
+                    )}
+                    <span className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3 sm:px-5">
+                      <small className="micro text-[9px] text-[#dc2626]">
+                        {article.featured ? `${t('news.featured')} · ` : ''}
+                        {new Date(article.publishedAt || article.createdAt).toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })}
+                      </small>
+                      <strong className="display mt-1 line-clamp-2 text-lg font-black uppercase italic leading-tight text-white sm:text-xl">
+                        {localized.title}
+                      </strong>
+                      {localized.summary && (
+                        <em className="mt-1 line-clamp-1 text-xs not-italic text-[#8b8490]">{localized.summary}</em>
+                      )}
+                    </span>
+                  </Link>
+                );
+              })}
             </div>
           </section>
         )}
 
-        {/* TRADE LIVE BONUS — accès aux liens d'affiliation / promos partenaires */}
-        <section className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
-          <Link
-            to="/compete/bonus"
-            className="group relative block overflow-hidden rounded-3xl border border-[#dc2626]/25 bg-gradient-to-br from-[#1a0709] via-[#0c0508] to-[#0a0a0d] p-6 transition-colors hover:border-[#dc2626]/55 md:p-9"
-          >
-            <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#dc2626]/20 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
-            <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-start gap-4">
-                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#dc2626]/30 bg-[#dc2626]/12 text-[#fca5a5]">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M20 12v8H4v-8M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85" />
-                  </svg>
-                </span>
-                <div>
-                  <div className="micro text-[10px] text-[#dc2626]">{t('bonus.eyebrow')}</div>
-                  <h2 className="display mt-1 text-2xl font-bold text-white sm:text-3xl">{t('bonus.title')}</h2>
-                  <p className="mt-2 max-w-xl text-sm text-[#b8b8c2]">{t('bonus.homeSub')}</p>
-                </div>
-              </div>
-              <span className="blood-cta flex shrink-0 items-center justify-center gap-2 px-6 py-4 text-sm uppercase tracking-[0.14em]">
-                {t('bonus.homeCta')}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M5 12h14M13 6l6 6-6 6" />
-                </svg>
-              </span>
-            </div>
-          </Link>
-        </section>
+        <HomeBonusBanner />
 
       </main>
+      )}
 
       {joinTarget && (
         <JoinCompetitionModal
@@ -1129,144 +1266,27 @@ export default function CompetitionPlatform() {
 
 /* ----------------------------- SUB COMPONENTS ----------------------------- */
 
-interface HomeSeasonInfo {
-  id: string;
-  nameKey: string;
-  startAt: number;
-  endAt: number;
-  isActive: boolean;
-  status: 'upcoming' | 'active' | 'ended';
-  homeBannerImage?: string | null;
-}
+type HomeSeasonInfo = SeasonInfo;
 
 /** Annonce sur la page d'accueil : la saison en cours + lien vers le leaderboard. */
-function SummerSeasonHomeSection() {
+function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
   const { t } = useTranslation();
-  const [season, setSeason] = useState<HomeSeasonInfo | null>(null);
+  const season = seasons.find((item) => item.status === 'active')
+    || seasons.find((item) => item.isActive)
+    || null;
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/competition/seasons')
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        const list = (data.seasons as HomeSeasonInfo[]) || [];
-        const active =
-          list.find((s) => s.id === data.activeSeasonId) ||
-          list.find((s) => s.status === 'active') ||
-          list.find((s) => s.isActive) ||
-          null;
-        if (active && active.status === 'active') setSeason(active);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!season) return null;
-
-  const seasonName = t(season.nameKey);
-  const daysLeft = Math.max(0, Math.ceil((season.endAt - Date.now()) / 86_400_000));
-  const isLastDay = daysLeft <= 1;
-  const [seasonLead, ...seasonTailParts] = seasonName.split(' ');
-  const seasonTail = seasonTailParts.join(' ') || seasonName;
+  if (!season || season.status !== 'active') return null;
 
   return (
-    <section className="relative isolate overflow-hidden py-14 sm:py-16">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_75%_at_78%_45%,rgba(245,158,11,0.13),transparent_62%),linear-gradient(180deg,transparent,rgba(5,5,7,0.78)_86%)]" />
-      <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-gradient-to-r from-transparent via-amber-300/18 to-transparent" />
-
-      {season.homeBannerImage && (
-        <motion.img
-          aria-hidden="true"
-          src={encodeURI(season.homeBannerImage)}
-          draggable={false}
-          className="pointer-events-none absolute right-[-16%] top-1/2 hidden w-[68%] max-w-[880px] -translate-y-1/2 select-none object-contain opacity-[0.34] saturate-[1.12] [mask-image:linear-gradient(90deg,transparent_0%,black_22%,black_70%,transparent_100%)] lg:block"
-          initial={{ opacity: 0, x: 80, scale: 1.04 }}
-          whileInView={{ opacity: 0.34, x: 0, scale: 1 }}
-          viewport={{ once: true, margin: '-120px' }}
-          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
-        />
-      )}
-
-      <div className="relative mx-auto grid max-w-7xl items-center gap-8 px-6 md:px-10 lg:grid-cols-[0.84fr_1.16fr]">
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-100px' }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-          className="relative z-10"
-        >
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="micro inline-flex items-center gap-2 text-[10px] text-amber-300/90">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300 opacity-70" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-300" />
-              </span>
-              {t('homeSeason.live')}
-            </span>
-            <span className="h-px w-8 bg-amber-300/35" />
-            <span className="num text-[10px] uppercase tracking-[0.18em] text-[#8f846c]">
-              {isLastDay ? t('homeSeason.lastDayLabel') : t('seasons.daysLeft', { count: daysLeft })}
-            </span>
-          </div>
-
-          <h2 className="display mt-4 max-w-xl text-[clamp(2.4rem,7.2vw,5.8rem)] font-black uppercase leading-[0.86] tracking-[-0.04em] text-white">
-            <span className="block text-white/95">{seasonLead}</span>
-            <span className="block bg-gradient-to-r from-amber-200 via-orange-300 to-[#dc2626] bg-clip-text text-transparent">
-              {seasonTail}
-            </span>
-          </h2>
-
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-[#aaa18f] sm:text-base">
-            {t('homeSeason.tagline')}
-          </p>
-
-          <div className="mt-6 flex flex-wrap items-center gap-4">
-            <Link
-              to="/compete/global-leaderboard"
-              className="group/link inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-amber-200 transition-colors hover:text-white"
-            >
-              <span className="h-px w-10 bg-gradient-to-r from-amber-300 to-transparent transition-all duration-300 group-hover/link:w-14" />
-              {t('homeSeason.ctaShort')}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M5 12h14M13 6l6 6-6 6" />
-              </svg>
-            </Link>
-          </div>
-        </motion.div>
-
-        <Link to="/compete/global-leaderboard" className="relative block lg:min-h-[320px]" aria-label={t('homeSeason.cta')}>
-          {season.homeBannerImage && (
-            <motion.div
-              initial={{ opacity: 0, y: 20, rotate: -1.5 }}
-              whileInView={{ opacity: 1, y: 0, rotate: -1.5 }}
-              viewport={{ once: true, margin: '-100px' }}
-              transition={{ duration: 0.8, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
-              whileHover={{ rotate: 0, scale: 1.015 }}
-              className="relative ml-auto max-w-2xl overflow-hidden rounded-[2rem] shadow-[0_44px_120px_-52px_rgba(245,158,11,0.74)] ring-1 ring-amber-200/18"
-            >
-              <img
-                src={encodeURI(season.homeBannerImage)}
-                alt={seasonName}
-                draggable={false}
-                className="block w-full select-none object-contain"
-              />
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#050507]/65 via-transparent to-amber-200/10" />
-              <div className="pointer-events-none absolute inset-0 rounded-[2rem] ring-1 ring-inset ring-white/10" />
-            </motion.div>
-          )}
-
-          <motion.img
-            aria-hidden="true"
-            src="/assets/badges/Summer Season BTF Arena Badge.png"
-            draggable={false}
-            className="absolute -right-4 -top-8 hidden h-24 w-24 object-contain drop-shadow-[0_18px_40px_rgba(245,158,11,0.5)] md:block lg:h-32 lg:w-32"
-            animate={{ y: [0, 10, 0], rotate: [2, -3, 2] }}
-            transition={{ duration: 6.5, repeat: Infinity, ease: 'easeInOut' }}
-          />
-        </Link>
+    <section className="mx-auto max-w-7xl px-6 pt-16 md:px-10">
+      <div className="border-b border-[#1a1a20] pb-5">
+        <div className="flex items-center gap-2">
+          <span className="h-px w-6 bg-[#dc2626]" />
+          <div className="micro text-[10px] text-[#dc2626]">{t('sections.seasonEyebrow')}</div>
+        </div>
+      </div>
+      <div className="mt-6">
+        <HomeSeasonBoard />
       </div>
     </section>
   );
@@ -1344,7 +1364,7 @@ function StepIcon({ type }: { type: string }) {
   );
 }
 
-function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title: string; sub?: string }) {
+function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title?: string; sub?: string }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -1357,7 +1377,7 @@ function SectionHeader({ eyebrow, title, sub }: { eyebrow: string; title: string
         <span className="h-px w-6 bg-[#dc2626]" />
         <div className="micro text-[10px] text-[#dc2626]">{eyebrow}</div>
       </div>
-      <h2 className="display mt-2 text-2xl font-bold text-white sm:text-3xl md:text-4xl">{title}</h2>
+      {title && <h2 className="display mt-2 text-2xl font-bold text-white sm:text-3xl md:text-4xl">{title}</h2>}
       {sub && <p className="mt-2 text-sm text-[#b8b8c2]">{sub}</p>}
     </motion.div>
   );
@@ -1511,7 +1531,7 @@ function AuthPanel({
                 </div>
               </div>
             )}
-            {pendingAuth?.devCode && (
+            {ENABLE_TEST_LOGIN && pendingAuth?.devCode && (
               <div className="mt-3 rounded-xl border border-[#232329] bg-[#0c0c10] px-4 py-3">
                 <div className="micro text-[10px] text-[#71717a]">{t('auth.backupCode')}</div>
                 <div className="num mt-1 text-2xl font-bold tracking-[0.45em] text-white">{pendingAuth.devCode}</div>
@@ -1641,216 +1661,344 @@ function formatProfitFactor(stats: UserStats | null): string {
   return stats.profitFactor.toFixed(2);
 }
 
-function UserSummary({ user, pnlUsd, avgPnlPct, count, stats, badges }: { user: SessionUser; pnlUsd: number; avgPnlPct: number; count: number; stats: UserStats | null; badges: UserBadge[] }) {
+function HexAvatar({ src, name, size = 112 }: { src?: string | null; name: string; size?: number }) {
+  const hex = 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)';
+  return (
+    <span
+      className="relative shrink-0"
+      style={{
+        width: size,
+        height: size,
+        filter: 'drop-shadow(0 10px 18px rgba(0,0,0,.45)) drop-shadow(0 0 10px rgba(220,38,38,.28))',
+      }}
+    >
+      <i className="absolute inset-0" style={{ clipPath: hex, background: 'linear-gradient(160deg, #ff6b7a, #7f1d1d 55%, #ff4655)' }} />
+      <span
+        className="absolute inset-[4px] grid place-items-center overflow-hidden bg-gradient-to-br from-[#dc263e] to-[#711423] text-2xl font-black uppercase text-white"
+        style={{ clipPath: hex }}
+      >
+        {src ? (
+          <AvatarImage key={src} src={src} alt="" className="h-full w-full object-cover" sizePx={size} />
+        ) : (
+          name.slice(0, 2)
+        )}
+      </span>
+    </span>
+  );
+}
+
+function UserSummary({ user, pnlUsd, avgPnlPct, count, stats, badges, rating }: { user: SessionUser; pnlUsd: number; avgPnlPct: number; count: number; stats: UserStats | null; badges: UserBadge[]; rating?: PlayerRating | null }) {
   const { t } = useTranslation();
   const pnlTone = pnlUsd > 0 ? 'pos' : pnlUsd < 0 ? 'neg' : 'neutral';
-  const avgTone = avgPnlPct > 0 ? 'pos' : avgPnlPct < 0 ? 'neg' : 'neutral';
   const hasTrades = Boolean(stats && stats.closedTrades > 0);
-  const winTone: 'pos' | 'neg' | 'neutral' = hasTrades ? (stats!.winRate >= 0.5 ? 'pos' : 'neg') : 'neutral';
-  const rrTone: 'pos' | 'neg' | 'neutral' = stats && stats.avgRR != null ? (stats.avgRR >= 1 ? 'pos' : 'neg') : 'neutral';
   const pfTone: 'pos' | 'neg' | 'neutral' =
     hasTrades && stats!.profitFactor != null ? (stats!.profitFactor >= 1 ? 'pos' : 'neg') : hasTrades && stats!.profitFactor == null && stats!.wins > 0 ? 'pos' : 'neutral';
+  const visibleRating: PlayerRating = rating ?? {
+    points: 0,
+    division: { id: 'bronze', label: 'Bronze', tier: 0 },
+    next: { label: 'Silver', pointsNeeded: 100 },
+    worldRank: null,
+    totalPlayers: 0,
+    recentEvents: [],
+  };
+  const divisionColor = DIVISION_COLORS[visibleRating.division.id] || '#c2724a';
+  const progress = divisionProgress(visibleRating);
+  const flag = countryFlag(user.country);
+  const chips = [
+    { label: t('user.totalPnl'), value: `${formatCompactSigned(pnlUsd)} $`, tone: pnlTone },
+    { label: t('user.profitFactor'), value: formatProfitFactor(stats), tone: pfTone },
+    {
+      label: t('rating.worldRankLabel'),
+      value: visibleRating.worldRank != null
+        ? `#${visibleRating.worldRank}${visibleRating.totalPlayers > 0 ? ` / ${visibleRating.totalPlayers}` : ''}`
+        : '—',
+      tone: 'neutral' as const,
+    },
+    { label: t('user.arenas'), value: String(count), tone: 'neutral' as const },
+    { label: t('user.avgPnl'), value: `${formatPercent(avgPnlPct)}%`, tone: avgPnlPct >= 0 ? 'pos' as const : 'neg' as const },
+    { label: t('user.winRate'), value: formatWinRate(stats), tone: 'neutral' as const },
+  ];
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="glass-card card-shine relative overflow-hidden p-5 sm:p-7 md:p-8"
+      className="glass-card card-shine relative overflow-hidden p-5 sm:p-7"
+      style={{
+        borderColor: `${divisionColor}55`,
+        background: `
+          radial-gradient(60% 100% at 100% 0%, ${divisionColor}20, transparent 68%),
+          repeating-linear-gradient(115deg, rgba(255,255,255,.018) 0 2px, transparent 2px 7px),
+          linear-gradient(145deg, #111016, #08080b)
+        `,
+      }}
     >
       <div className="hero-scanline" />
-      <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#dc2626]/15 blur-3xl hero-glow" />
-      <div className="relative">
-        <div className="flex items-center gap-2">
-          {user.avatarUrl ? (
-            <AvatarImage
-              key={user.avatarUrl}
-              src={user.avatarUrl}
-              alt=""
-              className="h-9 w-9 shrink-0 rounded-xl object-cover shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]"
-              sizePx={36}
-            />
-          ) : (
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#dc2626] to-[#7f1d1d] text-sm font-bold uppercase text-white shadow-[0_8px_24px_-8px_rgba(220,38,38,0.6)]">
-              {user.name.slice(0, 2)}
-            </span>
-          )}
-          <div className="min-w-0">
-            <div className="micro text-[10px] text-[#dc2626]">{t('user.myProfile')}</div>
-            <h3 className="display flex flex-wrap items-center gap-1.5 break-words text-xl font-bold leading-tight text-white sm:text-2xl">
-              {t('user.greeting', { name: user.name })}
-              <NameBadges badges={badges} />
-            </h3>
+      <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full blur-3xl hero-glow" style={{ background: `${divisionColor}20` }} />
+      <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-5 sm:gap-6">
+            <HexAvatar src={user.avatarUrl} name={user.name} size={148} />
+            <div className="min-w-0">
+              <div className="micro text-[11px] text-[#dc2626]">{t('user.myProfile')}</div>
+              <h1 className="display mt-1 flex flex-wrap items-center gap-2 text-3xl font-black leading-none text-white sm:text-4xl">
+                {flag && <span className="text-[28px] leading-none" title={user.country || undefined}>{flag}</span>}
+                {t('user.greeting', { name: user.name })}
+                <NameBadges badges={badges} />
+              </h1>
+              <p className="mt-2 truncate text-sm text-[#71717a]">{user.email}</p>
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-3 gap-2.5 sm:gap-3">
+            {chips.map((chip) => (
+              <div key={chip.label} className="rounded-2xl border border-white/[0.08] bg-black/30 px-3 py-3.5 sm:px-4 sm:py-4">
+                <div className="micro truncate text-[9px] text-[#8b8490]">{chip.label}</div>
+                <div className={`num mt-1.5 truncate text-lg font-black sm:text-xl ${
+                  chip.tone === 'pos' ? 'text-emerald-400' : chip.tone === 'neg' ? 'text-rose-400' : 'text-white'
+                }`}>
+                  {chip.value}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-        <p className="mt-1 break-all text-xs text-[#71717a] sm:text-sm">{user.email}</p>
 
-        <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
-          <MetricCard
-            label={t('user.totalPnl')}
-            value={pnlUsd}
-            format={(v) => formatCompactSigned(v)}
-            unit="$"
-            tone={pnlTone}
-            delayClass="rise-in-1"
-          />
-          <MetricCard
-            label={t('user.avgPnl')}
-            value={avgPnlPct}
-            format={(v) => formatPercent(v)}
-            unit="%"
-            tone={avgTone}
-            delayClass="rise-in-2"
-          />
-          <MetricCard
-            label={t('user.arenas')}
-            value={count}
-            format={(v) => formatCompactUnsigned(v)}
-            tone="neutral"
-            delayClass="rise-in-3"
-          />
-          <StatTile label={t('user.winRate')} value={formatWinRate(stats)} tone={winTone} delayClass="rise-in-1" />
-          <StatTile label={t('user.avgRR')} value={formatAvgRR(stats)} tone={rrTone} delayClass="rise-in-2" />
-          <StatTile label={t('user.profitFactor')} value={formatProfitFactor(stats)} tone={pfTone} delayClass="rise-in-3" />
-        </div>
-
+        <Link
+          to="/compete/rank#rating"
+          className="group relative mx-auto flex w-[200px] shrink-0 flex-col items-center text-center lg:mx-0 lg:-mr-2 lg:w-[220px]"
+          style={{ perspective: 520 }}
+        >
+          <div className="pointer-events-none absolute inset-x-2 inset-y-6 rounded-full blur-2xl" style={{ background: `${divisionColor}28` }} />
+          <div
+            className="relative transition-transform duration-500 group-hover:translate-y-[-4px]"
+            style={{
+              transform: 'rotateY(-18deg) rotateX(6deg) rotate(2.5deg)',
+              transformOrigin: '60% 45%',
+              filter: `drop-shadow(-14px 18px 20px rgba(0,0,0,.55)) drop-shadow(0 0 16px ${divisionColor}66)`,
+            }}
+          >
+            <DivisionBadge division={visibleRating.division} size={210} />
+          </div>
+          <div className="relative mt-1 w-full">
+            <div className="display text-xl font-black uppercase text-white">{divisionDisplayName(visibleRating.division)}</div>
+            <div className="num text-sm font-bold" style={{ color: divisionColor }}>{visibleRating.points} pts</div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full" style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${divisionColor}, #fff)` }} />
+            </div>
+            <div className="mt-1.5 text-[10px] leading-snug text-[#8b8490]">
+              {visibleRating.next
+                ? t('rating.nextAt', { label: visibleRating.next.label, points: visibleRating.next.pointsNeeded })
+                : t('rating.maxDivision')}
+            </div>
+          </div>
+        </Link>
       </div>
     </motion.div>
   );
 }
 
-function ArchivedCompetitionCard({ competition }: { competition: EndedArena }) {
+type ArenaEventCompetition = {
+  id: string;
+  title: string;
+  executionMode: 'paper' | 'real';
+  startAt: number;
+  endAt: number;
+  registrationEndsAt?: number;
+  dailyDrawdownPercent?: number | null;
+  status: 'registration' | 'starting_soon' | 'live' | 'ended';
+  canJoin?: boolean;
+  cashPrize?: CashPrize | null;
+  participants?: number;
+  sponsor?: string | null;
+  bannerImageUrl?: string | null;
+};
+
+function ArenaEventCard({
+  competition,
+  joined,
+  busy = false,
+  canTrade = false,
+  onJoin,
+  onTrade,
+  index,
+}: {
+  competition: ArenaEventCompetition;
+  joined: boolean;
+  busy?: boolean;
+  canTrade?: boolean;
+  onJoin?: () => void;
+  onTrade?: () => void;
+  index?: number;
+}) {
   const { t } = useTranslation();
-  const participants = competition.participants ?? null;
-  const myEntry = competition.myEntry ?? null;
-  const rank = competition.rank ?? null;
-  const pnlPercent = myEntry?.pnlPercent ?? 0;
-  const pos = pnlPercent >= 0;
-  const banner = competition.bannerImageUrl || '/assets/pictures/BTF ARENA SEO.png';
-  const prized = hasPrize(competition.cashPrize);
+  const isLive = competition.status === 'live';
+  const isEnded = competition.status === 'ended';
+  const canJoin = competition.canJoin ?? competition.status === 'registration';
+  const sponsor = getSponsor(competition.sponsor);
+  const accent = sponsor?.accent ?? '#dc2626';
+  const banner = resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/btf-arena-seo.webp';
+  const prize = getPrizeTitle(competition.cashPrize) || t('publicCard.freeEntry');
+  const countdown = useCountdown(isLive ? competition.endAt : competition.startAt);
+  const breakdown = competition.cashPrize?.breakdown?.slice(0, 3) || [];
+  const statusLabel = isLive
+    ? t('publicCard.liveNow')
+    : competition.status === 'registration' && canJoin
+      ? t('publicCard.arenaOpen')
+      : competition.status === 'starting_soon'
+        ? t('status.startingSoon')
+        : t('publicCard.arenaClosed');
 
   return (
     <motion.article
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className="archived-card tilt-card group relative z-0 flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0b0b10] shadow-[0_24px_60px_-32px_rgba(0,0,0,0.9)] hover:z-30 hover:border-white/15"
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.06 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
+      className="arena-event-card group relative isolate w-full overflow-hidden rounded-3xl border bg-[#08080b]"
+      style={{ borderColor: `${accent}55`, boxShadow: `0 30px 90px -55px ${accent}` }}
     >
-      {/* —— Bannière (désaturée pour le côté « archivé ») —— */}
-      <div className="relative h-32 overflow-hidden">
-        <img
-          src={encodeURI(banner)}
-          alt={competition.title}
-          className="h-full w-full object-cover opacity-90 grayscale-[35%] transition-all duration-500 ease-out group-hover:scale-[1.06] group-hover:grayscale-0"
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-        />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b0b10] via-[#0b0b10]/30 to-transparent" />
+      <img
+        src={encodeURI(banner)}
+        alt=""
+        className="pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-full object-contain object-right opacity-45 transition duration-700 group-hover:scale-[1.025] group-hover:opacity-55 md:w-[62%]"
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+      />
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.98)_38%,rgba(8,8,11,.74)_67%,rgba(8,8,11,.35)_100%)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-[#08080b] to-transparent" />
+      <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
 
-        {/* Pastille "Terminée" */}
-        <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/55 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-[#cfcfd6] backdrop-blur-md">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-          {t('archived.ended')}
-        </span>
-
-        {/* Pastille dotation */}
-        {prized && (
-          <span className="absolute right-3 top-3 inline-flex max-w-[55%] items-center gap-1 rounded-full border border-amber-400/30 bg-black/55 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em] text-amber-200 backdrop-blur-md">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-              <circle cx="12" cy="8" r="6" /><path d="M8.21 13.89L7 22l5-3 5 3-1.21-8.11" />
-            </svg>
-            <span className="truncate">{getPrizeTitle(competition.cashPrize)}</span>
+      <div className="relative p-5 sm:p-7 md:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span
+            className="micro inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[9px] text-white"
+            style={{ borderColor: `${accent}88`, backgroundColor: `${accent}22` }}
+          >
+            <i className={`h-1.5 w-1.5 rounded-full ${isEnded ? 'bg-zinc-500' : 'animate-pulse bg-[#ff435c] shadow-[0_0_12px_#ef233c]'}`} />
+            {statusLabel}
           </span>
-        )}
-      </div>
-
-      {/* —— Corps —— */}
-      <div className="flex flex-1 flex-col p-4">
-        <h3 className="display break-words text-base font-bold uppercase leading-tight text-[#d4d4dc]">
-          {competition.title}
-        </h3>
-
-        <div className="mt-2 flex items-center gap-2 text-[12px] text-[#a1a1aa]">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#71717a]" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
-          </svg>
-          <span className="truncate">{fmtDateShort(competition.endAt)}</span>
+          {sponsor && (
+            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/45 px-3 py-1.5 backdrop-blur-md">
+              <span className="micro text-[8px] text-[#77717a]">{t('sponsor.sponsoredBy', { name: sponsor.name })}</span>
+              <img src={sponsor.logoUrl} alt={sponsor.name} className="h-4 w-auto object-contain" />
+            </div>
+          )}
         </div>
 
-        {myEntry ? (
-          <div className="mt-3 flex items-end justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-            <div>
-              <div className="micro text-[9px] text-[#71717a]">{t('archived.myRank')}</div>
-              <div className="display text-2xl font-bold leading-none text-white">
-                {rank ? `#${rank}` : '—'}
-                {participants != null && (
-                  <span className="ml-1 text-[11px] font-medium text-[#71717a]">/ {participants}</span>
-                )}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="micro text-[9px] text-[#71717a]">{t('archived.myPnl')}</div>
-              <div className={`num text-xl font-bold leading-none ${pos ? 'text-[#34d399]' : 'text-[#f87171]'}`}>
-                {formatPercent(pnlPercent)}%
-              </div>
-              <div className={`num mt-0.5 text-[11px] ${pos ? 'text-[#34d399]/70' : 'text-[#f87171]/70'}`}>
-                {formatCompactSigned(myEntry.pnlUsd)} USD
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-            <div>
-              <div className="micro text-[9px] text-[#71717a]">{t('archived.participants')}</div>
-              <div className="display text-2xl font-bold leading-none text-white">
-                {participants != null ? participants : '—'}
-              </div>
-            </div>
-            <span className="rounded-md border border-white/[0.07] bg-white/[0.03] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#71717a]">
-              {t('archived.notJoined')}
-            </span>
-          </div>
-        )}
+        <div className="mt-7 grid items-end gap-7 md:grid-cols-[minmax(0,1.2fr)_minmax(210px,.8fr)]">
+          <div className="min-w-0">
+            <h3 className="display max-w-2xl text-3xl font-black uppercase leading-[0.92] text-white sm:text-4xl md:text-5xl">
+              {competition.title}
+            </h3>
+            <p className="mt-3 text-sm text-[#a1a1aa]">
+              {competition.executionMode === 'paper' ? t('publicCard.paperCompetition') : t('publicCard.realCompetition')}
+            </p>
 
-        <Link
-          to={`/compete/leaderboard/${competition.id}`}
-          className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#a1a1aa] transition-colors hover:border-white/20 hover:text-white"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-          </svg>
-          {t('archived.leaderboard')}
-        </Link>
+            <div className="mt-6 flex flex-wrap gap-x-6 gap-y-3 text-sm">
+              <span className="inline-flex items-center gap-2 text-[#d4d4d8]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
+                  <circle cx="9" cy="8" r="4" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M17 11a4 4 0 0 1 4.5 4v5" />
+                </svg>
+                <b className="font-semibold text-white">{competition.participants ?? 0}</b> {t('publicCard.registeredTraders')}
+              </span>
+              <span className="inline-flex items-center gap-2 text-[#d4d4d8]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" />
+                </svg>
+                {fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}
+              </span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-5 backdrop-blur-md">
+            <div className="micro text-[9px] text-[#f5b300]">{t('publicCard.prizeToWin')}</div>
+            <div className="display mt-1 text-4xl font-black uppercase leading-none text-white sm:text-5xl">{prize}</div>
+            {breakdown.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[#a1a1aa]">
+                {breakdown.map((item) => (
+                  <span key={item.rank}>
+                    {t('publicCard.place', { rank: item.rank })} <b className="text-[#ffe7a3]">{formatPrizeAmount(item.amount, competition.cashPrize?.currency || 'USD')}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+            {!isEnded && (
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <div className="micro text-[8px] text-[#77717a]">
+                  {isLive ? t('publicCard.endsIn') : t('publicCard.startsIn')}
+                </div>
+                <div className="num mt-1 text-2xl font-black tabular-nums text-white sm:text-3xl">{countdown}</div>
+                {!isLive && <div className="mt-1 text-[10px] text-[#77717a]">{fmtDateTime(competition.startAt)}</div>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-7 flex flex-col gap-4 border-t border-white/10 pt-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#8b8490]">
+            <span>{competition.executionMode === 'paper' ? t('mode.paper') : t('mode.real')}</span>
+            <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
+            <span>{t('publicCard.freeEntry')}</span>
+            {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+              <>
+                <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
+                <span>{t('publicCard.dailyDrawdown')} {competition.dailyDrawdownPercent}%</span>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {joined ? (
+              canTrade && onTrade ? (
+                <button type="button" onClick={onTrade} disabled={busy} className="blood-cta min-w-48 px-6 py-3.5 text-sm">
+                  {busy ? '...' : t('myCard.trade')}
+                </button>
+              ) : (
+                <span className="inline-flex min-w-48 items-center justify-center gap-2 rounded-xl border border-[#10b981]/35 bg-[#10b981]/12 px-6 py-3.5 text-xs font-black uppercase tracking-[0.13em] text-[#6ee7b7]">
+                  ✓ {t('publicCard.youAreJoined')}
+                </span>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={onJoin}
+                disabled={isEnded || !canJoin}
+                className="blood-cta min-w-52 px-7 py-3.5 text-sm"
+                style={!isEnded && canJoin ? { background: accent, boxShadow: `0 16px 42px -20px ${accent}` } : undefined}
+              >
+                {isEnded ? t('publicCard.arenaClosed') : !canJoin ? t('publicCard.joinClosed') : t('publicCard.joinArena')}
+              </button>
+            )}
+            <Link
+              to={joined ? `/compete/leaderboard/${competition.id}` : '/reglement'}
+              className="ghost-cta flex items-center justify-center px-5 py-3.5 text-xs uppercase tracking-[0.12em]"
+            >
+              {joined ? t('publicCard.viewArena') : t('publicCard.viewRules')} →
+            </Link>
+          </div>
+        </div>
       </div>
     </motion.article>
   );
 }
 
 function MyCompetitionCard({
-  competition, busy, onTrade, onStart,
+  competition, busy, onTrade, onStart, index,
 }: {
   competition: CompetitionMine;
   busy: boolean;
   onTrade: () => void;
   onStart?: () => void;
+  index?: number;
 }) {
-  const { t } = useTranslation();
-  const pnlPercent = competition.myEntry.pnlPercent;
-  const pnlUsd = competition.myEntry.pnlUsd;
-  const pos = pnlPercent >= 0;
   const isLive = competition.status === 'live';
   const isEnded = competition.status === 'ended';
-  const targetTs = isLive ? competition.endAt : competition.startAt;
-  const countdown = useCountdown(targetTs);
-  // L'horloge locale ré-évalue à chaque tick (useCountdown re-render chaque seconde) :
-  // dès que l'heure de départ est atteinte, on débloque le bouton sans rafraîchir.
   const startReached = !isLive && !isEnded && Date.now() >= competition.startAt;
   const canTrade = (competition.canTrade ?? isLive) || startReached;
-  const fillRatio = Math.min(1, Math.abs(pnlPercent) / 100);
-
-  // Quand le compte à rebours franchit 0, on resynchronise une fois l'état serveur
-  // (statut, PnL, accès) pour que la carte reflète la compétition désormais en cours.
   const startSyncedRef = useRef(false);
+
   useEffect(() => {
     if (startReached && !startSyncedRef.current) {
       startSyncedRef.current = true;
@@ -1859,120 +2007,14 @@ function MyCompetitionCard({
   }, [startReached, onStart]);
 
   return (
-    <motion.article
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={{ y: -3 }}
-      className={`relative overflow-hidden card-shine lift ${
-        isLive ? 'blood-card ticker-glow' : 'glass-card'
-      } p-5 sm:p-6`}
-    >
-      {isLive && (
-        <>
-          <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-[#dc2626]/22 blur-3xl hero-glow" />
-          <div className="hero-scanline" />
-        </>
-      )}
-      <div className="relative">
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusPill status={competition.status} />
-          <ModePill mode={competition.executionMode} />
-          <CashPrizePill prize={competition.cashPrize} />
-          <DrawdownRule percent={competition.dailyDrawdownPercent} />
-          {competition.breached && (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-[#ef4444]/55 bg-[#ef4444]/18 px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.12em] text-[#fca5a5]">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-              {t('leaderboard.breached')}
-            </span>
-          )}
-        </div>
-        <h3 className="display mt-3 break-words text-lg font-bold leading-tight text-white sm:text-2xl">
-          {competition.title}
-        </h3>
-        <PrizePreview prize={competition.cashPrize} compact />
-        <div className="mt-1 text-[11px] text-[#71717a] sm:text-xs">
-          {fmtDateShort(competition.startAt)} <span className="text-[#52525b]">→</span> {fmtDateShort(competition.endAt)}
-        </div>
-
-        <ScheduleInfo
-          startAt={competition.startAt}
-          registrationEndsAt={competition.registrationEndsAt}
-          status={competition.status}
-          className="mt-3"
-        />
-
-        {/* Big PnL hero block */}
-        <div
-          className={`metric metric-pnl-big mt-5 ${pos ? 'metric-pos' : 'metric-neg'} ${
-            pnlPercent === 0 ? '' : ''
-          }`}
-        >
-          <div className="metric-label">
-            <span>{t('myCard.myPnl')}</span>
-            <span className={`metric-trend ${pos ? 'up' : 'down'}`}>
-              {pos ? '▲' : '▼'} arena
-            </span>
-          </div>
-          <div className={`metric-value ${pos ? 'is-pos' : 'is-neg'}`}>
-            <AnimatedNumber value={pnlPercent} format={(v) => formatPercent(v)} />
-            <span className="unit">%</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className={`pnl-pill ${pos ? 'up' : 'down'}`}>
-              <AnimatedNumber value={pnlUsd} format={(v) => formatCompactSigned(v)} />
-              <span className="text-[#71717a]">USD</span>
-            </span>
-            <div className="progress-track w-full max-w-[140px] sm:max-w-[180px]">
-              <div
-                className={`progress-fill ${pos ? 'up' : 'down'}`}
-                style={{ width: `${fillRatio * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3">
-          <div className="metric">
-            <div className="metric-label">{isLive ? t('myCard.endsIn') : isEnded ? t('myCard.statusLabel') : t('myCard.startsIn')}</div>
-            <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4.2vw, 1.3rem)' }}>
-              {isEnded ? t('myCard.ended') : countdown}
-            </div>
-          </div>
-          <div className="metric">
-            <div className="metric-label">{t('myCard.trades')}</div>
-            <div className="metric-value" style={{ fontSize: 'clamp(1rem, 4.2vw, 1.3rem)' }}>
-              <AnimatedNumber value={competition.myEntry.tradesCount} format={(v) => formatCompactUnsigned(v)} />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-2.5 sm:grid-cols-[2.2fr_1fr]">
-          <button
-            type="button"
-            onClick={onTrade}
-            disabled={busy || isEnded || !canTrade}
-            className="blood-cta px-6 py-4 text-base sm:text-lg"
-          >
-            {busy
-              ? '...'
-              : isEnded
-                ? t('myCard.arenaClosed')
-                : !canTrade
-                  ? t('myCard.opensIn', { countdown })
-                  : t('myCard.trade')}
-          </button>
-          <Link
-            to={`/compete/leaderboard/${competition.id}`}
-            className="ghost-cta flex items-center justify-center px-4 py-3 text-xs uppercase tracking-[0.16em] sm:py-4"
-          >
-            {t('myCard.leaderboard')}
-          </Link>
-        </div>
-      </div>
-    </motion.article>
+    <ArenaEventCard
+      competition={competition}
+      joined
+      busy={busy}
+      canTrade={canTrade}
+      onTrade={onTrade}
+      index={index}
+    />
   );
 }
 
@@ -1984,150 +2026,31 @@ function PublicCompetitionCard({
   onJoin: () => void;
   index?: number;
 }) {
-  const { t } = useTranslation();
-  const isEnded = competition.status === 'ended';
-  const isLive = competition.status === 'live';
-  const canJoin = competition.canJoin ?? (competition.status === 'registration');
-  const sponsor = getSponsor(competition.sponsor);
-  const accent = sponsor?.accent ?? '#dc2626';
-  const banner = competition.bannerImageUrl || '/assets/pictures/BTF ARENA SEO.png';
-  const prized = hasPrize(competition.cashPrize);
   return (
-    <motion.article
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5, delay: 0.05 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
-      className="tilt-card group relative z-0 flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0b10] shadow-[0_24px_60px_-32px_rgba(0,0,0,0.9)] hover:z-30 hover:border-white/15"
-      style={sponsor ? { borderColor: `${accent}55` } : undefined}
-    >
-      {/* —— Bannière —— */}
-      <div className="relative h-36 overflow-hidden sm:h-40">
-        <img
-          src={encodeURI(banner)}
-          alt={competition.title}
-          className="h-full w-full object-cover transition-transform duration-[600ms] ease-out group-hover:scale-[1.06]"
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-        />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b0b10] via-[#0b0b10]/25 to-transparent" />
-        {isLive && <div className="hero-scanline" />}
-
-        {/* Pastille mode (haut gauche) */}
-        <span className="absolute left-3 top-3"><ModePill mode={competition.executionMode} /></span>
-
-        {/* Statut (haut droite) */}
-        <span className="absolute right-3 top-3"><StatusPill status={competition.status} /></span>
-
-        {/* Sponsor (bas droite sur la bannière) */}
-        {sponsor && (
-          <div
-            className="absolute bottom-2.5 right-2.5 flex items-center rounded-md border px-2 py-1 backdrop-blur-md"
-            style={{ borderColor: `${accent}80`, backgroundColor: 'rgba(0,0,0,0.45)' }}
-          >
-            <img src={sponsor.logoUrl} alt={sponsor.name} className="h-3.5 w-auto object-contain" />
-          </div>
-        )}
-      </div>
-
-      {/* —— Corps —— */}
-      <div className="flex flex-1 flex-col p-4">
-        <h3 className="display break-words text-base font-bold uppercase leading-tight text-white sm:text-[17px]">
-          {competition.title}
-        </h3>
-        {sponsor && (
-          <div className="mt-0.5 text-[10px] font-medium" style={{ color: sponsor.accentSoft }}>
-            {t('sponsor.sponsoredBy', { name: sponsor.name })}
-          </div>
-        )}
-
-        <div className="mt-3 space-y-2">
-          {/* Dotation / entrée */}
-          <div className="flex items-center gap-2 text-[12px]">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${prized ? 'text-amber-400' : 'text-[#6b6b76]'}`} aria-hidden="true">
-              <circle cx="12" cy="8" r="6" /><path d="M8.21 13.89L7 22l5-3 5 3-1.21-8.11" />
-            </svg>
-            {prized ? (
-              <span className="truncate font-bold text-amber-300">{getPrizeTitle(competition.cashPrize)}</span>
-            ) : (
-              <span className="font-semibold text-[#34d399]">{t('publicCard.freeEntry')}</span>
-            )}
-          </div>
-          {/* Période */}
-          <div className="flex items-center gap-2 text-[12px] text-[#a1a1aa]">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#71717a]" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
-            </svg>
-            <span className="truncate">{fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}</span>
-          </div>
-          {/* En ligne + nombre de traders */}
-          <div className="flex items-center gap-2 text-[12px] text-[#a1a1aa]">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#71717a]" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20" />
-            </svg>
-            <span className="truncate">{t('publicCard.online')}</span>
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-[#cfcfd6]">
-              <AnimatedNumber value={competition.participants} format={(v) => formatCompactUnsigned(v)} />
-              <span className="text-[#71717a]">{t('publicCard.traders')}</span>
-            </span>
-          </div>
-        </div>
-
-        <ScheduleInfo
-          startAt={competition.startAt}
-          registrationEndsAt={competition.registrationEndsAt}
-          status={competition.status}
-          className="mt-3"
-        />
-
-        {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
-          <div className="mt-3">
-            <DrawdownRule percent={competition.dailyDrawdownPercent} />
-          </div>
-        )}
-
-        {/* —— Actions —— */}
-        <div className="mt-auto flex items-stretch gap-2 pt-4">
-          {alreadyJoined ? (
-            <span className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#10b981]/30 bg-[#10b981]/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#34d399]">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-              {t('publicCard.joined')}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={onJoin}
-              disabled={isEnded || !canJoin}
-              className="blood-cta flex-1 px-4 py-3 text-sm"
-              style={sponsor && canJoin ? { background: accent, boxShadow: `0 16px 40px -18px ${accent}` } : undefined}
-            >
-              {isEnded
-                ? t('publicCard.arenaClosed')
-                : !canJoin
-                  ? t('publicCard.joinClosed')
-                  : t('publicCard.join')}
-            </button>
-          )}
-          <Link
-            to={`/compete/leaderboard/${competition.id}`}
-            aria-label={t('publicCard.leaderboard')}
-            title={t('publicCard.leaderboard')}
-            className="flex w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-[#a1a1aa] transition-colors hover:border-white/20 hover:text-white"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-            </svg>
-          </Link>
-        </div>
-      </div>
-    </motion.article>
+    <ArenaEventCard
+      competition={competition}
+      joined={alreadyJoined}
+      onJoin={onJoin}
+      index={index}
+    />
   );
 }
 
-function JoinCompetitionModal({
+export function JoinCompetitionModal({
   competition, code, onCode, sponsorId, onSponsorId, error, busy, onClose, onSubmit,
 }: {
-  competition: CompetitionPublic;
+  competition: {
+    id: string;
+    title: string;
+    code: string;
+    startAt: number;
+    endAt: number;
+    registrationEndsAt?: number;
+    dailyDrawdownPercent?: number | null;
+    status: 'registration' | 'starting_soon' | 'live' | 'ended';
+    sponsor?: string | null;
+    sponsorReferralUrl?: string | null;
+  };
   code: string;
   onCode: (value: string) => void;
   sponsorId: string;
@@ -2190,10 +2113,14 @@ function JoinCompetitionModal({
     (needsSponsorId && !sponsorId.trim()) ||
     sponsorIdFormatInvalid;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md" onClick={onClose}>
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] overflow-y-auto overscroll-contain bg-black/70 backdrop-blur-md"
+      onClick={onClose}
+    >
+      <div className="flex min-h-dvh items-end justify-center sm:items-center sm:p-4">
       <div
-        className="compete compete-modal relative w-full max-w-lg overflow-hidden rounded-2xl border bg-gradient-to-b from-[#140a14] to-[#0a0a0d] p-7"
+        className="compete compete-modal relative max-h-[92dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-2xl border bg-gradient-to-b from-[#140a14] to-[#0a0a0d] p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:max-h-[min(90dvh,880px)] sm:rounded-2xl sm:p-7"
         style={{ borderColor: `${accent}4d`, boxShadow: `0 30px 80px -20px ${accent}66` }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -2239,7 +2166,7 @@ function JoinCompetitionModal({
                   <img
                     src={sponsor.platformImageUrl}
                     alt={sponsor.name}
-                    className="block w-full object-cover"
+                    className="block h-36 w-full object-cover object-top sm:h-auto sm:max-h-56"
                     loading="lazy"
                   />
                 </div>
@@ -2503,6 +2430,8 @@ function JoinCompetitionModal({
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

@@ -2,6 +2,8 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, use
 import { useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import ArenaSwitcher from './ArenaSwitcher';
+import CompeteHeader from './CompeteHeader';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
@@ -45,7 +47,7 @@ import {
   buildCompeteTradeUrl,
 } from '../lib/paperSession';
 
-const DEMO_SESSION_KEY = 'btf-tradingview-review-demo';
+const DEMO_SESSION_KEY = 'btf-tradingview-review-demo-v2';
 const DEMO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD'];
 const DEMO_STARTING_BALANCE = 100_000;
 const DEMO_TAKER_FEE = 0.0004 / 3; // ≈ 0,01333 % — aligné sur le barème réel (cf. moteur)
@@ -271,26 +273,8 @@ function TokenIcon({ pair, imageUrl, size = 'h-7 w-7' }: { pair: string; imageUr
   );
 }
 
-const DEMO_PRICE_BASE: Record<string, { price: number; volatility: number }> = {
-  'BTC/USD': { price: 96_420, volatility: 38 },
-  'ETH/USD': { price: 3_420, volatility: 2.6 },
-  'SOL/USD': { price: 187.4, volatility: 0.2 },
-  'XRP/USD': { price: 2.42, volatility: 0.006 },
-};
-
-function createDemoMarket(): Record<string, MarketTicker> {
-  return Object.fromEntries(DEMO_PAIRS.map((pair) => {
-    const base = DEMO_PRICE_BASE[pair];
-    return [pair, {
-      pair,
-      symbol: pair.replace('/', ''),
-      markPrice: base.price,
-      bidPrice: base.price * 0.99995,
-      askPrice: base.price * 1.00005,
-      spreadBps: 1,
-      updatedAt: Date.now(),
-    }];
-  })) as Record<string, MarketTicker>;
+function emptyDemoMarket(): Record<string, MarketTicker> {
+  return {};
 }
 
 function createDemoPlayer(): Player {
@@ -1715,6 +1699,7 @@ function ChartArea({
           market={market}
           positions={positions}
           pendingOrders={pendingOrders}
+          trades={player?.trades}
           orderPreview={orderPreview}
           onPreviewRiskChange={onPreviewRiskChange}
           onPreviewEntryChange={onPreviewEntryChange}
@@ -3036,8 +3021,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     return () => clearTimeout(id);
   }, [eventStarted, eventStartTime]);
 
-  const [demoMarket, setDemoMarket] = useState<Record<string, MarketTicker>>(() => createDemoMarket());
-  const [demoPlayer, setDemoPlayer] = useState<Player>(() => loadDemoPlayer(createDemoMarket()));
+  const [demoMarket, setDemoMarket] = useState<Record<string, MarketTicker>>(() => emptyDemoMarket());
+  const [demoPlayer, setDemoPlayer] = useState<Player>(() => loadDemoPlayer(emptyDemoMarket()));
   const [meta, setMeta] = useState<PaperMeta>(() => ({
     enabled: demoMode,
     eventStarted: demoMode,
@@ -3058,9 +3043,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return { token: 'demo-token', player: { id: 'tradingview-demo', name: 'TradingView Demo', color: '#dc2626', avatar: null } };
     }
     const platform = getTerminalPlatformFromUrl();
+    const competitionId = getCompetitionIdFromUrl();
+    if (platform === 'compete' && !competitionId) return null;
     const token = readPaperSessionToken(platform);
     const cached = readPaperBootstrapCache();
-    const competitionId = getCompetitionIdFromUrl();
     if (token && cached && isPaperBootstrapCacheValid(cached, platform, token, competitionId)) {
       return { token: cached.token, player: cached.player as SessionPlayer };
     }
@@ -3072,6 +3058,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   // simply sees a loading state instead of a brief error popup.
   const [bootstrapping, setBootstrapping] = useState(() => {
     if (demoMode) return false;
+    if (getTerminalPlatformFromUrl() === 'compete' && !getCompetitionIdFromUrl()) return false;
     return Boolean(readPaperSessionToken(getTerminalPlatformFromUrl()));
   });
   const [accessCode, setAccessCode] = useState('');
@@ -3267,7 +3254,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       chartLiveTickRef.current?.(tick.pair, tick.markPrice, tick.updatedAt || Date.now());
     }
 
-    setLiveMarket((prev) => {
+    const mergeTicks = (prev: Record<string, MarketTicker> | null | undefined) => {
       const base = prev ? { ...prev } : {};
       let changed = false;
       for (const tick of ticks) {
@@ -3285,14 +3272,24 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         };
         changed = true;
       }
-      if (changed) {
+      return { next: changed ? base : prev, changed };
+    };
+
+    if (demoMode) {
+      setDemoMarket((prev) => mergeTicks(prev).next ?? prev);
+      return;
+    }
+
+    setLiveMarket((prev) => {
+      const { next, changed } = mergeTicks(prev);
+      if (changed && next) {
         setLivePlayer((player) => (
-          player ? refreshPlayerPaperMetrics(player, base, meta.startingBalance) : player
+          player ? refreshPlayerPaperMetrics(player, next, meta.startingBalance) : player
         ));
       }
-      return changed ? base : prev;
+      return next ?? prev;
     });
-  }, [meta.startingBalance]);
+  }, [demoMode, meta.startingBalance]);
 
   const applyArenaInit = useCallback((payload: any) => {
     if (!payload?.competition || !Array.isArray(payload?.leaderboard)) return;
@@ -3340,8 +3337,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     });
   }, []);
 
-  useWebSocket(!demoMode, {
-    paperToken: session?.token || null,
+  useWebSocket(true, {
+    paperToken: demoMode ? null : (session?.token || null),
     onPaperUpdate: applyPaperUpdate,
     onMarketTick: applyMarketTick,
     onArenaInit: applyArenaInit,
@@ -3387,29 +3384,25 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useEffect(() => {
     if (!demoMode) return;
-
-    const id = window.setInterval(() => {
-      setDemoMarket((current) => {
-        const next: Record<string, MarketTicker> = {};
-        for (const pair of DEMO_PAIRS) {
-          const ticker = current[pair];
-          const base = DEMO_PRICE_BASE[pair];
-          const drift = (Math.random() - 0.48) * base.volatility;
-          const anchor = (base.price - ticker.markPrice) * 0.0006;
-          const markPrice = Math.max(ticker.markPrice + drift + anchor, base.price * 0.2);
-          next[pair] = {
-            ...ticker,
-            markPrice,
-            bidPrice: markPrice * 0.99995,
-            askPrice: markPrice * 1.00005,
-            updatedAt: Date.now(),
-          };
+    fetch('/api/paper/meta')
+      .then((response) => response.json())
+      .then((data: PaperMeta) => {
+        setMeta({
+          ...data,
+          enabled: true,
+          eventStarted: true,
+          startingBalance: DEMO_STARTING_BALANCE,
+        });
+        if (data.pairs.length > 0) {
+          setSelectedPair((current) => (data.pairs.includes(current) ? current : data.pairs[0]));
         }
-        return next;
+        if (data.market && Object.keys(data.market).length > 0) {
+          setDemoMarket(data.market);
+        }
+      })
+      .catch(() => {
+        // Le chart charge encore /api/paper/candles ; les ticks WS prendront le relais.
       });
-    }, 900);
-
-    return () => window.clearInterval(id);
   }, [demoMode]);
 
   useEffect(() => {
@@ -3593,6 +3586,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useEffect(() => {
     if (demoMode) return;
+    if (terminalPlatform === 'compete' && !urlCompetitionId) {
+      setSession(null);
+      setLivePlayer(null);
+      setLiveMarket(null);
+      setLiveCanTrade(null);
+      setBootstrapping(false);
+      return;
+    }
     const token = readPaperSessionToken(terminalPlatform);
     if (!token) {
       setSession(null);
@@ -4456,6 +4457,24 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       error={leaderboardError}
     />
   );
+
+  const showArenaPicker = !demoMode && !liveMode && !urlCompetitionId;
+  if (showArenaPicker) {
+    return (
+      <div
+        className="terminal flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden bg-[#050507] text-[12px] text-[#e0e2ea]"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        <CompeteHeader />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ArenaSwitcher variant="page" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

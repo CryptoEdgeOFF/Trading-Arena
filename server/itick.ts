@@ -994,6 +994,10 @@ class ItickFeedRegistry extends EventEmitter {
 
   disconnect(): void {
     for (const m of this.managers.values()) m.disconnect();
+    if (this.quotesPollTimer) {
+      clearInterval(this.quotesPollTimer);
+      this.quotesPollTimer = null;
+    }
     if (this.depthBatchTimer) {
       clearInterval(this.depthBatchTimer);
       this.depthBatchTimer = null;

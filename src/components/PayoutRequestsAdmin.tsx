@@ -47,6 +47,34 @@ function formatAmount(amount: number, currency: string): string {
   return `${sym}${Number(amount).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}`;
 }
 
+function shortAddress(address: string): string {
+  const value = address.trim();
+  if (value.length <= 18) return value;
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    try {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export default function PayoutRequestsAdmin() {
   const [adminToken, setAdminToken] = useState<string>(() => localStorage.getItem(ADMIN_TOKEN_KEY) || '');
   const [adminCode, setAdminCode] = useState('');
@@ -56,6 +84,7 @@ export default function PayoutRequestsAdmin() {
   const [requests, setRequests] = useState<PayoutRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const adminFetch = useCallback(
     async (url: string, init: RequestInit = {}) => {
@@ -108,6 +137,20 @@ export default function PayoutRequestsAdmin() {
     } catch (err: unknown) {
       setLoginError(err instanceof Error ? err.message : 'Erreur');
     }
+  }
+
+  async function copyAddress(id: string, address?: string | null) {
+    const value = String(address || '').trim();
+    if (!value) return;
+    const ok = await copyText(value);
+    if (!ok) {
+      setError('Impossible de copier l’adresse. Sélectionne-la manuellement.');
+      return;
+    }
+    setCopiedId(id);
+    window.setTimeout(() => {
+      setCopiedId((current) => (current === id ? null : current));
+    }, 1600);
   }
 
   async function approveRequest(id: string) {
@@ -207,8 +250,23 @@ export default function PayoutRequestsAdmin() {
                     <td className="px-4 py-3">{req.arenaTitle || '—'}</td>
                     <td className="px-4 py-3">{rankLabel(req.rank)}</td>
                     <td className="px-4 py-3 font-semibold text-emerald-400">{formatAmount(req.amount, req.currency)}</td>
-                    <td className="max-w-[200px] truncate px-4 py-3 font-mono text-xs text-slate-300" title={req.erc20Address || ''}>
-                      {req.erc20Address || '—'}
+                    <td className="px-4 py-3">
+                      {req.erc20Address ? (
+                        <div className="flex items-center gap-2">
+                          <code className="max-w-[168px] truncate font-mono text-xs text-slate-300" title={req.erc20Address}>
+                            {shortAddress(req.erc20Address)}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => void copyAddress(req.id, req.erc20Address)}
+                            className="shrink-0 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-200 hover:border-emerald-500/50 hover:text-emerald-300"
+                          >
+                            {copiedId === req.id ? 'Copié' : 'Copier'}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {req.status === 'pending' ? (

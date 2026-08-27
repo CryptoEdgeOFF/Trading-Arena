@@ -477,13 +477,14 @@ h1 em { color: var(--red-bright); font-style: normal; }
 
 /* Vitrine de saison : héro + podium */
 .home-season { overflow: hidden; border: 1px solid rgba(255,70,92,.2); border-radius: 18px; background: linear-gradient(180deg,#130a0e,#0b090d 58%); box-shadow: 0 16px 40px rgba(0,0,0,.3); }
-.home-season__banner { position: relative; min-height: 188px; display: flex; align-items: center; }
-.home-season__banner img { position: absolute; top: 0; right: -14px; height: 100%; width: 64%; object-fit: cover; object-position: top center; mix-blend-mode: screen; opacity: .92; -webkit-mask-image: linear-gradient(90deg,transparent,#000 40%); mask-image: linear-gradient(90deg,transparent,#000 40%); pointer-events: none; }
-.home-season__banner-text { position: relative; z-index: 1; max-width: 74%; padding: 20px 18px; }
+.home-season__banner { position: relative; }
+.home-season__banner img { display: block; width: 100%; height: auto; object-fit: contain; pointer-events: none; }
+.home-season__banner::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 28%, rgba(8,7,10,.88) 86%); pointer-events: none; }
+.home-season__banner-text { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; max-width: none; padding: 18px 16px 16px; }
 .home-season__banner-text span { color: #ff6c7e; font-size: 9px; font-weight: 900; letter-spacing: .2em; }
 .home-season__banner-text h2 { margin: 8px 0 0; font: 800 31px/.95 'Barlow Condensed',sans-serif; text-transform: uppercase; }
 .home-season__banner-text h2 em { color: var(--red-bright); font-style: normal; }
-.home-season__banner-text p { margin: 10px 0 0; max-width: 200px; color: #99939d; font-size: 10px; line-height: 1.5; }
+.home-season__banner-text p { margin: 8px 0 0; max-width: 320px; color: #d4cfd6; font-size: 11px; line-height: 1.45; }
 
 .home-season__podium { padding: 14px 14px 0; display: grid; grid-template-columns: 1fr 1.12fr 1fr; gap: 8px; align-items: end; }
 .home-season__player { --medal: #9a95a0; --hex: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
@@ -516,6 +517,19 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .home-guest-hero p { margin: 17px 0 0; color: #99939d; font-size: 10px; line-height: 1.55; }
 .home-guest-hero > button { min-height: 44px; margin-top: 17px; padding: 0 14px; display: flex; align-items: center; gap: 18px; border: 1px solid rgba(255,85,104,.45); border-radius: 6px; background: var(--red); color: #fff; font-size: 9px; font-weight: 800; }
 .home-guest-hero > button.home-global-link { min-height: 34px; margin-top: 7px; border-color: var(--line); background: #151319; color: #aaa4ad; }
+.home-join-list { display: grid; gap: 10px; }
+.home-join-list .arena-card { flex: none; width: 100%; min-height: 176px; }
+
+.home-news { display: grid; gap: 8px; }
+.home-news__head { display: flex; align-items: center; justify-content: space-between; }
+.home-news__head span { color: var(--red-bright); font: 700 9px/1 Manrope, sans-serif; letter-spacing: .2em; text-transform: uppercase; }
+.home-news__head button { border: 0; background: none; color: #8b8490; font-size: 10px; font-weight: 700; }
+.home-news__card { display: flex; min-height: 78px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: #0b0b10; color: inherit; text-align: left; padding: 0; }
+.home-news__card img { width: 92px; height: 100%; object-fit: cover; }
+.home-news__card > span { display: flex; min-width: 0; flex: 1; flex-direction: column; justify-content: center; padding: 10px 12px; }
+.home-news__card small { color: #dc2626; font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.home-news__card strong { display: -webkit-box; overflow: hidden; margin-top: 4px; font: italic 800 16px/1.1 'Barlow Condensed', sans-serif; text-transform: uppercase; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
 .home-arena-section { min-width: 0; }
 .home-arena-section .section-title { position:relative; margin-bottom:10px; padding-bottom:9px; border-bottom:1px solid rgba(255,255,255,.07); }
 .home-arena-section .section-title::after { content:''; position:absolute; left:0; bottom:-1px; width:54px; height:1px; background:linear-gradient(90deg,#ff465c,transparent); box-shadow:0 0 8px rgba(238,36,60,.45); }

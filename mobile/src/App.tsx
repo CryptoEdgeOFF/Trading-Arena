@@ -13,6 +13,7 @@ import {
   getGlobalLeaderboard,
   getLeaderboardSeasons,
   getNewsPage,
+  newsCoverAssetUrl,
   getPnlHistory,
   getPromotions,
   logoutSession,
@@ -23,6 +24,7 @@ import {
   type GlobalLeaderboardRow,
   type LeaderboardRow,
   type MyCompetition,
+  type NewsArticle,
   type PlayerRating,
   type PnlHistorySample,
   type PnlHistoryTrader,
@@ -38,6 +40,7 @@ import {
 } from './lib/session'
 import { AuthSheet } from './components/AuthSheet'
 import { DealsScreen } from './components/DealsScreen'
+import { HomeBonusCard } from './components/HomeBonusCard'
 import { DIVISION_BOUNDS, DivisionBadge, DivisionCard, divisionDisplayName } from './components/DivisionCard'
 import { GlobalChat } from './components/GlobalChat'
 import { JoinArenaSheet } from './components/JoinArenaSheet'
@@ -168,7 +171,7 @@ function ArenaCard({
   return (
     <motion.article className={`arena-card is-${competition.status}`} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
       <img className="arena-card__banner"
-        src={competition.bannerImageUrl ? apiAssetUrl(competition.bannerImageUrl) : '/assets/pictures/BTF ARENA SEO.png'} alt="" />
+        src={competition.bannerImageUrl ? apiAssetUrl(competition.bannerImageUrl) : '/assets/pictures/btf-arena-seo.webp'} alt="" />
       <div className="arena-card__shade" />
       <div className="arena-card__glow" />
       <div className="arena-card__top">
@@ -240,7 +243,7 @@ function SeasonShowcase({ onGlobalLeaderboard }: { onGlobalLeaderboard: () => vo
   return (
     <section className="home-season">
       <div className="home-season__banner">
-        <img src="/assets/pictures/trader-silhouette.jpg" alt="" />
+        <img src="/assets/Seasons/summer-season-ranking.webp" alt="" />
         <div className="home-season__banner-text">
           <span>{t('season.eyebrow')}</span>
           <h2>{t('season.title')}<br /><em>{t('season.titleEm')}</em></h2>
@@ -464,8 +467,10 @@ function HomeScreen({
   onGlobalLeaderboard,
   onProfile,
   onNews,
+  onOpenArticle,
   onRank,
   onPayouts,
+  onDeals,
   unreadNews,
   claimablePayouts,
 }: {
@@ -480,8 +485,10 @@ function HomeScreen({
   onGlobalLeaderboard: () => void
   onProfile: () => void
   onNews: () => void
+  onOpenArticle: (articleId: string) => void
   onRank: () => void
   onPayouts: () => void
+  onDeals: () => void
   unreadNews: number
   claimablePayouts: number
 }) {
@@ -493,8 +500,29 @@ function HomeScreen({
   const active = competitions
     .filter((competition) => competition.status === 'live' && mineById.has(competition.id))
     .sort((a, b) => a.endAt - b.endAt)
+  const openForJoin = competitions
+    .filter((competition) => (
+      competition.entryMode !== 'team'
+      && competition.status !== 'ended'
+      && competition.status !== 'live'
+      && (competition.status === 'registration' || competition.canJoin === true)
+    ))
+    .sort((a, b) => a.startAt - b.startAt)
   const hour = new Date().getHours()
   const greeting = hour >= 18 || hour < 5 ? t('home.greetingEvening') : t('home.greetingMorning')
+  const [latestNews, setLatestNews] = useState<NewsArticle[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    void getNewsPage(undefined, 2)
+      .then((result) => {
+        if (!cancelled) setLatestNews(result.news.slice(0, 2))
+      })
+      .catch(() => {
+        if (!cancelled) setLatestNews([])
+      })
+    return () => { cancelled = true }
+  }, [])
 
   return (
     <div className="home-dashboard">
@@ -589,6 +617,52 @@ function HomeScreen({
         </section>
       )}
 
+      {openForJoin.length > 0 && (
+        <section className="home-arena-section">
+          <div className="section-title">
+            <div><span>{t('home.competitions')}</span><h2>{t('home.openForJoin')}</h2></div>
+          </div>
+          <div className="home-join-list">
+            {openForJoin.map((competition) => (
+              <ArenaCard
+                key={competition.id}
+                competition={competition}
+                mine={mineById.get(competition.id)}
+                joined={mineById.has(competition.id)}
+                onJoin={onJoin}
+                onTrade={onTrade}
+                onLeaderboard={onLeaderboard}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {latestNews.length > 0 && (
+        <section className="home-news">
+          <div className="home-news__head">
+            <span>{t('news.homeBanner')}</span>
+            <button type="button" onClick={onNews}>{t('news.homeAll')} →</button>
+          </div>
+          {latestNews.map((article) => {
+            const english = locale.startsWith('en')
+            const title = english && article.titleEn ? article.titleEn : article.title
+            return (
+              <button key={article.id} type="button" className="home-news__card" onClick={() => onOpenArticle(article.id)}>
+                {article.coverUrl && <img src={newsCoverAssetUrl(article.coverUrl, 'card')} alt="" />}
+                <span>
+                  <small>
+                    {article.featured ? t('news.featured') : ''}
+                    {new Date(article.publishedAt || article.createdAt).toLocaleDateString(locale, { day: 'numeric', month: 'short' })}
+                  </small>
+                  <strong>{title}</strong>
+                </span>
+              </button>
+            )
+          })}
+        </section>
+      )}
+
       {user && (loading || active.length > 0) && <section className="home-arena-section">
         {(loading || active.length > 0) && (
           <div className="section-title">
@@ -605,6 +679,7 @@ function HomeScreen({
       </section>}
 
       <SeasonShowcase onGlobalLeaderboard={onGlobalLeaderboard} />
+      <HomeBonusCard onOpen={onDeals} />
     </div>
   )
 }
@@ -866,8 +941,13 @@ function App() {
                 setInitialNewsId('')
                 selectTab('news')
               }}
+              onOpenArticle={(articleId) => {
+                setInitialNewsId(articleId)
+                selectTab('news')
+              }}
               onRank={() => selectTab('rank')}
               onPayouts={() => selectTab('payouts')}
+              onDeals={() => selectTab('deals')}
               unreadNews={unreadNewsCount}
               claimablePayouts={dashboard?.claimablePayouts || 0}
             />
@@ -889,6 +969,8 @@ function App() {
             <RankScreen
               currentUserId={dashboard?.user?.id}
               rating={dashboard?.myRating}
+              competitions={leaderboardCompetitions}
+              onJoin={(competition) => token ? setJoiningArena(competition) : setShowAuth(true)}
               onOpenPlayer={(userId) => {
                 setSelectedPlayerId(userId)
                 setPlayerBackTab('rank')

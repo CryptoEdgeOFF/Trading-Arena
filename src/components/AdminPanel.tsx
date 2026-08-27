@@ -6,7 +6,7 @@ import ReplayAdmin from './ReplayAdmin';
 import ItickFeedPanel, { type ItickFeedStatus, type ItickInstrument } from './ItickFeedPanel';
 import type { EventMode, MarketDataSource, PlatformMode, TeamInfo } from '../stores/useGameStore';
 import { TEAM_MODE_LABEL, TEAM_MODE_TOTAL_PLAYERS, TEAM_PLAYERS_PER_SIDE } from '../utils/teamMode';
-import { ARENA_ADMIN_PATH, NEWS_ADMIN_PATH, PROMOTIONS_ADMIN_PATH } from '../lib/adminPath';
+import { ARENA_ADMIN_PATH, NEWS_ADMIN_PATH, PROMOTIONS_ADMIN_PATH, TERMINAL_REVIEW_PATH } from '../lib/adminPath';
 
 const ADMIN_TOKEN_KEY = 'btf-admin-token';
 
@@ -831,6 +831,12 @@ export default function AdminPanel() {
               className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm font-medium text-green-300 transition-colors hover:bg-green-500/15"
             >
               Ouvrir le terminal trader
+            </a>
+            <a
+              href={`${TERMINAL_REVIEW_PATH}?player=SnorkyFab`}
+              className="rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/10 px-4 py-3 text-sm font-medium text-fuchsia-300 transition-colors hover:bg-fuchsia-500/15"
+            >
+              Terminal SnorkyFab
             </a>
             <button
               type="button"

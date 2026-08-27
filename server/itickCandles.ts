@@ -22,6 +22,7 @@ import * as itick from './itick.js';
 import * as hyperliquid from './hyperliquid.js';
 import { ITICK_INSTRUMENTS, findByPair, findByCode, type ItickInstrument } from './itickInstruments.js';
 import type { ItickLiveTick } from './itick.js';
+import { isLiveMarketNeeded } from './liveMarketNeeded.js';
 
 export const ITICK_CANDLE_INTERVALS = new Set([1, 5, 15, 30, 60, 240, 1440]);
 const MAX_HISTORY_BARS = 100_000;
@@ -292,7 +293,7 @@ export function applyLiveTick(tick: ItickLiveTick): void {
 
 /** Flush périodique : écrit en Postgres les bougies dirty puis vide le set. */
 async function flushDirty(): Promise<void> {
-  if (!pool) return;
+  if (!pool || !isLiveMarketNeeded()) return;
   for (const series of memorySeries.values()) {
     if (series.dirty.size === 0) continue;
     const inst = findByPair(series.pair);
@@ -740,7 +741,7 @@ async function ensureScrollHistory(
   countBack: number,
   fromSec: number | null,
 ): Promise<void> {
-  if (!findByPair(pair)) return;
+  if (!findByPair(pair) || !isLiveMarketNeeded()) return;
   const intervalSec = intervalMin * 60;
   const required = fromSec != null
     ? Math.max(countBack, Math.ceil((toSec - fromSec) / intervalSec) + 2)
@@ -896,7 +897,6 @@ let started = false;
  * À appeler après `initItickCandlesStore()` :
  *   - branche le live tick → applyLiveTick
  *   - démarre le flush loop DB
- *   - lance le backfill historique en arrière-plan
  */
 export function startLiveBuilder(): void {
   if (started) return;
@@ -907,10 +907,6 @@ export function startLiveBuilder(): void {
     }
   });
   startFlushLoop();
-  // Backfill en background — pas bloquant pour le boot serveur.
-  void backfillAll().catch((err) => {
-    console.warn('[itickCandles] backfillAll KO:', (err as Error).message);
-  });
 }
 
 /** Pour tests / admin : reset complet du cache mémoire. */

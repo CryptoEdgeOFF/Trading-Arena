@@ -898,6 +898,7 @@ export function TradingTerminal({
           metadata={meta?.marketMetadata}
           positions={state.player.openPositions}
           orders={state.player.openOrders}
+          trades={state.player.trades}
           orderPreview={orderPreview}
           onPairChange={setSelectedPair}
           onUpdatePositionRisk={(positionId, nextStopLoss, nextTakeProfit, sizes) => {

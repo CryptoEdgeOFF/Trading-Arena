@@ -1,6 +1,14 @@
 .join-arena-layer { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; justify-content: center; }
 .join-arena-backdrop { position: absolute; inset: 0; border: 0; background: rgba(0,0,0,.78); backdrop-filter: blur(7px); }
-.join-arena-sheet { position: relative; z-index: 1; width: min(100%,540px); padding: 20px 20px calc(22px + env(safe-area-inset-bottom)); display: grid; gap: 15px; border: 1px solid #312a39; border-bottom: 0; border-radius: 22px 22px 0 0; background: #0d0b10; box-shadow: 0 -30px 90px rgba(0,0,0,.65); }
+.join-arena-sheet { position: relative; z-index: 1; width: min(100%,540px); max-height: min(92dvh, 100%); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 20px 20px calc(22px + env(safe-area-inset-bottom)); display: grid; gap: 15px; border: 1px solid #312a39; border-bottom: 0; border-radius: 22px 22px 0 0; background: #0d0b10; box-shadow: 0 -30px 90px rgba(0,0,0,.65); }
+.join-arena-intro { display: grid; gap: 12px; }
+.join-arena-intro h3 { margin: 0; font: 800 24px/1.05 'Barlow Condensed', sans-serif; text-transform: uppercase; }
+.join-arena-intro p { margin: 0; color: #aaa4ad; font-size: 12px; line-height: 1.45; }
+.join-arena-intro img { display: block; width: 100%; max-height: 160px; object-fit: cover; object-position: top; border: 1px solid var(--line); border-radius: 12px; }
+.join-arena-warning { padding: 10px; border: 1px solid rgba(245,184,107,.28); border-radius: 8px; background: rgba(245,184,107,.08); color: #f5b86b !important; font-size: 11px !important; }
+.join-arena-secondary { min-height: 46px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: #d9d4dc; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.join-arena-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
+.join-arena-actions .join-arena-submit { width: 100%; }
 .join-arena-sheet header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .join-arena-sheet header span { color: var(--red-bright); font-size: 8px; font-weight: 700; letter-spacing: .16em; }
 .join-arena-sheet h3 { margin: 4px 0 0; font: 800 27px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
@@ -16,5 +24,5 @@
 .join-arena-sheet > p { margin: 0; padding: 10px; border: 1px solid rgba(255,70,92,.24); border-radius: 7px; background: rgba(255,70,92,.07); color: #ff8998; font-size: 9px; }
 .join-arena-team { border-color: rgba(255,255,255,.1) !important; background: rgba(255,255,255,.04) !important; color: #c8c3cb !important; }
 .join-arena-team.is-ready { border-color: rgba(90,210,140,.28) !important; background: rgba(90,210,140,.08) !important; color: #9ee4b8 !important; }
-.join-arena-submit { min-height: 51px; border: 1px solid rgba(255,90,110,.45); border-radius: 7px; background: var(--red); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.join-arena-submit { min-height: 51px; border: 1px solid rgba(255,90,110,.45); border-radius: 7px; background: var(--red); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .08em; display: grid; place-items: center; text-decoration: none; }
 .join-arena-submit:disabled { opacity: .45; }

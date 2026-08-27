@@ -3,7 +3,7 @@ import http2 from 'node:http2';
 import { GoogleAuth } from 'google-auth-library';
 import { Pool } from 'pg';
 import type { CompetitionManager } from './competitionManager.js';
-import { isPodiumLoss } from './notificationRules.js';
+import { isPodiumLoss, shouldAnnounceNewArenaPush } from './notificationRules.js';
 
 export type PushKind =
   | 'order_filled'
@@ -509,8 +509,14 @@ export class CompetitionPushNotifier {
         if (!competition.notifiedNewArenaPushAt && competition.isPublic) {
           // Au premier tick on photographie l'existant sans rejouer tout
           // l'historique. Toute arène publique créée ensuite est annoncée.
+          const shouldAnnounce = shouldAnnounceNewArenaPush({
+            initialized: this.initialized,
+            isPublic: competition.isPublic,
+            alreadyNotified: Boolean(competition.notifiedNewArenaPushAt),
+            status: competition.status,
+          });
           this.competitionManager.markCompetitionNotified(competition.id, 'newArenaPush');
-          if (this.initialized && competition.status !== 'ended') {
+          if (shouldAnnounce) {
             await sendPushToAllDevices({
               title: 'Nouvelle arène disponible',
               body: `${competition.title} est ouverte aux inscriptions.`,

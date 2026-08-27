@@ -1,4 +1,4 @@
-.news-admin-shell { min-height: 100dvh; overflow-y: auto; background: #020617; color: #f8fafc; }
+.news-admin-shell { height: 100dvh; overflow-x: hidden; overflow-y: auto; background: #020617; color: #f8fafc; }
 .news-admin-page { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 70px; }
 .news-admin-login { width: min(430px, calc(100% - 32px)); margin: 12vh auto 0; padding: 28px; display: grid; gap: 15px; border: 1px solid #1e293b; border-radius: 18px; background: rgba(15,23,42,.86); }
 .news-admin-login img { width: 45px; height: 45px; object-fit: contain; }

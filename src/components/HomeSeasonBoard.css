@@ -1,0 +1,377 @@
+.home-season-board {
+  overflow: hidden;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.home-season-board__banner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #0b090d;
+}
+
+.home-season-board__banner img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.home-season-board__banner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 7, 10, 0.42) 0%, transparent 42%);
+  pointer-events: none;
+}
+
+.home-season-board__clock {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 2;
+  display: grid;
+  gap: 2px;
+}
+
+.home-season-board__clock small {
+  color: #ffd257;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.home-season-board__clock b {
+  color: #fff;
+  font: italic 900 26px/1 'Barlow Condensed', sans-serif;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.home-season-board__podium {
+  padding: 14px 14px 0;
+  display: grid;
+  grid-template-columns: 1fr 1.12fr 1fr;
+  gap: 8px;
+  align-items: end;
+}
+
+.home-season-board__player {
+  --medal: #9a95a0;
+  --hex: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+  position: relative;
+  min-width: 0;
+  padding: 16px 6px 12px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  text-align: center;
+  text-decoration: none;
+}
+
+.home-season-board__player.is-rank-1 {
+  --medal: #ffd86c;
+  padding: 22px 6px 16px;
+  border-color: rgba(255, 216, 108, 0.35);
+  background: linear-gradient(180deg, rgba(255, 216, 108, 0.09), rgba(255, 255, 255, 0.02));
+}
+
+.home-season-board__player.is-rank-2 { --medal: #e4e9ef; }
+.home-season-board__player.is-rank-3 { --medal: #d78a51; }
+
+.home-season-board__player i {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #0b090d;
+  border-radius: 50%;
+  background: var(--medal);
+  color: #100d12;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.home-season-board__player span {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  clip-path: var(--hex);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--medal) 55%, #1a161d), #16131a 70%);
+  color: #fff;
+  font: 900 16px 'Barlow Condensed', sans-serif;
+}
+
+.home-season-board__player span img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home-season-board__player.is-rank-1 span {
+  width: 66px;
+  height: 66px;
+  font-size: 21px;
+}
+
+.home-season-board__player strong {
+  max-width: 100%;
+  overflow: hidden;
+  font: 700 13px/1.1 'Barlow Condensed', sans-serif;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.home-season-board__player.is-rank-1 strong { font-size: 16px; }
+
+.home-season-board__player em {
+  color: #6ee7a0;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.home-season-board__player.is-rank-1 em { font-size: 15px; }
+
+.home-season-board__player small {
+  color: #716b75;
+  font-size: 7px;
+}
+
+.home-season-board__runners {
+  padding: 12px 14px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.home-season-board__runners > a {
+  min-height: 42px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  color: #d9d4dc;
+  text-decoration: none;
+}
+
+.home-season-board__runners i {
+  color: #8d8791;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.home-season-board__runners strong {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  font: 700 14px 'Barlow Condensed', sans-serif;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.home-season-board__runners em {
+  color: #6ee7a0;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.home-season-board__more {
+  justify-content: center;
+  gap: 7px;
+  border-color: rgba(255, 70, 92, 0.25);
+  background: rgba(238, 36, 60, 0.07);
+  color: #ff8d9b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.home-season-board__more b { font-size: 14px; }
+
+.home-season-board__rank {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(8, 7, 10, 0.55);
+}
+
+.home-season-board__prizes {
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(255, 210, 87, 0.16);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 210, 87, 0.06), transparent);
+}
+
+.home-season-board__prizes > small {
+  display: block;
+  margin-bottom: 8px;
+  color: #ffd257;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.home-season-board__prizes > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.home-season-board__prizes article {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 210, 87, 0.16);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  text-align: center;
+}
+
+.home-season-board__prizes img {
+  height: 42px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 12px rgba(245, 179, 0, 0.28));
+}
+
+.home-season-board__prizes strong {
+  color: #ffe7a3;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (min-width: 768px) {
+  .home-season-board {
+    display: grid;
+    grid-template-columns: 1.15fr 0.95fr;
+    grid-template-rows: minmax(420px, auto) auto;
+    align-items: stretch;
+    width: 100%;
+    max-width: none;
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .home-season-board__banner {
+    position: relative;
+    min-height: 100%;
+  }
+
+  .home-season-board__clock {
+    top: 18px;
+    left: 22px;
+  }
+
+  .home-season-board__clock small {
+    font-size: 11px;
+  }
+
+  .home-season-board__clock b {
+    font-size: 42px;
+  }
+
+  .home-season-board__prizes {
+    grid-column: 1 / -1;
+    padding: 14px 16px 16px;
+  }
+
+  .home-season-board__prizes img {
+    height: 64px;
+  }
+
+  .home-season-board__prizes strong {
+    font-size: 10px;
+  }
+
+  .home-season-board__banner img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+
+  .home-season-board__rank {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .home-season-board__podium {
+    padding: 16px 16px 0;
+    gap: 8px;
+  }
+
+  .home-season-board__player {
+    padding: 14px 6px 10px;
+  }
+
+  .home-season-board__player.is-rank-1 {
+    padding: 18px 6px 12px;
+  }
+
+  .home-season-board__player span {
+    width: 48px;
+    height: 48px;
+  }
+
+  .home-season-board__player.is-rank-1 span {
+    width: 60px;
+    height: 60px;
+    font-size: 18px;
+  }
+
+  .home-season-board__player strong,
+  .home-season-board__player.is-rank-1 strong {
+    font-size: 13px;
+  }
+
+  .home-season-board__player em,
+  .home-season-board__player.is-rank-1 em {
+    font-size: 12px;
+  }
+
+  .home-season-board__runners {
+    padding: 10px 16px 14px;
+    gap: 6px;
+  }
+
+  .home-season-board__runners > a {
+    min-height: 40px;
+  }
+
+  .home-season-board__more {
+    min-height: 42px;
+  }
+}

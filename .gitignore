@@ -29,6 +29,8 @@ charting_library-master/
 *.sln
 *.sw?
 .env
+.env.*
+!.env.example
 
 # Local Netlify folder
 .netlify
@@ -37,3 +39,10 @@ charting_library-master/
 src/Desktop/
 website-v2/src/Desktop/
 website-v2/test-results/
+website-v2/src/assets/News/
+
+# Médias locaux non shippés
+assets-src/
+public/assets/BTF2026/
+public/assets/Application/
+public/assets/Players/

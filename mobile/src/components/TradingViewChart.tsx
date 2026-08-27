@@ -13,8 +13,10 @@ import {
   type MarketTicker,
   type PaperMeta,
   type PaperOrder,
+  type PaperTrade,
   type Position,
 } from '../lib/api'
+import { chartTradeMarkers, timeSecToPlotX } from '../lib/chartTradeMarkers'
 
 type TvBar = {
   time: number
@@ -42,9 +44,18 @@ type TvWidget = {
     createOrderLine?: () => Promise<TvOrderLine>
     createPositionLine?: () => Promise<TvPositionLine>
     createShape?: (
-      points: Array<{ time: number; price: number }>,
+      points: { time: number; price: number } | Array<{ time: number; price: number }>,
       options: Record<string, unknown>,
     ) => Promise<string | number>
+    getTimeScale?: () => {
+      width: () => number
+      barSpacing: () => number
+      rightOffset: () => number
+      coordinateToTime: (x: number) => number | null
+    }
+    resolution?: () => string
+    getVisibleBarsRange?: () => { from: number; to: number } | null
+    getVisibleRange?: () => { from: number; to: number }
     getShapeById?: (id: string | number) => {
       getPoints: () => Array<{ price?: number }>
     }
@@ -512,6 +523,7 @@ export function TradingViewChart({
   metadata,
   positions,
   orders,
+  trades,
   orderPreview,
   onPairChange,
   onUpdatePositionRisk,
@@ -529,6 +541,7 @@ export function TradingViewChart({
   metadata: PaperMeta['marketMetadata']
   positions: Position[]
   orders: PaperOrder[]
+  trades?: PaperTrade[]
   orderPreview: MobileOrderPreview | null
   onPairChange: (pair: string) => void
   onUpdatePositionRisk: (
@@ -551,6 +564,7 @@ export function TradingViewChart({
   const widgetRef = useRef<TvWidget | null>(null)
   const datafeedRef = useRef<MobileBtfDatafeed | null>(null)
   const managedLinesRef = useRef<ManagedLine[]>([])
+  const fillMarkElementsRef = useRef(new Map<string, HTMLDivElement>())
   const fallbackLineHandlersRef = useRef(new Map<string | number, () => void>())
   const fallbackLineTimersRef = useRef(new Map<string | number, ReturnType<typeof setTimeout>>())
   const overlayElementRefs = useRef(new Map<string, HTMLDivElement>())
@@ -900,7 +914,7 @@ export function TradingViewChart({
     try {
       const shapes = (chart as { getAllShapes?: () => Array<{ id: string | number; name?: string }> })?.getAllShapes?.() || []
       for (const shape of shapes) {
-        if (shape.name === 'horizontal_line') {
+        if (shape.name === 'horizontal_line' || shape.name === 'arrow_up' || shape.name === 'arrow_down') {
           try { chart?.removeEntity?.(shape.id) } catch { /* déjà supprimée */ }
         }
       }
@@ -909,6 +923,10 @@ export function TradingViewChart({
     }
   }, [candlesReady, chartReady, pair, tradingLinesSignature])
 
+  const fillMarkers = useMemo(
+    () => chartTradeMarkers(trades, pair, RESOLUTION_MINUTES[resolution] || 1),
+    [pair, resolution, trades],
+  )
 
   const collectCanvases = useCallback((root: ParentNode) => {
     const canvases: HTMLCanvasElement[] = []
@@ -927,32 +945,71 @@ export function TradingViewChart({
   const getPaneRect = useCallback(() => {
     const container = paneRef.current
     if (!container) return null
+    const containerRect = container.getBoundingClientRect()
+    let chart
+    try {
+      chart = widgetRef.current?.activeChart()
+    } catch {
+      chart = undefined
+    }
+    const tsWidth = chart?.getTimeScale?.()?.width() || 0
     const canvases = collectCanvases(container)
+    let plotCanvas: HTMLCanvasElement | null = null
+    let bestWidthDiff = Infinity
     let largest: HTMLCanvasElement | null = null
     let largestArea = 0
     for (const canvas of canvases) {
       const rect = rectInTopViewport(canvas)
+      if (rect.width <= 40 || rect.height <= 40) continue
       const area = rect.width * rect.height
-      if (rect.width > 40 && rect.height > 40 && area > largestArea) {
+      if (area > largestArea) {
         largest = canvas
         largestArea = area
       }
+      if (tsWidth > 40) {
+        const diff = Math.abs(rect.width - tsWidth)
+        if (diff < bestWidthDiff && rect.width > tsWidth * 0.75) {
+          bestWidthDiff = diff
+          plotCanvas = canvas
+        }
+      }
     }
-    if (!largest) return null
-    const containerRect = container.getBoundingClientRect()
-    const canvasRect = rectInTopViewport(largest)
-    let height = canvasRect.height
+    const plotRect = plotCanvas && bestWidthDiff < 48 ? rectInTopViewport(plotCanvas) : null
+    let hostRect = plotRect || (largest ? rectInTopViewport(largest) : null)
+    if (!hostRect) {
+      const iframe = container.querySelector('iframe')
+      if (iframe) hostRect = rectInTopViewport(iframe)
+      else hostRect = containerRect
+    }
+    if (hostRect.width < 40 || hostRect.height < 40) return null
+    let height = hostRect.height
+    let width = tsWidth > 40 ? Math.min(tsWidth, hostRect.width) : hostRect.width
+    let topPad = 0
     try {
-      const paneHeight = widgetRef.current?.activeChart().getPanes?.()[0]?.getHeight()
+      const panes = chart?.getPanes?.() ?? []
+      const paneHeight = panes[0]?.getHeight()
       if (paneHeight && paneHeight > 40) height = Math.min(height, paneHeight)
+      if (!plotRect) {
+        let panesHeight = 0
+        for (const pane of panes) panesHeight += pane.getHeight() || 0
+        const leftover = hostRect.height - panesHeight
+        if (leftover > 20 && leftover < hostRect.height * 0.5) topPad = Math.max(0, leftover - 28)
+      }
     } catch {
-      // Hauteur du canvas utilisée.
+      // dimensions iframe / canvas déjà mesurées
     }
-    const top = canvasRect.top - containerRect.top
+    const top = hostRect.top - containerRect.top + topPad
+    const matchedPlot = Boolean(plotRect)
+    const priceScaleWidth = matchedPlot ? 0 : Math.min(86, Math.max(0, hostRect.width - width))
+    const left = matchedPlot
+      ? hostRect.left - containerRect.left
+      : hostRect.left - containerRect.left + Math.max(0, hostRect.width - width - priceScaleWidth)
     return {
       top,
       bottom: top + height,
-      left: canvasRect.left - containerRect.left,
+      left,
+      right: left + width,
+      width,
       height,
     }
   }, [collectCanvases])
@@ -976,6 +1033,15 @@ export function TradingViewChart({
     if (!pane || !range || !Number.isFinite(value)) return null
     return pane.top + ((range.top - value) / (range.top - range.bottom)) * pane.height
   }, [getPaneRect, getPriceRange])
+
+  const timeToX = useCallback((timeSec: number) => {
+    const pane = getPaneRect()
+    if (!pane) return null
+    const chart = widgetRef.current?.activeChart()
+    if (!chart) return null
+    const xLocal = timeSecToPlotX(chart, timeSec, RESOLUTION_MINUTES[resolution] || 1)
+    return xLocal == null ? null : pane.left + xLocal
+  }, [getPaneRect, resolution])
 
   const yToPrice = useCallback((value: number) => {
     const pane = getPaneRect()
@@ -1007,6 +1073,23 @@ export function TradingViewChart({
           element.style.pointerEvents = offscreen ? 'none' : 'auto'
           fallbackIndex += 1
         }
+        for (const marker of fillMarkers) {
+          const element = fillMarkElementsRef.current.get(marker.key)
+          if (!element) continue
+          const x = timeToX(marker.timeSec)
+          const y = priceToY(marker.price)
+          if (x == null || y == null || !pane) {
+            element.style.opacity = '0'
+            continue
+          }
+          const left = x + marker.stack * 10
+          const top = y + (marker.direction === 'buy' ? 11 : -11)
+          const hidden = left < pane.left - 8 || left > pane.right + 8
+            || top < pane.top - 8 || top > pane.bottom + 8
+          element.style.left = `${left}px`
+          element.style.top = `${top}px`
+          element.style.opacity = hidden ? '0' : '1'
+        }
       }
       frame = requestAnimationFrame(position)
     }
@@ -1015,7 +1098,7 @@ export function TradingViewChart({
       stopped = true
       cancelAnimationFrame(frame)
     }
-  }, [getPaneRect, overlayLines, priceToY])
+  }, [fillMarkers, getPaneRect, overlayLines, priceToY, timeToX])
 
   const isValidOverlayPrice = useCallback((line: MobileOverlayLine, value: number) => {
     if (line.kind !== 'sl' && line.kind !== 'tp') return true
@@ -1262,6 +1345,20 @@ export function TradingViewChart({
       <div ref={paneRef} className="tradingview-mobile-pane">
       <div id={containerId.current} className="tradingview-mobile-chart" />
       <div className="chart-trade-overlay">
+        {fillMarkers.map((marker) => (
+          <div
+            key={marker.key}
+            ref={(element) => {
+              if (element) fillMarkElementsRef.current.set(marker.key, element)
+              else fillMarkElementsRef.current.delete(marker.key)
+            }}
+            title={marker.tooltip}
+            className={`tv-fill-mark is-${marker.direction}`}
+            style={{ background: marker.color }}
+          >
+            {marker.text}
+          </div>
+        ))}
         <div ref={riskDragGuideRef} className="chart-risk-drag-guide">
           <span ref={riskDragGuideLabelRef} />
           <strong ref={riskDragGuidePriceRef} />
