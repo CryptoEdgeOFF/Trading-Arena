@@ -2399,7 +2399,9 @@ app.post('/api/competition/auth/request', rateLimit({ windowMs: 10 * 60 * 1000, 
       consent: Boolean(consent),
     });
 
-    const result = await sendOtpEmail(String(email || '').trim(), code, safeIntent);
+    const result = competitionManager.isAppleReviewEmail(String(email || ''))
+      ? { delivered: true as const, error: undefined }
+      : await sendOtpEmail(String(email || '').trim(), code, safeIntent);
 
     res.json({
       ok: true,
