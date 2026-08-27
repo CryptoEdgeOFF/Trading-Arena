@@ -8,6 +8,10 @@ import {
   shouldAnnounceNewArenaPush,
   shouldNotifyCompletedLimit,
   shouldSendNewsPush,
+  shouldSendNoTradeReminder,
+  shouldSendRegisterReminder24h,
+  shouldSkipNoTradeReminder,
+  shouldSkipRegisterReminder24h,
   shouldWarnDailyDrawdown,
   tradingClosePushKind,
 } from './notificationRules.js';
@@ -75,6 +79,41 @@ test('new arena push is public, not historical, and only once', () => {
   assert.equal(shouldAnnounceNewArenaPush({
     initialized: true, isPublic: true, alreadyNotified: false, status: 'ended',
   }), false);
+});
+
+test('24h register reminder is public, joinable, and only inside the last day', () => {
+  assert.equal(shouldSendRegisterReminder24h({
+    isPublic: true, alreadyNotified: false, status: 'registration', msUntilStart: 24 * 60 * 60 * 1000,
+  }), true);
+  assert.equal(shouldSendRegisterReminder24h({
+    isPublic: true, alreadyNotified: false, status: 'registration', msUntilStart: 10 * 60 * 60 * 1000,
+  }), true);
+  assert.equal(shouldSendRegisterReminder24h({
+    isPublic: true, alreadyNotified: false, status: 'registration', msUntilStart: 25 * 60 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder24h({
+    isPublic: false, alreadyNotified: false, status: 'registration', msUntilStart: 12 * 60 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder24h({
+    isPublic: true, alreadyNotified: true, status: 'registration', msUntilStart: 12 * 60 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder24h({
+    isPublic: true, alreadyNotified: false, status: 'starting_soon', msUntilStart: 12 * 60 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSkipRegisterReminder24h({ alreadyNotified: false, status: 'starting_soon' }), true);
+  assert.equal(shouldSkipRegisterReminder24h({ alreadyNotified: false, status: 'registration' }), false);
+});
+
+test('J+2 no-trade reminder fires once while the arena is still live', () => {
+  const twoDays = 2 * 24 * 60 * 60 * 1000;
+  assert.equal(shouldSendNoTradeReminder({ alreadyNotified: false, status: 'live', msSinceStart: twoDays }), true);
+  assert.equal(shouldSendNoTradeReminder({ alreadyNotified: false, status: 'live', msSinceStart: twoDays + 12 * 60 * 60 * 1000 }), true);
+  assert.equal(shouldSendNoTradeReminder({ alreadyNotified: false, status: 'live', msSinceStart: twoDays - 1 }), false);
+  assert.equal(shouldSendNoTradeReminder({ alreadyNotified: false, status: 'live', msSinceStart: twoDays + 25 * 60 * 60 * 1000 }), false);
+  assert.equal(shouldSendNoTradeReminder({ alreadyNotified: false, status: 'ended', msSinceStart: twoDays }), false);
+  assert.equal(shouldSendNoTradeReminder({ alreadyNotified: true, status: 'live', msSinceStart: twoDays }), false);
+  assert.equal(shouldSkipNoTradeReminder({ alreadyNotified: false, status: 'ended', msSinceStart: twoDays }), true);
+  assert.equal(shouldSkipNoTradeReminder({ alreadyNotified: false, status: 'live', msSinceStart: twoDays + 25 * 60 * 60 * 1000 }), true);
 });
 
 test('news push fires on first publish only', () => {

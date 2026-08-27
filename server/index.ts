@@ -1378,9 +1378,11 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
         ctaUrl: (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim(),
       });
     } else {
-      // arena_start_soon | arena_podium_lost | arena_results → notification générique
+      // arena_start_soon | rappels | podium | résultats → notification générique
       const headings: Record<string, string> = {
         arena_start_soon: "L'arène démarre bientôt",
+        arena_register_reminder_24h: "L'arène démarre dans 24 heures",
+        arena_no_trade_reminder: "L'arène a commencé il y a 2 jours",
         arena_podium_lost: 'On t’a pris ta place sur le podium !',
         arena_results: "Résultats — Arène de démonstration",
       };

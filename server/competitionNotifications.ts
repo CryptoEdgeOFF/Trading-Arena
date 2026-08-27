@@ -1,20 +1,30 @@
 import type { CashPrize, CompetitionManager } from './competitionManager.js';
 import { isMailerConfigured, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
 import { getEmailSettings } from './emailSettingsStore.js';
+import {
+  shouldSendNoTradeReminder,
+  shouldSendRegisterReminder24h,
+  shouldSkipNoTradeReminder,
+  shouldSkipRegisterReminder24h,
+} from './notificationRules.js';
 
 /**
  * Moteur de notifications email des arènes online :
  *  1. « Ton arène démarre bientôt » — envoyé une fois, dans l'heure qui
  *     précède le départ, à tous les inscrits.
- *  2. « Tu as perdu ta place sur le podium » — pendant le live, quand un
+ *  2. « Plus que 24 h pour rejoindre » — envoyé une fois, dans les 24 h
+ *     avant le départ, aux utilisateurs non inscrits (jamais aux inscrits).
+ *  3. « Tu n'as pas encore tradé » — envoyé une fois, 2 jours après le
+ *     départ, aux inscrits dont tradesCount === 0.
+ *  4. « Tu as perdu ta place sur le podium » — pendant le live, quand un
  *     joueur sort du top 3 (cooldown anti-spam par joueur).
- *  3. « Résultats de l'arène » — envoyé une fois à la fin, avec le rang et le
+ *  5. « Résultats de l'arène » — envoyé une fois à la fin, avec le rang et le
  *     PnL final de chaque participant.
  *
- * Les flags « déjà envoyé » des notifications 1 et 3 sont persistés sur la
- * compétition (notifiedStartSoonAt / notifiedEndedAt) pour survivre aux
- * redémarrages. Le suivi du podium est en mémoire : après un restart, le
- * premier tick reconstruit la photo du top 3 sans notifier.
+ * Les flags « déjà envoyé » des notifications 1, 2, 3 et 5 sont persistés sur
+ * la compétition pour survivre aux redémarrages. Le suivi du podium est en
+ * mémoire : après un restart, le premier tick reconstruit la photo du top 3
+ * sans notifier.
  */
 
 const START_SOON_WINDOW_MS = 60 * 60 * 1000; // 1h avant le départ
@@ -39,6 +49,11 @@ const APP_PUBLIC_URL = (process.env.APP_PUBLIC_URL || 'https://btfarena.com').tr
 function arenaUrl(competitionId: string): string | undefined {
   if (!APP_PUBLIC_URL) return undefined;
   return `${APP_PUBLIC_URL}/compete/leaderboard/${competitionId}`;
+}
+
+function joinArenaUrl(competitionId: string): string | undefined {
+  if (!APP_PUBLIC_URL) return undefined;
+  return `${APP_PUBLIC_URL}/?arena=${encodeURIComponent(competitionId)}&join=1`;
 }
 
 function formatPnl(pnlUsd: number, pnlPercent: number): string {
@@ -188,6 +203,23 @@ export class CompetitionNotifier {
           }
         }
 
+        // Rappel 24 h : destinataires = tous les users plateforme SAUF les
+        // inscrits. Placé avant le filtre « arène vide » car c'est justement
+        // le cas le plus fréquent (personne encore inscrit).
+        if (shouldSendRegisterReminder24h({
+          isPublic: competition.isPublic,
+          alreadyNotified: Boolean(competition.notifiedRegisterReminder24hAt),
+          status: competition.status,
+          msUntilStart: competition.startAt - now,
+        })) {
+          await this.sendRegisterReminder24h(competition.id, competition.title);
+        } else if (shouldSkipRegisterReminder24h({
+          alreadyNotified: Boolean(competition.notifiedRegisterReminder24hAt),
+          status: competition.status,
+        })) {
+          this.competitionManager.markCompetitionNotified(competition.id, 'registerReminder24h');
+        }
+
         if (competition.entriesCount === 0) continue;
 
         if ((competition.status === 'registration' || competition.status === 'starting_soon') && !competition.notifiedStartSoonAt) {
@@ -203,6 +235,16 @@ export class CompetitionNotifier {
 
         if (competition.status === 'live') {
           await this.checkPodium(competition.id, competition.title, now);
+        }
+        const noTradeInput = {
+          alreadyNotified: Boolean(competition.notifiedNoTradeReminderAt),
+          status: competition.status,
+          msSinceStart: now - competition.startAt,
+        };
+        if (shouldSendNoTradeReminder(noTradeInput)) {
+          await this.sendNoTradeReminder(competition.id, competition.title);
+        } else if (shouldSkipNoTradeReminder(noTradeInput)) {
+          this.competitionManager.markCompetitionNotified(competition.id, 'noTradeReminder');
         }
 
         if (competition.status === 'ended' && !competition.notifiedEndedAt) {
@@ -251,6 +293,65 @@ export class CompetitionNotifier {
       await sleep(SEND_SPACING_MS);
     }
     console.log(`[notifier] start-soon "${title}" → ${sent} emails`);
+  }
+
+  private async sendRegisterReminder24h(competitionId: string, title: string): Promise<void> {
+    this.competitionManager.markCompetitionNotified(competitionId, 'registerReminder24h');
+
+    const payload = this.competitionManager.getNewArenaPayload(competitionId);
+    if (!payload) return;
+
+    const startLabel = formatArenaDateTime(payload.startAt);
+    const prizeHead = prizeHeadline(payload.cashPrize);
+    const ctaUrl = joinArenaUrl(competitionId);
+    let sent = 0;
+    for (const recipient of payload.recipients) {
+      if (!recipient.email) continue;
+      if (this.competitionManager.isUserInCompetition(competitionId, recipient.id)) continue;
+      const bodyLines = [
+        `Salut ${recipient.name},`,
+        `L'arène « ${title} » démarre le ${startLabel} (heure de Paris) et tu n'es pas encore inscrit.`,
+      ];
+      if (prizeHead) bodyLines.push(`Il y a ${prizeHead} à gagner.`);
+      bodyLines.push("Inscris-toi maintenant pour ne pas rater le départ.");
+      await this.send(recipient.email, `Plus que 24h pour rejoindre ${title}`, {
+        eyebrow: title,
+        heading: "L'arène démarre dans 24 heures",
+        bodyLines,
+        highlight: prizeHead,
+        ctaLabel: "Rejoindre l'arène",
+        ctaUrl,
+      }, 'arena_register_reminder_24h');
+      sent += 1;
+      await sleep(SEND_SPACING_MS);
+    }
+    console.log(`[notifier] register-reminder-24h "${title}" → ${sent} emails`);
+  }
+
+  private async sendNoTradeReminder(competitionId: string, title: string): Promise<void> {
+    this.competitionManager.markCompetitionNotified(competitionId, 'noTradeReminder');
+
+    const entries = this.competitionManager.getRankedEntriesForNotifier(competitionId);
+    let sent = 0;
+    for (const entry of entries) {
+      if (!entry.email) continue;
+      if (entry.tradesCount > 0) continue;
+      if (entry.breached) continue;
+      await this.send(entry.email, `Tu n'as pas encore tradé — ${title}`, {
+        eyebrow: title,
+        heading: "L'arène a commencé il y a 2 jours",
+        bodyLines: [
+          `Salut ${entry.name},`,
+          `Tu es inscrit à « ${title} », mais tu n'as encore passé aucun trade.`,
+          'Ouvre une position pour apparaître au classement — il est encore temps.',
+        ],
+        ctaLabel: 'Commencer à trader',
+        ctaUrl: arenaUrl(competitionId),
+      }, 'arena_no_trade_reminder');
+      sent += 1;
+      await sleep(SEND_SPACING_MS);
+    }
+    console.log(`[notifier] no-trade-reminder "${title}" → ${sent} emails`);
   }
 
   private async sendNewArena(competitionId: string, title: string): Promise<number> {

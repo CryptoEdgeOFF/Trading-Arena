@@ -51,6 +51,52 @@ export function shouldSendNewsPush(article: { published?: boolean; pushSentAt?: 
   return Boolean(article.published) && !article.pushSentAt;
 }
 
+export const REGISTER_REMINDER_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const NO_TRADE_REMINDER_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
+export const NO_TRADE_REMINDER_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export function shouldSendRegisterReminder24h(input: {
+  isPublic: boolean;
+  alreadyNotified: boolean;
+  status: string;
+  msUntilStart: number;
+}): boolean {
+  return (
+    input.isPublic
+    && !input.alreadyNotified
+    && input.status === 'registration'
+    && input.msUntilStart > 0
+    && input.msUntilStart <= REGISTER_REMINDER_WINDOW_MS
+  );
+}
+
+export function shouldSkipRegisterReminder24h(input: {
+  alreadyNotified: boolean;
+  status: string;
+}): boolean {
+  return !input.alreadyNotified && (input.status === 'starting_soon' || input.status === 'live' || input.status === 'ended');
+}
+
+export function shouldSendNoTradeReminder(input: {
+  alreadyNotified: boolean;
+  status: string;
+  msSinceStart: number;
+}): boolean {
+  if (input.alreadyNotified || input.status !== 'live') return false;
+  return input.msSinceStart >= NO_TRADE_REMINDER_AFTER_MS
+    && input.msSinceStart <= NO_TRADE_REMINDER_AFTER_MS + NO_TRADE_REMINDER_GRACE_MS;
+}
+
+export function shouldSkipNoTradeReminder(input: {
+  alreadyNotified: boolean;
+  status: string;
+  msSinceStart: number;
+}): boolean {
+  if (input.alreadyNotified) return false;
+  if (input.status === 'ended') return true;
+  return input.status === 'live' && input.msSinceStart > NO_TRADE_REMINDER_AFTER_MS + NO_TRADE_REMINDER_GRACE_MS;
+}
+
 export function buildTradingPushPayload(input: {
   kind: 'order_filled' | 'take_profit' | 'stop_loss' | 'drawdown_warning';
   pair?: string;

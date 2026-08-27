@@ -359,6 +359,10 @@ export interface Competition {
   notifiedNewArenaAt?: number | null;
   /** Timestamp d'envoi du push « nouvelle arène disponible » (anti-doublon). */
   notifiedNewArenaPushAt?: number | null;
+  /** Timestamp d'envoi du rappel 24 h aux non-inscrits (anti-doublon). */
+  notifiedRegisterReminder24hAt?: number | null;
+  /** Timestamp d'envoi du rappel J+2 aux inscrits sans trade (anti-doublon). */
+  notifiedNoTradeReminderAt?: number | null;
   /** Saison du leaderboard global à laquelle cette arène contribue. */
   seasonId?: string | null;
   /**
@@ -3573,6 +3577,8 @@ export class CompetitionManager {
     notifiedEndedAt: number | null;
     notifiedNewArenaAt: number | null;
     notifiedNewArenaPushAt: number | null;
+    notifiedRegisterReminder24hAt: number | null;
+    notifiedNoTradeReminderAt: number | null;
   }> {
     return Array.from(this.competitions.values()).map((competition) => ({
       id: competition.id,
@@ -3587,6 +3593,8 @@ export class CompetitionManager {
       notifiedEndedAt: competition.notifiedEndedAt ?? null,
       notifiedNewArenaAt: competition.notifiedNewArenaAt ?? null,
       notifiedNewArenaPushAt: competition.notifiedNewArenaPushAt ?? null,
+      notifiedRegisterReminder24hAt: competition.notifiedRegisterReminder24hAt ?? null,
+      notifiedNoTradeReminderAt: competition.notifiedNoTradeReminderAt ?? null,
     }));
   }
 
@@ -3596,13 +3604,19 @@ export class CompetitionManager {
   }
 
   /** Marque une notification comme envoyée (persisté, anti-doublon). */
-  markCompetitionNotified(competitionId: string, kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush'): void {
+  markCompetitionNotified(
+    competitionId: string,
+    kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush' | 'registerReminder24h' | 'noTradeReminder',
+  ): void {
     const competition = this.competitions.get(competitionId);
     if (!competition) return;
-    if (kind === 'startSoon') competition.notifiedStartSoonAt = Date.now();
-    else if (kind === 'ended') competition.notifiedEndedAt = Date.now();
-    else if (kind === 'newArena') competition.notifiedNewArenaAt = Date.now();
-    else competition.notifiedNewArenaPushAt = Date.now();
+    const now = Date.now();
+    if (kind === 'startSoon') competition.notifiedStartSoonAt = now;
+    else if (kind === 'ended') competition.notifiedEndedAt = now;
+    else if (kind === 'newArena') competition.notifiedNewArenaAt = now;
+    else if (kind === 'newArenaPush') competition.notifiedNewArenaPushAt = now;
+    else if (kind === 'registerReminder24h') competition.notifiedRegisterReminder24hAt = now;
+    else competition.notifiedNoTradeReminderAt = now;
     this.competitions.set(competition.id, competition);
     this.save();
   }
@@ -3629,6 +3643,14 @@ export class CompetitionManager {
       }
       if (!competition.notifiedNewArenaAt && status === 'ended') {
         competition.notifiedNewArenaAt = now;
+        dirty = true;
+      }
+      if (!competition.notifiedRegisterReminder24hAt && (status === 'live' || status === 'ended')) {
+        competition.notifiedRegisterReminder24hAt = now;
+        dirty = true;
+      }
+      if (!competition.notifiedNoTradeReminderAt && (status === 'ended' || (status === 'live' && now - competition.startAt >= 3 * 24 * 60 * 60 * 1000))) {
+        competition.notifiedNoTradeReminderAt = now;
         dirty = true;
       }
 
@@ -3670,22 +3692,28 @@ export class CompetitionManager {
     };
   }
 
+  isUserInCompetition(competitionId: string, userId: string): boolean {
+    const competition = this.competitions.get(competitionId);
+    return Boolean(competition?.entries.some((entry) => entry.userId === userId));
+  }
+
   getNewArenaPayload(competitionId: string): {
     title: string;
     startAt: number;
     endAt: number;
     cashPrize: CashPrize | null;
     sponsor: string | null;
-    recipients: Array<{ name: string; email: string }>;
+    recipients: Array<{ id: string; name: string; email: string }>;
   } | null {
     const competition = this.competitions.get(competitionId);
     if (!competition) return null;
     const alreadyIn = new Set(competition.entries.map((entry) => entry.userId));
-    const recipients: Array<{ name: string; email: string }> = [];
+    const recipients: Array<{ id: string; name: string; email: string }> = [];
     for (const user of this.users.values()) {
+      if (user.deletedAt) continue;
       if (alreadyIn.has(user.id)) continue;
       if (!user.email) continue;
-      recipients.push({ name: user.name || 'Trader', email: user.email });
+      recipients.push({ id: user.id, name: user.name || 'Trader', email: user.email });
     }
     return {
       title: competition.title,
@@ -3720,7 +3748,7 @@ export class CompetitionManager {
         return {
           userId: entry.userId,
           name: user?.name || 'Participant',
-          email: user?.email || '',
+          email: user && !user.deletedAt ? (user.email || '') : '',
           pnlPercent: entry.pnlPercent,
           pnlUsd: entry.pnlUsd,
           tradesCount: entry.tradesCount,
