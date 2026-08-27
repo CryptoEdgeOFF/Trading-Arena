@@ -832,6 +832,23 @@ export class CompetitionManager {
       throw new Error('Email invalide');
     }
 
+    if (this.isAppleReviewEmail(email)) {
+      await this.ensureAppleReviewUser();
+      const code = CompetitionManager.APPLE_REVIEW_CODE;
+      const expiresAt = Date.now() + OTP_TTL_MS;
+      await this.writePendingOtp({
+        email,
+        intent: 'login',
+        code,
+        expiresAt,
+        attempts: 0,
+        step: 'email',
+        resends: 0,
+        lastSentAt: Date.now(),
+      });
+      return { code, expiresAt };
+    }
+
     const exists = this.emailExists(email);
     if (input.intent === 'signup' && exists) {
       throw new Error('Cet email a deja un compte. Utilise la connexion.');
@@ -908,6 +925,61 @@ export class CompetitionManager {
     return { code, expiresAt };
   }
 
+  static readonly APPLE_REVIEW_EMAIL = normalizeEmail(process.env.APPLE_REVIEW_EMAIL || 'apple.review@btfarena.com');
+  static readonly APPLE_REVIEW_CODE = String(process.env.APPLE_REVIEW_CODE || '847293').trim();
+  static readonly APPLE_REVIEW_NAME = 'Apple Review';
+
+  isAppleReviewEmail(email: string): boolean {
+    return normalizeEmail(email) === CompetitionManager.APPLE_REVIEW_EMAIL;
+  }
+
+  async ensureAppleReviewUser(): Promise<CompetitionUser> {
+    let user = this.findUserByEmail(CompetitionManager.APPLE_REVIEW_EMAIL);
+    if (!user) {
+      user = {
+        id: crypto.randomUUID(),
+        email: CompetitionManager.APPLE_REVIEW_EMAIL,
+        name: CompetitionManager.APPLE_REVIEW_NAME,
+        phone: null,
+        phoneVerifiedAt: Date.now(),
+        consent: { termsAccepted: true, newsletter: false, acceptedAt: Date.now() },
+        createdAt: Date.now(),
+      };
+      this.users.set(user.id, user);
+      await this.persist();
+    }
+    return user;
+  }
+
+  enrollAppleReviewUser(userId: string): void {
+    const now = Date.now();
+    for (const competition of this.competitions.values()) {
+      if (!competition.isPublic) continue;
+      const alreadyIn = competition.entries.some((entry) => entry.userId === userId);
+      if (!alreadyIn && !canJoinCompetition(competition, now)) continue;
+      try {
+        this.joinCompetition(
+          userId,
+          '',
+          CompetitionManager.APPLE_REVIEW_EMAIL,
+          competition.id,
+          true,
+        );
+      } catch {
+        // Arène team, code requis, ou déjà inscrite.
+      }
+    }
+  }
+
+  async completeAppleReviewLogin(): Promise<{ token: string; user: CompetitionUser }> {
+    const user = await this.ensureAppleReviewUser();
+    this.enrollAppleReviewUser(user.id);
+    const token = crypto.randomBytes(24).toString('hex');
+    await this.writeSession(token, user.id);
+    await this.persist();
+    return { token, user };
+  }
+
   /**
    * Backdoor pour le compte de test : pas de mail, pas de SMS, le user
    * tape simplement le pseudo magique dans le champ email/login. Utilisé
@@ -953,6 +1025,11 @@ export class CompetitionManager {
     const code = String(input.code || '').trim();
     if (!email || !code) {
       throw new Error('Email et code requis');
+    }
+
+    if (this.isAppleReviewEmail(email) && code === CompetitionManager.APPLE_REVIEW_CODE) {
+      await this.deletePendingOtp(email);
+      return this.completeAppleReviewLogin();
     }
 
     const pending = await this.readPendingOtp(email);
