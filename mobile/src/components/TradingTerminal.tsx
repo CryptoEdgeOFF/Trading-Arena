@@ -855,7 +855,10 @@ export function TradingTerminal({
     )
   }
 
-  const historyTrades = (state.player.trades || []).filter((trade) => trade.action === 'close')
+  const historyTrades = (state.player.trades || [])
+    .filter((trade) => trade.action === 'close')
+    .slice()
+    .sort((a, b) => b.time - a.time)
 
   return (
     <div className="mobile-terminal">

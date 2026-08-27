@@ -3,12 +3,13 @@ import { Capacitor } from '@capacitor/core'
 import { Keyboard } from '@capacitor/keyboard'
 import { motion } from 'framer-motion'
 import {
-  loginTestAccount,
   requestAuthCode,
   verifyAuthCode,
   verifyPhoneCode,
   type SessionUser,
 } from '../lib/api'
+
+const ENABLE_TEST_TOOLS = import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true'
 import { useI18n } from '../i18n'
 
 type Intent = 'login' | 'signup'
@@ -93,7 +94,7 @@ export function AuthSheet({
       })
       setEmail(result.email)
       setStep('email-code')
-      setHint(result.devCode ? `Dev code: ${result.devCode}` : t('auth.codeSent'))
+      setHint(ENABLE_TEST_TOOLS && result.devCode ? `Dev code: ${result.devCode}` : t('auth.codeSent'))
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : t('auth.loginFailed'))
     } finally {
@@ -110,7 +111,7 @@ export function AuthSheet({
       if (result.needsPhone) {
         setStep('phone-code')
         setCode('')
-        setHint(result.devSmsCode ? `Dev code: ${result.devSmsCode}` : t('auth.smsSent', { phone: result.phoneMasked || t('auth.smsFallback') }))
+        setHint(ENABLE_TEST_TOOLS && result.devSmsCode ? `Dev code: ${result.devSmsCode}` : t('auth.smsSent', { phone: result.phoneMasked || t('auth.smsFallback') }))
         return
       }
       if (!result.token || !result.user) throw new Error(t('auth.incomplete'))
@@ -137,9 +138,11 @@ export function AuthSheet({
   }
 
   async function testLogin() {
+    if (!ENABLE_TEST_TOOLS) return
     setBusy(true)
     setError('')
     try {
+      const { loginTestAccount } = await import('../lib/testTools')
       const result = await loginTestAccount()
       await onAuthenticated(result.token, result.user)
     } catch (nextError) {
@@ -203,7 +206,7 @@ export function AuthSheet({
               {error && <p className="auth-error" role="alert">{error}</p>}
               <button className="auth-submit" type="submit" disabled={busy || (intent === 'signup' && !consent)}>{busy ? t('auth.sending') : t('auth.sendCode')}</button>
             </form>
-            {import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true' && (
+            {ENABLE_TEST_TOOLS && (
               <button className="auth-test" type="button" disabled={busy} onClick={() => void testLogin()}>{t('auth.useTest')}</button>
             )}
           </>

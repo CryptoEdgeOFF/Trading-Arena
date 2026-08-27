@@ -1,0 +1,3 @@
+NSCameraUsageDescription = "BTF Arena utilise la caméra pour partager des photos dans le chat communautaire.";
+NSPhotoLibraryUsageDescription = "BTF Arena a besoin d’accéder à tes photos pour les partager dans le chat communautaire.";
+NSPhotoLibraryAddUsageDescription = "BTF Arena peut enregistrer une photo dans ta bibliothèque si tu le choisis.";

@@ -3524,18 +3524,7 @@ app.get('/api/competition/teams/mine', async (req, res) => {
 });
 
 app.post('/api/competition/teams', async (req, res) => {
-  const user = await getCompetitionUser(req);
-  if (!user) {
-    res.status(401).json({ error: 'Session invalide' });
-    return;
-  }
-  try {
-    const team = competitionManager.createTeam(user.id, req.body?.name);
-    await competitionManager.persist();
-    res.status(201).json({ team });
-  } catch (error: any) {
-    res.status(400).json({ error: error.message || 'Création d’équipe impossible' });
-  }
+  res.status(403).json({ error: 'La création d’équipes est temporairement désactivée.' });
 });
 
 app.post('/api/competition/teams/join', async (req, res) => {

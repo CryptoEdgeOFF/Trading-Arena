@@ -1,6 +1,7 @@
+const PRODUCTION_API_URL = 'https://trading-arena-api-production.up.railway.app'
 const API_BASE_URL = (
   import.meta.env.VITE_API_URL ||
-  'https://btf-mobile-staging-production.up.railway.app'
+  PRODUCTION_API_URL
 ).replace(/\/$/, '')
 const API_WS_URL = API_BASE_URL.replace(/^http/, 'ws')
 
@@ -497,7 +498,7 @@ export type ApiHealth = {
   latencyMs: number | null
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
@@ -581,7 +582,9 @@ export function getNewsArticle(id: string): Promise<NewsArticle> {
 
 function refreshPromotions(lang = 'en'): Promise<Promotion[]> {
   if (promotionsRequest) return promotionsRequest
-  const productionBase = API_BASE_URL.includes('btfarena.com') ? API_BASE_URL : 'https://btfarena.com'
+  const productionBase = API_BASE_URL.includes('trading-arena-api-production')
+    ? API_BASE_URL
+    : PRODUCTION_API_URL
   promotionsRequest = fetch(`${productionBase}/api/promotions?lang=${lang === 'fr' ? 'fr' : 'en'}`)
     .then(async (response) => {
       if (!response.ok) return promotionsCache || []
@@ -636,14 +639,6 @@ export function verifyPhoneCode(email: string, code: string): Promise<{
   })
 }
 
-export function loginTestAccount(): Promise<{ token: string; user: SessionUser }> {
-  return apiFetch('/api/competition/auth/test-login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'ARTEMTEST987' }),
-  })
-}
-
 export function logoutSession(token: string): Promise<{ ok: true }> {
   return apiFetch('/api/competition/auth/logout', { method: 'POST' }, token)
 }
@@ -676,10 +671,6 @@ export async function registerPushDevice(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: deviceToken, platform, environment }),
   }, token)
-}
-
-export async function sendPushTest(token: string): Promise<{ sent: number; configured: boolean; devices: number }> {
-  return apiFetch('/api/competition/me/push-test', { method: 'POST' }, token)
 }
 
 export async function unregisterPushDevice(token: string, deviceToken: string): Promise<void> {

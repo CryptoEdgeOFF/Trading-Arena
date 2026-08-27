@@ -18,7 +18,6 @@ import {
   getPromotions,
   logoutSession,
   registerPushDevice,
-  sendPushTest,
   unregisterPushDevice,
   type BootstrapData,
   type GlobalLeaderboardRow,
@@ -65,6 +64,7 @@ import './App.css'
 
 type Tab = 'home' | 'live' | 'rank' | 'deals' | 'trade' | 'community' | 'news' | 'leaderboard' | 'journal' | 'settings' | 'player' | 'profile' | 'payouts' | 'team'
 type IconName = Tab | 'bell' | 'arrow' | 'refresh' | 'shield'
+const ENABLE_TEST_TOOLS = import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true'
 
 const icons: Record<IconName, ReactNode> = {
   home: <path d="M7 4.8v14.4a.5.5 0 0 0 .76.43l11.77-7.2a.5.5 0 0 0 0-.86L7.76 4.37A.5.5 0 0 0 7 4.8Z" />,
@@ -345,15 +345,31 @@ function LiveScreen({
   const liveArenas = competitions
     .filter((competition) => competition.status === 'live')
     .sort((a, b) => a.endAt - b.endAt)
-  const myLiveArenas = liveArenas.filter((competition) => mineById.has(competition.id))
+  const myArenas = competitions
+    .filter((competition) => mineById.has(competition.id) && competition.status !== 'ended')
+    .sort((a, b) => {
+      const rank = (status: PublicCompetition['status']) => (
+        status === 'live' ? 0 : status === 'starting_soon' ? 1 : status === 'registration' ? 2 : 9
+      )
+      const byStatus = rank(a.status) - rank(b.status)
+      return byStatus !== 0 ? byStatus : a.startAt - b.startAt
+    })
+  const featuredMine = myArenas[0] || null
+  const otherMine = myArenas.slice(1)
   const otherLiveArenas = liveArenas.filter((competition) => !mineById.has(competition.id))
   const upcoming = competitions
-    .filter((competition) => competition.status === 'registration' || competition.status === 'starting_soon')
+    .filter((competition) => (
+      (competition.status === 'registration' || competition.status === 'starting_soon')
+      && !mineById.has(competition.id)
+    ))
     .sort((a, b) => a.startAt - b.startAt)
   const allPrevious = competitions
     .filter((competition) => competition.status === 'ended')
     .sort((a, b) => b.endAt - a.endAt)
   const previous = allPrevious.slice(0, previousLimit)
+  const compactEmpty = (label: string) => (
+    <div className="live-empty is-compact"><p>{label}</p></div>
+  )
   const renderLiveArenas = (arenas: PublicCompetition[]) => (
     <div className="live-list">
       {arenas.map((arena, index) => (
@@ -390,21 +406,66 @@ function LiveScreen({
           <h2>{t('live.title')}</h2>
           <p>{t('live.lead')}</p>
         </div>
-        <strong>{String(liveArenas.length).padStart(2, '0')}</strong>
+        <strong>{String(myArenas.length).padStart(2, '0')}</strong>
       </header>
       <section className="live-upcoming">
         <header><span>{t('live.mine')}</span><i /></header>
-        {myLiveArenas.length ? renderLiveArenas(myLiveArenas) : (
-          <div className="live-empty">
-            <p>{t('live.emptyMine')}</p>
+        {featuredMine ? (
+          <article className={`live-mine ${featuredMine.status === 'live' ? 'is-live' : 'is-soon'}`}>
+            <img className="live-mine__art" src={arenaVisual(featuredMine)} alt="" />
+            <div className="live-mine__top">
+              <span className={`live-pill ${featuredMine.status === 'live' ? '' : 'is-soon'}`}>
+                <i />{featuredMine.status === 'live' ? t('arena.live') : t('live.registered')}
+              </span>
+              <FormatChip format={featuredMine.format} />
+              {featuredMine.entryMode === 'team' && <span className="format-chip is-team">{t('arena.teamChip')}</span>}
+            </div>
+            <h3>{featuredMine.title || t('arena.fallbackTitle')}</h3>
+            <div className="live-mine__countdown">
+              <small>{featuredMine.status === 'live' ? t('live.remaining') : t('live.startsIn')}</small>
+              <strong>{formatCountdown(
+                (featuredMine.status === 'live' ? featuredMine.endAt : featuredMine.startAt) - now,
+                t('nextArena.dayUnit'),
+              )}</strong>
+              {featuredMine.status !== 'live' && (
+                <em>{t('live.startsAt')} {new Date(featuredMine.startAt).toLocaleString(locale, {
+                  weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+                })}</em>
+              )}
+            </div>
+            <footer>
+              <small>{t('arena.players', { count: (featuredMine.participants ?? 0).toLocaleString(locale) })}</small>
+              <div className="live-card__actions">
+                {mineById.get(featuredMine.id)?.canTrade && (
+                  <button type="button" onClick={() => onTrade(featuredMine.id)}>{t('arena.trade')}</button>
+                )}
+                <button className="is-primary" type="button" onClick={() => onLeaderboard(featuredMine.id)}>
+                  {featuredMine.status === 'live' ? t('live.spectate') : t('arena.leaderboard')}
+                </button>
+              </div>
+            </footer>
+          </article>
+        ) : compactEmpty(t('live.emptyMine'))}
+        {otherMine.length > 0 && renderLiveArenas(otherMine.filter((arena) => arena.status === 'live'))}
+        {otherMine.filter((arena) => arena.status !== 'live').map((arena) => (
+          <div key={arena.id} className="live-upcoming__row">
+            <span className="live-upcoming__icon"><img src={arenaVisual(arena)} alt="" /></span>
+            <button type="button" onClick={() => onLeaderboard(arena.id)}>
+              <span className="live-upcoming__label">
+                <strong>{arena.title || t('arena.fallbackTitle')}</strong>
+                <small>{t('live.registered')}</small>
+              </span>
+              <span className="live-upcoming__when">
+                <em>{formatCountdown(arena.startAt - now, t('nextArena.dayUnit'))}</em>
+                <small>{new Date(arena.startAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</small>
+              </span>
+            </button>
           </div>
-        )}
+        ))}
       </section>
       <section className="live-upcoming">
         <header><span>{t('live.current')}</span><i /></header>
-        {otherLiveArenas.length ? renderLiveArenas(otherLiveArenas) : (
-          <div className="live-empty"><p>{t('live.emptyOtherLive')}</p></div>
-        )}
+        {otherLiveArenas.length ? renderLiveArenas(otherLiveArenas) : compactEmpty(t('live.emptyOtherLive'))}
       </section>
       <section className="live-upcoming">
         <header><span>{t('live.upcoming')}</span><i /></header>
@@ -425,7 +486,7 @@ function LiveScreen({
               </button>
             </div>
           ))
-        ) : <div className="live-empty"><p>{t('live.emptyUpcoming')}</p></div>}
+        ) : compactEmpty(t('live.emptyUpcoming'))}
       </section>
       <section className="live-upcoming">
         <header><span>{t('live.previous')}</span><i /></header>
@@ -444,7 +505,7 @@ function LiveScreen({
             </button>
           </div>
         ))}
-        {allPrevious.length === 0 && <div className="live-empty"><p>{t('live.emptyPrevious')}</p></div>}
+        {allPrevious.length === 0 && compactEmpty(t('live.emptyPrevious'))}
         {previousLimit < allPrevious.length && (
           <button className="home-ended-toggle" type="button" onClick={() => setPreviousLimit((current) => current + 5)}>
             {previousLimit === 0 ? t('live.loadPrevious') : t('live.loadMorePrevious')}
@@ -814,9 +875,7 @@ function App() {
         console.warn('[push] registration failed:', registrationError.error)
       }))
       listeners.push(await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-        const title = notification.title || 'BTF Arena'
-        const body = notification.body || ''
-        window.alert(`${title}\n${body}`)
+        console.info('[push] received', notification.title || 'BTF Arena', notification.body || '')
       }))
       listeners.push(await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
         const data = action.notification.data as { kind?: string; competitionId?: string; newsId?: string }
@@ -1630,11 +1689,11 @@ function ProfileScreen({ dashboard, token, onJournal, onGlobalLeaderboard, onRew
         <button type="button" onClick={onTeam}><span>{dashboard.myTeam?.imageUrl ? <img src={apiAssetUrl(dashboard.myTeam.imageUrl)} alt="" /> : <Icon name="team" size={20} />}</span><div><strong>{t('profile.team')}</strong><small>{dashboard.myTeam ? dashboard.myTeam.name : t('profile.teamHint')}</small></div><i>›</i></button>
         <button type="button" onClick={onGlobalLeaderboard}><span><Icon name="rank" size={20} /></span><div><strong>{t('profile.global')}</strong><small>{t('profile.globalHint')}</small></div><i>›</i></button>
         <button type="button" onClick={onSettings}><span><Icon name="settings" size={20} /></span><div><strong>{t('profile.edit')}</strong><small>{t('profile.editHint')}</small></div><i>›</i></button>
-        {token && (
+        {ENABLE_TEST_TOOLS && token && (
           <button
             type="button"
             onClick={() => {
-              void sendPushTest(token).then((result) => {
+              void import('./lib/testTools').then(({ sendPushTest }) => sendPushTest(token)).then((result) => {
                 window.alert(
                   result.sent > 0
                     ? t('profile.pushTestOk')

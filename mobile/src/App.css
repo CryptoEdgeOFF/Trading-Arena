@@ -371,10 +371,27 @@ h1 em { color: var(--red-bright); font-style: normal; }
   width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid rgba(238,36,60,.4); border-radius: 50%;
   background: linear-gradient(145deg, #2a1218, #16090c); color: #ff8d9b;
   box-shadow: 0 10px 26px rgba(0,0,0,.5), 0 0 18px rgba(238,36,60,.18); }
-.arena-chat-overlay { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;
-  padding: calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom));
-  background: rgba(5,5,7,.97); }
-.arena-chat-overlay .global-chat { flex: 1; min-height: 0; }
+.arena-chat-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: #050507;
+}
+.arena-chat-overlay .global-chat {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
 
 /* --- Hero « Next Arena » (Play) --- */
 .next-arena { position: relative; overflow: hidden; padding: 15px 15px 13px; display: grid; gap: 9px; border: 1px solid rgba(238,36,60,.3); border-radius: 16px; background: radial-gradient(120% 130% at 100% 0%, rgba(238,36,60,.2), transparent 55%), linear-gradient(180deg, #141117, #0b0a0d); }
@@ -435,6 +452,26 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .live-empty::before { content:''; width:72px; height:72px; border-radius:6px; background:url('/assets/pictures/arena-live-red.webp') center 40%/cover no-repeat; box-shadow:0 8px 20px rgba(0,0,0,.4); }
 .live-empty strong { font:italic 800 23px 'Barlow Condensed',sans-serif; text-transform:uppercase; }
 .live-empty p { margin:0; color:#8d8690; font-size:10.5px; }
+.live-empty.is-compact { padding:9px 12px; justify-items:start; text-align:left; clip-path:none; border-radius:8px; }
+.live-empty.is-compact::before { display:none; }
+.live-empty.is-compact p { font-size:11px; line-height:1.4; }
+
+.live-mine { position:relative; overflow:hidden; padding:16px 16px 15px; display:grid; gap:10px; isolation:isolate; border:1px solid rgba(255,181,71,.38); border-radius:14px; background:radial-gradient(110% 120% at 100% 0,rgba(255,181,71,.16),transparent 54%),linear-gradient(165deg,#1a1410,#0d0a0e 74%); box-shadow:0 16px 34px rgba(0,0,0,.34); }
+.live-mine.is-live { border-color:rgba(255,70,92,.4); background:radial-gradient(110% 120% at 100% 0,rgba(238,36,60,.2),transparent 54%),linear-gradient(165deg,#1a1117,#0d0a0e 74%); }
+.live-mine__art { position:absolute; inset:0 0 0 28%; object-fit:cover; object-position:center 40%; opacity:.32; filter:saturate(1.1) contrast(1.1); -webkit-mask-image:linear-gradient(90deg,transparent,#000 48%); mask-image:linear-gradient(90deg,transparent,#000 48%); pointer-events:none; }
+.live-mine__top { position:relative; z-index:1; display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+.live-pill.is-soon { color:#ffd086; }
+.live-pill.is-soon i { background:#ffb547; box-shadow:0 0 8px rgba(255,181,71,.7); }
+.live-mine h3 { position:relative; z-index:1; margin:0; max-width:92%; font:italic 800 28px/.92 'Barlow Condensed',sans-serif; letter-spacing:.01em; text-transform:uppercase; text-shadow:0 0 18px rgba(255,181,71,.2); }
+.live-mine.is-live h3 { text-shadow:0 0 18px rgba(238,36,60,.25); }
+.live-mine__countdown { position:relative; z-index:1; display:grid; gap:3px; }
+.live-mine__countdown small { color:#b7a48a; font-size:9px; font-weight:900; letter-spacing:.16em; }
+.live-mine.is-live .live-mine__countdown small { color:#8d8690; }
+.live-mine__countdown strong { color:#ffd086; font:800 34px/.9 'Barlow Condensed',sans-serif; letter-spacing:.04em; font-variant-numeric:tabular-nums; text-shadow:0 0 22px rgba(255,181,71,.35); }
+.live-mine.is-live .live-mine__countdown strong { color:#fff; text-shadow:0 0 15px rgba(255,255,255,.12); }
+.live-mine__countdown em { color:#d8c4a2; font:600 12px/1.35 'Manrope',sans-serif; font-style:normal; }
+.live-mine > footer { position:relative; z-index:1; padding-top:10px; display:flex; align-items:flex-end; justify-content:space-between; gap:10px; border-top:1px solid rgba(255,255,255,.08); }
+.live-mine > footer > small { color:#aaa2ad; font-size:10px; font-weight:700; }
 
 .live-upcoming { display:grid; gap:8px; }
 .live-upcoming > header { display:flex; align-items:center; gap:9px; }
@@ -913,6 +950,8 @@ h1 em { color: var(--red-bright); font-style: normal; }
   padding-bottom: calc(76px + env(safe-area-inset-bottom));
 }
 .app-shell.is-native .screen.screen--community {
+  min-width: 0;
+  overflow-x: hidden;
   padding: calc(10px + env(safe-area-inset-top)) 10px calc(76px + env(safe-area-inset-bottom));
 }
 .app-shell.is-native .bottom-nav {
@@ -935,8 +974,13 @@ h1 em { color: var(--red-bright); font-style: normal; }
   transform: none;
   box-shadow: 0 6px 19px rgba(238,36,60,.45);
 }
-.app-shell.is-native .global-chat {
-  border-radius: 13px 13px 0 0;
+.app-shell.is-native .global-chat,
+.app-shell.is-native .arena-chat-overlay .global-chat {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  border-radius: 0;
 }
 
 @media (min-width: 700px) {

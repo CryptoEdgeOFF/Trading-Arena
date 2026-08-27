@@ -49,7 +49,6 @@ export function TeamPanel({
 }) {
   const { t } = useTranslation()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -77,27 +76,7 @@ export function TeamPanel({
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
             <strong className="display block text-lg uppercase text-white">{t('team.create')}</strong>
-            <input
-              value={name}
-              maxLength={24}
-              placeholder={t('team.namePlaceholder')}
-              onChange={(event) => setName(event.target.value)}
-              className="input-field mt-3"
-            />
-            <button
-              type="button"
-              disabled={busy || name.trim().length < 2}
-              onClick={() => void run(async () => {
-                const data = await teamRequest<{ team: ArenaTeam }>('/api/competition/teams', token, {
-                  method: 'POST',
-                  body: JSON.stringify({ name: name.trim() }),
-                })
-                return data.team
-              })}
-              className="blood-cta mt-3 w-full px-4 py-3 text-sm disabled:opacity-45"
-            >
-              {busy ? t('team.saving') : t('team.createAction')}
-            </button>
+            <p className="mt-3 text-sm leading-relaxed text-[#8b858e]">{t('team.disabledHint')}</p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
             <strong className="display block text-lg uppercase text-white">{t('team.join')}</strong>

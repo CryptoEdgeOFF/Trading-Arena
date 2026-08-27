@@ -112,7 +112,10 @@ export function TradeJournal({
 
   const arenas = useMemo(() => [...new Map(trades.map((trade) => [trade.competitionId, trade.competitionTitle])).entries()], [trades])
   const filtered = useMemo(() => arena === 'all' ? trades : trades.filter((trade) => trade.competitionId === arena), [arena, trades])
-  const closed = useMemo(() => filtered.filter((trade) => trade.action === 'close').slice().reverse(), [filtered])
+  const closed = useMemo(
+    () => filtered.filter((trade) => trade.action === 'close').slice().sort((a, b) => b.time - a.time),
+    [filtered],
+  )
   const stats = useMemo(() => computeStats(filtered), [filtered])
   const highlights = useMemo(() => filtered.filter((trade) => trade.action === 'close').slice().sort((a, b) => netPnl(b) - netPnl(a)), [filtered])
   const bestTrades = highlights.filter((trade) => netPnl(trade) > 0).slice(0, 3)

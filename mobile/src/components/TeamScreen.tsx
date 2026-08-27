@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react'
 import {
   apiAssetUrl,
-  createTeam,
   joinTeamByCode,
   kickTeamMember,
   leaveTeam,
@@ -48,7 +47,6 @@ export function TeamScreen({
   onBack: () => void
 }) {
   const { t } = useI18n()
-  const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -79,10 +77,7 @@ export function TeamScreen({
         <>
           <section className="team-card">
             <strong>{t('team.create')}</strong>
-            <input value={name} maxLength={24} placeholder={t('team.namePlaceholder')} onChange={(event) => setName(event.target.value)} />
-            <button type="button" disabled={busy || name.trim().length < 2} onClick={() => void run(() => createTeam(token, name.trim()))}>
-              {busy ? t('team.saving') : t('team.createAction')}
-            </button>
+            <p>{t('team.disabledHint')}</p>
           </section>
           <section className="team-card">
             <strong>{t('team.join')}</strong>

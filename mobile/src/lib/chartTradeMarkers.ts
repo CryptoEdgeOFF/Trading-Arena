@@ -201,13 +201,13 @@ export function timeSecToPlotX(
 
   try {
     const native = scale.timeToCoordinate?.(timeSec)
-    if (native != null && Number.isFinite(native)) return native
+    if (native != null && Number.isFinite(native)) return native + spacing / 2
   } catch {
     // ignore
   }
 
   const inverted = invertCoordinateToTime(scale, timeSec, width)
-  if (inverted != null) return inverted
+  if (inverted != null) return inverted + spacing / 2
 
   return linearTimeToX(chart, scale, timeSec, fallbackIntervalMinutes)
 }

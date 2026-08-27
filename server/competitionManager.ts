@@ -1850,23 +1850,8 @@ export class CompetitionManager {
     };
   }
 
-  createTeam(userId: string, nameInput: unknown) {
-    if (this.findTeamByUser(userId)) throw new Error('Tu es déjà dans une équipe');
-    const name = String(nameInput || '').trim();
-    if (name.length < 2) throw new Error('Nom d’équipe trop court');
-    if (name.length > 24) throw new Error('Nom d’équipe trop long');
-    const now = Date.now();
-    const team: CompetitionTeam = {
-      id: crypto.randomUUID(),
-      name,
-      inviteCode: this.generateTeamInviteCode(),
-      ownerUserId: userId,
-      createdAt: now,
-      members: [{ userId, joinedAt: now }],
-    };
-    this.teams.set(team.id, team);
-    this.save();
-    return this.publicTeam(team);
+  createTeam(_userId: string, _nameInput: unknown) {
+    throw new Error('La création d’équipes est temporairement désactivée.');
   }
 
   joinTeamByCode(userId: string, codeInput: unknown) {
