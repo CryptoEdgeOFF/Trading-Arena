@@ -969,6 +969,28 @@ export const en = {
         },
       ],
     },
+    deleteAccount: {
+      title: 'Delete a BTF Arena account',
+      intro:
+        'This page covers the BTF Arena app and website (Breakout Trading Fight by BLOCKS). It explains how to request deletion of your account and associated data.',
+      sections: [
+        {
+          title: 'How to request deletion',
+          body:
+            `1) In the BTF Arena app: Profile → Settings → Delete my account, then confirm. Deletion is immediate.\n2) By email: write to ${CONTACT_EMAIL} with the subject “BTF Arena account deletion” and the email address of the account. We process requests within 30 days.`,
+        },
+        {
+          title: 'Data we delete',
+          body:
+            'We delete: email, phone number, name / username, profile photo, login sessions, push tokens and paper-trading accounts linked to your profile. You can sign up again later with the same details.',
+        },
+        {
+          title: 'Data we keep',
+          body:
+            'Already published arena leaderboards stay visible in anonymized form (“Deleted account”), to preserve competition integrity. If a payout was already sent, records required for accounting or anti-fraud may be kept for up to 5 years. No data is used for advertising after deletion.',
+        },
+      ],
+    },
     mentions: {
       title: 'Legal notice',
       intro: 'General information about Breakout Trading Fight.',

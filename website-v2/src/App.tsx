@@ -131,6 +131,8 @@ function AppRoutes() {
         <Route path="/mentions-legales" element={<LegalPage type="mentions" />} />
         <Route path="/risques" element={<LegalPage type="risques" />} />
         <Route path="/reglement" element={<LegalPage type="reglement" />} />
+        <Route path="/supprimer-compte" element={<LegalPage type="deleteAccount" />} />
+        <Route path="/delete-account" element={<LegalPage type="deleteAccount" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {!hideFooter && <LegalFooter />}
