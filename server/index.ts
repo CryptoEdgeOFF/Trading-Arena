@@ -283,14 +283,15 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/uploads', express.static(UPLOADS_DIR));
-app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets'), {
-  immutable: true,
-  maxAge: '7d',
-}));
-app.use('/news', express.static(path.join(process.cwd(), 'public', 'news'), {
-  immutable: true,
-  maxAge: '7d',
-}));
+// Ne plus servir les médias du site depuis Railway : aftermovie, WAV, PNG
+// lourds partaient en egress ($0,05/Go). Le site les a déjà sur Netlify.
+const PUBLIC_SITE_URL = (process.env.APP_PUBLIC_URL || 'https://btfarena.com').replace(/\/$/, '');
+app.use('/assets', (req, res) => {
+  res.redirect(301, `${PUBLIC_SITE_URL}${req.originalUrl}`);
+});
+app.use('/news', (req, res) => {
+  res.redirect(301, `${PUBLIC_SITE_URL}${req.originalUrl}`);
+});
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -1952,6 +1953,10 @@ app.get('/api/paper/candles', async (req, res) => {
       // Le snapshot initial est partagé et brièvement réutilisable. Les ticks
       // WebSocket prennent ensuite le relais pour la bougie en cours.
       res.set('Cache-Control', 'public, max-age=5, stale-while-revalidate=20');
+    }
+    const MAX_CANDLES = 5000;
+    if (Array.isArray(candles) && candles.length > MAX_CANDLES) {
+      candles = candles.slice(-MAX_CANDLES);
     }
     res.json({ pair, interval, candles, source });
   } catch (error: any) {
