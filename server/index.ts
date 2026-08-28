@@ -726,6 +726,11 @@ function parseAsset(raw: unknown): itick.ItickAssetClass {
  *      utilisé par la page /feed-test pour debug pure source.
  */
 app.get('/api/itick/candles', async (req, res) => {
+  if (!isLiveMarketNeeded()) {
+    res.set('Cache-Control', 'public, max-age=15');
+    res.json({ candles: [], pair: req.query.pair || null, source: 'idle' });
+    return;
+  }
   try {
     const interval = Number(req.query.interval || 1);
     const limit = parseCandleLimit(req.query.limit || req.query.countBack, 500);
@@ -1893,6 +1898,11 @@ app.get('/api/paper/meta', async (_req, res) => {
 app.get('/api/paper/candles', async (req, res) => {
   const pair = String(req.query.pair || 'BTC/USD');
   const interval = Number(req.query.interval || 1);
+  if (!isLiveMarketNeeded()) {
+    res.set('Cache-Control', 'public, max-age=15');
+    res.json({ pair, interval, candles: [], source: 'idle' });
+    return;
+  }
   const from = Number(req.query.from);
   const to = Number(req.query.to);
   const countBack = parseCandleLimit(req.query.countBack, MAX_PUBLIC_CANDLES);
