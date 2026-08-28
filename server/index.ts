@@ -282,6 +282,23 @@ app.use('/api', (req, res, next) => {
   globalApiLimiter(req, res, next);
 });
 
+const MAX_PUBLIC_CANDLES = 4000;
+function parseCandleLimit(raw: unknown, fallback = 500): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(MAX_PUBLIC_CANDLES, Math.floor(value));
+}
+
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    const length = Number(res.getHeader('content-length') || 0);
+    if (length >= 200_000) {
+      console.warn(`[egress] ${req.method} ${req.originalUrl} ${res.statusCode} ${length}B ip=${req.ip}`);
+    }
+  });
+  next();
+});
+
 app.use('/uploads', express.static(UPLOADS_DIR));
 // Ne plus servir les médias du site depuis Railway : aftermovie, WAV, PNG
 // lourds partaient en egress ($0,05/Go). Le site les a déjà sur Netlify.
@@ -711,7 +728,7 @@ function parseAsset(raw: unknown): itick.ItickAssetClass {
 app.get('/api/itick/candles', async (req, res) => {
   try {
     const interval = Number(req.query.interval || 1);
-    const limit = Number(req.query.limit || req.query.countBack || 500);
+    const limit = parseCandleLimit(req.query.limit || req.query.countBack, 500);
     const to = req.query.to ? Number(req.query.to) : undefined;
     const endTs = to && to > 0 ? Math.floor(to) * 1000 : undefined;
 
@@ -1878,11 +1895,11 @@ app.get('/api/paper/candles', async (req, res) => {
   const interval = Number(req.query.interval || 1);
   const from = Number(req.query.from);
   const to = Number(req.query.to);
-  const countBack = Number(req.query.countBack);
+  const countBack = parseCandleLimit(req.query.countBack, MAX_PUBLIC_CANDLES);
   const candleOpts = {
     from: Number.isFinite(from) && from > 0 ? from : undefined,
     to: Number.isFinite(to) && to > 0 ? to : undefined,
-    countBack: Number.isFinite(countBack) && countBack > 0 ? countBack : undefined,
+    countBack,
   };
 
   try {
@@ -1954,9 +1971,8 @@ app.get('/api/paper/candles', async (req, res) => {
       // WebSocket prennent ensuite le relais pour la bougie en cours.
       res.set('Cache-Control', 'public, max-age=5, stale-while-revalidate=20');
     }
-    const MAX_CANDLES = 5000;
-    if (Array.isArray(candles) && candles.length > MAX_CANDLES) {
-      candles = candles.slice(-MAX_CANDLES);
+    if (Array.isArray(candles) && candles.length > MAX_PUBLIC_CANDLES) {
+      candles = candles.slice(-MAX_PUBLIC_CANDLES);
     }
     res.json({ pair, interval, candles, source });
   } catch (error: any) {
