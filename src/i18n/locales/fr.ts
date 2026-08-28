@@ -971,6 +971,28 @@ export const fr: TranslationResources = {
         },
       ],
     },
+    deleteAccount: {
+      title: 'Supprimer un compte BTF Arena',
+      intro:
+        'Cette page concerne l’application et le site BTF Arena (Breakout Trading Fight by BLOCKS). Elle décrit comment demander la suppression de votre compte et des données associées.',
+      sections: [
+        {
+          title: 'Comment demander la suppression',
+          body:
+            `1) Dans l’appli BTF Arena : Profil → Paramètres → Supprimer mon compte, puis confirmez. La suppression est immédiate.\n2) Par e-mail : écrivez à ${CONTACT_EMAIL} avec l’objet « Suppression de compte BTF Arena » et l’adresse e-mail du compte. Nous traitons la demande sous 30 jours.`,
+        },
+        {
+          title: 'Données supprimées',
+          body:
+            'Nous supprimons : e-mail, numéro de téléphone, nom / pseudo, photo de profil, sessions de connexion, jetons push et comptes paper trading liés à votre profil. Vous pourrez vous réinscrire ensuite avec les mêmes identifiants.',
+        },
+        {
+          title: 'Données conservées',
+          body:
+            'Les classements d’arènes déjà publiés restent affichés de façon anonymisée (« Compte supprimé »), pour l’intégrité de la compétition. Si un payout a déjà été versé, les pièces nécessaires aux obligations comptables ou anti-fraude peuvent être conservées jusqu’à 5 ans. Aucune donnée n’est utilisée à des fins publicitaires après suppression.',
+        },
+      ],
+    },
     mentions: {
       title: 'Mentions légales',
       intro: 'Informations générales relatives à Breakout Trading Fight.',

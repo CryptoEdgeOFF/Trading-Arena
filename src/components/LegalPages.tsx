@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
-type LegalPageType = 'cgu' | 'confidentialite' | 'mentions' | 'risques' | 'reglement';
+type LegalPageType = 'cgu' | 'confidentialite' | 'mentions' | 'risques' | 'reglement' | 'deleteAccount';
 
 interface LegalSection {
   title: string;
@@ -35,7 +35,7 @@ export function LegalPage({ type }: { type: LegalPageType }) {
             {sections.map((section) => (
               <article key={section.title} className="rounded-2xl border border-white/8 bg-black/25 p-5">
                 <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-red-200">{section.title}</h2>
-                <p className="mt-3 text-sm leading-7 text-[#d7dae3]">{section.body}</p>
+                <p className="mt-3 whitespace-pre-line text-sm leading-7 text-[#d7dae3]">{section.body}</p>
               </article>
             ))}
           </div>
