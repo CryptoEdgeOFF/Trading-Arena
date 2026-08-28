@@ -84,7 +84,7 @@ export function renderPublicSpectatePage(input: {
   <meta property="og:title" content="${escapeHtml(title)}" />
   <meta property="og:description" content="${escapeHtml(description)}" />
   <meta property="og:url" content="${escapeHtml(publicUrl)}" />
-  <meta property="og:image" content="${escapeHtml(new URL('/assets/pictures/btf-arena-seo.webp', publicUrl).toString())}" />
+  <meta property="og:image" content="${escapeHtml(new URL('/assets/pictures/btf-arena-seo.webp', appUrl).toString())}" />
   <meta name="twitter:card" content="summary_large_image" />
   <style>
     :root{color-scheme:dark;--red:#ee243c;--green:#43dc89;--muted:#8d8791}
@@ -112,7 +112,7 @@ export function renderPublicSpectatePage(input: {
 <body>
   <main>
     <header class="top">
-      <img class="logo" src="/assets/pictures/btf-logo-header.png" alt="BTF Arena" />
+      <img class="logo" src="${escapeHtml(new URL('/assets/pictures/btf-logo-header.png', appUrl).toString())}" alt="BTF Arena" />
       <button class="share" id="share" type="button">PARTAGER</button>
     </header>
     <section class="hero">
