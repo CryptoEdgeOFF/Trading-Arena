@@ -10,6 +10,7 @@ import {
   apiAssetUrl,
   getBootstrap,
   getCompetitionLeaderboard,
+  getGlobalChatMessages,
   getGlobalLeaderboard,
   getLeaderboardSeasons,
   getNewsPage,
@@ -294,6 +295,34 @@ function formatCountdown(ms: number, dayUnit: string) {
   return days > 0 ? `${days}${dayUnit} ${clock}` : clock
 }
 
+function chatSeenKey(userId: string, competitionId?: string) {
+  return competitionId ? `btf.chat.lastSeen.${userId}.${competitionId}` : `btf.chat.lastSeen.${userId}`
+}
+
+function readChatSeen(userId: string, competitionId?: string) {
+  return Number(window.localStorage.getItem(chatSeenKey(userId, competitionId)) || 0)
+}
+
+function writeChatSeen(userId: string, timestamp: number, competitionId?: string) {
+  if (!userId || !Number.isFinite(timestamp) || timestamp <= 0) return
+  const previous = readChatSeen(userId, competitionId)
+  if (timestamp > previous) window.localStorage.setItem(chatSeenKey(userId, competitionId), String(timestamp))
+}
+
+function countUnreadChat(
+  messages: Array<{ userId: string; createdAt: number }>,
+  userId: string,
+  competitionId?: string,
+) {
+  const seen = readChatSeen(userId, competitionId)
+  if (!seen) {
+    const latest = messages.at(-1)?.createdAt || 0
+    if (latest) writeChatSeen(userId, latest, competitionId)
+    return 0
+  }
+  return messages.filter((message) => message.createdAt > seen && message.userId !== userId).length
+}
+
 function ArenaChatOverlay({
   competitionId,
   title,
@@ -320,7 +349,9 @@ function ArenaChatOverlay({
         title={title}
         onClose={onClose}
         onAuth={onAuth}
-        onLatestSeen={() => {}}
+        onLatestSeen={(timestamp) => {
+          if (user?.id) writeChatSeen(user.id, timestamp, competitionId)
+        }}
         onOpenPlayer={onOpenPlayer}
       />
     </div>,
@@ -788,9 +819,7 @@ function App() {
   const markChatSeen = useCallback((timestamp: number) => {
     const userId = dashboard?.user?.id
     if (!userId) return
-    const key = `btf.chat.lastSeen.${userId}`
-    const previous = Number(window.localStorage.getItem(key) || 0)
-    if (timestamp > previous) window.localStorage.setItem(key, String(timestamp))
+    writeChatSeen(userId, timestamp)
   }, [dashboard?.user?.id])
 
   const markNewsSeen = useCallback((timestamp: number) => {
@@ -1324,6 +1353,7 @@ function LeaderboardScreen({
   const [shareRow, setShareRow] = useState<LeaderboardRow | null>(null)
   const [linkCopied, setLinkCopied] = useState(false)
   const [showChat, setShowChat] = useState(false)
+  const [unreadChat, setUnreadChat] = useState(0)
   const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[]; moments: PnlMoment[] } | null>(null)
   const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] })
 
@@ -1338,6 +1368,26 @@ function LeaderboardScreen({
   }, [competitionId, competitions, initialCompetitionId])
 
   const isLiveCompetition = competitions.find((item) => item.id === competitionId)?.status === 'live'
+
+  useEffect(() => {
+    if (!competitionId || showChat) {
+      if (showChat) setUnreadChat(0)
+      return
+    }
+    const userId = sessionUser?.id || currentUserId || 'guest'
+    let cancelled = false
+    const refresh = async () => {
+      const messages = await getGlobalChatMessages(token, undefined, competitionId).catch(() => [])
+      if (cancelled) return
+      setUnreadChat(countUnreadChat(messages, userId, competitionId))
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 20_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [competitionId, currentUserId, sessionUser?.id, showChat, token])
 
   const loadLeaderboard = useCallback(async () => {
     if (!competitionId) {
@@ -1538,9 +1588,10 @@ function LeaderboardScreen({
 
           {ranked.length >= 2 && <VersusStrip left={ranked[0]} right={ranked[1]} onOpenPlayer={onOpenPlayer} />}
 
-          <button className="spectate-chat-cta" type="button" onClick={() => setShowChat(true)}>
+          <button className="spectate-chat-cta" type="button" onClick={() => { setShowChat(true); setUnreadChat(0) }}>
             <Icon name="community" size={20} />
             <span>{t('chat.arenaOpen')}</span>
+            {unreadChat > 0 && <b className="news-unread-badge">{unreadChat > 99 ? '99+' : unreadChat}</b>}
             <i>›</i>
           </button>
 

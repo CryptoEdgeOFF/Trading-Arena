@@ -1190,6 +1190,7 @@ export const en = {
     open: 'Open chat',
     collapse: 'Collapse',
     tab: 'Arena chat',
+    unread: '{{count}} unread',
     notice: 'Participants and spectators chat here live.',
     emptyTitle: 'Chat is open',
     emptyLead: 'Be the first to start the conversation.',

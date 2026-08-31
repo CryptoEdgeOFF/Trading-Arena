@@ -1,4 +1,5 @@
 .arena-chat-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -149,7 +150,28 @@
   pointer-events: auto;
 }
 
+.arena-chat-unread {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 1;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #09090d;
+  border-radius: 99px;
+  background: #ee243c;
+  color: #fff;
+  font: 800 9px/1 'Barlow Condensed', sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+  pointer-events: none;
+}
+
 .arena-chat-tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
