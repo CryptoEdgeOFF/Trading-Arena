@@ -717,6 +717,7 @@ export class CompetitionManager {
   private competitionStartingBalance = DEFAULT_COMPETITION_STARTING_BALANCE;
   private localAdminTokens = new Set<string>();
   private pool: Pool | null = null;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
   readonly ready: Promise<void>;
 
   constructor() {
@@ -1351,6 +1352,10 @@ export class CompetitionManager {
   }
 
   async persist(): Promise<void> {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
     if (this.pool) {
       await this.saveToDb();
       return;
@@ -1634,7 +1639,11 @@ export class CompetitionManager {
 
   private save(): void {
     if (this.pool) {
-      void this.saveToDb();
+      if (this.saveTimer) return;
+      this.saveTimer = setTimeout(() => {
+        this.saveTimer = null;
+        void this.saveToDb();
+      }, 4000);
       return;
     }
     try {
@@ -2773,12 +2782,24 @@ export class CompetitionManager {
       if (competition.finalizedAt) continue;
       const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
       if (!entry) continue;
+      // Compte déjà éliminé : on fige le PnL affiché et on évite un write
+      // Postgres à chaque poll du classement.
+      if (entry.breachedAt) continue;
 
-      entry.pnlUsd = Number(result.pnlUsd) || 0;
-      entry.pnlPercent = Number(result.pnlPercent) || 0;
-      entry.tradesCount = Math.max(0, Math.floor(Number(result.tradesCount) || 0));
-      entry.updatedAt = now;
-      changed = true;
+      const pnlUsd = Number(result.pnlUsd) || 0;
+      const pnlPercent = Number(result.pnlPercent) || 0;
+      const tradesCount = Math.max(0, Math.floor(Number(result.tradesCount) || 0));
+      if (
+        entry.pnlUsd !== pnlUsd
+        || entry.pnlPercent !== pnlPercent
+        || entry.tradesCount !== tradesCount
+      ) {
+        entry.pnlUsd = pnlUsd;
+        entry.pnlPercent = pnlPercent;
+        entry.tradesCount = tradesCount;
+        entry.updatedAt = now;
+        changed = true;
+      }
 
       // Règle de drawdown journalier : on n'évalue que pendant le live, avec
       // une équité finie. La baseline se recapture au 1er échantillon du jour UTC.

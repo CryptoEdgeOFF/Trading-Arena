@@ -160,6 +160,29 @@ export function getPnlHistory(competitionId: string): PnlSample[] {
   return histories.get(competitionId) || [];
 }
 
+const PUBLIC_PNL_MAX_SAMPLES = 160;
+const PUBLIC_PNL_MAX_TRADERS = 12;
+
+/** Payload public compact : le graphe client ne garde que ~96 points. */
+export function slimPublicPnlHistory(
+  samples: PnlSample[],
+  leaderboard: Array<{ userId: string; rank: number }>,
+): PnlSample[] {
+  const keep = new Set(
+    leaderboard.filter((row) => row.rank > 0).slice(0, PUBLIC_PNL_MAX_TRADERS).map((row) => row.userId),
+  );
+  if (!samples.length || keep.size === 0) return [];
+  const step = samples.length <= PUBLIC_PNL_MAX_SAMPLES
+    ? 1
+    : Math.ceil(samples.length / PUBLIC_PNL_MAX_SAMPLES);
+  return samples
+    .filter((_, index) => index === 0 || index === samples.length - 1 || index % step === 0)
+    .map((sample) => ({
+      t: sample.t,
+      rows: sample.rows.filter((row) => keep.has(row.userId)),
+    }));
+}
+
 export function getPnlHistoryWithLivePoint(
   competitionId: string,
   leaderboard: Array<{ userId: string; rank: number; pnlPercent: number }>,
