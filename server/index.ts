@@ -67,7 +67,7 @@ import {
   type ChatReportReason,
 } from './globalChatStore.js';
 import { deleteUserRating, getRatingLeaderboard, syncManyUserRatings, syncUserRating } from './ratingStore.js';
-import { getPnlHistoryWithLivePoint, getPnlMoments, hasPnlHistory, maybeRecordPnlSample, prunePnlHistories, reconstructPnlHistoryFromTrades, setPnlHistoryPersistHandler } from './pnlHistoryStore.js';
+import { getPnlHistoryWithLivePoint, getPnlMoments, hasPnlHistory, maybeRecordPnlSample, prunePnlHistories, reconstructPnlHistoryFromTrades, setPnlHistoryPersistHandler, slimPublicPnlHistory } from './pnlHistoryStore.js';
 import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
 import { renderPublicSpectatePage } from './publicSpectatePage.js';
@@ -874,8 +874,9 @@ async function syncCompetitionResultsForCompetition(competitionId: string): Prom
     try {
       await manager.syncCompetitionLeaderboardEquity(playerIds);
       for (const playerId of playerIds) {
-        await syncCompetitionResultForPlayer(playerId);
+        await syncCompetitionResultForPlayer(playerId, { persist: false });
       }
+      void competitionManager.persist();
       state.lastAt = Date.now();
     } finally {
       state.inflight = null;
@@ -889,7 +890,10 @@ async function refreshCompetitionStoreIfServerless(): Promise<void> {
   if (IS_SERVERLESS) await competitionManager.refresh();
 }
 
-async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
+async function syncCompetitionResultForPlayer(
+  playerId: string,
+  options?: { persist?: boolean },
+): Promise<void> {
   const player = manager.getPlayerById(playerId);
   if (!player) return;
   const update = competitionManager.updatePaperResultByPlayerId(player.id, {
@@ -918,6 +922,7 @@ async function syncCompetitionResultForPlayer(playerId: string): Promise<void> {
       console.error('[drawdown] breach finalize failed:', (err as Error)?.message);
     }
   }
+  if (options?.persist === false) return;
   if (IS_SERVERLESS) {
     await competitionManager.persist();
   } else {
@@ -3785,10 +3790,17 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
  * du PnL % du top 10, plus l'identité des traders suivis pour tracer les
  * courbes avec avatars côté client.
  */
+const pnlHistoryResponseCache = new Map<string, { at: number; body: unknown }>();
+const PNL_HISTORY_CACHE_MS = 8_000;
+
 app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
   try {
     const competitionId = String(req.params.id || '');
-    await syncCompetitionResultsForCompetition(competitionId);
+    const cached = pnlHistoryResponseCache.get(competitionId);
+    if (cached && Date.now() - cached.at < PNL_HISTORY_CACHE_MS) {
+      res.json(cached.body);
+      return;
+    }
     const data = competitionManager.getPublicLeaderboard(competitionId);
     if (data.competition.status === 'live') {
       maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
@@ -3826,9 +3838,12 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
     // Toujours terminer la série par un point « maintenant » issu du
     // leaderboard courant : la courbe est visible dès les premiers polls
     // au lieu d'attendre plusieurs échantillons throttlés.
-    const samples = getPnlHistoryWithLivePoint(competitionId, data.leaderboard);
+    const samples = slimPublicPnlHistory(
+      getPnlHistoryWithLivePoint(competitionId, data.leaderboard),
+      data.leaderboard,
+    );
     const tracked = new Set(samples.flatMap((sample) => sample.rows.map((row) => row.userId)));
-    res.json({
+    const body = {
       status: data.competition.status,
       samples,
       moments: getPnlMoments(competitionId),
@@ -3842,7 +3857,9 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
           pnlPercent: row.pnlPercent,
           breached: row.breached,
         })),
-    });
+    };
+    pnlHistoryResponseCache.set(competitionId, { at: Date.now(), body });
+    res.json(body);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Historique introuvable' });
   }
