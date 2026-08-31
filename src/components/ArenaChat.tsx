@@ -29,6 +29,26 @@ function mergeMessages(current: ArenaChatMessage[], incoming: ArenaChatMessage[]
   return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt).slice(-200);
 }
 
+function lastSeenKey(competitionId: string, userId?: string | null) {
+  return `btf.arenaChat.lastSeen.${userId || 'guest'}.${competitionId}`;
+}
+
+function readLastSeen(competitionId: string, userId?: string | null): number | null {
+  const raw = window.localStorage.getItem(lastSeenKey(competitionId, userId));
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function writeLastSeen(competitionId: string, userId: string | null | undefined, timestamp: number) {
+  window.localStorage.setItem(lastSeenKey(competitionId, userId), String(timestamp));
+}
+
+function UnreadBubble({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return <b className="arena-chat-unread">{count > 99 ? '99+' : count}</b>;
+}
+
 export default function ArenaChat({
   competitionId,
   title,
@@ -42,7 +62,7 @@ export default function ArenaChat({
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ArenaChatMessage[]>([]);
   const [body, setBody] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
@@ -50,8 +70,10 @@ export default function ArenaChat({
   const [viewer, setViewer] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const primedSeenRef = useRef(false);
   const token = window.localStorage.getItem(COMPETE_SESSION_KEY);
   const user = readCachedCompeteUser() as CompeteSessionUser | null;
+  const [lastSeen, setLastSeen] = useState<number | null>(() => readLastSeen(competitionId, user?.id));
 
   const load = useCallback(async () => {
     try {
@@ -68,12 +90,31 @@ export default function ArenaChat({
   }, [competitionId, t]);
 
   useEffect(() => {
-    if (!open) return;
-    setLoading(messages.length === 0);
+    primedSeenRef.current = false;
+    setLastSeen(readLastSeen(competitionId, user?.id));
+  }, [competitionId, user?.id]);
+
+  useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 12_000);
+    const timer = window.setInterval(() => void load(), open ? 12_000 : 20_000);
     return () => window.clearInterval(timer);
-  }, [load, messages.length, open]);
+  }, [load, open]);
+
+  useEffect(() => {
+    if (!messages.length) return;
+    const latest = messages[messages.length - 1].createdAt;
+    if (lastSeen == null && !primedSeenRef.current) {
+      primedSeenRef.current = true;
+      writeLastSeen(competitionId, user?.id, latest);
+      setLastSeen(latest);
+      return;
+    }
+    if (!open) return;
+    if (lastSeen == null || latest > lastSeen) {
+      writeLastSeen(competitionId, user?.id, latest);
+      setLastSeen(latest);
+    }
+  }, [competitionId, lastSeen, messages, open, user?.id]);
 
   useEffect(() => {
     if (!open || !token) return;
@@ -266,6 +307,10 @@ export default function ArenaChat({
     </aside>
   );
 
+  const unread = open || lastSeen == null
+    ? 0
+    : messages.filter((message) => message.createdAt > lastSeen && message.userId !== user?.id).length;
+
   return (
     <>
       {isMobileWeb && (
@@ -273,12 +318,13 @@ export default function ArenaChat({
           type="button"
           className="arena-chat-btn"
           onClick={() => setOpen(true)}
-          aria-label={t('arenaChat.open')}
+          aria-label={unread > 0 ? t('arenaChat.unread', { count: unread }) : t('arenaChat.open')}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
           </svg>
           {t('arenaChat.open')}
+          <UnreadBubble count={unread} />
         </button>
       )}
       {createPortal(
@@ -297,12 +343,13 @@ export default function ArenaChat({
                   className="arena-chat-tab"
                   onClick={() => setOpen(true)}
                   aria-expanded={false}
-                  aria-label={t('arenaChat.open')}
+                  aria-label={unread > 0 ? t('arenaChat.unread', { count: unread }) : t('arenaChat.open')}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
                   </svg>
                   <span>{t('arenaChat.tab')}</span>
+                  <UnreadBubble count={unread} />
                 </button>
               )}
               {open && panel}

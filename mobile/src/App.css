@@ -706,7 +706,8 @@ h1 em { color: var(--red-bright); font-style: normal; }
 .spectate-prizes__items img { width: 100%; height: 72px; object-fit: contain; }
 .spectate-prizes__items strong { display: block; margin-top: 6px; font-size: 11px; }
 
-.spectate-chat-cta { min-height: 48px; padding: 0 14px; display: flex; align-items: center; gap: 10px; border: 1px solid rgba(238,36,60,.4); border-radius: 12px; background: linear-gradient(90deg, rgba(238,36,60,.16), rgba(255,255,255,.03)); color: #fff; font: italic 800 16px 'Barlow Condensed', sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.spectate-chat-cta { position: relative; min-height: 48px; padding: 0 14px; display: flex; align-items: center; gap: 10px; border: 1px solid rgba(238,36,60,.4); border-radius: 12px; background: linear-gradient(90deg, rgba(238,36,60,.16), rgba(255,255,255,.03)); color: #fff; font: italic 800 16px 'Barlow Condensed', sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.spectate-chat-cta .news-unread-badge { position: static; margin-left: auto; }
 .spectate-chat-cta span { flex: 1; text-align: left; }
 .spectate-chat-cta i { color: #ff8d9b; font-size: 20px; font-style: normal; }
 .leaderboard-page-loading { min-height: 230px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #77727b; font-size: 9px; }

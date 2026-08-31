@@ -1192,6 +1192,7 @@ export const fr: TranslationResources = {
     open: 'Ouvrir le chat',
     collapse: 'Réduire',
     tab: 'Chat arène',
+    unread: '{{count}} non lu(s)',
     notice: 'Participants et spectateurs échangent ici en direct.',
     emptyTitle: 'Le chat est ouvert',
     emptyLead: 'Sois le premier à lancer la discussion.',
