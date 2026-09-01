@@ -40,27 +40,48 @@ type Series = {
  * échantillons ~10 s pour obtenir une courbe propre.
  */
 function resample(list: Array<{ t: number; value: number }>, t0: number, timeSpan: number): Array<{ t: number; value: number }> {
-  if (list.length <= 3) return list;
-  const buckets: Array<{ sum: number; count: number; t: number }> = [];
-  for (const point of list) {
-    const index = Math.min(BUCKETS - 1, Math.floor(((point.t - t0) / timeSpan) * BUCKETS));
-    if (!buckets[index]) buckets[index] = { sum: 0, count: 0, t: t0 + ((index + 0.5) / BUCKETS) * timeSpan };
-    buckets[index].sum += point.value;
-    buckets[index].count += 1;
+  const sorted = [...list].sort((a, b) => a.t - b.t);
+  if (sorted.length <= 3) return sorted;
+  const buckets: Array<{ sum: number; count: number } | undefined> = Array(BUCKETS);
+  for (const point of sorted) {
+    const raw = Math.floor(((point.t - t0) / timeSpan) * BUCKETS);
+    if (raw < 0) continue;
+    const index = Math.min(BUCKETS - 1, raw);
+    if (!buckets[index]) buckets[index] = { sum: 0, count: 0 };
+    buckets[index]!.sum += point.value;
+    buckets[index]!.count += 1;
   }
-  const averaged = buckets.filter(Boolean).map((bucket) => ({ t: bucket.t, value: bucket.sum / bucket.count }));
+  let first = -1;
+  let last = -1;
+  for (let index = 0; index < BUCKETS; index += 1) {
+    if (!buckets[index]) continue;
+    if (first < 0) first = index;
+    last = index;
+  }
+  if (first < 0) return sorted;
+  let carry = buckets[first]!.sum / buckets[first]!.count;
+  const averaged: Array<{ t: number; value: number }> = [];
+  for (let index = first; index <= last; index += 1) {
+    const bucket = buckets[index];
+    if (bucket) carry = bucket.sum / bucket.count;
+    averaged.push({ t: t0 + ((index + 0.5) / BUCKETS) * timeSpan, value: carry });
+  }
   const alpha = 0.45;
   let ema = averaged[0].value;
   const smoothed = averaged.map((point) => {
     ema += alpha * (point.value - ema);
     return { t: point.t, value: ema };
   });
-  // Le dernier point reste la valeur réelle actuelle.
-  smoothed[smoothed.length - 1] = { t: list[list.length - 1].t, value: list[list.length - 1].value };
+  const tip = sorted[sorted.length - 1];
+  const previousT = smoothed.length > 1 ? smoothed[smoothed.length - 2].t : smoothed[0].t;
+  smoothed[smoothed.length - 1] = {
+    t: Math.max(previousT, tip.t),
+    value: tip.value,
+  };
   return smoothed;
 }
 
-/** Courbe fluide (Catmull-Rom → Bézier). */
+/** Courbe fluide (Catmull-Rom → Bézier), bornée pour ne jamais reculer dans le temps. */
 function smoothPath(points: Array<{ x: number; y: number }>): string {
   if (points.length === 0) return '';
   if (points.length < 3) {
@@ -72,7 +93,11 @@ function smoothPath(points: Array<{ x: number; y: number }>): string {
     const p1 = points[index];
     const p2 = points[index + 1];
     const p3 = points[Math.min(points.length - 1, index + 2)];
-    path += ` C${(p1.x + (p2.x - p0.x) / 6).toFixed(1)} ${(p1.y + (p2.y - p0.y) / 6).toFixed(1)},${(p2.x - (p3.x - p1.x) / 6).toFixed(1)} ${(p2.y - (p3.y - p1.y) / 6).toFixed(1)},${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    const lo = Math.min(p1.x, p2.x);
+    const hi = Math.max(p1.x, p2.x);
+    const c1x = Math.min(hi, Math.max(lo, p1.x + (p2.x - p0.x) / 6));
+    const c2x = Math.min(hi, Math.max(lo, p2.x - (p3.x - p1.x) / 6));
+    path += ` C${c1x.toFixed(1)} ${(p1.y + (p2.y - p0.y) / 6).toFixed(1)},${c2x.toFixed(1)} ${(p2.y - (p3.y - p1.y) / 6).toFixed(1)},${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
   }
   return path;
 }
@@ -87,15 +112,22 @@ function buildChart(
     .slice(0, MAX_SERIES);
   if (ranked.length === 0 || samples.length < 2) return null;
 
-  const t0 = samples[0].t;
-  const t1 = samples[samples.length - 1].t;
+  const ordered = [...samples].sort((a, b) => a.t - b.t);
+  const t0 = ordered[0].t;
+  const t1 = ordered[ordered.length - 1].t;
   const timeSpan = Math.max(1, t1 - t0);
 
   const values = new Map<string, Array<{ t: number; value: number }>>();
   for (const trader of ranked) values.set(trader.userId, []);
-  for (const sample of samples) {
-    for (const row of sample.rows) {
-      values.get(row.userId)?.push({ t: sample.t, value: row.pnlPercent });
+  const lastKnown = new Map<string, number>();
+  for (const sample of ordered) {
+    for (const row of sample.rows) lastKnown.set(row.userId, row.pnlPercent);
+    for (const trader of ranked) {
+      const value = sample.rows.find((row) => row.userId === trader.userId)?.pnlPercent;
+      const resolved = value ?? lastKnown.get(trader.userId);
+      if (resolved == null) continue;
+      lastKnown.set(trader.userId, resolved);
+      values.get(trader.userId)?.push({ t: sample.t, value: resolved });
     }
   }
   for (const [userId, list] of values) {
