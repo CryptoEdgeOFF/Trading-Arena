@@ -3874,7 +3874,6 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
 const activityResponseCache = new Map<string, { at: number; body: unknown }>();
 const ACTIVITY_CACHE_MS = 4_000;
 const ACTIVITY_LIMIT = 25;
-const ACTIVITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
   try {
@@ -3886,7 +3885,6 @@ app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
     }
     if (IS_SERVERLESS) await competitionManager.refresh();
 
-    const since = Date.now() - ACTIVITY_WINDOW_MS;
     const recent: Array<{
       id: string;
       t: number;
@@ -3900,7 +3898,6 @@ app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
       const player = manager.getPlayerById(member.paperPlayerId);
       for (const trade of player?.trades ?? []) {
         if (trade.action !== 'open' && trade.action !== 'close') continue;
-        if (trade.time < since) continue;
         recent.push({
           id: trade.id,
           t: trade.time,
