@@ -10,6 +10,13 @@ export function formatPnl(value: number): string {
   return `${prefix}$${formatUSD(value)}`;
 }
 
+/** PnL d’une ligne d’historique, net de frais — même convention que le header. */
+export function historyTradePnl(trade: { action?: string; pnl?: number; fee?: number }): number {
+  const pnl = Number(trade.pnl) || 0;
+  const fee = Number(trade.fee) || 0;
+  return trade.action === 'close' ? pnl - fee : -fee;
+}
+
 export function formatPercent(value: number): string {
   const prefix = value >= 0 ? '+' : '';
   return `${prefix}${value.toFixed(2)}%`;
