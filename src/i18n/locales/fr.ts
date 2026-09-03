@@ -77,8 +77,7 @@ export const fr: TranslationResources = {
     seoHeading: 'BTF Arena — Compétition de trading en ligne gratuite',
     ctaArenas: 'Voir les arènes',
     ctaHow: 'Comment ça marche',
-    subtitle:
-      'Rejoins BTF Arena, la compétition de trading en ligne 100% gratuite : crypto, forex, indices, actions et matières premières. Grimpe au classement en temps réel et gagne des lots exclusifs.',
+    subtitle: 'Inscris-toi à une arène, trade sur notre plateforme et gagne des prix.',
   },
 
   spotlight: {
@@ -478,6 +477,17 @@ export const fr: TranslationResources = {
     step3Text: 'Trade sur la plateforme, suis ton classement et vise les récompenses.',
   },
 
+  platform: {
+    eyebrow: 'La plateforme',
+    title: 'Trade sur notre plateforme',
+    sub: 'Inscris-toi à une arène, trade sur BTF Arena et gagne des prix.',
+    step1: 'Inscris-toi à une arène',
+    step2: 'Trade sur notre plateforme',
+    step3: 'Gagne des prix',
+    alt: 'Terminal de trading BTF Arena.',
+    cta: 'Créer un compte',
+  },
+
   archived: {
     ended: 'Terminée',
     leaderboard: 'Classement →',
@@ -622,7 +632,12 @@ export const fr: TranslationResources = {
       'Remis aux meilleurs traders à la fin de la compétition. Plus tu grimpes dans le ranking, plus tu te rapproches du lot.',
     breakdown: 'Répartition',
     breakdownTba: 'Répartition annoncée à la fin de la compétition.',
-    otherPrizes: 'Autres lots à gagner',
+    otherPrizes: 'Autres places',
+    prizeCount: '{{count}} lot',
+    prizeCount_other: '{{count}} lots',
+    rankRange: '{{from}} – {{to}}',
+    promoOffer: 'Offre partenaire',
+    promoCta: 'Découvrir l’offre',
     waitingFor: 'En attente du #{{place}}',
     trades: 'trades',
     yourRanking: 'Ton classement',
@@ -1223,7 +1238,7 @@ export const fr: TranslationResources = {
     guestEyebrow: 'Compétition de trading',
     guestTitle: 'Entre dans',
     guestTitleEm: 'l’arène.',
-    guestLead: 'Affronte les meilleurs traders et suis ta performance en direct.',
+    guestLead: 'Inscris-toi à une arène, trade sur notre plateforme et gagne des prix.',
     guestGlobal: 'Voir le classement de saison',
   },
 

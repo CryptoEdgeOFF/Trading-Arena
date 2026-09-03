@@ -75,8 +75,7 @@ export const en = {
     seoHeading: 'BTF Arena — Free online trading competition',
     ctaArenas: 'View arenas',
     ctaHow: 'How it works',
-    subtitle:
-      'Join BTF Arena, the 100% free online trading competition: crypto, forex, indices, stocks and commodities. Climb the live leaderboard and win exclusive prizes.',
+    subtitle: 'Join an arena, trade on our platform and win prizes.',
   },
 
   spotlight: {
@@ -476,6 +475,17 @@ export const en = {
     step3Text: 'Trade on the platform, track your ranking and aim for the rewards.',
   },
 
+  platform: {
+    eyebrow: 'The platform',
+    title: 'Trade on our platform',
+    sub: 'Join an arena, trade on BTF Arena and win prizes.',
+    step1: 'Join an arena',
+    step2: 'Trade on our platform',
+    step3: 'Win prizes',
+    alt: 'BTF Arena trading terminal.',
+    cta: 'Create an account',
+  },
+
   archived: {
     ended: 'Ended',
     leaderboard: 'Leaderboard →',
@@ -620,7 +630,12 @@ export const en = {
       'Awarded to the best traders at the end of the competition. The higher you climb in the ranking, the closer you get to the prize.',
     breakdown: 'Breakdown',
     breakdownTba: 'Breakdown announced at the end of the competition.',
-    otherPrizes: 'More prizes to win',
+    otherPrizes: 'Other places',
+    prizeCount: '{{count}} prize',
+    prizeCount_other: '{{count}} prizes',
+    rankRange: '{{from}} – {{to}}',
+    promoOffer: 'Partner offer',
+    promoCta: 'See the offer',
     waitingFor: 'Waiting for #{{place}}',
     trades: 'trades',
     yourRanking: 'Your ranking',
@@ -1221,7 +1236,7 @@ export const en = {
     guestEyebrow: 'Trading competition',
     guestTitle: 'Enter the',
     guestTitleEm: 'arena.',
-    guestLead: 'Face the best traders and track your performance live.',
+    guestLead: 'Join an arena, trade on our platform and win prizes.',
     guestGlobal: 'View the season ranking',
   },
 

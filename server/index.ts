@@ -4107,7 +4107,7 @@ app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
 });
 
 app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, seasonId } = req.body || {};
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, promoTitle, promoSubtitle, promoHref, promoCta, seasonId } = req.body || {};
   try {
     const competition = competitionManager.createCompetition({
       title: String(title || ''),
@@ -4125,6 +4125,10 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       sponsorReferralUrl,
       sponsorName,
       sponsorLogoUrl,
+      promoTitle,
+      promoSubtitle,
+      promoHref,
+      promoCta,
       seasonId,
       entryMode: req.body?.entryMode,
     });
@@ -4138,7 +4142,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, seasonId } = body;
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, promoTitle, promoSubtitle, promoHref, promoCta, seasonId } = body;
   try {
     const patch: Record<string, unknown> = {};
     if (title !== undefined) patch.title = String(title);
@@ -4160,6 +4164,10 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
     if ('sponsorReferralUrl' in body) patch.sponsorReferralUrl = sponsorReferralUrl;
     if ('sponsorName' in body) patch.sponsorName = sponsorName;
     if ('sponsorLogoUrl' in body) patch.sponsorLogoUrl = sponsorLogoUrl;
+    if ('promoTitle' in body) patch.promoTitle = promoTitle;
+    if ('promoSubtitle' in body) patch.promoSubtitle = promoSubtitle;
+    if ('promoHref' in body) patch.promoHref = promoHref;
+    if ('promoCta' in body) patch.promoCta = promoCta;
     if ('seasonId' in body) patch.seasonId = seasonId;
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);

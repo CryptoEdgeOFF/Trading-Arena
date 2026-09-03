@@ -357,6 +357,14 @@ export interface Competition {
   sponsorLogoUrl?: string | null;
   /** Lien de la bannière leaderboard (http/https). */
   bannerHref?: string | null;
+  /** Titre du encart promo / CTA sur le leaderboard. */
+  promoTitle?: string | null;
+  /** Accroche sous le titre (ex. -50% pour les combattants). */
+  promoSubtitle?: string | null;
+  /** Lien du bouton promo (http/https). */
+  promoHref?: string | null;
+  /** Libellé du bouton (ex. Découvrir). */
+  promoCta?: string | null;
   /** Timestamp d'envoi de l'email « l'arène démarre bientôt » (anti-doublon). */
   notifiedStartSoonAt?: number | null;
   /** Timestamp d'envoi des emails de résultats de fin d'arène (anti-doublon). */
@@ -434,15 +442,38 @@ function normalizeSponsorName(input: unknown): string | null {
   return value || null;
 }
 
+function normalizePromoTitle(input: unknown): string | null {
+  const value = String(input ?? '').trim().replace(/\s+/g, ' ').slice(0, 140);
+  return value || null;
+}
+
+function normalizePromoSubtitle(input: unknown): string | null {
+  const value = String(input ?? '').trim().replace(/\s+/g, ' ').slice(0, 280);
+  return value || null;
+}
+
+function normalizePromoCta(input: unknown): string | null {
+  const value = String(input ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  return value || null;
+}
+
 function publicBranding(competition: Competition): {
   sponsorName: string | null;
   sponsorLogoUrl: string | null;
   bannerHref: string | null;
+  promoTitle: string | null;
+  promoSubtitle: string | null;
+  promoHref: string | null;
+  promoCta: string | null;
 } {
   return {
     sponsorName: competition.sponsorName ?? null,
     sponsorLogoUrl: competition.sponsorLogoUrl ?? null,
     bannerHref: competition.bannerHref ?? null,
+    promoTitle: competition.promoTitle ?? null,
+    promoSubtitle: competition.promoSubtitle ?? null,
+    promoHref: competition.promoHref ?? null,
+    promoCta: competition.promoCta ?? null,
   };
 }
 
@@ -2065,6 +2096,10 @@ export class CompetitionManager {
     sponsorName?: unknown;
     sponsorLogoUrl?: unknown;
     bannerHref?: unknown;
+    promoTitle?: unknown;
+    promoSubtitle?: unknown;
+    promoHref?: unknown;
+    promoCta?: unknown;
     seasonId?: unknown;
     format?: unknown;
     scheduleKey?: unknown;
@@ -2087,6 +2122,10 @@ export class CompetitionManager {
     const sponsorName = normalizeSponsorName(input.sponsorName);
     const sponsorLogoUrl = normalizeBannerImageUrl(input.sponsorLogoUrl);
     const bannerHref = normalizeSponsorReferralUrl(input.bannerHref);
+    const promoTitle = normalizePromoTitle(input.promoTitle);
+    const promoSubtitle = normalizePromoSubtitle(input.promoSubtitle);
+    const promoHref = normalizeSponsorReferralUrl(input.promoHref);
+    const promoCta = normalizePromoCta(input.promoCta);
     const dailyDrawdownPercent = normalizeDrawdownPercent(input.dailyDrawdownPercent);
     const bannerImageUrl = normalizeBannerImageUrl(input.bannerImageUrl);
     const seasonIdRaw = input.seasonId != null && String(input.seasonId).trim()
@@ -2136,6 +2175,10 @@ export class CompetitionManager {
       sponsorName,
       sponsorLogoUrl,
       bannerHref,
+      promoTitle,
+      promoSubtitle,
+      promoHref,
+      promoCta,
       seasonId,
       format: input.format === 'blitz' || input.format === 'weekly' ? input.format : null,
       entryMode: input.entryMode === 'team' ? 'team' : 'solo',
@@ -2236,6 +2279,10 @@ export class CompetitionManager {
     sponsorLogoUrl: string | null;
     bannerImageUrl: string | null;
     bannerHref: string | null;
+    promoTitle: string | null;
+    promoSubtitle: string | null;
+    promoHref: string | null;
+    promoCta: string | null;
     format: 'blitz' | 'weekly' | null;
     entryMode: CompetitionEntryMode;
     teamSize: number | null;
@@ -2954,6 +3001,10 @@ export class CompetitionManager {
     sponsorLogoUrl: string | null;
     bannerImageUrl: string | null;
     bannerHref: string | null;
+    promoTitle: string | null;
+    promoSubtitle: string | null;
+    promoHref: string | null;
+    promoCta: string | null;
   }> {
     return Array.from(this.competitions.values())
       .filter((competition) => competition.entries.some((entry) => entry.userId === userId))
@@ -3496,6 +3547,10 @@ export class CompetitionManager {
     sponsorName: unknown;
     sponsorLogoUrl: unknown;
     bannerHref: unknown;
+    promoTitle: unknown;
+    promoSubtitle: unknown;
+    promoHref: unknown;
+    promoCta: unknown;
     seasonId: unknown;
   }>): Competition {
     const competition = this.competitions.get(id);
@@ -3580,6 +3635,22 @@ export class CompetitionManager {
       competition.bannerHref = normalizeSponsorReferralUrl(patch.bannerHref);
     }
 
+    if (patch.promoTitle !== undefined) {
+      competition.promoTitle = normalizePromoTitle(patch.promoTitle);
+    }
+
+    if (patch.promoSubtitle !== undefined) {
+      competition.promoSubtitle = normalizePromoSubtitle(patch.promoSubtitle);
+    }
+
+    if (patch.promoHref !== undefined) {
+      competition.promoHref = normalizeSponsorReferralUrl(patch.promoHref);
+    }
+
+    if (patch.promoCta !== undefined) {
+      competition.promoCta = normalizePromoCta(patch.promoCta);
+    }
+
     if (patch.seasonId !== undefined) {
       const raw = patch.seasonId == null || patch.seasonId === '' ? null : String(patch.seasonId).trim();
       if (raw && !this.seasons.has(raw)) throw new Error('Saison introuvable');
@@ -3650,6 +3721,10 @@ export class CompetitionManager {
       sponsorLogoUrl: string | null;
       bannerImageUrl: string | null;
       bannerHref: string | null;
+      promoTitle: string | null;
+      promoSubtitle: string | null;
+      promoHref: string | null;
+      promoCta: string | null;
     };
     rank: number | null;
     userId: string | null;
@@ -3988,6 +4063,10 @@ export class CompetitionManager {
       sponsorLogoUrl: string | null;
       bannerImageUrl: string | null;
       bannerHref: string | null;
+      promoTitle: string | null;
+      promoSubtitle: string | null;
+      promoHref: string | null;
+      promoCta: string | null;
     };
     leaderboard: Array<{
       rank: number;
