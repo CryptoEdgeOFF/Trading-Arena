@@ -31,7 +31,7 @@ import { formatDHMS } from '../utils/formatters';
 import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
 import { fetchPublicNews } from '../lib/publicNews';
 import { localizeNews } from '../lib/newsLocale';
-import { getSponsor, normalizeSponsorAccountId } from '../lib/sponsors';
+import { getSponsor, ninjaTraderCupBanner, normalizeSponsorAccountId, resolveArenaBrand } from '../lib/sponsors';
 import { countryFlag } from '../lib/country';
 import { analytics } from '../lib/analytics';
 import { buildArenaItemListJsonLd } from '../lib/structuredData';
@@ -114,7 +114,10 @@ interface CompetitionPublic {
   cashPrize?: CashPrize | null;
   sponsor?: string | null;
   sponsorReferralUrl?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
   bannerImageUrl?: string | null;
+  bannerHref?: string | null;
   entryMode?: 'solo' | 'team';
   teamSize?: number | null;
 }
@@ -141,8 +144,11 @@ interface CompetitionMine {
   participants?: number;
   rank?: number | null;
   sponsor?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
   seasonId?: string | null;
   bannerImageUrl?: string | null;
+  bannerHref?: string | null;
 }
 
 interface SeasonInfo {
@@ -995,6 +1001,9 @@ export default function CompetitionPlatform() {
             status: competition.status,
             startAt: competition.startAt,
             endAt: competition.endAt,
+            sponsor: competition.sponsor,
+            sponsorName: competition.sponsorName,
+            sponsorLogoUrl: competition.sponsorLogoUrl,
             bannerImageUrl: competition.bannerImageUrl,
             myEntry: competition.myEntry,
           }))}
@@ -1010,6 +1019,9 @@ export default function CompetitionPlatform() {
               status: competition.status,
               startAt: competition.startAt,
               endAt: competition.endAt,
+              sponsor: competition.sponsor,
+              sponsorName: competition.sponsorName,
+              sponsorLogoUrl: competition.sponsorLogoUrl,
               bannerImageUrl: competition.bannerImageUrl,
               canJoin: competition.canJoin,
               joined: myCompetitions.some((entry) => entry.id === competition.id),
@@ -1129,6 +1141,7 @@ export default function CompetitionPlatform() {
         </section>
 
         {!session && <ProcessSection />}
+        {!session && <PlatformWhereSection />}
 
         {/* MES COMPETITIONS */}
         {session && (
@@ -1287,6 +1300,52 @@ function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
       </div>
       <div className="mt-6">
         <HomeSeasonBoard />
+      </div>
+    </section>
+  );
+}
+
+function PlatformWhereSection() {
+  const { t } = useTranslation();
+  const steps = [t('platform.step1'), t('platform.step2'), t('platform.step3')];
+
+  return (
+    <section id="platform" className="compete-platform mx-auto max-w-7xl px-6 pt-12 md:px-10">
+      <div className="compete-platform__grid">
+        <div className="compete-platform__copy">
+          <div className="flex items-center gap-2">
+            <span className="h-px w-6 bg-[#dc2626]" />
+            <span className="micro text-[10px] text-[#dc2626]">{t('platform.eyebrow')}</span>
+          </div>
+          <h2 className="display mt-2 text-2xl font-bold text-white sm:text-3xl md:text-4xl">{t('platform.title')}</h2>
+          <p className="mt-3 max-w-md text-sm leading-relaxed text-[#b8b8c2] md:text-base">{t('platform.sub')}</p>
+          <ol className="compete-platform__steps">
+            {steps.map((step, index) => (
+              <li key={step}>
+                <b>{String(index + 1).padStart(2, '0')}</b>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+          <a
+            href="#signup"
+            onClick={(event) => scrollToCompeteSection(event, 'signup')}
+            className="blood-cta mt-6 inline-flex items-center justify-center px-6 py-3.5 text-sm"
+          >
+            {t('platform.cta')}
+          </a>
+        </div>
+        <figure className="compete-platform__visual">
+          <OptimizedImage
+            src="/assets/pictures/btf-arena-terminal.jpg"
+            alt={t('platform.alt')}
+            displayWidth={900}
+            width={1024}
+            height={683}
+            sizes="(min-width: 1024px) 520px, 92vw"
+            className="compete-platform__shot"
+          />
+        </figure>
       </div>
     </section>
   );
@@ -1812,7 +1871,10 @@ type ArenaEventCompetition = {
   cashPrize?: CashPrize | null;
   participants?: number;
   sponsor?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
   bannerImageUrl?: string | null;
+  bannerHref?: string | null;
 };
 
 function ArenaEventCard({
@@ -1836,9 +1898,10 @@ function ArenaEventCard({
   const isLive = competition.status === 'live';
   const isEnded = competition.status === 'ended';
   const canJoin = competition.canJoin ?? competition.status === 'registration';
-  const sponsor = getSponsor(competition.sponsor);
-  const accent = sponsor?.accent ?? '#dc2626';
-  const banner = resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/btf-arena-seo.webp';
+  const brand = resolveArenaBrand(competition, resolveMediaUrl);
+  const accent = brand?.accent ?? '#dc2626';
+  const ninjaBanner = ninjaTraderCupBanner(competition);
+  const banner = ninjaBanner || resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/btf-arena-seo.webp';
   const prize = getPrizeTitle(competition.cashPrize) || t('publicCard.freeEntry');
   const countdown = useCountdown(isLive ? competition.endAt : competition.startAt);
   const breakdown = competition.cashPrize?.breakdown?.slice(0, 3) || [];
@@ -1855,18 +1918,23 @@ function ArenaEventCard({
       initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.06 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
-      className="arena-event-card group relative isolate w-full overflow-hidden rounded-3xl border bg-[#08080b]"
+      className={`arena-event-card group relative isolate w-full overflow-hidden rounded-3xl border bg-[#08080b]${ninjaBanner ? ' is-ninja-cup' : ''}`}
       style={{ borderColor: `${accent}55`, boxShadow: `0 30px 90px -55px ${accent}` }}
     >
       <img
         src={encodeURI(banner)}
         alt=""
-        className="pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-full object-contain object-right opacity-45 transition duration-700 group-hover:scale-[1.025] group-hover:opacity-55 md:w-[62%]"
+        className={ninjaBanner
+          ? 'pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-[72%] object-cover object-right opacity-90 transition duration-700 group-hover:scale-[1.03] group-hover:opacity-100 md:w-[58%]'
+          : 'pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-full object-contain object-right opacity-45 transition duration-700 group-hover:scale-[1.025] group-hover:opacity-55 md:w-[62%]'}
         loading="lazy"
         decoding="async"
         draggable={false}
       />
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.98)_38%,rgba(8,8,11,.74)_67%,rgba(8,8,11,.35)_100%)]" />
+      <div className={`pointer-events-none absolute inset-0 -z-10 ${ninjaBanner
+        ? 'bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.96)_40%,rgba(8,8,11,.55)_70%,rgba(8,8,11,.12)_100%)]'
+        : 'bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.98)_38%,rgba(8,8,11,.74)_67%,rgba(8,8,11,.35)_100%)]'}`}
+      />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-[#08080b] to-transparent" />
       <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
 
@@ -1879,10 +1947,12 @@ function ArenaEventCard({
             <i className={`h-1.5 w-1.5 rounded-full ${isEnded ? 'bg-zinc-500' : 'animate-pulse bg-[#ff435c] shadow-[0_0_12px_#ef233c]'}`} />
             {statusLabel}
           </span>
-          {sponsor && (
+          {brand && (brand.logoUrl || brand.name !== 'Sponsor') && (
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/45 px-3 py-1.5 backdrop-blur-md">
-              <span className="micro text-[8px] text-[#77717a]">{t('sponsor.sponsoredBy', { name: sponsor.name })}</span>
-              <img src={sponsor.logoUrl} alt={sponsor.name} className="h-4 w-auto object-contain" />
+              <span className="micro text-[8px] text-[#77717a]">{t('sponsor.sponsoredBy', { name: brand.name })}</span>
+              {brand.logoUrl && (
+                <img src={brand.logoUrl} alt={brand.name} className="h-4 w-auto object-contain" />
+              )}
             </div>
           )}
         </div>
@@ -2050,6 +2120,8 @@ export function JoinCompetitionModal({
     status: 'registration' | 'starting_soon' | 'live' | 'ended';
     sponsor?: string | null;
     sponsorReferralUrl?: string | null;
+    sponsorName?: string | null;
+    sponsorLogoUrl?: string | null;
   };
   code: string;
   onCode: (value: string) => void;
@@ -2062,7 +2134,8 @@ export function JoinCompetitionModal({
 }) {
   const { t } = useTranslation();
   const sponsor = getSponsor(competition.sponsor);
-  const accent = sponsor?.accent ?? '#dc2626';
+  const brand = resolveArenaBrand(competition, resolveMediaUrl);
+  const accent = sponsor?.accent ?? brand?.accent ?? '#dc2626';
   const accentSoft = sponsor?.accentSoft ?? '#fca5a5';
   const referralUrl = competition.sponsorReferralUrl || sponsor?.referralUrl || '';
   const needsSponsorId = Boolean(sponsor?.requiresAccountId);
@@ -2128,9 +2201,9 @@ export function JoinCompetitionModal({
         <div className="relative">
           <div className="flex items-start justify-between gap-3">
             <div>
-              {sponsor ? (
+              {brand?.logoUrl ? (
                 <div className="flex items-center gap-2">
-                  <img src={sponsor.logoUrl} alt={sponsor.name} className="h-5 w-auto object-contain" />
+                  <img src={brand.logoUrl} alt={brand.name} className="h-5 w-auto object-contain" />
                   <span className="micro text-[10px] text-[#71717a]">{t('sponsor.partnerTag')}</span>
                 </div>
               ) : (

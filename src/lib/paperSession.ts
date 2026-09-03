@@ -32,6 +32,11 @@ export type PaperCompetitionContext = {
   breachedAt?: number | null;
   dailyBaselineEquity?: number | null;
   dailyLimitEquity?: number | null;
+  sponsor?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
+  bannerImageUrl?: string | null;
+  bannerHref?: string | null;
 };
 
 /** Normalise les deux formes renvoyées par l'API (`/me` vs `/trade/session`). */
@@ -43,7 +48,21 @@ export function extractPaperCompetitionContext(
   const raw = payload.competition;
   if (!raw || typeof raw !== 'object') return null;
 
-  const nested = (raw as { competition?: { id?: string; title?: string; executionMode?: string; startAt?: number; endAt?: number; status?: string; participants?: number; dailyDrawdownPercent?: number | null } }).competition;
+  const nested = (raw as { competition?: {
+    id?: string;
+    title?: string;
+    executionMode?: string;
+    startAt?: number;
+    endAt?: number;
+    status?: string;
+    participants?: number;
+    dailyDrawdownPercent?: number | null;
+    sponsor?: string | null;
+    sponsorName?: string | null;
+    sponsorLogoUrl?: string | null;
+    bannerImageUrl?: string | null;
+    bannerHref?: string | null;
+  } }).competition;
   if (nested?.id) {
     const top = raw as {
       userId?: string | null;
@@ -70,10 +89,31 @@ export function extractPaperCompetitionContext(
       breachedAt: top.breachedAt ?? null,
       dailyBaselineEquity: top.dailyBaselineEquity ?? null,
       dailyLimitEquity: top.dailyLimitEquity ?? null,
+      sponsor: nested.sponsor ?? null,
+      sponsorName: nested.sponsorName ?? null,
+      sponsorLogoUrl: nested.sponsorLogoUrl ?? null,
+      bannerImageUrl: nested.bannerImageUrl ?? null,
+      bannerHref: nested.bannerHref ?? null,
     };
   }
 
-  const flat = raw as { id?: string; title?: string; executionMode?: string; startAt?: number; endAt?: number; status?: string; participants?: number; userId?: string | null; rank?: number | null; pnlPercent?: number };
+  const flat = raw as {
+    id?: string;
+    title?: string;
+    executionMode?: string;
+    startAt?: number;
+    endAt?: number;
+    status?: string;
+    participants?: number;
+    userId?: string | null;
+    rank?: number | null;
+    pnlPercent?: number;
+    sponsor?: string | null;
+    sponsorName?: string | null;
+    sponsorLogoUrl?: string | null;
+    bannerImageUrl?: string | null;
+    bannerHref?: string | null;
+  };
   if (flat.id) {
     return {
       id: flat.id,
@@ -86,6 +126,11 @@ export function extractPaperCompetitionContext(
       userId: flat.userId ?? null,
       rank: flat.rank ?? null,
       pnlPercent: flat.pnlPercent,
+      sponsor: flat.sponsor ?? null,
+      sponsorName: flat.sponsorName ?? null,
+      sponsorLogoUrl: flat.sponsorLogoUrl ?? null,
+      bannerImageUrl: flat.bannerImageUrl ?? null,
+      bannerHref: flat.bannerHref ?? null,
     };
   }
 

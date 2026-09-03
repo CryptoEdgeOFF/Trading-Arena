@@ -7,6 +7,7 @@ import Seo from './Seo';
 import { formatDHMS } from '../utils/formatters';
 import OptimizedImage from './OptimizedImage';
 import { resolveMediaUrl } from '../utils/imageUrl';
+import { ninjaTraderCupBanner, resolveArenaBrand } from '../lib/sponsors';
 import { COMPETE_SESSION_KEY } from '../lib/competeSession';
 
 type Arena = {
@@ -18,6 +19,9 @@ type Arena = {
   status: 'registration' | 'starting_soon' | 'live' | 'ended';
   bannerImageUrl?: string | null;
   dailyDrawdownPercent?: number | null;
+  sponsor?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
 };
 
 function useCountdown(target: number) {
@@ -34,6 +38,7 @@ function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; 
   const { t, i18n } = useTranslation();
   const isLive = arena.status === 'live';
   const countdown = useCountdown(isLive ? arena.endAt : arena.startAt);
+  const brand = resolveArenaBrand(arena, resolveMediaUrl);
   const destination = joined || isLive
     ? `/compete/leaderboard/${arena.id}`
     : `/compete?arena=${arena.id}`;
@@ -46,10 +51,10 @@ function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; 
   return (
     <article className={`group relative overflow-hidden border border-white/[0.09] bg-[#0a0a0e] ${featured ? 'min-h-[240px] rounded-2xl sm:min-h-[280px]' : 'min-h-[200px] rounded-2xl'}`}>
       <OptimizedImage
-        src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
+        src={ninjaTraderCupBanner(arena) || resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
         alt=""
         displayWidth={featured ? 1280 : 720}
-        className="absolute inset-0 h-full w-full object-cover opacity-60 transition duration-700 group-hover:scale-[1.035] group-hover:opacity-75"
+        className="absolute inset-0 h-full w-full object-cover object-right opacity-60 transition duration-700 group-hover:scale-[1.035] group-hover:opacity-75"
       />
       <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-[#050507]/55 to-black/10" />
       <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4">
@@ -57,7 +62,12 @@ function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; 
           {isLive && <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff314d] shadow-[0_0_10px_#ef233c]" />}
           {isLive ? t('status.live') : arena.status === 'starting_soon' ? t('status.startingSoon') : t('status.registration')}
         </span>
-        <span className="micro text-[9px] text-white/65">{arena.participants} {t('spotlight.traders')}</span>
+        <span className="flex items-center gap-2">
+          {brand?.logoUrl && (
+            <img src={brand.logoUrl} alt={brand.name} className="h-4 w-auto max-w-[72px] object-contain" />
+          )}
+          <span className="micro text-[9px] text-white/65">{arena.participants} {t('spotlight.traders')}</span>
+        </span>
       </div>
       <div className="absolute inset-x-0 bottom-0 p-4 sm:p-5">
         <div className="micro text-[9px] text-[#ff5268]">{t('livePage.weeklyArena')}</div>
@@ -88,10 +98,10 @@ function ArchiveMiniCard({ arena }: { arena: Arena }) {
     >
       <div className="relative h-20 overflow-hidden">
         <OptimizedImage
-          src={resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
+          src={ninjaTraderCupBanner(arena) || resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
           alt=""
           displayWidth={420}
-          className="h-full w-full object-cover opacity-80 grayscale-[40%] transition duration-500 group-hover:scale-105 group-hover:grayscale-0"
+          className="h-full w-full object-cover object-right opacity-80 grayscale-[40%] transition duration-500 group-hover:scale-105 group-hover:grayscale-0"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b10] to-transparent" />
         <span className="absolute left-2 top-2 rounded-full border border-white/15 bg-black/60 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-[#cfcfd6]">

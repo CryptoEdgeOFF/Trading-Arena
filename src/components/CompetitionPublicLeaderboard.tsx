@@ -13,7 +13,8 @@ import {
 } from './competeMetrics';
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
-import { getSponsor } from '../lib/sponsors';
+import { resolveArenaBrand } from '../lib/sponsors';
+import { resolveMediaUrl } from '../utils/imageUrl';
 import ShareCardModal from './ShareCardModal';
 import type { ShareCardData } from '../lib/shareCard';
 import Seo, { SITE_URL } from './Seo';
@@ -72,7 +73,10 @@ interface LeaderboardResponse {
     participants: number;
     cashPrize?: CashPrize | null;
     sponsor?: string | null;
+    sponsorName?: string | null;
+    sponsorLogoUrl?: string | null;
     bannerImageUrl?: string | null;
+    bannerHref?: string | null;
   };
   leaderboard: LeaderboardRow[];
 }
@@ -316,6 +320,8 @@ export default function CompetitionPublicLeaderboard() {
     };
   }, [data]);
 
+  const brand = data ? resolveArenaBrand(data.competition, resolveMediaUrl) : null;
+
   return (
     <div className="compete min-h-dvh-safe bg-[#050507]">
       {data && (
@@ -375,20 +381,35 @@ export default function CompetitionPublicLeaderboard() {
 
           {data && (
             <>
-              {/* BANNER (mise en avant, ex. CUP) — image entière, hauteur plafonnée */}
-              {data.competition.bannerImageUrl && (
+              {brand?.bannerUrl && (
                 <motion.div
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                  className="mb-6 overflow-hidden rounded-2xl border border-[#232329] bg-[#0c0c10] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.85)]"
+                  className="mb-6 overflow-hidden rounded-2xl border border-[#232329] bg-black shadow-[0_20px_60px_-20px_rgba(0,0,0,0.85)]"
                 >
-                  <img
-                    src={data.competition.bannerImageUrl}
-                    alt={data.competition.title}
-                    className="h-[110px] w-full object-cover object-center sm:h-[170px] lg:h-[200px]"
-                    loading="lazy"
-                  />
+                  {brand.bannerHref ? (
+                    <a
+                      href={brand.bannerHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                    >
+                      <img
+                        src={brand.bannerUrl}
+                        alt={data.competition.title}
+                        className="h-[110px] w-full object-contain object-center sm:h-[170px] lg:h-[210px]"
+                        loading="lazy"
+                      />
+                    </a>
+                  ) : (
+                    <img
+                      src={brand.bannerUrl}
+                      alt={data.competition.title}
+                      className="h-[110px] w-full object-contain object-center sm:h-[170px] lg:h-[210px]"
+                      loading="lazy"
+                    />
+                  )}
                 </motion.div>
               )}
 
@@ -405,19 +426,17 @@ export default function CompetitionPublicLeaderboard() {
                         <span className="font-normal text-[#fda4af]/70">· {t('leaderboard.updatedAt', { time: fmtTime(lastRefresh) })}</span>
                       )}
                     </span>
-                    {(() => {
-                      const sponsor = getSponsor(data.competition.sponsor);
-                      if (!sponsor) return null;
-                      return (
-                        <span
-                          className="flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold text-white"
-                          style={{ borderColor: `${sponsor.accent}80`, backgroundColor: `${sponsor.accent}26` }}
-                        >
-                          <img src={sponsor.logoUrl} alt={sponsor.name} className="h-3.5 w-auto object-contain" />
-                          {t('sponsor.sponsoredBy', { name: sponsor.name })}
-                        </span>
-                      );
-                    })()}
+                    {brand && (brand.logoUrl || brand.name !== 'Sponsor') && (
+                      <span
+                        className="flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold text-white"
+                        style={{ borderColor: `${brand.accent}80`, backgroundColor: `${brand.accent}26` }}
+                      >
+                        {brand.logoUrl && (
+                          <img src={brand.logoUrl} alt={brand.name} className="h-3.5 w-auto object-contain" />
+                        )}
+                        {t('sponsor.sponsoredBy', { name: brand.name })}
+                      </span>
+                    )}
                   </div>
                   <h1 className="display mt-4 text-4xl font-bold leading-[1.05] text-white md:text-6xl">
                     {data.competition.title}

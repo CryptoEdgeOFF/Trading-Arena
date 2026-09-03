@@ -7,7 +7,7 @@ import CompeteHeader from './CompeteHeader';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
-import { formatPnl, formatTime, timeAgo } from '../utils/formatters';
+import { formatPnl, formatTime, historyTradePnl, timeAgo } from '../utils/formatters';
 import { EVENT_INTRO_COUNTDOWN_MS } from '../utils/liveEvent';
 import { getMarketSession } from '../utils/marketHours';
 import {
@@ -30,7 +30,8 @@ import EventEndOverlay from './EventEndOverlay';
 import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
 import { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
-import { withDisplayWidth } from '../utils/imageUrl';
+import { resolveMediaUrl, withDisplayWidth } from '../utils/imageUrl';
+import { resolveArenaBrand } from '../lib/sponsors';
 import { analytics } from '../lib/analytics';
 import {
   clearAllPaperSessions,
@@ -158,6 +159,9 @@ interface CompetitionContext {
   breached?: boolean;
   dailyBaselineEquity?: number | null;
   dailyLimitEquity?: number | null;
+  sponsor?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
 }
 
 interface LeaderboardRow {
@@ -454,20 +458,32 @@ function TopBar({
   const leaderboardHref = competition?.id && competition.id !== 'unknown'
     ? `/compete/leaderboard/${competition.id}`
     : '/compete';
+  const brand = competition ? resolveArenaBrand(competition, resolveMediaUrl) : null;
 
   return (
     <header className="relative flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
       {/* Logo compact (mobile uniquement) */}
       <div className="order-1 flex items-center gap-2 md:hidden">
         <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-6 w-auto object-contain sm:h-7" />
+        {brand?.logoUrl && (
+          <img src={brand.logoUrl} alt={brand.name} className="h-5 w-auto max-w-[64px] object-contain" />
+        )}
       </div>
 
-      {/* Gros logo centré (desktop uniquement) */}
-      <img
-        src="/assets/pictures/BTFarenaLOGOTERMINAL.webp"
-        alt="BTF Arena"
-        className="pointer-events-none absolute left-1/2 top-1/2 hidden h-14 w-auto max-w-[44%] -translate-x-1/2 -translate-y-1/2 object-contain md:block lg:h-16"
-      />
+      {/* Gros logo centré, flanqué du sponsor (desktop uniquement) */}
+      <div className="pointer-events-none absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-4 md:flex">
+        {brand?.logoUrl && (
+          <img src={brand.logoUrl} alt="" className="h-7 w-auto max-w-[72px] object-contain opacity-90 lg:h-8 lg:max-w-[88px]" />
+        )}
+        <img
+          src="/assets/pictures/BTFarenaLOGOTERMINAL.webp"
+          alt="BTF Arena"
+          className="h-14 w-auto max-w-[220px] object-contain lg:h-16"
+        />
+        {brand?.logoUrl && (
+          <img src={brand.logoUrl} alt={brand.name} className="h-7 w-auto max-w-[72px] object-contain opacity-90 lg:h-8 lg:max-w-[88px]" />
+        )}
+      </div>
 
       {/* Compte à rebours : collé au logo sur mobile, à droite sur desktop */}
       {((liveMode && remainingMs != null) || (!liveMode && (compRemainingMs != null || compEnded))) && (
@@ -2638,7 +2654,7 @@ function BottomTabs({
                     <Td>{fmt(trade.price, 1)}</Td>
                     <Td>{trade.size.toFixed(5)}</Td>
                     <Td>{fmt(trade.fee, 4)}</Td>
-                    <Td><span style={{ color: trade.pnl >= 0 ? '#15c990' : '#c026d3' }}>{formatPnl(trade.pnl)}</span></Td>
+                    <Td><span style={{ color: historyTradePnl(trade) >= 0 ? '#15c990' : '#c026d3' }}>{formatPnl(historyTradePnl(trade))}</span></Td>
                   </tr>
                 ))}
               </tbody>
@@ -3536,6 +3552,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       breached: extracted.breached ?? prev?.breached ?? false,
       dailyBaselineEquity: extracted.dailyBaselineEquity ?? prev?.dailyBaselineEquity ?? null,
       dailyLimitEquity: extracted.dailyLimitEquity ?? prev?.dailyLimitEquity ?? null,
+      sponsor: extracted.sponsor ?? prev?.sponsor ?? null,
+      sponsorName: extracted.sponsorName ?? prev?.sponsorName ?? null,
+      sponsorLogoUrl: extracted.sponsorLogoUrl ?? prev?.sponsorLogoUrl ?? null,
     }));
   }
 

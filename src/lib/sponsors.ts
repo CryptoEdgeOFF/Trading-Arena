@@ -91,8 +91,66 @@ export function getSponsor(key?: string | null): SponsorConfig | null {
   return SPONSORS[key] ?? null;
 }
 
+export type ArenaBrandInput = {
+  sponsor?: string | null;
+  title?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
+  bannerImageUrl?: string | null;
+  bannerHref?: string | null;
+};
+
+export type ArenaBrand = {
+  name: string;
+  logoUrl: string | null;
+  accent: string;
+  bannerUrl: string | null;
+  bannerHref: string | null;
+};
+
+/** Identité visuelle d'une arène : champs custom prioritaire, sinon preset Kraken/NT. */
+export function resolveArenaBrand(
+  arena: ArenaBrandInput,
+  resolveUrl?: (src?: string | null) => string | undefined,
+): ArenaBrand | null {
+  const preset = getSponsor(arena.sponsor);
+  const name = String(arena.sponsorName || '').trim() || preset?.name || '';
+  const rawLogo = arena.sponsorLogoUrl || preset?.logoUrl || null;
+  const logoUrl = (rawLogo && resolveUrl ? (resolveUrl(rawLogo) || rawLogo) : rawLogo);
+  const rawBanner = arena.bannerImageUrl || ninjaTraderCupBanner(arena) || null;
+  const bannerUrl = (rawBanner && resolveUrl ? (resolveUrl(rawBanner) || rawBanner) : rawBanner);
+  const bannerHref = safeHttpHref(arena.bannerHref);
+  if (!name && !logoUrl && !bannerUrl) return null;
+  return {
+    name: name || 'Sponsor',
+    logoUrl,
+    accent: preset?.accent ?? '#dc2626',
+    bannerUrl,
+    bannerHref,
+  };
+}
+
+/** Lien bannière : http(s) uniquement. */
+export function safeHttpHref(value?: string | null): string | null {
+  const raw = String(value || '').trim();
+  if (!/^https?:\/\//i.test(raw)) return null;
+  return raw;
+}
+
+/** Bannière locale des Cups NinjaTrader (logo BTF + ninja). */
+export const NINJA_TRADER_CUP_BANNER = '/assets/pictures/ninja-trader-cup-banner.jpg';
+
+export function isNinjaTraderArena(arena: { sponsor?: string | null; title?: string | null }): boolean {
+  if (arena.sponsor === 'ninjatrader') return true;
+  return /ninja\s*trader/i.test(arena.title || '');
+}
+
+export function ninjaTraderCupBanner(arena: { sponsor?: string | null; title?: string | null }): string | null {
+  return isNinjaTraderArena(arena) ? NINJA_TRADER_CUP_BANNER : null;
+}
+
 /** Liste utilisable dans un <select> admin. */
 export const SPONSOR_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Aucun (BTF)' },
-  ...Object.values(SPONSORS).map((sponsor) => ({ value: sponsor.key, label: sponsor.name })),
+  { value: '', label: 'Aucun accès partenaire (sponsor libre)' },
+  ...Object.values(SPONSORS).map((sponsor) => ({ value: sponsor.key, label: `${sponsor.name} (accès compte)` })),
 ];

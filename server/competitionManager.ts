@@ -351,6 +351,12 @@ export interface Competition {
    * vide, le client retombe sur le lien par défaut du registre sponsor.
    */
   sponsorReferralUrl?: string | null;
+  /** Nom affiché libre (indépendant de la clé kraken/ninjatrader). */
+  sponsorName?: string | null;
+  /** Logo uploadé, affiché sur cartes / classement / terminal. */
+  sponsorLogoUrl?: string | null;
+  /** Lien de la bannière leaderboard (http/https). */
+  bannerHref?: string | null;
   /** Timestamp d'envoi de l'email « l'arène démarre bientôt » (anti-doublon). */
   notifiedStartSoonAt?: number | null;
   /** Timestamp d'envoi des emails de résultats de fin d'arène (anti-doublon). */
@@ -421,6 +427,23 @@ function normalizeSponsorReferralUrl(input: unknown): string | null {
   // (javascript:, data:, etc.) injectés dans un href.
   if (!/^https?:\/\//i.test(raw)) return null;
   return raw.slice(0, 2000);
+}
+
+function normalizeSponsorName(input: unknown): string | null {
+  const value = String(input ?? '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  return value || null;
+}
+
+function publicBranding(competition: Competition): {
+  sponsorName: string | null;
+  sponsorLogoUrl: string | null;
+  bannerHref: string | null;
+} {
+  return {
+    sponsorName: competition.sponsorName ?? null,
+    sponsorLogoUrl: competition.sponsorLogoUrl ?? null,
+    bannerHref: competition.bannerHref ?? null,
+  };
 }
 
 interface CompetitionStore {
@@ -2039,6 +2062,9 @@ export class CompetitionManager {
     cashPrize?: unknown;
     sponsor?: unknown;
     sponsorReferralUrl?: unknown;
+    sponsorName?: unknown;
+    sponsorLogoUrl?: unknown;
+    bannerHref?: unknown;
     seasonId?: unknown;
     format?: unknown;
     scheduleKey?: unknown;
@@ -2058,6 +2084,9 @@ export class CompetitionManager {
     const cashPrize = normalizeCashPrize(input.cashPrize);
     const sponsor = normalizeSponsor(input.sponsor);
     const sponsorReferralUrl = normalizeSponsorReferralUrl(input.sponsorReferralUrl);
+    const sponsorName = normalizeSponsorName(input.sponsorName);
+    const sponsorLogoUrl = normalizeBannerImageUrl(input.sponsorLogoUrl);
+    const bannerHref = normalizeSponsorReferralUrl(input.bannerHref);
     const dailyDrawdownPercent = normalizeDrawdownPercent(input.dailyDrawdownPercent);
     const bannerImageUrl = normalizeBannerImageUrl(input.bannerImageUrl);
     const seasonIdRaw = input.seasonId != null && String(input.seasonId).trim()
@@ -2104,6 +2133,9 @@ export class CompetitionManager {
       cashPrize,
       sponsor,
       sponsorReferralUrl,
+      sponsorName,
+      sponsorLogoUrl,
+      bannerHref,
       seasonId,
       format: input.format === 'blitz' || input.format === 'weekly' ? input.format : null,
       entryMode: input.entryMode === 'team' ? 'team' : 'solo',
@@ -2200,7 +2232,10 @@ export class CompetitionManager {
     cashPrize: CashPrize | null;
     sponsor: string | null;
     sponsorReferralUrl: string | null;
+    sponsorName: string | null;
+    sponsorLogoUrl: string | null;
     bannerImageUrl: string | null;
+    bannerHref: string | null;
     format: 'blitz' | 'weekly' | null;
     entryMode: CompetitionEntryMode;
     teamSize: number | null;
@@ -2228,6 +2263,7 @@ export class CompetitionManager {
         cashPrize: competition.cashPrize ?? null,
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
+        ...publicBranding(competition),
         bannerImageUrl: competition.bannerImageUrl ?? null,
         format: competition.format ?? null,
         entryMode: isTeamCompetition(competition) ? 'team' : 'solo',
@@ -2914,7 +2950,10 @@ export class CompetitionManager {
     rank: number | null;
     sponsor: string | null;
     sponsorReferralUrl: string | null;
+    sponsorName: string | null;
+    sponsorLogoUrl: string | null;
     bannerImageUrl: string | null;
+    bannerHref: string | null;
   }> {
     return Array.from(this.competitions.values())
       .filter((competition) => competition.entries.some((entry) => entry.userId === userId))
@@ -2947,6 +2986,7 @@ export class CompetitionManager {
           rank: myRanked && myRanked.rank > 0 ? myRanked.rank : null,
           sponsor: competition.sponsor ?? null,
           sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
+          ...publicBranding(competition),
           bannerImageUrl: competition.bannerImageUrl ?? null,
         };
       })
@@ -3453,6 +3493,9 @@ export class CompetitionManager {
     cashPrize: unknown;
     sponsor: unknown;
     sponsorReferralUrl: unknown;
+    sponsorName: unknown;
+    sponsorLogoUrl: unknown;
+    bannerHref: unknown;
     seasonId: unknown;
   }>): Competition {
     const competition = this.competitions.get(id);
@@ -3525,6 +3568,18 @@ export class CompetitionManager {
       competition.sponsorReferralUrl = normalizeSponsorReferralUrl(patch.sponsorReferralUrl);
     }
 
+    if (patch.sponsorName !== undefined) {
+      competition.sponsorName = normalizeSponsorName(patch.sponsorName);
+    }
+
+    if (patch.sponsorLogoUrl !== undefined) {
+      competition.sponsorLogoUrl = normalizeBannerImageUrl(patch.sponsorLogoUrl);
+    }
+
+    if (patch.bannerHref !== undefined) {
+      competition.bannerHref = normalizeSponsorReferralUrl(patch.bannerHref);
+    }
+
     if (patch.seasonId !== undefined) {
       const raw = patch.seasonId == null || patch.seasonId === '' ? null : String(patch.seasonId).trim();
       if (raw && !this.seasons.has(raw)) throw new Error('Saison introuvable');
@@ -3590,6 +3645,11 @@ export class CompetitionManager {
       participants: number;
       cashPrize: CashPrize | null;
       dailyDrawdownPercent: number | null;
+      sponsor: string | null;
+      sponsorName: string | null;
+      sponsorLogoUrl: string | null;
+      bannerImageUrl: string | null;
+      bannerHref: string | null;
     };
     rank: number | null;
     userId: string | null;
@@ -3629,6 +3689,9 @@ export class CompetitionManager {
         participants: competition.entries.length,
         cashPrize: competition.cashPrize ?? null,
         dailyDrawdownPercent: ddPercent,
+        sponsor: competition.sponsor ?? null,
+        ...publicBranding(competition),
+        bannerImageUrl: competition.bannerImageUrl ?? null,
       },
       // rank null = pas (encore) classé (aucun trade).
       rank: myEntry && myEntry.rank > 0 ? myEntry.rank : null,
@@ -3921,7 +3984,10 @@ export class CompetitionManager {
       cashPrize: CashPrize | null;
       sponsor: string | null;
       sponsorReferralUrl: string | null;
+      sponsorName: string | null;
+      sponsorLogoUrl: string | null;
       bannerImageUrl: string | null;
+      bannerHref: string | null;
     };
     leaderboard: Array<{
       rank: number;
@@ -3961,6 +4027,7 @@ export class CompetitionManager {
         cashPrize: competition.cashPrize ?? null,
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
+        ...publicBranding(competition),
         bannerImageUrl: competition.bannerImageUrl ?? null,
       },
       leaderboard,

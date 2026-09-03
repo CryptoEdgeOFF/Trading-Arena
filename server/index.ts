@@ -4107,7 +4107,7 @@ app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
 });
 
 app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, isPublic, cashPrize, sponsor, sponsorReferralUrl, seasonId } = req.body || {};
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, seasonId } = req.body || {};
   try {
     const competition = competitionManager.createCompetition({
       title: String(title || ''),
@@ -4118,10 +4118,13 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       registrationEndsAt,
       dailyDrawdownPercent,
       bannerImageUrl,
+      bannerHref,
       isPublic: Boolean(isPublic),
       cashPrize,
       sponsor,
       sponsorReferralUrl,
+      sponsorName,
+      sponsorLogoUrl,
       seasonId,
       entryMode: req.body?.entryMode,
     });
@@ -4135,7 +4138,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, isPublic, cashPrize, sponsor, sponsorReferralUrl, seasonId } = body;
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, seasonId } = body;
   try {
     const patch: Record<string, unknown> = {};
     if (title !== undefined) patch.title = String(title);
@@ -4150,10 +4153,13 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
     }
     if ('dailyDrawdownPercent' in body) patch.dailyDrawdownPercent = dailyDrawdownPercent;
     if ('bannerImageUrl' in body) patch.bannerImageUrl = bannerImageUrl;
+    if ('bannerHref' in body) patch.bannerHref = bannerHref;
     if (isPublic !== undefined) patch.isPublic = Boolean(isPublic);
     if ('cashPrize' in body) patch.cashPrize = cashPrize;
     if ('sponsor' in body) patch.sponsor = sponsor;
     if ('sponsorReferralUrl' in body) patch.sponsorReferralUrl = sponsorReferralUrl;
+    if ('sponsorName' in body) patch.sponsorName = sponsorName;
+    if ('sponsorLogoUrl' in body) patch.sponsorLogoUrl = sponsorLogoUrl;
     if ('seasonId' in body) patch.seasonId = seasonId;
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);
