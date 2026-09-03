@@ -3865,6 +3865,76 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
   }
 });
 
+/**
+ * Flux d'activité public d'une arène : « X vient de prendre un trade sur Bitcoin ».
+ * L'anonymisation est faite ici, jamais côté client : la réponse ne contient ni
+ * sens (long/short), ni taille, ni prix, ni levier — seulement qui, quand et sur
+ * quel marché.
+ */
+const activityResponseCache = new Map<string, { at: number; body: unknown }>();
+const ACTIVITY_CACHE_MS = 4_000;
+const ACTIVITY_LIMIT = 25;
+const ACTIVITY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
+  try {
+    const competitionId = String(req.params.id || '');
+    const cached = activityResponseCache.get(competitionId);
+    if (cached && Date.now() - cached.at < ACTIVITY_CACHE_MS) {
+      res.json(cached.body);
+      return;
+    }
+    if (IS_SERVERLESS) await competitionManager.refresh();
+
+    const since = Date.now() - ACTIVITY_WINDOW_MS;
+    const recent: Array<{
+      id: string;
+      t: number;
+      action: 'open' | 'close';
+      pair: string;
+      userId: string;
+      name: string;
+      avatarUrl: string | null;
+    }> = [];
+    for (const member of competitionManager.listCompetitionRoster(competitionId)) {
+      const player = manager.getPlayerById(member.paperPlayerId);
+      for (const trade of player?.trades ?? []) {
+        if (trade.action !== 'open' && trade.action !== 'close') continue;
+        if (trade.time < since) continue;
+        recent.push({
+          id: trade.id,
+          t: trade.time,
+          action: trade.action,
+          pair: trade.pair,
+          userId: member.userId,
+          name: member.name,
+          avatarUrl: member.avatarUrl,
+        });
+      }
+    }
+    recent.sort((a, b) => b.t - a.t);
+    const events = recent.slice(0, ACTIVITY_LIMIT);
+    const metadata = await getMarketMetadata([...new Set(events.map((event) => event.pair))]);
+
+    const body = {
+      events: events.map((event) => ({
+        id: event.id,
+        t: event.t,
+        action: event.action,
+        userId: event.userId,
+        name: event.name,
+        avatarUrl: event.avatarUrl,
+        asset: metadata[event.pair]?.name || event.pair.split('/')[0] || event.pair,
+        assetImageUrl: metadata[event.pair]?.imageUrl ?? null,
+      })),
+    };
+    activityResponseCache.set(competitionId, { at: Date.now(), body });
+    res.json(body);
+  } catch (error: any) {
+    res.status(404).json({ error: error.message || 'Activité introuvable' });
+  }
+});
+
 /** Champion of the Week : vainqueur de la dernière Friday Night Arena terminée. */
 app.get('/api/competition/champion-of-week', async (_req, res) => {
   try {

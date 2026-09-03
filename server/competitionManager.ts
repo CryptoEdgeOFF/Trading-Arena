@@ -2778,6 +2778,32 @@ export class CompetitionManager {
    * Paper players d'un user avec l'arène associée (hors qualification) —
    * utilisé par le journal de trades pour rattacher chaque trade à son arène.
    */
+  /**
+   * Participants d'une arène associés à leur compte paper : sert à construire
+   * le flux d'activité public (qui a tradé, quand) sans exposer les positions.
+   */
+  listCompetitionRoster(competitionId: string): Array<{
+    userId: string;
+    paperPlayerId: string;
+    name: string;
+    avatarUrl: string | null;
+  }> {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return [];
+    const roster: Array<{ userId: string; paperPlayerId: string; name: string; avatarUrl: string | null }> = [];
+    for (const entry of competition.entries) {
+      if (!entry.paperPlayerId) continue;
+      const user = this.users.get(entry.userId);
+      roster.push({
+        userId: entry.userId,
+        paperPlayerId: entry.paperPlayerId,
+        name: user?.name || 'Participant',
+        avatarUrl: user?.avatarUrl || null,
+      });
+    }
+    return roster;
+  }
+
   listUserArenaPlayers(userId: string): Array<{
     paperPlayerId: string;
     competitionId: string;
