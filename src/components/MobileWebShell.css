@@ -575,6 +575,21 @@ body.mobile-web-active {
   line-height: 1.55;
 }
 
+.mobile-home-platform {
+  position: relative;
+  margin: 16px 0 0;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(238, 36, 60, 0.35);
+}
+.mobile-home-platform img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: #08080b;
+}
+
 .mobile-home-guest__login {
   min-height: 44px;
   margin-top: 17px;
@@ -692,6 +707,11 @@ body.mobile-web-active {
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 42%);
   mask-image: linear-gradient(90deg, transparent, #000 42%);
 }
+.mobile-arena-card.is-ninja-cup .mobile-arena-card__banner {
+  width: 62%;
+  object-position: right center;
+  opacity: 0.88;
+}
 
 .mobile-arena-card__shade {
   position: absolute;
@@ -711,6 +731,13 @@ body.mobile-web-active {
   align-items: center;
   justify-content: space-between;
   gap: 7px;
+}
+
+.mobile-arena-card__logo {
+  height: 18px;
+  width: auto;
+  max-width: 72px;
+  object-fit: contain;
 }
 
 .mobile-arena-card__live {

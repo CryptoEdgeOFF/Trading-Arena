@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { compressImage } from '../utils/imageUpload';
 import { SPONSOR_OPTIONS } from '../lib/sponsors';
+import { resolveMediaUrl } from '../utils/imageUrl';
 import { ADMIN_BASE, PROMOTIONS_ADMIN_PATH, EMAILS_ADMIN_PATH, PAYOUTS_ADMIN_PATH, PAYOUT_REQUESTS_ADMIN_PATH } from '../lib/adminPath';
 import ItickFeedPanel from './ItickFeedPanel';
 import AdminMetricsPanel from './AdminMetricsPanel';
@@ -83,6 +84,9 @@ interface AdminCompetition {
   cashPrize?: AdminCashPrize | null;
   sponsor?: string | null;
   sponsorReferralUrl?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
+  bannerHref?: string | null;
   seasonId?: string | null;
 }
 
@@ -122,9 +126,12 @@ interface CompetitionDraft {
   endAt: string;
   dailyDrawdownPercent: string;
   bannerImageUrl: string;
+  bannerHref: string;
   isPublic: boolean;
   sponsor: string;
   sponsorReferralUrl: string;
+  sponsorName: string;
+  sponsorLogoUrl: string;
   seasonId: string;
   entryMode?: 'solo' | 'team';
   prize: PrizeDraft;
@@ -144,9 +151,12 @@ const EMPTY_DRAFT: CompetitionDraft = {
   endAt: '',
   dailyDrawdownPercent: '',
   bannerImageUrl: '',
+  bannerHref: '',
   isPublic: true,
   sponsor: '',
   sponsorReferralUrl: '',
+  sponsorName: '',
+  sponsorLogoUrl: '',
   seasonId: '',
   entryMode: 'solo',
   prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '', description: '', items: [] },
@@ -417,6 +427,19 @@ export default function CompetitionAdmin() {
     return String(data.imageUrl || '');
   }
 
+  async function uploadArenaLogo(file: File): Promise<string> {
+    const compressed = await compressImage(file, { maxSide: 512, quality: 0.9, preserveAlpha: true });
+    const formData = new FormData();
+    formData.append('image', compressed, file.name.replace(/\.\w+$/, '.webp'));
+    const res = await adminFetch('/api/admin/promotion-image', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Upload du logo impossible');
+    return String(data.imageUrl || '');
+  }
+
   async function loginAdmin(e: React.FormEvent) {
     e.preventDefault();
     setLoginError('');
@@ -481,9 +504,12 @@ export default function CompetitionAdmin() {
           endAt: endMs,
           dailyDrawdownPercent: createDraft.dailyDrawdownPercent.trim() === '' ? null : Number(createDraft.dailyDrawdownPercent),
           bannerImageUrl: createDraft.bannerImageUrl.trim() || null,
+          bannerHref: createDraft.bannerHref.trim() || null,
           isPublic: createDraft.isPublic,
           sponsor: createDraft.sponsor || null,
-          sponsorReferralUrl: createDraft.sponsor ? (createDraft.sponsorReferralUrl.trim() || null) : null,
+          sponsorReferralUrl: createDraft.sponsorReferralUrl.trim() || null,
+          sponsorName: createDraft.sponsorName.trim() || null,
+          sponsorLogoUrl: createDraft.sponsorLogoUrl.trim() || null,
           seasonId: createDraft.seasonId || null,
           entryMode: createDraft.entryMode,
           cashPrize,
@@ -514,9 +540,12 @@ export default function CompetitionAdmin() {
       endAt: toLocalInput(competition.endAt),
       dailyDrawdownPercent: competition.dailyDrawdownPercent != null ? String(competition.dailyDrawdownPercent) : '',
       bannerImageUrl: competition.bannerImageUrl || '',
+      bannerHref: competition.bannerHref || '',
       isPublic: competition.isPublic,
       sponsor: competition.sponsor || '',
       sponsorReferralUrl: competition.sponsorReferralUrl || '',
+      sponsorName: competition.sponsorName || '',
+      sponsorLogoUrl: competition.sponsorLogoUrl || '',
       seasonId: competition.seasonId || seasons.find((s) => s.isActive)?.id || '',
       prize: {
         currency: competition.cashPrize?.currency || 'USD',
@@ -571,9 +600,12 @@ export default function CompetitionAdmin() {
           endAt: endMs,
           dailyDrawdownPercent: editDraft.dailyDrawdownPercent.trim() === '' ? null : Number(editDraft.dailyDrawdownPercent),
           bannerImageUrl: editDraft.bannerImageUrl.trim() || null,
+          bannerHref: editDraft.bannerHref.trim() || null,
           isPublic: editDraft.isPublic,
           sponsor: editDraft.sponsor || null,
-          sponsorReferralUrl: editDraft.sponsor ? (editDraft.sponsorReferralUrl.trim() || null) : null,
+          sponsorReferralUrl: editDraft.sponsorReferralUrl.trim() || null,
+          sponsorName: editDraft.sponsorName.trim() || null,
+          sponsorLogoUrl: editDraft.sponsorLogoUrl.trim() || null,
           seasonId: editDraft.seasonId || null,
           cashPrize,
         }),
@@ -848,37 +880,12 @@ export default function CompetitionAdmin() {
                 Listée publiquement
               </label>
             </Field>
-            <Field label="Sponsor">
-              <select
-                value={createDraft.sponsor}
-                onChange={(e) => setCreateDraft({ ...createDraft, sponsor: e.target.value })}
-                className="admin-input"
-              >
-                {SPONSOR_OPTIONS.map((opt) => (
-                  <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </Field>
-            {createDraft.sponsor && (
-              <Field label="Lien d'affiliation sponsor">
-                <input
-                  type="url"
-                  value={createDraft.sponsorReferralUrl}
-                  onChange={(e) => setCreateDraft({ ...createDraft, sponsorReferralUrl: e.target.value })}
-                  placeholder="https://www.kraken.com/..."
-                  className="admin-input"
-                />
-              </Field>
-            )}
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Bannière (leaderboard)</label>
-              <BannerUpload
-                value={createDraft.bannerImageUrl}
-                onChange={(url) => setCreateDraft({ ...createDraft, bannerImageUrl: url })}
-                onUpload={uploadArenaBanner}
-              />
-            </div>
+            <ArenaBrandFields
+              draft={createDraft}
+              onChange={(patch) => setCreateDraft({ ...createDraft, ...patch })}
+              onUploadImage={uploadArenaBanner}
+              onUploadLogo={uploadArenaLogo}
+            />
 
             <PrizeFields
               draft={createDraft.prize}
@@ -1059,36 +1066,12 @@ export default function CompetitionAdmin() {
                               Listée publiquement
                             </label>
                           </Field>
-                          <Field label="Sponsor">
-                            <select
-                              value={editDraft.sponsor}
-                              onChange={(e) => setEditDraft({ ...editDraft, sponsor: e.target.value })}
-                              className="admin-input"
-                            >
-                              {SPONSOR_OPTIONS.map((opt) => (
-                                <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
-                              ))}
-                            </select>
-                          </Field>
-                          {editDraft.sponsor && (
-                            <Field label="Lien d'affiliation sponsor">
-                              <input
-                                type="url"
-                                value={editDraft.sponsorReferralUrl}
-                                onChange={(e) => setEditDraft({ ...editDraft, sponsorReferralUrl: e.target.value })}
-                                placeholder="https://www.kraken.com/..."
-                                className="admin-input"
-                              />
-                            </Field>
-                          )}
-                          <div className="md:col-span-2">
-                            <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Bannière (leaderboard)</label>
-                            <BannerUpload
-                              value={editDraft.bannerImageUrl}
-                              onChange={(url) => setEditDraft({ ...editDraft, bannerImageUrl: url })}
-                              onUpload={uploadArenaBanner}
-                            />
-                          </div>
+                          <ArenaBrandFields
+                            draft={editDraft}
+                            onChange={(patch) => setEditDraft({ ...editDraft, ...patch })}
+                            onUploadImage={uploadArenaBanner}
+                            onUploadLogo={uploadArenaLogo}
+                          />
                           <PrizeFields
                             draft={editDraft.prize}
                             onChange={(prize) => setEditDraft({ ...editDraft, prize })}
@@ -1242,6 +1225,81 @@ function PrizePhotoUpload({
   );
 }
 
+function ArenaBrandFields({
+  draft,
+  onChange,
+  onUploadImage,
+  onUploadLogo,
+}: {
+  draft: Pick<CompetitionDraft, 'sponsor' | 'sponsorName' | 'sponsorLogoUrl' | 'sponsorReferralUrl' | 'bannerImageUrl' | 'bannerHref'>;
+  onChange: (patch: Partial<CompetitionDraft>) => void;
+  onUploadImage: (file: File) => Promise<string>;
+  onUploadLogo: (file: File) => Promise<string>;
+}) {
+  return (
+    <div className="md:col-span-2 grid gap-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 md:grid-cols-2">
+      <div className="md:col-span-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200">Marque / sponsor</p>
+        <p className="mt-1 text-[12px] text-slate-500">Nom et logo partout (cartes, classement, terminal). Bannière cliquable uniquement sur le leaderboard.</p>
+      </div>
+      <Field label="Nom du sponsor">
+        <input
+          value={draft.sponsorName}
+          onChange={(e) => onChange({ sponsorName: e.target.value })}
+          placeholder="Ex. Broker X, Bybit, ton partenaire…"
+          className="admin-input"
+        />
+      </Field>
+      <Field label="Accès partenaire (optionnel)">
+        <select
+          value={draft.sponsor}
+          onChange={(e) => onChange({ sponsor: e.target.value })}
+          className="admin-input"
+        >
+          {SPONSOR_OPTIONS.map((opt) => (
+            <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Lien d'affiliation / inscription">
+        <input
+          type="url"
+          value={draft.sponsorReferralUrl}
+          onChange={(e) => onChange({ sponsorReferralUrl: e.target.value })}
+          placeholder="https://…"
+          className="admin-input"
+        />
+      </Field>
+      <Field label="Lien de la bannière">
+        <input
+          type="url"
+          value={draft.bannerHref}
+          onChange={(e) => onChange({ bannerHref: e.target.value })}
+          placeholder="https://… (clic sur la bannière du classement)"
+          className="admin-input"
+        />
+      </Field>
+      <div>
+        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Logo du sponsor</label>
+        <BannerUpload
+          value={draft.sponsorLogoUrl}
+          onChange={(url) => onChange({ sponsorLogoUrl: url })}
+          onUpload={onUploadLogo}
+          variant="logo"
+        />
+      </div>
+      <div>
+        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Bannière leaderboard</label>
+        <BannerUpload
+          value={draft.bannerImageUrl}
+          onChange={(url) => onChange({ bannerImageUrl: url })}
+          onUpload={onUploadImage}
+        />
+      </div>
+    </div>
+  );
+}
+
 /**
  * Upload d'une bannière d'arène (paysage). Gère son propre état d'upload/erreur,
  * preview 16:9, et permet de retirer la bannière. `onUpload` renvoie l'URL DB.
@@ -1250,10 +1308,12 @@ function BannerUpload({
   value,
   onChange,
   onUpload,
+  variant = 'banner',
 }: {
   value: string;
   onChange: (url: string) => void;
   onUpload: (file: File) => Promise<string>;
+  variant?: 'banner' | 'logo';
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -1274,9 +1334,9 @@ function BannerUpload({
 
   return (
     <div>
-      <div className="relative aspect-[16/6] w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+      <div className={`relative w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-900 ${variant === 'logo' ? 'aspect-square max-w-[180px]' : 'aspect-[16/6]'}`}>
         {value ? (
-          <img src={value} alt="Bannière de l'arène" className="h-full w-full object-cover" />
+          <img src={resolveMediaUrl(value) || value} alt="" className={`h-full w-full ${variant === 'logo' ? 'object-contain p-3' : 'object-cover'}`} />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-600">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1284,7 +1344,7 @@ function BannerUpload({
               <circle cx="9" cy="9" r="2" />
               <path d="m21 15-3.5-3.5L9 20" />
             </svg>
-            <span className="text-[11px] uppercase tracking-[0.14em]">Aucune bannière</span>
+            <span className="text-[11px] uppercase tracking-[0.14em]">{variant === 'logo' ? 'Aucun logo' : 'Aucune bannière'}</span>
           </div>
         )}
       </div>
@@ -1295,7 +1355,7 @@ function BannerUpload({
           onClick={() => inputRef.current?.click()}
           className="flex cursor-pointer items-center justify-center rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-200 transition-colors hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {uploading ? 'Upload...' : value ? 'Changer la bannière' : 'Ajouter une bannière'}
+          {uploading ? 'Upload...' : value ? (variant === 'logo' ? 'Changer le logo' : 'Changer la bannière') : (variant === 'logo' ? 'Ajouter un logo' : 'Ajouter une bannière')}
         </button>
         {value && !uploading && (
           <button

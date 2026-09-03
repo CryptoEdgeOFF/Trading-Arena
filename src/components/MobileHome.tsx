@@ -12,6 +12,7 @@ import { countryFlag } from '../lib/country';
 import { localizeNews } from '../lib/newsLocale';
 import { hasUnreadNews } from '../lib/newsRead';
 import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
+import { ninjaTraderCupBanner, resolveArenaBrand } from '../lib/sponsors';
 import { formatDHMS } from '../utils/formatters';
 import type { CompeteSessionUser } from '../lib/competeSession';
 import HomeSeasonBoard from './HomeSeasonBoard';
@@ -38,6 +39,9 @@ type HomeArena = {
   startAt: number;
   endAt: number;
   bannerImageUrl?: string | null;
+  sponsor?: string | null;
+  sponsorName?: string | null;
+  sponsorLogoUrl?: string | null;
   canJoin?: boolean;
   joined?: boolean;
   myEntry?: { pnlUsd: number; pnlPercent: number };
@@ -74,18 +78,24 @@ function MobileArenaCard({
   const { t } = useTranslation();
   const countdown = useCountdown(arena.status === 'live' ? arena.endAt : arena.startAt);
   const pnl = arena.myEntry?.pnlUsd ?? 0;
-  const banner = resolveMediaUrl(arena.bannerImageUrl)
+  const ninjaBanner = ninjaTraderCupBanner(arena);
+  const brand = resolveArenaBrand(arena, resolveMediaUrl);
+  const banner = ninjaBanner
+    || resolveMediaUrl(arena.bannerImageUrl)
     || '/assets/pictures/arena-live-red.webp';
   const joining = variant === 'join';
 
   return (
-    <article className={`mobile-arena-card${joining ? ' is-join' : ''}`}>
+    <article className={`mobile-arena-card${joining ? ' is-join' : ''}${ninjaBanner ? ' is-ninja-cup' : ''}`}>
       <img className="mobile-arena-card__banner" src={banner} alt="" loading="lazy" decoding="async" />
       <div className="mobile-arena-card__shade" />
       <div className="mobile-arena-card__top">
         <span className={`mobile-arena-card__live${joining ? ' is-open' : ''}`}>
           <i />{joining ? t('home.openForJoin') : t('status.live')}
         </span>
+        {brand?.logoUrl && (
+          <img className="mobile-arena-card__logo" src={brand.logoUrl} alt={brand.name} />
+        )}
       </div>
       <h3>{arena.title}</h3>
       <div className="mobile-arena-card__meta">
@@ -254,6 +264,16 @@ export default function MobileHome({
           <div className="eyebrow"><span /> {t('home.guestEyebrow')}</div>
           <h1>{t('home.guestTitle')}<br /><em>{t('home.guestTitleEm')}</em></h1>
           <p>{t('home.guestLead')}</p>
+          <figure className="mobile-home-platform">
+            <img
+              src="/assets/pictures/btf-arena-terminal.jpg"
+              alt={t('platform.alt')}
+              width={1024}
+              height={683}
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
           <a className="mobile-home-guest__login" href="#signup">
             {t('header.login')}
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
