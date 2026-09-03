@@ -6,14 +6,13 @@ import type { TFunction } from 'i18next';
 import i18n from '../i18n';
 import {
   AnimatedNumber,
-  MetricCard,
   formatCompactSigned,
   formatCompactUnsigned,
   formatPercent,
 } from './competeMetrics';
 import OptimizedImage, { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
-import { resolveArenaBrand } from '../lib/sponsors';
+import { resolveArenaBrand, safeHttpHref } from '../lib/sponsors';
 import { resolveMediaUrl } from '../utils/imageUrl';
 import ShareCardModal from './ShareCardModal';
 import type { ShareCardData } from '../lib/shareCard';
@@ -77,6 +76,10 @@ interface LeaderboardResponse {
     sponsorLogoUrl?: string | null;
     bannerImageUrl?: string | null;
     bannerHref?: string | null;
+    promoTitle?: string | null;
+    promoSubtitle?: string | null;
+    promoHref?: string | null;
+    promoCta?: string | null;
   };
   leaderboard: LeaderboardRow[];
 }
@@ -137,6 +140,71 @@ function rankTierLabel(rank: number, t: TFunction): string {
   if (rank === 2) return t('leaderboard.rankTier2');
   if (rank === 3) return t('leaderboard.rankTier3');
   return t('leaderboard.rankTierN', { rank });
+}
+
+function prizeItemKey(item: CashPrizeItem): string {
+  return `${item.title || ''}\n${item.imageUrl || ''}\n${item.description || ''}`;
+}
+
+function formatRankSpan(ranks: number[], t: TFunction): string {
+  if (ranks.length === 0) return '';
+  const sorted = [...ranks].sort((a, b) => a - b);
+  if (sorted.length === 1) return rankTierLabel(sorted[0], t);
+  const consecutive = sorted.every((rank, index) => index === 0 || rank === sorted[index - 1] + 1);
+  if (consecutive) {
+    return t('leaderboard.rankRange', {
+      from: rankTierLabel(sorted[0], t),
+      to: rankTierLabel(sorted[sorted.length - 1], t),
+    });
+  }
+  return sorted.map((rank) => rankTierLabel(rank, t)).join(', ');
+}
+
+type PrizeGroup = { item: CashPrizeItem; ranks: number[] };
+
+function groupPrizeItems(items: CashPrizeItem[]): PrizeGroup[] {
+  const ranked = items
+    .filter((item) => Number(item.rank) > 0)
+    .sort((a, b) => Number(a.rank) - Number(b.rank));
+  const unranked = items.filter((item) => !Number(item.rank));
+  const ordered = ranked.length > 0 ? [...ranked, ...unranked] : items;
+  const groups: PrizeGroup[] = [];
+  for (const item of ordered) {
+    const last = groups[groups.length - 1];
+    if (last && prizeItemKey(last.item) === prizeItemKey(item)) {
+      if (item.rank) last.ranks.push(item.rank);
+    } else {
+      groups.push({ item, ranks: item.rank ? [item.rank] : [] });
+    }
+  }
+  return groups;
+}
+
+function PrizeGiftIcon({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 12v8H4v-8" />
+      <path d="M2 7h20v5H2z" />
+      <path d="M12 22V7" />
+      <path d="M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85C10.6 4.55 12 7 12 7Z" />
+      <path d="M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85C13.4 4.55 12 7 12 7Z" />
+    </svg>
+  );
+}
+
+function PrizeThumb({ src, alt, size = 56 }: { src?: string | null; alt: string; size?: number }) {
+  return (
+    <div
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-amber-400/20 bg-[#16120a] text-amber-200/80"
+      style={{ width: size, height: size }}
+    >
+      {src ? (
+        <OptimizedImage src={src} alt={alt} className="h-full w-full object-contain p-1" displayWidth={Math.max(size * 2, 128)} />
+      ) : (
+        <PrizeGiftIcon size={Math.round(size * 0.48)} />
+      )}
+    </div>
+  );
 }
 
 function getInitials(name: string): string {
@@ -413,91 +481,78 @@ export default function CompetitionPublicLeaderboard() {
                 </motion.div>
               )}
 
-              {/* HERO */}
-              <section className="grid gap-6 lg:grid-cols-[1.4fr_1fr] lg:items-end">
-                <div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <StatusPill status={data.competition.status} />
-                    {id && <ArenaChat competitionId={id} title={data.competition.title} />}
-                    <span className="flex items-center gap-2 rounded-full border border-[#dc2626]/30 bg-[#dc2626]/10 px-3 py-1 text-[11px] font-semibold text-[#fca5a5]">
-                      <span className={`h-2 w-2 rounded-full ${paused ? 'bg-[#71717a]' : 'live-dot'}`} />
-                      {paused ? t('leaderboard.paused') : t('leaderboard.live')}
-                      {lastRefresh && (
-                        <span className="font-normal text-[#fda4af]/70">· {t('leaderboard.updatedAt', { time: fmtTime(lastRefresh) })}</span>
-                      )}
-                    </span>
-                    {brand && (brand.logoUrl || brand.name !== 'Sponsor') && (
-                      <span
-                        className="flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold text-white"
-                        style={{ borderColor: `${brand.accent}80`, backgroundColor: `${brand.accent}26` }}
-                      >
-                        {brand.logoUrl && (
-                          <img src={brand.logoUrl} alt={brand.name} className="h-3.5 w-auto object-contain" />
-                        )}
-                        {t('sponsor.sponsoredBy', { name: brand.name })}
-                      </span>
+              <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#09090d] px-5 py-6 md:px-8 md:py-8">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill status={data.competition.status} />
+                  {id && <ArenaChat competitionId={id} title={data.competition.title} />}
+                  <span className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] font-semibold text-[#cfcfd6]">
+                    <span className={`h-2 w-2 rounded-full ${paused ? 'bg-[#71717a]' : 'live-dot'}`} />
+                    {paused ? t('leaderboard.paused') : data.competition.status === 'ended' ? t('leaderboard.ended') : t('leaderboard.live')}
+                    {lastRefresh && data.competition.status === 'live' && (
+                      <span className="font-normal text-[#71717a]">· {fmtTime(lastRefresh)}</span>
                     )}
-                  </div>
-                  <h1 className="display mt-4 text-4xl font-bold leading-[1.05] text-white md:text-6xl">
-                    {data.competition.title}
-                  </h1>
-                  <div className="mt-3 text-sm text-[#b8b8c2]">
-                    {fmtDate(data.competition.startAt)} <span className="text-[#71717a]">→</span> {fmtDate(data.competition.endAt)}
-                  </div>
+                  </span>
+                  {brand && (brand.logoUrl || brand.name !== 'Sponsor') && (
+                    <span
+                      className="ml-auto flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold text-white"
+                      style={{ borderColor: `${brand.accent}80`, backgroundColor: `${brand.accent}26` }}
+                    >
+                      {brand.logoUrl && (
+                        <img src={brand.logoUrl} alt={brand.name} className="h-3.5 w-auto object-contain" />
+                      )}
+                      {brand.name}
+                    </span>
+                  )}
                 </div>
-
-                <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
-                  <motion.div
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                    className={`metric metric-pnl-big ${data.competition.status === 'live' ? 'ticker-glow' : ''}`}
-                  >
-                    <div className="metric-label">
-                      {data.competition.status === 'live'
-                        ? t('leaderboard.endsIn')
-                        : data.competition.status === 'ended'
-                          ? t('leaderboard.statusLabel')
-                          : t('leaderboard.startsIn')}
-                      {data.competition.status === 'live' && <span className="live-dot" />}
+                <h1 className="display mt-4 text-4xl font-black uppercase leading-[0.95] text-white md:text-6xl">
+                  {data.competition.title}
+                </h1>
+                <div className="mt-3 text-sm text-[#8f8b93]">
+                  {fmtDate(data.competition.startAt)} <span className="text-[#4b4b53]">→</span> {fmtDate(data.competition.endAt)}
+                </div>
+                <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-2xl border border-white/[0.07] bg-black/30 px-3.5 py-3">
+                    <div className="micro text-[9px] text-[#71717a]">
+                      {data.competition.status === 'live' ? t('leaderboard.endsIn') : data.competition.status === 'ended' ? t('leaderboard.statusLabel') : t('leaderboard.startsIn')}
                     </div>
-                    <div className="metric-value" style={{ fontSize: 'clamp(1.3rem, 5.5vw, 1.9rem)' }}>
+                    <div className="num mt-1 text-lg font-bold text-white md:text-xl">
                       {data.competition.status === 'ended' ? t('leaderboard.ended') : countdown}
                     </div>
-                  </motion.div>
-                  <MetricCard
-                    label={t('leaderboard.participants')}
-                    value={data.competition.participants}
-                    format={(v) => formatCompactUnsigned(v)}
-                    tone="neutral"
-                    delayClass="rise-in-1"
-                  />
-                  <MetricCard
-                    label={t('leaderboard.avgPnl')}
-                    value={aggregates.avgPnl}
-                    format={(v) => formatPercent(v)}
-                    unit="%"
-                    tone={aggregates.avgPnl > 0 ? 'pos' : aggregates.avgPnl < 0 ? 'neg' : 'neutral'}
-                    delayClass="rise-in-2"
-                  />
-                  <MetricCard
-                    label={t('leaderboard.totalTrades')}
-                    value={aggregates.totalTrades}
-                    format={(v) => formatCompactUnsigned(v)}
-                    tone="neutral"
-                    delayClass="rise-in-3"
-                  />
+                  </div>
+                  <div className="rounded-2xl border border-white/[0.07] bg-black/30 px-3.5 py-3">
+                    <div className="micro text-[9px] text-[#71717a]">{t('leaderboard.participants')}</div>
+                    <div className="num mt-1 text-lg font-bold text-white md:text-xl">{formatCompactUnsigned(data.competition.participants)}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/[0.07] bg-black/30 px-3.5 py-3">
+                    <div className="micro text-[9px] text-[#71717a]">{t('leaderboard.avgPnl')}</div>
+                    <div className={`num mt-1 text-lg font-bold md:text-xl ${aggregates.avgPnl > 0 ? 'text-[#34d399]' : aggregates.avgPnl < 0 ? 'text-[#f87171]' : 'text-white'}`}>
+                      {formatPercent(aggregates.avgPnl)}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/[0.07] bg-black/30 px-3.5 py-3">
+                    <div className="micro text-[9px] text-[#71717a]">{t('leaderboard.totalTrades')}</div>
+                    <div className="num mt-1 text-lg font-bold text-white md:text-xl">{formatCompactUnsigned(aggregates.totalTrades)}</div>
+                  </div>
                 </div>
               </section>
 
-              {/* PRIZE */}
               {hasPrize(data.competition.cashPrize) && (
                 <CashPrizeSection prize={data.competition.cashPrize} />
               )}
 
+              <PromoCtaSection
+                title={data.competition.promoTitle}
+                subtitle={data.competition.promoSubtitle}
+                href={data.competition.promoHref}
+                cta={data.competition.promoCta}
+                logoUrl={brand?.logoUrl}
+                accent={brand?.accent}
+              />
+
               {myRow && (
-                <section className="mt-8 rounded-2xl border border-[#dc2626]/35 bg-[#dc2626]/10 p-4 shadow-[0_20px_70px_-45px_rgba(220,38,38,0.9)]">
-                  <div className="flex items-center justify-between gap-3">
+                <section className="mt-6 overflow-hidden rounded-2xl border border-[#dc2626]/30 bg-[#dc2626]/8">
+                  <div className="flex items-center justify-between gap-3 px-4 pt-3">
                     <div className="micro text-[10px] text-[#fca5a5]">{t('leaderboard.yourPosition')}</div>
                     {myRow.rank > 0 && (
                       <button
@@ -550,30 +605,24 @@ export default function CompetitionPublicLeaderboard() {
                 </motion.section>
               )}
 
-              {/* PODIUM */}
-              {top3.length > 0 && (
-                <section className="mt-12">
-                  <div className="border-b border-[#1a1a20] pb-4">
-                    <div className="micro text-[10px] text-[#dc2626]">{t('leaderboard.livePodium')}</div>
-                    <h2 className="display mt-1 text-2xl font-bold text-white md:text-3xl">{t('leaderboard.top3')}</h2>
+              <section className="mt-10">
+                <div className="flex items-end justify-between gap-4 border-b border-white/[0.08] pb-4">
+                  <div>
+                    <div className="micro text-[10px] text-[#dc2626]">{t('leaderboard.fullRanking')}</div>
+                    <h2 className="display mt-1 text-2xl font-black uppercase text-white md:text-3xl">{t('leaderboard.allTraders')}</h2>
                   </div>
-                  <div className="mt-8 grid gap-5 md:grid-cols-3 md:items-end">
-                    {/* Mobile follows DOM order (1, 2, 3 — natural reading
-                        order). Desktop reorders to the classical podium
-                        layout (2nd left, 1st centred, 3rd right). */}
+                  {ranked.length > 0 && (
+                    <div className="text-[12px] text-[#71717a]">{ranked.length} · {t('leaderboard.thRank')}</div>
+                  )}
+                </div>
+
+                {top3.length > 0 && (
+                  <div className="mt-6 grid gap-3 md:grid-cols-3 md:items-end">
                     <div className="md:order-2"><PodiumCard row={top3[0]} place={1} /></div>
                     <div className="md:order-1"><PodiumCard row={top3[1]} place={2} /></div>
                     <div className="md:order-3"><PodiumCard row={top3[2]} place={3} /></div>
                   </div>
-                </section>
-              )}
-
-              {/* RANKING TABLE */}
-              <section className="mt-14">
-                <div className="border-b border-[#1a1a20] pb-4">
-                  <div className="micro text-[10px] text-[#dc2626]">{t('leaderboard.fullRanking')}</div>
-                  <h2 className="display mt-1 text-2xl font-bold text-white md:text-3xl">{t('leaderboard.allTraders')}</h2>
-                </div>
+                )}
 
                 {data.leaderboard.length === 0 ? (
                   <div className="glass-card mt-6 p-10 text-center text-sm text-[#b8b8c2]">
@@ -582,6 +631,7 @@ export default function CompetitionPublicLeaderboard() {
                 ) : (
                   <>
                     {ranked.length > 0 ? (
+                      rest.length > 0 ? (
                       <div className="glass-card mt-6 overflow-hidden">
                         <div className="grid grid-cols-[40px_1.7fr_1fr_0.9fr_0.5fr] items-center gap-2 border-b border-[#232329] bg-[#0c0c10] px-3 py-3 text-[9px] uppercase tracking-[0.16em] text-[#71717a] sm:grid-cols-[60px_1.6fr_0.9fr_0.9fr_0.6fr_0.9fr] sm:gap-3 sm:px-5 sm:text-[10px] md:grid-cols-[80px_1.6fr_1fr_1fr_0.7fr_1fr]">
                           <div>{t('leaderboard.thRank')}</div>
@@ -592,16 +642,12 @@ export default function CompetitionPublicLeaderboard() {
                           <div className="hidden text-right md:block">{t('leaderboard.thLastUpdate')}</div>
                         </div>
                         <div className="divide-y divide-[#1a1a20]">
-                          {rest.length === 0 && (
-                            <div className="px-5 py-6 text-center text-xs text-[#71717a]">
-                              {t('leaderboard.podiumOnly')}
-                            </div>
-                          )}
                           {rest.map((row, idx) => (
                             <RankRow key={row.userId} row={row} index={idx} isMe={row.userId === currentUserId} />
                           ))}
                         </div>
                       </div>
+                      ) : null
                     ) : (
                       <div className="glass-card mt-6 px-5 py-6 text-center text-sm text-[#71717a]">
                         {t('leaderboard.noRankedYet')}
@@ -668,147 +714,150 @@ export default function CompetitionPublicLeaderboard() {
 
 /* ----------------------------- SUB COMPONENTS ----------------------------- */
 
-function PrizeItemCard({ item, index, t }: { item: CashPrizeItem; index: number; t: TFunction }) {
-  const tier = item.rank === 1 ? 'gold' : item.rank === 2 ? 'silver' : item.rank === 3 ? 'bronze' : '';
+function PromoCtaSection({
+  title,
+  subtitle,
+  href,
+  cta,
+  logoUrl,
+  accent,
+}: {
+  title?: string | null;
+  subtitle?: string | null;
+  href?: string | null;
+  cta?: string | null;
+  logoUrl?: string | null;
+  accent?: string;
+}) {
+  const { t } = useTranslation();
+  const heading = String(title || '').trim();
+  const line = String(subtitle || '').trim();
+  const link = safeHttpHref(href);
+  if (!heading && !line) return null;
+  const color = accent || '#f5b300';
+  const inner = (
+    <>
+      <div className="min-w-0 flex-1">
+        <div className="micro text-[10px]" style={{ color }}>{t('leaderboard.promoOffer')}</div>
+        {heading && (
+          <h2 className="display mt-2 text-2xl font-black uppercase leading-tight text-white md:text-3xl">{heading}</h2>
+        )}
+        {line && (
+          <p className="mt-2 text-sm font-semibold leading-relaxed text-amber-100/90 md:text-base">{line}</p>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        {logoUrl && (
+          <img src={logoUrl} alt="" className="hidden h-8 w-auto max-w-[88px] object-contain sm:block" />
+        )}
+        {link && (
+          <span
+            className="inline-flex items-center rounded-xl px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.14em] text-black"
+            style={{ background: color }}
+          >
+            {cta?.trim() || t('leaderboard.promoCta')}
+          </span>
+        )}
+      </div>
+    </>
+  );
+
+  const className = 'relative mt-6 flex flex-col gap-4 overflow-hidden rounded-3xl border px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7 sm:py-6';
+  const style = {
+    borderColor: `${color}55`,
+    background: `linear-gradient(135deg, ${color}22 0%, #0c0904 55%, #09090d 100%)`,
+  };
+
+  if (link) {
+    return (
+      <a href={link} target="_blank" rel="noopener noreferrer" className={`${className} transition-transform hover:scale-[1.01]`} style={style}>
+        <div className="pointer-events-none absolute -right-16 -top-20 h-44 w-44 rounded-full opacity-30 blur-3xl" style={{ background: color }} />
+        {inner}
+      </a>
+    );
+  }
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-[#232329] bg-gradient-to-br from-[#15151c] to-[#0a0a0d] transition-colors hover:border-amber-500/30">
-      <div className="relative flex aspect-[4/3] w-full items-center justify-center p-4">
-        {item.rank ? (
-          <span className={`rank-circle ${tier} absolute left-3 top-3 z-10 h-8 w-8 text-sm shadow-lg`}>{item.rank}</span>
-        ) : null}
-        {item.imageUrl ? (
-          <OptimizedImage
-            src={item.imageUrl}
-            alt={item.title || `Lot ${index + 1}`}
-            className="max-h-full max-w-full object-contain"
-            displayWidth={512}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-amber-200/70">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M20 12v8H4v-8" />
-              <path d="M2 7h20v5H2z" />
-              <path d="M12 22V7" />
-              <path d="M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85C10.6 4.55 12 7 12 7Z" />
-              <path d="M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85C13.4 4.55 12 7 12 7Z" />
-            </svg>
-          </div>
-        )}
-      </div>
-      <div className="border-t border-[#1a1a20] p-4">
-        {item.rank ? (
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-300/85">
-            {rankTierLabel(item.rank, t)}
-          </div>
-        ) : null}
-        {item.title && <div className="mt-1 text-base font-bold text-white">{item.title}</div>}
-        {item.description && (
-          <p className="mt-1.5 whitespace-pre-line text-xs leading-relaxed text-[#b8b8c2]">{item.description}</p>
-        )}
-      </div>
-    </div>
+    <section className={className} style={style}>
+      <div className="pointer-events-none absolute -right-16 -top-20 h-44 w-44 rounded-full opacity-30 blur-3xl" style={{ background: color }} />
+      {inner}
+    </section>
   );
 }
 
 function CashPrizeSection({ prize }: { prize: CashPrize }) {
   const { t } = useTranslation();
-  const breakdown = prize.breakdown && prize.breakdown.length > 0 ? prize.breakdown.slice(0, 6) : null;
   const items = prize.items && prize.items.length > 0 ? prize.items : null;
-  // Un vrai prix principal = un titre OU un montant cash. Une simple image
-  // sans titre/montant n'est pas un "prix" en soi.
-  const hasMainPrize = Boolean(prize.label || prize.total > 0);
-  // On masque le bloc "lot principal + répartition" dès qu'il y a des lots
-  // par place : ce sont eux la récompense. On garde le hero si un vrai prix
-  // existe, une répartition cash existe, ou une image seule sans lots.
-  const showHero = hasMainPrize || Boolean(breakdown) || (Boolean(prize.imageUrl) && !items);
+  const groups = items ? groupPrizeItems(items) : [];
+  const breakdown = !items && prize.breakdown && prize.breakdown.length > 0 ? prize.breakdown : null;
   const prizeTitle = getPrizeTitle(prize, t);
+  const itemCount = items?.length ?? breakdown?.length ?? 0;
+  const hasRows = groups.length > 0 || Boolean(breakdown);
+  if (!hasRows && !prize.label && !prize.imageUrl && !(prize.total > 0)) return null;
+
   return (
-    <section className="mt-12">
-      <div className="border-b border-[#1a1a20] pb-4">
-        <div className="micro text-[10px] text-amber-400/90">{t('leaderboard.reward')}</div>
-        <h2 className="display mt-1 text-2xl font-bold text-white md:text-3xl">{t('leaderboard.toWin')}</h2>
-      </div>
-
-      {showHero && (
-        <div className="mt-6 grid gap-5 lg:grid-cols-[1.05fr_1fr]">
-          <div className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-br from-[#241a05] via-[#0f0a04] to-[#0a0a0d] p-7 md:p-9">
-            <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-amber-500/15 blur-3xl" />
-            <div className="pointer-events-none absolute -left-24 -bottom-24 h-72 w-72 rounded-full bg-[#dc2626]/15 blur-3xl" />
-            <div className="relative grid gap-6 sm:grid-cols-[150px_1fr] sm:items-center">
-              <div className="overflow-hidden rounded-2xl border border-amber-400/25 bg-[#0a0a0d] shadow-[0_24px_80px_-45px_rgba(245,158,11,0.9)]">
-                {prize.imageUrl ? (
-                  <OptimizedImage
-                    src={prize.imageUrl}
-                    alt={prizeTitle}
-                    className="aspect-square w-full object-cover"
-                    displayWidth={480}
-                  />
-                ) : (
-                  <div className="flex aspect-square w-full items-center justify-center text-amber-200">
-                    <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M20 12v8H4v-8" />
-                      <path d="M2 7h20v5H2z" />
-                      <path d="M12 22V7" />
-                      <path d="M12 7H7.5a2.5 2.5 0 1 1 2.1-3.85C10.6 4.55 12 7 12 7Z" />
-                      <path d="M12 7h4.5a2.5 2.5 0 1 0-2.1-3.85C13.4 4.55 12 7 12 7Z" />
-                    </svg>
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className="micro text-[10px] text-amber-300/80">{t('leaderboard.mainPrize')}</div>
-                <div className="display mt-2 text-4xl font-bold leading-tight text-white md:text-5xl">{prizeTitle}</div>
-                {prize.total > 0 && prize.label && (
-                  <div className="mt-3 inline-flex rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-sm font-semibold text-amber-200">
-                    {t('leaderboard.cashValue', { amount: formatPrizeAmount(prize.total, prize.currency) })}
-                  </div>
-                )}
-                <p className="mt-4 max-w-md whitespace-pre-line text-sm leading-relaxed text-[#b8b8c2]">
-                  {prize.description?.trim()
-                    ? prize.description
-                    : t('leaderboard.defaultPrizeDesc')}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#232329] bg-[#0c0c10] p-6">
-            <div className="micro text-[10px] text-[#71717a]">{t('leaderboard.breakdown')}</div>
-            {breakdown ? (
-              <div className="mt-4 space-y-2.5">
-                {breakdown.map((row) => {
-                  const tier = row.rank === 1 ? 'gold' : row.rank === 2 ? 'silver' : row.rank === 3 ? 'bronze' : '';
-                  const label = rankTierLabel(row.rank, t);
-                  return (
-                    <div key={row.rank} className="flex items-center gap-3 rounded-xl border border-[#1a1a20] bg-[#0a0a0d] px-3.5 py-2.5">
-                      <span className={`rank-circle ${tier} h-9 w-9 text-sm`}>{row.rank}</span>
-                      <span className="text-sm font-semibold text-[#e0e2ea]">{label}</span>
-                      <span className="num ml-auto text-base font-bold text-white">
-                        {formatPrizeAmount(row.amount, prize.currency)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-xl border border-dashed border-[#232329] bg-[#0a0a0d] px-4 py-6 text-center text-sm text-[#71717a]">
-                {t('leaderboard.breakdownTba')}
-              </div>
+    <section className="relative mt-6 overflow-hidden rounded-3xl border border-amber-400/20 bg-[#0c0904]">
+      <div className="pointer-events-none absolute -right-20 -top-24 h-52 w-52 rounded-full bg-amber-400/10 blur-3xl" />
+      <div className="relative flex items-center justify-between gap-4 border-b border-amber-400/10 px-5 py-4">
+        <div className="flex min-w-0 items-center gap-3">
+          {prize.imageUrl && <PrizeThumb src={prize.imageUrl} alt={prizeTitle} size={48} />}
+          <div className="min-w-0">
+            <div className="micro text-[10px] text-amber-300/90">{t('leaderboard.toWin')}</div>
+            {(prize.label || prize.total > 0) && (
+              <h2 className="display mt-0.5 truncate text-xl font-black uppercase text-white md:text-2xl">{prizeTitle}</h2>
             )}
           </div>
         </div>
+        {itemCount > 0 && (
+          <div className="shrink-0 rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-[11px] font-semibold text-amber-200">
+            {t('leaderboard.prizeCount', { count: itemCount })}
+          </div>
+        )}
+      </div>
+
+      {groups.length > 0 && (
+        <div className="relative divide-y divide-white/[0.05]">
+          {groups.map((group, index) => {
+            const firstRank = group.ranks[0] || 0;
+            const tier = firstRank === 1 ? 'gold' : firstRank === 2 ? 'silver' : firstRank === 3 ? 'bronze' : '';
+            const span = formatRankSpan(group.ranks, t);
+            return (
+              <div key={`${prizeItemKey(group.item)}-${index}`} className="flex items-center gap-3 px-5 py-3">
+                {group.ranks.length === 1 ? (
+                  <span className={`rank-circle ${tier} h-8 w-8 text-sm`}>{firstRank}</span>
+                ) : (
+                  <span className="flex h-8 min-w-[2.5rem] items-center justify-center rounded-full border border-amber-400/25 bg-amber-400/8 px-2 text-[10px] font-bold text-amber-200">
+                    {group.ranks.length > 1 ? `${group.ranks[0]}–${group.ranks[group.ranks.length - 1]}` : '•'}
+                  </span>
+                )}
+                <PrizeThumb src={group.item.imageUrl} alt={group.item.title || t('leaderboard.rewardAlt')} size={36} />
+                <div className="min-w-0 flex-1">
+                  {span && <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#8b8b96]">{span}</div>}
+                  <div className="truncate text-sm font-semibold text-white">{group.item.title || t('leaderboard.rewardAlt')}</div>
+                </div>
+                {group.ranks.length > 1 && (
+                  <span className="shrink-0 text-[11px] text-[#71717a]">×{group.ranks.length}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
 
-      {items && (
-        <div className={showHero ? 'mt-8' : 'mt-6'}>
-          {showHero && (
-            <div className="micro mb-4 text-[10px] text-amber-400/90">{t('leaderboard.otherPrizes')}</div>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((item, index) => (
-              <PrizeItemCard key={index} item={item} index={index} t={t} />
-            ))}
-          </div>
+      {breakdown && (
+        <div className="relative divide-y divide-white/[0.05]">
+          {breakdown.map((row) => {
+            const tier = row.rank === 1 ? 'gold' : row.rank === 2 ? 'silver' : row.rank === 3 ? 'bronze' : '';
+            return (
+              <div key={row.rank} className="flex items-center gap-3 px-5 py-3">
+                <span className={`rank-circle ${tier} h-8 w-8 text-sm`}>{row.rank}</span>
+                <span className="text-sm font-semibold text-[#e0e2ea]">{rankTierLabel(row.rank, t)}</span>
+                <span className="num ml-auto text-base font-bold text-white">
+                  {formatPrizeAmount(row.amount, prize.currency)}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
