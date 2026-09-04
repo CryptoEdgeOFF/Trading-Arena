@@ -527,16 +527,60 @@ body.mobile-web-active {
 
 .mobile-home-guest {
   position: relative;
-  padding: 22px 18px;
+  isolation: isolate;
+  min-height: 410px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 28px 18px 22px;
   border: 1px solid rgba(255, 70, 92, 0.18);
-  border-radius: 14px;
-  background: radial-gradient(circle at 90% 0, rgba(238, 36, 60, 0.2), transparent 43%), rgba(255, 255, 255, 0.02);
+  border-radius: 18px;
+  background: #08070a;
+  box-shadow: 0 24px 60px -30px rgba(238, 36, 60, 0.6);
+}
+
+.mobile-home-guest__backdrop {
+  position: absolute;
+  z-index: -3;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 72% 18%;
+  opacity: 0.7;
+}
+
+.mobile-home-guest__shade {
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(5, 5, 7, 0.12) 0%, rgba(5, 5, 7, 0.48) 48%, #08070a 91%),
+    linear-gradient(90deg, rgba(5, 5, 7, 0.94) 0%, rgba(5, 5, 7, 0.66) 52%, rgba(5, 5, 7, 0.12) 100%);
+}
+
+.mobile-home-guest__content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
 }
 
 .mobile-home-guest__news {
   position: absolute;
   top: 14px;
   right: 14px;
+  z-index: 2;
+}
+
+.mobile-home-guest__brand {
+  position: absolute;
+  top: 15px;
+  left: 17px;
+  z-index: 2;
+  width: auto;
+  height: 42px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.65));
 }
 
 .mobile-home-guest .eyebrow {
@@ -544,7 +588,7 @@ body.mobile-web-active {
   align-items: center;
   gap: 9px;
   margin-bottom: 13px;
-  color: #b1abb4;
+  color: #d5d0d8;
   font: 600 11px/1 Manrope, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.2em;
@@ -558,7 +602,8 @@ body.mobile-web-active {
 
 .mobile-home-guest h1 {
   margin: 0;
-  font: 800 52px/0.86 'Barlow Condensed', sans-serif;
+  max-width: 290px;
+  font: 800 clamp(48px, 14vw, 66px)/0.84 'Barlow Condensed', sans-serif;
   letter-spacing: -0.04em;
   text-transform: uppercase;
 }
@@ -569,59 +614,140 @@ body.mobile-web-active {
 }
 
 .mobile-home-guest p {
-  margin: 17px 0 0;
-  color: #99939d;
-  font-size: 12px;
+  max-width: 310px;
+  margin: 15px 0 0;
+  color: #c2bdc5;
+  font-size: 12.5px;
   line-height: 1.55;
 }
 
-.mobile-home-platform {
-  position: relative;
-  margin: 16px 0 0;
-  overflow: hidden;
-  border-radius: 12px;
-  border: 1px solid rgba(238, 36, 60, 0.35);
-}
-.mobile-home-platform img {
-  display: block;
-  width: 100%;
-  height: auto;
-  object-fit: contain;
-  background: #08080b;
+.mobile-home-guest__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 20px;
 }
 
-.mobile-home-guest__login {
+.mobile-home-guest__actions button {
   min-height: 44px;
-  margin-top: 17px;
   padding: 0 14px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: center;
   border: 1px solid rgba(255, 85, 104, 0.45);
-  border-radius: 6px;
+  border-radius: 9px;
   background: var(--red);
   color: #fff;
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  text-decoration: none;
+  cursor: pointer;
 }
 
-.mobile-home-guest__rank {
-  min-height: 34px;
-  margin-top: 7px;
-  width: 100%;
+.mobile-home-guest__actions button:first-child {
+  background: rgba(10, 9, 13, 0.72);
+  border-color: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.mobile-home-guest__auth {
+  scroll-margin-top: 16px;
+  animation: mobile-auth-unfold 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.mobile-home-guest__auth > .glass-card {
+  border-color: rgba(238, 36, 60, 0.24);
+  box-shadow: 0 20px 55px -30px rgba(238, 36, 60, 0.62);
+}
+
+.mobile-home-process {
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: linear-gradient(155deg, rgba(238, 36, 60, 0.07), transparent 42%), #09080c;
+}
+
+.mobile-home-process__head > span {
+  color: var(--red-bright);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+}
+
+.mobile-home-process__head h2 {
+  margin: 6px 0 0;
+  font: 800 28px/1 'Barlow Condensed', sans-serif;
+  text-transform: uppercase;
+}
+
+.mobile-home-process__head p {
+  margin: 8px 0 0;
+  color: #918c95;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mobile-home-process ol {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mobile-home-process li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.mobile-home-process li > b {
   display: grid;
   place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #151319;
-  color: #aaa4ad;
-  font-size: 11px;
-  font-weight: 700;
-  text-decoration: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(238, 36, 60, 0.38);
+  border-radius: 10px;
+  background: rgba(238, 36, 60, 0.12);
+  color: #ff7b8b;
+  font: 800 10px/1 'JetBrains Mono', monospace;
+}
+
+.mobile-home-process li span {
+  display: grid;
+  gap: 3px;
+}
+
+.mobile-home-process li strong {
+  color: #fff;
+  font: 800 15px/1.1 'Barlow Condensed', sans-serif;
+  text-transform: uppercase;
+}
+
+.mobile-home-process li small {
+  color: #918c95;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+@keyframes mobile-auth-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scaleY(0.96);
+    transform-origin: top;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+    transform-origin: top;
+  }
 }
 
 .mobile-home__section-title {
@@ -707,10 +833,22 @@ body.mobile-web-active {
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 42%);
   mask-image: linear-gradient(90deg, transparent, #000 42%);
 }
-.mobile-arena-card.is-ninja-cup .mobile-arena-card__banner {
-  width: 62%;
-  object-position: right center;
-  opacity: 0.88;
+.mobile-arena-card.has-clear-banner {
+  padding-top: 0;
+}
+.mobile-arena-card.has-clear-banner .mobile-arena-card__banner {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 100%;
+  height: 92px;
+  margin-bottom: 10px;
+  object-fit: contain;
+  object-position: center;
+  opacity: 1;
+  background: #000;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .mobile-arena-card__shade {

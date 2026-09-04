@@ -7,7 +7,7 @@ import Seo from './Seo';
 import { formatDHMS } from '../utils/formatters';
 import OptimizedImage from './OptimizedImage';
 import { resolveMediaUrl } from '../utils/imageUrl';
-import { ninjaTraderCupBanner, resolveArenaBrand } from '../lib/sponsors';
+import { BTF_ARENA_LOGO, ninjaTraderCupBanner, resolveArenaBrand } from '../lib/sponsors';
 import { COMPETE_SESSION_KEY } from '../lib/competeSession';
 
 type Arena = {
@@ -22,16 +22,63 @@ type Arena = {
   sponsor?: string | null;
   sponsorName?: string | null;
   sponsorLogoUrl?: string | null;
+  hostLogoUrl?: string | null;
 };
 
 function useCountdown(target: number) {
   const { i18n } = useTranslation();
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
   return formatDHMS(target - now, i18n.language.startsWith('fr') ? 'j' : 'd');
+}
+
+function SponsorArenaVisual({
+  hostLogoUrl,
+  sponsorLogoUrl,
+  sponsorName,
+  accent,
+  featured,
+}: {
+  hostLogoUrl: string;
+  sponsorLogoUrl: string;
+  sponsorName: string;
+  accent: string;
+  featured: boolean;
+}) {
+  return (
+    <div
+      className={`relative overflow-hidden border-b border-white/[0.06] ${featured ? 'h-[160px] sm:h-[210px]' : 'h-[120px] sm:h-[150px]'}`}
+      style={{
+        background: `radial-gradient(circle at 82% 36%, ${accent}38, transparent 42%), radial-gradient(circle at 18% 42%, rgba(239,35,60,.24), transparent 42%), #08070a`,
+      }}
+    >
+      <div
+        className="absolute inset-0 opacity-30"
+        style={{
+          backgroundImage: 'linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px)',
+          backgroundSize: '32px 32px',
+          maskImage: 'linear-gradient(to bottom, transparent, black)',
+        }}
+      />
+      <svg className="absolute inset-x-0 bottom-0 h-2/3 w-full opacity-55" viewBox="0 0 600 160" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 128 C70 120 96 140 155 94 C214 48 254 108 320 72 C386 36 426 88 482 45 C526 12 561 48 600 24" fill="none" stroke={accent} strokeWidth="2" />
+      </svg>
+      <div className="relative z-[1] flex h-full items-center justify-center gap-3 px-5 sm:gap-6 sm:px-8">
+        <span className="flex h-[58%] w-[35%] min-w-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/35 p-2 backdrop-blur-sm sm:p-3">
+          <img src={hostLogoUrl} alt="BTF Arena" className="block max-h-full max-w-full object-contain" />
+        </span>
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[#ef233c]/50 bg-black/70 font-black text-white shadow-[0_0_20px_rgba(239,35,60,.35)] sm:h-10 sm:w-10">
+          X
+        </span>
+        <span className="flex h-[58%] w-[35%] min-w-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/35 p-2 backdrop-blur-sm sm:p-3">
+          <img src={sponsorLogoUrl} alt={sponsorName} className="block max-h-full max-w-full object-contain" />
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; featured?: boolean; joined?: boolean }) {
@@ -48,16 +95,37 @@ function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; 
       ? t('spotlight.watch')
       : t('spotlight.join');
 
+  const banner = resolveMediaUrl(arena.bannerImageUrl) || ninjaTraderCupBanner(arena);
+
   return (
-    <article className={`group relative overflow-hidden border border-white/[0.09] bg-[#0a0a0e] ${featured ? 'min-h-[240px] rounded-2xl sm:min-h-[280px]' : 'min-h-[200px] rounded-2xl'}`}>
-      <OptimizedImage
-        src={ninjaTraderCupBanner(arena) || resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
-        alt=""
-        displayWidth={featured ? 1280 : 720}
-        className="absolute inset-0 h-full w-full object-cover object-right opacity-60 transition duration-700 group-hover:scale-[1.035] group-hover:opacity-75"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-[#050507]/55 to-black/10" />
-      <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4">
+    <article className={`group overflow-hidden border border-white/[0.09] bg-[#0a0a0e] ${featured ? 'rounded-2xl' : 'rounded-2xl'}`}>
+      {brand?.logoUrl ? (
+        <SponsorArenaVisual
+          hostLogoUrl={brand.hostLogoUrl || BTF_ARENA_LOGO}
+          sponsorLogoUrl={brand.logoUrl}
+          sponsorName={brand.name}
+          accent={brand.accent}
+          featured={featured}
+        />
+      ) : banner ? (
+        <div className="bg-black">
+          <OptimizedImage
+            src={banner}
+            alt={arena.title}
+            displayWidth={featured ? 1280 : 720}
+            className={`block w-full object-contain object-center ${featured ? 'h-[160px] sm:h-[210px]' : 'h-[120px] sm:h-[150px]'}`}
+          />
+        </div>
+      ) : (
+        <OptimizedImage
+          src="/assets/pictures/arena3d.webp"
+          alt=""
+          displayWidth={featured ? 1280 : 720}
+          className="h-24 w-full object-cover object-right opacity-40"
+        />
+      )}
+      <div className="p-4 sm:p-5">
+      <div className="flex items-center justify-between">
         <span className={`micro inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[9px] ${isLive ? 'border-[#ef233c]/55 bg-[#ef233c]/15 text-white' : 'border-white/15 bg-black/45 text-[#d4d4d8]'}`}>
           {isLive && <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ff314d] shadow-[0_0_10px_#ef233c]" />}
           {isLive ? t('status.live') : arena.status === 'starting_soon' ? t('status.startingSoon') : t('status.registration')}
@@ -69,8 +137,7 @@ function ArenaCard({ arena, featured = false, joined = false }: { arena: Arena; 
           <span className="micro text-[9px] text-white/65">{arena.participants} {t('spotlight.traders')}</span>
         </span>
       </div>
-      <div className="absolute inset-x-0 bottom-0 p-4 sm:p-5">
-        <div className="micro text-[9px] text-[#ff5268]">{t('livePage.weeklyArena')}</div>
+        <div className="micro mt-4 text-[9px] text-[#ff5268]">{t('livePage.weeklyArena')}</div>
         <h2 className={`display mt-1 font-black uppercase italic text-white ${featured ? 'text-2xl md:text-4xl' : 'text-xl'}`}>{arena.title}</h2>
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-white/10 pt-3">
           <div>
@@ -96,14 +163,13 @@ function ArchiveMiniCard({ arena }: { arena: Arena }) {
       to={`/compete/leaderboard/${arena.id}`}
       className="group flex w-[210px] shrink-0 snap-start flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0b0b10] transition-colors hover:border-white/20"
     >
-      <div className="relative h-20 overflow-hidden">
+      <div className="relative h-24 overflow-hidden bg-black">
         <OptimizedImage
-          src={ninjaTraderCupBanner(arena) || resolveMediaUrl(arena.bannerImageUrl) || '/assets/pictures/arena3d.webp'}
-          alt=""
+          src={resolveMediaUrl(arena.bannerImageUrl) || ninjaTraderCupBanner(arena) || '/assets/pictures/arena3d.webp'}
+          alt={arena.title}
           displayWidth={420}
-          className="h-full w-full object-cover object-right opacity-80 grayscale-[40%] transition duration-500 group-hover:scale-105 group-hover:grayscale-0"
+          className="h-full w-full object-contain object-center"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b10] to-transparent" />
         <span className="absolute left-2 top-2 rounded-full border border-white/15 bg-black/60 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-[#cfcfd6]">
           {t('archived.ended')}
         </span>

@@ -360,6 +360,8 @@ export interface Competition {
   sponsorName?: string | null;
   /** Logo uploadé, affiché sur cartes / classement / terminal. */
   sponsorLogoUrl?: string | null;
+  /** Logo BTF Arena (slot gauche de la bannière template). */
+  hostLogoUrl?: string | null;
   /** Lien de la bannière leaderboard (http/https). */
   bannerHref?: string | null;
   /** Titre du encart promo / CTA sur le leaderboard. */
@@ -370,6 +372,12 @@ export interface Competition {
   promoHref?: string | null;
   /** Libellé du bouton (ex. Découvrir). */
   promoCta?: string | null;
+  /** Texte et code de la première offre cadeau. */
+  promoOffer1?: string | null;
+  promoCode1?: string | null;
+  /** Texte et code de la seconde offre cadeau. */
+  promoOffer2?: string | null;
+  promoCode2?: string | null;
   /** Timestamp d'envoi de l'email « l'arène démarre bientôt » (anti-doublon). */
   notifiedStartSoonAt?: number | null;
   /** Timestamp d'envoi des emails de résultats de fin d'arène (anti-doublon). */
@@ -462,23 +470,43 @@ function normalizePromoCta(input: unknown): string | null {
   return value || null;
 }
 
+function normalizePromoOffer(input: unknown): string | null {
+  const value = String(input ?? '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  return value || null;
+}
+
+function normalizePromoCode(input: unknown): string | null {
+  const value = String(input ?? '').trim().replace(/\s+/g, '').slice(0, 40);
+  return value || null;
+}
+
 function publicBranding(competition: Competition): {
   sponsorName: string | null;
   sponsorLogoUrl: string | null;
+  hostLogoUrl: string | null;
   bannerHref: string | null;
   promoTitle: string | null;
   promoSubtitle: string | null;
   promoHref: string | null;
   promoCta: string | null;
+  promoOffer1: string | null;
+  promoCode1: string | null;
+  promoOffer2: string | null;
+  promoCode2: string | null;
 } {
   return {
     sponsorName: competition.sponsorName ?? null,
     sponsorLogoUrl: competition.sponsorLogoUrl ?? null,
+    hostLogoUrl: competition.hostLogoUrl ?? null,
     bannerHref: competition.bannerHref ?? null,
     promoTitle: competition.promoTitle ?? null,
     promoSubtitle: competition.promoSubtitle ?? null,
     promoHref: competition.promoHref ?? null,
     promoCta: competition.promoCta ?? null,
+    promoOffer1: competition.promoOffer1 ?? null,
+    promoCode1: competition.promoCode1 ?? null,
+    promoOffer2: competition.promoOffer2 ?? null,
+    promoCode2: competition.promoCode2 ?? null,
   };
 }
 
@@ -2100,11 +2128,16 @@ export class CompetitionManager {
     sponsorReferralUrl?: unknown;
     sponsorName?: unknown;
     sponsorLogoUrl?: unknown;
+    hostLogoUrl?: unknown;
     bannerHref?: unknown;
     promoTitle?: unknown;
     promoSubtitle?: unknown;
     promoHref?: unknown;
     promoCta?: unknown;
+    promoOffer1?: unknown;
+    promoCode1?: unknown;
+    promoOffer2?: unknown;
+    promoCode2?: unknown;
     seasonId?: unknown;
     format?: unknown;
     scheduleKey?: unknown;
@@ -2126,11 +2159,16 @@ export class CompetitionManager {
     const sponsorReferralUrl = normalizeSponsorReferralUrl(input.sponsorReferralUrl);
     const sponsorName = normalizeSponsorName(input.sponsorName);
     const sponsorLogoUrl = normalizeBannerImageUrl(input.sponsorLogoUrl);
+    const hostLogoUrl = normalizeBannerImageUrl(input.hostLogoUrl);
     const bannerHref = normalizeSponsorReferralUrl(input.bannerHref);
     const promoTitle = normalizePromoTitle(input.promoTitle);
     const promoSubtitle = normalizePromoSubtitle(input.promoSubtitle);
     const promoHref = normalizeSponsorReferralUrl(input.promoHref);
     const promoCta = normalizePromoCta(input.promoCta);
+    const promoOffer1 = normalizePromoOffer(input.promoOffer1);
+    const promoCode1 = normalizePromoCode(input.promoCode1);
+    const promoOffer2 = normalizePromoOffer(input.promoOffer2);
+    const promoCode2 = normalizePromoCode(input.promoCode2);
     const dailyDrawdownPercent = normalizeDrawdownPercent(input.dailyDrawdownPercent);
     const bannerImageUrl = normalizeBannerImageUrl(input.bannerImageUrl);
     const seasonIdRaw = input.seasonId != null && String(input.seasonId).trim()
@@ -2179,11 +2217,16 @@ export class CompetitionManager {
       sponsorReferralUrl,
       sponsorName,
       sponsorLogoUrl,
+      hostLogoUrl,
       bannerHref,
       promoTitle,
       promoSubtitle,
       promoHref,
       promoCta,
+      promoOffer1,
+      promoCode1,
+      promoOffer2,
+      promoCode2,
       seasonId,
       format: input.format === 'blitz' || input.format === 'weekly' ? input.format : null,
       entryMode: input.entryMode === 'team' ? 'team' : 'solo',
@@ -2288,6 +2331,10 @@ export class CompetitionManager {
     promoSubtitle: string | null;
     promoHref: string | null;
     promoCta: string | null;
+    promoOffer1: string | null;
+    promoCode1: string | null;
+    promoOffer2: string | null;
+    promoCode2: string | null;
     format: 'blitz' | 'weekly' | null;
     entryMode: CompetitionEntryMode;
     teamSize: number | null;
@@ -3039,6 +3086,10 @@ export class CompetitionManager {
     promoSubtitle: string | null;
     promoHref: string | null;
     promoCta: string | null;
+    promoOffer1: string | null;
+    promoCode1: string | null;
+    promoOffer2: string | null;
+    promoCode2: string | null;
   }> {
     return Array.from(this.competitions.values())
       .filter((competition) => competition.entries.some((entry) => entry.userId === userId))
@@ -3580,11 +3631,16 @@ export class CompetitionManager {
     sponsorReferralUrl: unknown;
     sponsorName: unknown;
     sponsorLogoUrl: unknown;
+    hostLogoUrl: unknown;
     bannerHref: unknown;
     promoTitle: unknown;
     promoSubtitle: unknown;
     promoHref: unknown;
     promoCta: unknown;
+    promoOffer1: unknown;
+    promoCode1: unknown;
+    promoOffer2: unknown;
+    promoCode2: unknown;
     seasonId: unknown;
   }>): Competition {
     const competition = this.competitions.get(id);
@@ -3665,6 +3721,10 @@ export class CompetitionManager {
       competition.sponsorLogoUrl = normalizeBannerImageUrl(patch.sponsorLogoUrl);
     }
 
+    if (patch.hostLogoUrl !== undefined) {
+      competition.hostLogoUrl = normalizeBannerImageUrl(patch.hostLogoUrl);
+    }
+
     if (patch.bannerHref !== undefined) {
       competition.bannerHref = normalizeSponsorReferralUrl(patch.bannerHref);
     }
@@ -3683,6 +3743,19 @@ export class CompetitionManager {
 
     if (patch.promoCta !== undefined) {
       competition.promoCta = normalizePromoCta(patch.promoCta);
+    }
+
+    if (patch.promoOffer1 !== undefined) {
+      competition.promoOffer1 = normalizePromoOffer(patch.promoOffer1);
+    }
+    if (patch.promoCode1 !== undefined) {
+      competition.promoCode1 = normalizePromoCode(patch.promoCode1);
+    }
+    if (patch.promoOffer2 !== undefined) {
+      competition.promoOffer2 = normalizePromoOffer(patch.promoOffer2);
+    }
+    if (patch.promoCode2 !== undefined) {
+      competition.promoCode2 = normalizePromoCode(patch.promoCode2);
     }
 
     if (patch.seasonId !== undefined) {
@@ -3759,6 +3832,10 @@ export class CompetitionManager {
       promoSubtitle: string | null;
       promoHref: string | null;
       promoCta: string | null;
+      promoOffer1: string | null;
+      promoCode1: string | null;
+      promoOffer2: string | null;
+      promoCode2: string | null;
     };
     rank: number | null;
     userId: string | null;
@@ -4103,6 +4180,10 @@ export class CompetitionManager {
       promoSubtitle: string | null;
       promoHref: string | null;
       promoCta: string | null;
+      promoOffer1: string | null;
+      promoCode1: string | null;
+      promoOffer2: string | null;
+      promoCode2: string | null;
     };
     leaderboard: Array<{
       rank: number;

@@ -67,7 +67,7 @@ import {
   type ChatReportReason,
 } from './globalChatStore.js';
 import { deleteUserRating, getRatingLeaderboard, getRatingSnapshots, syncManyUserRatings, syncUserRating } from './ratingStore.js';
-import { getPnlHistoryWithLivePoint, getPnlMoments, hasPnlHistory, maybeRecordPnlSample, prunePnlHistories, reconstructPnlHistoryFromTrades, setPnlHistoryPersistHandler, slimPublicPnlHistory } from './pnlHistoryStore.js';
+import { getPnlHistory, getPnlHistoryWithLivePoint, getPnlMoments, hasPnlHistory, maybeRecordPnlSample, prunePnlHistories, reconstructPnlHistoryFromTrades, setPnlHistoryPersistHandler, slimPublicPnlHistory } from './pnlHistoryStore.js';
 import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
 import { renderPublicSpectatePage } from './publicSpectatePage.js';
@@ -2842,10 +2842,11 @@ app.post('/api/competition/me/avatar', upload.single('avatar'), async (req, res)
  */
 app.get('/api/avatars/:userId', async (req, res) => {
   const userId = String(req.params.userId);
+  const version = String(req.query.v || '').replace(/[^0-9]/g, '').slice(0, 20);
   try {
     await sendImageBlob(
       res,
-      `avatar:${userId}`,
+      `avatar:${userId}${version ? `:v${version}` : ''}`,
       () => competitionManager.getUserAvatarBlob(userId),
       String(req.query.w || ''),
     );
@@ -3831,6 +3832,8 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
  */
 const pnlHistoryResponseCache = new Map<string, { at: number; body: unknown }>();
 const PNL_HISTORY_CACHE_MS = 8_000;
+const pnlTradeBackfillAttempted = new Set<string>();
+const PNL_BACKFILL_MAX_INITIAL_GAP_MS = 60 * 60 * 1000;
 
 app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
   try {
@@ -3841,10 +3844,21 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
       return;
     }
     const data = competitionManager.getPublicLeaderboard(competitionId);
-    if (data.competition.status === 'live') {
-      maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
-    }
-    if (!hasPnlHistory(competitionId)) {
+    const storedHistory = getPnlHistory(competitionId);
+    const firstRecordedPoint = storedHistory.find((sample) => sample.t > data.competition.startAt + 1_000);
+    const missingEarlyHistory = Boolean(
+      firstRecordedPoint
+      && firstRecordedPoint.t - data.competition.startAt > PNL_BACKFILL_MAX_INITIAL_GAP_MS,
+    );
+    const shouldReconstruct = !hasPnlHistory(competitionId)
+      || (
+        data.competition.status === 'live'
+        && missingEarlyHistory
+        && !pnlTradeBackfillAttempted.has(competitionId)
+      );
+
+    if (shouldReconstruct) {
+      pnlTradeBackfillAttempted.add(competitionId);
       const paperByUser = new Map(
         competitionManager.getCompetitionPaperPlayers(competitionId).map((link) => [link.userId, link.paperPlayerId]),
       );
@@ -3872,7 +3886,12 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
             finalPnlPercent: row.pnlPercent,
           };
         }),
+        Date.now(),
+        hasPnlHistory(competitionId),
       );
+    }
+    if (data.competition.status === 'live') {
+      maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
     }
     // Toujours terminer la série par un point « maintenant » issu du
     // leaderboard courant : la courbe est visible dès les premiers polls
@@ -3913,6 +3932,16 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
 const activityResponseCache = new Map<string, { at: number; body: unknown }>();
 const ACTIVITY_CACHE_MS = 4_000;
 const ACTIVITY_LIMIT = 25;
+type PublicArenaActivity = {
+  id: string;
+  t: number;
+  action: 'open' | 'close';
+  pair: string;
+  userId: string;
+  name: string;
+  avatarUrl: string | null;
+};
+const simulatedActivityByCompetition = new Map<string, PublicArenaActivity[]>();
 
 app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
   try {
@@ -3924,15 +3953,7 @@ app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
     }
     if (IS_SERVERLESS) await competitionManager.refresh();
 
-    const recent: Array<{
-      id: string;
-      t: number;
-      action: 'open' | 'close';
-      pair: string;
-      userId: string;
-      name: string;
-      avatarUrl: string | null;
-    }> = [];
+    const recent: PublicArenaActivity[] = [];
     for (const member of competitionManager.listCompetitionRoster(competitionId)) {
       const player = manager.getPlayerById(member.paperPlayerId);
       for (const trade of player?.trades ?? []) {
@@ -3948,6 +3969,7 @@ app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
         });
       }
     }
+    recent.push(...(simulatedActivityByCompetition.get(competitionId) || []));
     recent.sort((a, b) => b.t - a.t);
     const events = recent.slice(0, ACTIVITY_LIMIT);
     const metadata = await getMarketMetadata([...new Set(events.map((event) => event.pair))]);
@@ -4018,87 +4040,197 @@ if (!process.env.NETLIFY) {
   setInterval(runScheduler, 10 * 60_000);
 }
 
-// Joueurs simulés (staging uniquement) : peuplent l'arène de test avec des
-// trajectoires PnL en marche aléatoire pour visualiser la course au PnL en
-// mode spectateur. Jamais actif en production : MOBILE_STAGING_TEST_MODE.
-if (MOBILE_STAGING_TEST_MODE && !process.env.NETLIFY) {
-  const SIM_BOTS = [
-    { userId: 'sim-bot-nova', name: 'NovaQuant', drift: 0.06, vol: 0.55 },
-    { userId: 'sim-bot-wolf', name: 'KryptoWolf', drift: 0.03, vol: 0.85 },
-    { userId: 'sim-bot-lisa', name: 'Lisa.eth', drift: 0.02, vol: 0.35 },
-    { userId: 'sim-bot-scalp', name: 'ScalpKing', drift: -0.01, vol: 0.95 },
-    { userId: 'sim-bot-moon', name: 'MoonRider', drift: 0.04, vol: 0.6 },
-    { userId: 'sim-bot-zen', name: 'ZenTrader', drift: 0.01, vol: 0.25 },
-    { userId: 'sim-bot-degen', name: 'DegenMax', drift: -0.03, vol: 1.15 },
-  ];
-  // État de marche aléatoire par arène puis par bot : chaque arène a sa
-  // propre course (un bot peut gagner la Blitz et perdre la Friday Night).
-  const simStateByCompetition = new Map<string, Map<string, { pnlPercent: number; tradesCount: number }>>();
+// Simulation visuelle contrôlée manuellement, disponible uniquement sur le
+// staging. Elle ne démarre jamais au boot : un appel admin explicite est requis.
+const STAGING_SIMULATION_TITLE = 'STAGING — PNL RACE LIVE TEST';
+const STAGING_SIMULATION_TICK_MS = 2_000;
+const STAGING_SIMULATION_ASSETS = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'XRP/USD', 'DOGE/USD', 'TRX/USD'];
+const STAGING_SIMULATION_BOTS = [
+  { userId: 'sim-live-nova', name: 'NovaQuant', drift: 0.08, vol: 0.9 },
+  { userId: 'sim-live-wolf', name: 'KryptoWolf', drift: 0.04, vol: 1.2 },
+  { userId: 'sim-live-lisa', name: 'Lisa.eth', drift: 0.03, vol: 0.65 },
+  { userId: 'sim-live-scalp', name: 'ScalpKing', drift: -0.02, vol: 1.4 },
+  { userId: 'sim-live-moon', name: 'MoonRider', drift: 0.05, vol: 1.0 },
+  { userId: 'sim-live-zen', name: 'ZenTrader', drift: 0.01, vol: 0.55 },
+  { userId: 'sim-live-degen', name: 'DegenMax', drift: -0.04, vol: 1.6 },
+  { userId: 'sim-live-alpha', name: 'AlphaFlow', drift: 0.07, vol: 0.8 },
+  { userId: 'sim-live-satoshi', name: 'SatoshiKid', drift: 0.02, vol: 1.1 },
+  { userId: 'sim-live-pulse', name: 'MarketPulse', drift: 0.04, vol: 0.75 },
+  { userId: 'sim-live-crypto', name: 'CryptoNico', drift: -0.01, vol: 1.25 },
+  { userId: 'sim-live-bull', name: 'BullRunner', drift: 0.06, vol: 1.05 },
+  { userId: 'sim-live-bear', name: 'BearHunter', drift: 0.01, vol: 1.35 },
+  { userId: 'sim-live-orbit', name: 'OrbitTrade', drift: 0.03, vol: 0.7 },
+  { userId: 'sim-live-flash', name: 'FlashEntry', drift: -0.03, vol: 1.5 },
+  { userId: 'sim-live-wave', name: 'WaveRider', drift: 0.05, vol: 0.95 },
+  { userId: 'sim-live-edge', name: 'RiskEdge', drift: 0.02, vol: 0.85 },
+  { userId: 'sim-live-liquid', name: 'LiquidityX', drift: 0.04, vol: 1.15 },
+  { userId: 'sim-live-candle', name: 'RedCandle', drift: -0.02, vol: 1.3 },
+  { userId: 'sim-live-vertex', name: 'VertexFX', drift: 0.06, vol: 0.9 },
+] as const;
 
-  const simulateCompetitionTick = (competitionId: string) => {
-    const liveRows = competitionManager.getPublicLeaderboard(competitionId).leaderboard;
-    let states = simStateByCompetition.get(competitionId);
-    if (!states) {
-      states = new Map();
-      simStateByCompetition.set(competitionId, states);
-    }
+type StagingSimulationState = {
+  competitionId: string;
+  startedAt: number;
+  timer: ReturnType<typeof setInterval>;
+  bots: Map<string, { pnlPercent: number; tradesCount: number }>;
+};
+let stagingSimulation: StagingSimulationState | null = null;
 
-    const updates = SIM_BOTS.map((bot) => {
-      let state = states.get(bot.userId);
-      if (!state) {
-        // Reprise après redéploiement : on repart du PnL persisté pour
-        // éviter un saut visuel, sinon départ dispersé autour de 0.
-        const existing = liveRows.find((row) => row.userId === bot.userId);
-        state = existing
-          ? { pnlPercent: existing.pnlPercent, tradesCount: Math.max(1, existing.tradesCount) }
-          : { pnlPercent: (Math.random() - 0.35) * 6, tradesCount: 1 + Math.floor(Math.random() * 8) };
-        states.set(bot.userId, state);
-      }
-      state.pnlPercent = Math.max(-14, Math.min(28, state.pnlPercent + bot.drift + (Math.random() - 0.5) * bot.vol));
-      if (Math.random() < 0.4) state.tradesCount += 1;
-      return {
-        userId: bot.userId,
-        name: bot.name,
-        pnlPercent: Number(state.pnlPercent.toFixed(3)),
-        pnlUsd: Number(((state.pnlPercent / 100) * 10_000).toFixed(2)),
-        tradesCount: state.tradesCount,
-      };
-    });
-
-    competitionManager.applySimulatedResults(competitionId, updates);
-    const next = competitionManager.getPublicLeaderboard(competitionId);
-    maybeRecordPnlSample(competitionId, next.leaderboard, { startAt: next.competition.startAt });
-  };
-
-  const runSimulatedPlayersTick = () => {
-    try {
-      // Arène de test ARTEMTEST + toutes les arènes programmées (Blitz /
-      // Friday Night) en cours : le rituel complet est visible en staging,
-      // y compris le Champion of the Week à la fin de la Friday Night.
-      const targets = competitionManager
-        .listAdminCompetitions()
-        .filter((item) => item.status === 'live'
-          && (item.title === 'MOBILE STAGING - TRADING TEST' || item.format != null));
-      for (const competition of targets) {
-        try {
-          simulateCompetitionTick(competition.id);
-        } catch {
-          // Arène retirée entre-temps : on passe.
-        }
-      }
-      for (const competitionId of simStateByCompetition.keys()) {
-        if (!targets.some((competition) => competition.id === competitionId)) {
-          simStateByCompetition.delete(competitionId);
-        }
-      }
-    } catch {
-      // Store indisponible : on réessaie au prochain tick.
-    }
-  };
-
-  setTimeout(runSimulatedPlayersTick, 5_000);
-  setInterval(runSimulatedPlayersTick, 20_000);
+function assertStagingSimulationAvailable(): void {
+  if (!MOBILE_STAGING_TEST_MODE || process.env.NETLIFY) {
+    throw new Error('Simulation disponible uniquement sur le staging Railway');
+  }
 }
+
+function runStagingSimulationTick(state: StagingSimulationState): void {
+  const current = competitionManager.getPublicLeaderboard(state.competitionId);
+  const updates = STAGING_SIMULATION_BOTS.map((bot) => {
+    let botState = state.bots.get(bot.userId);
+    if (!botState) {
+      const existing = current.leaderboard.find((row) => row.userId === bot.userId);
+      botState = existing
+        ? { pnlPercent: existing.pnlPercent, tradesCount: Math.max(1, existing.tradesCount) }
+        : { pnlPercent: (Math.random() - 0.42) * 8, tradesCount: 5 + Math.floor(Math.random() * 20) };
+      state.bots.set(bot.userId, botState);
+    }
+    botState.pnlPercent = Math.max(-18, Math.min(35,
+      botState.pnlPercent + bot.drift + (Math.random() - 0.5) * bot.vol,
+    ));
+    botState.tradesCount += 1 + Math.floor(Math.random() * 3);
+    return {
+      userId: bot.userId,
+      name: bot.name,
+      pnlPercent: Number(botState.pnlPercent.toFixed(3)),
+      pnlUsd: Number((botState.pnlPercent * 100).toFixed(2)),
+      tradesCount: botState.tradesCount,
+    };
+  });
+
+  competitionManager.applySimulatedResults(state.competitionId, updates);
+  const next = competitionManager.getPublicLeaderboard(state.competitionId);
+  maybeRecordPnlSample(state.competitionId, next.leaderboard, { startAt: next.competition.startAt });
+
+  const now = Date.now();
+  const activity = simulatedActivityByCompetition.get(state.competitionId) || [];
+  const eventCount = 3 + Math.floor(Math.random() * 4);
+  for (let index = 0; index < eventCount; index += 1) {
+    const bot = STAGING_SIMULATION_BOTS[Math.floor(Math.random() * STAGING_SIMULATION_BOTS.length)];
+    const pair = STAGING_SIMULATION_ASSETS[Math.floor(Math.random() * STAGING_SIMULATION_ASSETS.length)];
+    activity.unshift({
+      id: `sim-${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+      t: now - index * 120,
+      action: Math.random() < 0.55 ? 'open' : 'close',
+      pair,
+      userId: bot.userId,
+      name: bot.name,
+      avatarUrl: null,
+    });
+  }
+  simulatedActivityByCompetition.set(state.competitionId, activity.slice(0, 60));
+  activityResponseCache.delete(state.competitionId);
+  pnlHistoryResponseCache.delete(state.competitionId);
+}
+
+async function startStagingSimulation(): Promise<{ competitionId: string; startedAt: number }> {
+  assertStagingSimulationAvailable();
+  if (stagingSimulation) {
+    return { competitionId: stagingSimulation.competitionId, startedAt: stagingSimulation.startedAt };
+  }
+
+  const now = Date.now();
+  const existingCompetition = competitionManager
+    .listAdminCompetitions()
+    .find((item) => item.title === STAGING_SIMULATION_TITLE && item.status === 'live');
+  let competitionId = existingCompetition?.id || '';
+  if (!competitionId) {
+    const created = competitionManager.createCompetition({
+      title: STAGING_SIMULATION_TITLE,
+      code: '',
+      executionMode: 'paper',
+      startAt: now - 5 * 60_000,
+      endAt: now + 6 * 60 * 60_000,
+      registrationEndsAt: now - 60_000,
+      dailyDrawdownPercent: null,
+      isPublic: true,
+      cashPrize: { label: 'Simulation', total: 10_000, currency: 'USD' },
+    });
+    competitionId = created.id;
+    await competitionManager.persist();
+  }
+
+  const state: StagingSimulationState = {
+    competitionId,
+    startedAt: now,
+    timer: 0 as unknown as ReturnType<typeof setInterval>,
+    bots: new Map(),
+  };
+  runStagingSimulationTick(state);
+  state.timer = setInterval(() => {
+    try {
+      runStagingSimulationTick(state);
+    } catch (error) {
+      console.warn('[staging-simulation] tick failed:', (error as Error).message);
+    }
+  }, STAGING_SIMULATION_TICK_MS);
+  stagingSimulation = state;
+  return { competitionId: state.competitionId, startedAt: state.startedAt };
+}
+
+async function stopStagingSimulation(removeArena: boolean): Promise<{ competitionId: string | null; removed: boolean }> {
+  assertStagingSimulationAvailable();
+  const competitionId = stagingSimulation?.competitionId
+    || competitionManager.listAdminCompetitions()
+      .find((item) => item.title === STAGING_SIMULATION_TITLE && item.status === 'live')?.id
+    || null;
+  if (stagingSimulation) clearInterval(stagingSimulation.timer);
+  stagingSimulation = null;
+  if (competitionId) {
+    simulatedActivityByCompetition.delete(competitionId);
+    activityResponseCache.delete(competitionId);
+    if (removeArena) {
+      competitionManager.deleteCompetition(competitionId);
+      await competitionManager.persist();
+    }
+  }
+  return { competitionId, removed: Boolean(competitionId && removeArena) };
+}
+
+app.get('/api/admin/staging-simulation', requireAdmin, (_req, res) => {
+  try {
+    assertStagingSimulationAvailable();
+    const existingCompetitionId = stagingSimulation?.competitionId
+      || competitionManager.listAdminCompetitions()
+        .find((item) => item.title === STAGING_SIMULATION_TITLE && item.status === 'live')?.id
+      || null;
+    res.json({
+      running: Boolean(stagingSimulation),
+      competitionId: existingCompetitionId,
+      startedAt: stagingSimulation?.startedAt || null,
+      traders: STAGING_SIMULATION_BOTS.length,
+      tickMs: STAGING_SIMULATION_TICK_MS,
+    });
+  } catch (error) {
+    res.status(404).json({ error: (error as Error).message });
+  }
+});
+
+app.post('/api/admin/staging-simulation/start', requireAdmin, async (_req, res) => {
+  try {
+    const simulation = await startStagingSimulation();
+    res.json({ ok: true, running: true, traders: STAGING_SIMULATION_BOTS.length, ...simulation });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+});
+
+app.post('/api/admin/staging-simulation/stop', requireAdmin, async (req, res) => {
+  try {
+    const result = await stopStagingSimulation(req.body?.removeArena === true);
+    res.json({ ok: true, running: false, ...result });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+});
 
 // --- Admin APIs for competitions ---
 
@@ -4213,7 +4345,7 @@ app.get('/api/admin/competitions', requireAdmin, async (_req, res) => {
 });
 
 app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, promoTitle, promoSubtitle, promoHref, promoCta, seasonId } = req.body || {};
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, hostLogoUrl, promoTitle, promoSubtitle, promoHref, promoCta, promoOffer1, promoCode1, promoOffer2, promoCode2, seasonId } = req.body || {};
   try {
     const competition = competitionManager.createCompetition({
       title: String(title || ''),
@@ -4231,10 +4363,15 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
       sponsorReferralUrl,
       sponsorName,
       sponsorLogoUrl,
+      hostLogoUrl,
       promoTitle,
       promoSubtitle,
       promoHref,
       promoCta,
+      promoOffer1,
+      promoCode1,
+      promoOffer2,
+      promoCode2,
       seasonId,
       entryMode: req.body?.entryMode,
     });
@@ -4248,7 +4385,7 @@ app.post('/api/admin/competitions', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, promoTitle, promoSubtitle, promoHref, promoCta, seasonId } = body;
+  const { title, code, executionMode, startAt, endAt, registrationEndsAt, dailyDrawdownPercent, bannerImageUrl, bannerHref, isPublic, cashPrize, sponsor, sponsorReferralUrl, sponsorName, sponsorLogoUrl, hostLogoUrl, promoTitle, promoSubtitle, promoHref, promoCta, promoOffer1, promoCode1, promoOffer2, promoCode2, seasonId } = body;
   try {
     const patch: Record<string, unknown> = {};
     if (title !== undefined) patch.title = String(title);
@@ -4270,10 +4407,15 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
     if ('sponsorReferralUrl' in body) patch.sponsorReferralUrl = sponsorReferralUrl;
     if ('sponsorName' in body) patch.sponsorName = sponsorName;
     if ('sponsorLogoUrl' in body) patch.sponsorLogoUrl = sponsorLogoUrl;
+    if ('hostLogoUrl' in body) patch.hostLogoUrl = hostLogoUrl;
     if ('promoTitle' in body) patch.promoTitle = promoTitle;
     if ('promoSubtitle' in body) patch.promoSubtitle = promoSubtitle;
     if ('promoHref' in body) patch.promoHref = promoHref;
     if ('promoCta' in body) patch.promoCta = promoCta;
+    if ('promoOffer1' in body) patch.promoOffer1 = promoOffer1;
+    if ('promoCode1' in body) patch.promoCode1 = promoCode1;
+    if ('promoOffer2' in body) patch.promoOffer2 = promoOffer2;
+    if ('promoCode2' in body) patch.promoCode2 = promoCode2;
     if ('seasonId' in body) patch.seasonId = seasonId;
 
     const competition = competitionManager.updateCompetition(String(req.params.id || ''), patch);

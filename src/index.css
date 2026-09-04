@@ -466,13 +466,13 @@ body.app-scroll-lock {
 .compete .process-step {
   position: relative;
   overflow: hidden;
-  min-height: 150px;
-  border-radius: 20px;
+  min-height: 118px;
+  border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)),
     #08080b;
-  padding: 20px;
+  padding: 14px 16px;
 }
 .compete .process-step::before {
   content: '';
@@ -500,8 +500,8 @@ body.app-scroll-lock {
 .compete .process-number {
   position: relative;
   display: inline-flex;
-  height: 36px;
-  width: 36px;
+  height: 30px;
+  width: 30px;
   align-items: center;
   justify-content: center;
   border-radius: 12px;
@@ -515,8 +515,8 @@ body.app-scroll-lock {
 .compete .process-icon {
   position: relative;
   display: inline-flex;
-  height: 48px;
-  width: 48px;
+  height: 38px;
+  width: 38px;
   align-items: center;
   justify-content: center;
   border-radius: 16px;
@@ -531,8 +531,138 @@ body.app-scroll-lock {
   z-index: 1;
 }
 .compete .process-icon svg {
-  height: 24px;
-  width: 24px;
+  height: 20px;
+  width: 20px;
+}
+
+.compete-process__grid {
+  display: grid;
+  gap: 28px;
+  align-items: stretch;
+}
+.compete-process__steps {
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr)) auto;
+  gap: 10px;
+}
+@media (min-width: 960px) {
+  .compete-process__grid {
+    grid-template-columns: minmax(320px, 0.88fr) minmax(440px, 1.12fr);
+    gap: 42px;
+  }
+}
+
+.compete-platform__grid {
+  display: grid;
+  gap: 28px;
+  align-items: center;
+}
+@media (min-width: 960px) {
+  .compete-platform__grid {
+    grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
+    gap: 48px;
+  }
+}
+.compete-platform__copy {
+  min-width: 0;
+}
+.compete-platform__steps {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.compete-platform__steps li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01)),
+    #08080b;
+}
+.compete-platform__steps li b {
+  color: #fca5a5;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+.compete-platform__steps li span {
+  color: #fff;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.compete-platform__visual {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: clamp(310px, 64vw, 500px);
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+.compete-platform__visual::before {
+  content: '';
+  position: absolute;
+  z-index: -2;
+  inset: 14% 7% 10%;
+  border-radius: 48%;
+  background:
+    radial-gradient(ellipse at center, rgba(239, 35, 60, 0.55) 0%, rgba(220, 38, 38, 0.2) 42%, transparent 72%);
+  filter: blur(30px);
+  animation: terminal-neon-pulse 3.8s ease-in-out infinite;
+}
+.compete-platform__visual::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  left: 12%;
+  right: 8%;
+  bottom: 7%;
+  height: 16%;
+  border-radius: 50%;
+  background: rgba(239, 35, 60, 0.38);
+  filter: blur(34px);
+  transform: perspective(240px) rotateX(68deg);
+}
+.compete-platform__shot {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  filter:
+    drop-shadow(0 20px 25px rgba(0, 0, 0, 0.82))
+    drop-shadow(0 0 13px rgba(239, 35, 60, 0.28));
+  animation: terminal-float 5s ease-in-out infinite;
+}
+@media (min-width: 960px) {
+  .compete-platform__visual {
+    min-height: 0;
+    height: 100%;
+  }
+}
+@keyframes terminal-float {
+  0%, 100% { transform: translate3d(0, 3px, 0) rotate(-0.25deg); }
+  50% { transform: translate3d(0, -7px, 0) rotate(0.2deg); }
+}
+@keyframes terminal-neon-pulse {
+  0%, 100% { opacity: 0.62; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .compete-platform__shot,
+  .compete-platform__visual::before {
+    animation: none;
+  }
 }
 
 .compete .blood-cta {

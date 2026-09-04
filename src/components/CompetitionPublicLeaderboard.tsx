@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -13,7 +14,7 @@ import {
 import { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
 import { DivisionBadge, type RatingDivision } from './playerRating';
-import { resolveArenaBrand, safeHttpHref } from '../lib/sponsors';
+import { BTF_ARENA_LOGO, resolveArenaBrand, safeHttpHref } from '../lib/sponsors';
 import { resolveMediaUrl } from '../utils/imageUrl';
 import ShareCardModal from './ShareCardModal';
 import type { ShareCardData } from '../lib/shareCard';
@@ -79,14 +80,20 @@ interface LeaderboardResponse {
     participants: number;
     cashPrize?: CashPrize | null;
     sponsor?: string | null;
+    sponsorReferralUrl?: string | null;
     sponsorName?: string | null;
     sponsorLogoUrl?: string | null;
+    hostLogoUrl?: string | null;
     bannerImageUrl?: string | null;
     bannerHref?: string | null;
     promoTitle?: string | null;
     promoSubtitle?: string | null;
     promoHref?: string | null;
     promoCta?: string | null;
+    promoOffer1?: string | null;
+    promoCode1?: string | null;
+    promoOffer2?: string | null;
+    promoCode2?: string | null;
   };
   leaderboard: LeaderboardRow[];
 }
@@ -95,17 +102,21 @@ function fmtDate(value: number): string {
   return new Date(value).toLocaleString(dateLocale(), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function fmtTime(value: number): string {
-  return new Date(value).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function useCountdown(target: number): string {
+function useCountdownParts(target: number) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-  return formatDHMS(target - now, i18n.language.startsWith('fr') ? 'j' : 'd');
+  const remaining = Math.max(0, target - now);
+  const total = Math.floor(remaining / 1000);
+  return {
+    days: Math.floor(total / 86400),
+    hours: Math.floor((total % 86400) / 3600),
+    minutes: Math.floor((total % 3600) / 60),
+    seconds: total % 60,
+    text: formatDHMS(remaining, i18n.language.startsWith('fr') ? 'j' : 'd'),
+  };
 }
 
 function formatPrizeAmount(amount: number, currency: string): string {
@@ -155,12 +166,104 @@ function groupPrizeItems(items: CashPrizeItem[]): PrizeGroup[] {
 }
 
 
+function ArenaHeroBanner({
+  hostLogoUrl,
+  sponsorLogoUrl,
+  sponsorName,
+  accent,
+  bannerHref,
+}: {
+  hostLogoUrl: string;
+  sponsorLogoUrl?: string | null;
+  sponsorName?: string | null;
+  accent?: string;
+  bannerHref?: string | null;
+}) {
+  const { t } = useTranslation();
+  const color = accent || '#ef233c';
+  const partnerHref = safeHttpHref(bannerHref);
+  const partner = sponsorLogoUrl ? (
+    <img src={sponsorLogoUrl} alt={sponsorName || ''} />
+  ) : sponsorName ? (
+    <span className="lb-banner__name">{sponsorName}</span>
+  ) : null;
+
+  return (
+    <section className="lb-banner" style={{ '--lb-accent': color } as CSSProperties}>
+      <div className="lb-banner__fx" aria-hidden="true">
+        <div className="lb-banner__aurora" />
+        <div className="lb-banner__grid" />
+        <svg className="lb-banner__chart" viewBox="0 0 1440 360" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="lbChartLine" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#ef233c" stopOpacity="0" />
+              <stop offset="28%" stopColor="#ef233c" stopOpacity="0.85" />
+              <stop offset="72%" stopColor={color} stopOpacity="0.9" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="lbChartFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ef233c" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="#ef233c" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path
+            className="lb-banner__chart-fill"
+            d="M0 250 C 90 236 150 268 230 210 C 310 152 360 188 430 148 C 520 96 580 170 670 128 C 760 86 820 154 910 112 C 1000 70 1080 146 1180 98 C 1260 64 1340 118 1440 72 L 1440 360 L 0 360 Z"
+          />
+          <path
+            className="lb-banner__chart-line"
+            d="M0 250 C 90 236 150 268 230 210 C 310 152 360 188 430 148 C 520 96 580 170 670 128 C 760 86 820 154 910 112 C 1000 70 1080 146 1180 98 C 1260 64 1340 118 1440 72"
+          />
+        </svg>
+        <div className="lb-banner__candles">
+          {[42, 68, 36, 88, 54, 96, 40, 74, 58, 110, 48, 82, 64, 98, 44, 76, 52, 90, 38, 70].map((h, i) => (
+            <i key={i} style={{ height: h, animationDelay: `${i * 0.12}s` }} />
+          ))}
+        </div>
+        <div className="lb-banner__scan" />
+        <div className="lb-banner__vignette" />
+      </div>
+
+      <div className="lb-banner__inner">
+        <p className="lb-banner__kicker">{t('leaderboard.bannerKicker')}</p>
+        <div className="lb-banner__match">
+          <div className="lb-banner__logo">
+            <img src={hostLogoUrl} alt="BTF Arena" />
+          </div>
+          {partner && (
+            <>
+              <div className="lb-banner__vs" aria-hidden="true">
+                <span>X</span>
+              </div>
+              {partnerHref ? (
+                <a href={partnerHref} target="_blank" rel="noopener noreferrer" className="lb-banner__logo lb-banner__logo--partner">
+                  {partner}
+                </a>
+              ) : (
+                <div className="lb-banner__logo lb-banner__logo--partner">{partner}</div>
+              )}
+            </>
+          )}
+        </div>
+        <Link to="/trade" className="lb-terminal">
+          <span className="lb-terminal__ico">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M5 8l3.5 3.5L5 15M11 16h8" />
+            </svg>
+          </span>
+          {t('leaderboard.openTerminal')}
+          <span className="lb-terminal__dot" />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 export default function CompetitionPublicLeaderboard() {
   const { t } = useTranslation();
   const { id } = useParams();
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [error, setError] = useState('');
-  const [lastRefresh, setLastRefresh] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [shareData, setShareData] = useState<ShareCardData | null>(null);
@@ -194,7 +297,6 @@ export default function CompetitionPublicLeaderboard() {
         if (!response.ok) throw new Error(payload.error || t('leaderboard.unavailable'));
         const next = payload as LeaderboardResponse;
         setData(next);
-        setLastRefresh(Date.now());
         setError('');
         if (next.competition.status === 'live' && id) {
           applyPnlSnapshot(id, next.leaderboard);
@@ -310,24 +412,18 @@ export default function CompetitionPublicLeaderboard() {
   );
 
   const targetCountdown = data ? (data.competition.status === 'live' ? data.competition.endAt : data.competition.startAt) : Date.now();
-  const countdown = useCountdown(targetCountdown);
+  const countdown = useCountdownParts(targetCountdown);
 
   const aggregates = useMemo(() => {
     if (!data || data.leaderboard.length === 0) {
-      return { avgPnl: 0, bestPnl: 0, totalTrades: 0 };
+      return { avgPnl: 0 };
     }
     const traders = data.leaderboard.filter((row) => row.rank > 0);
     if (traders.length === 0) {
-      return { avgPnl: 0, bestPnl: 0, totalTrades: 0 };
+      return { avgPnl: 0 };
     }
     const totalPct = traders.reduce((acc, row) => acc + row.pnlPercent, 0);
-    const totalTrades = traders.reduce((acc, row) => acc + row.tradesCount, 0);
-    const bestPnl = Math.max(...traders.map((row) => row.pnlPercent));
-    return {
-      avgPnl: totalPct / traders.length,
-      bestPnl,
-      totalTrades,
-    };
+    return { avgPnl: totalPct / traders.length };
   }, [data]);
 
   const brand = data ? resolveArenaBrand(data.competition, resolveMediaUrl) : null;
@@ -362,6 +458,16 @@ export default function CompetitionPublicLeaderboard() {
       <CompeteHeader />
 
       <main className="compete-bg pb-10">
+        {data && (
+          <ArenaHeroBanner
+            hostLogoUrl={brand?.hostLogoUrl || BTF_ARENA_LOGO}
+            sponsorLogoUrl={brand?.logoUrl}
+            sponsorName={brand?.name}
+            accent={brand?.accent}
+            bannerHref={brand?.bannerHref}
+          />
+        )}
+
         <div className="mx-auto max-w-[1440px] px-4 sm:px-6 md:px-8">
           {error && (
             <div className="mt-6 rounded-2xl border border-[#dc2626]/30 bg-[#dc2626]/10 px-5 py-4 text-sm text-[#fca5a5]">
@@ -377,56 +483,44 @@ export default function CompetitionPublicLeaderboard() {
 
           {data && (
             <>
-              {/* ------------------------------- HERO ------------------------------ */}
-              <section className="lb-hero">
-                <div className="lb-hero__id">
-                  <h1 className="lb-hero__title">{data.competition.title}</h1>
-                  <div className="lb-hero__meta">
+              <div className="lb-id">
+                <h1 className="lb-hero__title">{data.competition.title}</h1>
+                <div className="lb-id__stats">
+                  {(isLive || isEnded) && (
                     <span className={`lb-live ${isLive ? '' : 'lb-live--off'}`}>
                       <i />
-                      {isLive
-                        ? t('leaderboard.arenaLive')
-                        : isEnded
-                          ? t('leaderboard.arenaEnded')
-                          : t('leaderboard.arenaSoon')}
+                      {isLive ? t('leaderboard.arenaLive') : t('leaderboard.arenaEnded')}
                     </span>
-                    {!isEnded && (
-                      <span className="lb-hero__clock">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-                          <circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3.2 2" />
-                        </svg>
-                        {isLive ? t('leaderboard.endsIn') : t('leaderboard.startsIn')}
-                        <b>{countdown}</b>
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {brand?.bannerUrl && (
-                  brand.bannerHref ? (
-                    <a href={brand.bannerHref} target="_blank" rel="noopener noreferrer" className="min-w-0">
-                      <img src={brand.bannerUrl} alt={brand.name} className="lb-hero__art" loading="lazy" />
-                    </a>
-                  ) : (
-                    <img src={brand.bannerUrl} alt="" className="lb-hero__art" loading="lazy" />
-                  )
-                )}
-
-                <Link to="/trade" className="lb-terminal">
-                  <span className="lb-terminal__ico">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M5 8l3.5 3.5L5 15M11 16h8" />
-                    </svg>
+                  )}
+                  <span className="lb-stat">
+                    <small>{isEnded || isLive ? t('leaderboard.endsOn') : t('leaderboard.startsOn')}</small>
+                    <b>{fmtDate(isLive || isEnded ? data.competition.endAt : data.competition.startAt)}</b>
                   </span>
-                  {t('leaderboard.openTerminal')}
-                  <span className="lb-terminal__dot" />
-                </Link>
-              </section>
-
-              {/* ------------------------------ CONTENU ---------------------------- */}
+                  <span className="lb-stat">
+                    <small>{t('leaderboard.participants')}</small>
+                    <b>{formatCompactUnsigned(data.competition.participants)}</b>
+                  </span>
+                  <span className="lb-stat">
+                    <small>{t('leaderboard.avgPnl')}</small>
+                    <b style={{ color: aggregates.avgPnl > 0 ? '#10b981' : aggregates.avgPnl < 0 ? '#ef4444' : undefined }}>
+                      {formatPercent(aggregates.avgPnl)}
+                    </b>
+                  </span>
+                  {id && (
+                    <span className="lb-id__chat">
+                      <ArenaChat competitionId={id} title={data.competition.title} />
+                    </span>
+                  )}
+                </div>
+              </div>
+              {hasPrize(data.competition.cashPrize) && (
+                <div className="lb-prize-mobile">
+                  <PrizePanel prize={data.competition.cashPrize} />
+                </div>
+              )}
               <div className="lb-grid">
                 <div className="lb-col">
-                  {showRace && pnlHistory && (
+                  {showRace && pnlHistory ? (
                     <PnlRaceChart
                       samples={pnlHistory.samples}
                       traders={pnlHistory.traders}
@@ -434,7 +528,9 @@ export default function CompetitionPublicLeaderboard() {
                       currentUserId={currentUserId}
                       ended={isEnded}
                     />
-                  )}
+                  ) : !isEnded ? (
+                    <RaceCountdown clock={countdown} />
+                  ) : null}
 
                   {top3.length > 0 && (
                     <div className="lb-podium">
@@ -529,66 +625,27 @@ export default function CompetitionPublicLeaderboard() {
                 {/* ----------------------------- SIDEBAR ---------------------------- */}
                 <aside className="lb-side">
                   {hasPrize(data.competition.cashPrize) && (
-                    <PrizePanel prize={data.competition.cashPrize} />
+                    <div className="lb-prize-desktop">
+                      <PrizePanel prize={data.competition.cashPrize} />
+                    </div>
                   )}
 
-                  {(data.competition.promoTitle || data.competition.promoSubtitle) && (
+                  {data.competition.promoTitle && (
                     <PromoPanel
                       title={data.competition.promoTitle}
                       subtitle={data.competition.promoSubtitle}
-                      href={data.competition.promoHref}
+                      href={data.competition.promoHref || data.competition.sponsorReferralUrl}
                       cta={data.competition.promoCta}
+                      offer1={data.competition.promoOffer1}
+                      code1={data.competition.promoCode1}
+                      offer2={data.competition.promoOffer2}
+                      code2={data.competition.promoCode2}
                       brandName={brand?.name}
                       logoUrl={brand?.logoUrl}
                       artUrl={brand?.bannerUrl}
                       accent={brand?.accent}
                     />
                   )}
-
-                  <section className="lb-panel lb-status">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className={`micro text-[9px] ${isLive ? 'text-[#ff6274]' : 'text-[#6f6f7a]'}`}>
-                        {isLive ? t('leaderboard.eventOngoing') : t('leaderboard.statusLabel')}
-                      </span>
-                      {isLive && <span className="lb-pill-live"><i className="lb-dot lb-dot--on" />{t('leaderboard.live')}</span>}
-                    </div>
-                    <div className={`lb-live mt-2.5 ${isLive ? '' : 'lb-live--off'}`}>
-                      <i />
-                      {isLive ? t('leaderboard.arenaLive') : isEnded ? t('leaderboard.arenaEnded') : t('leaderboard.arenaSoon')}
-                    </div>
-                    <p className="mt-1.5 text-[11px] leading-snug text-[#8b8b96]">{t('leaderboard.liveUpdateHint')}</p>
-                    <div className="lb-status__row">
-                      <span className="micro text-[8px] text-[#6f6f7a]">
-                        {paused ? t('leaderboard.paused') : t('leaderboard.lastUpdate')}
-                      </span>
-                      <span className="num text-[13px] font-bold text-white">
-                        {lastRefresh ? fmtTime(lastRefresh) : '—'}
-                      </span>
-                    </div>
-                    <div className="lb-status__row">
-                      <span className="micro text-[8px] text-[#6f6f7a]">
-                        {isLive ? t('leaderboard.endsIn') : t('leaderboard.startsIn')}
-                      </span>
-                      <span className="text-right text-[11px] text-[#b8b8c2]">
-                        {fmtDate(isLive ? data.competition.endAt : data.competition.startAt)}
-                      </span>
-                    </div>
-                    <div className="lb-status__row">
-                      <span className="micro text-[8px] text-[#6f6f7a]">{t('leaderboard.participants')}</span>
-                      <span className="num text-[13px] font-bold text-white">
-                        {formatCompactUnsigned(data.competition.participants)}
-                      </span>
-                    </div>
-                    <div className="lb-status__row">
-                      <span className="micro text-[8px] text-[#6f6f7a]">{t('leaderboard.avgPnl')}</span>
-                      <span
-                        className="num text-[13px] font-bold"
-                        style={{ color: aggregates.avgPnl > 0 ? '#10b981' : aggregates.avgPnl < 0 ? '#ef4444' : '#fff' }}
-                      >
-                        {formatPercent(aggregates.avgPnl)}
-                      </span>
-                    </div>
-                  </section>
 
                   {id && <ArenaActivityFeed competitionId={id} live={isLive} />}
                 </aside>
@@ -597,7 +654,6 @@ export default function CompetitionPublicLeaderboard() {
           )}
         </div>
       </main>
-      {id && data && <ArenaChat competitionId={id} title={data.competition.title} />}
       <ShareCardModal open={shareData != null} data={shareData} onClose={() => setShareData(null)} />
     </div>
   );
@@ -608,18 +664,8 @@ export default function CompetitionPublicLeaderboard() {
 /** Arène déserte : podium vide sous les projecteurs, l'image se fond dans le fond noir. */
 function EmptyArena({ label }: { label: string }) {
   return (
-    <div className="flex flex-col items-center pt-2">
-      <img
-        src="/assets/pictures/arena-empty.webp"
-        alt=""
-        width={840}
-        height={560}
-        className="w-full max-w-[380px] select-none"
-        loading="lazy"
-        decoding="async"
-        draggable={false}
-      />
-      <p className="-mt-8 pb-5 text-center text-[13px] text-[#8b8b96]">{label}</p>
+    <div className="flex min-h-24 items-center justify-center px-5 py-8">
+      <p className="text-center text-[13px] text-[#8b8b96]">{label}</p>
     </div>
   );
 }
@@ -646,9 +692,43 @@ function WorldRankChip({ row }: { row: LeaderboardRow }) {
     : `${t('rating.worldRankLabel')} · ${division.label}`;
   return (
     <span className="lb-world" title={title}>
-      {row.worldRank != null && <span className="lb-world__n">#{row.worldRank}</span>}
-      <DivisionBadge division={division} size={22} />
+      <DivisionBadge division={division} size={26} />
     </span>
+  );
+}
+
+function RaceCountdown({ clock }: { clock: ReturnType<typeof useCountdownParts> }) {
+  const { t } = useTranslation();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const units = [
+    { key: 'd', value: pad(clock.days), label: t('leaderboard.unitDays') },
+    { key: 'h', value: pad(clock.hours), label: t('leaderboard.unitHours') },
+    { key: 'm', value: pad(clock.minutes), label: t('leaderboard.unitMinutes') },
+    { key: 's', value: pad(clock.seconds), label: t('leaderboard.unitSeconds') },
+  ];
+  return (
+    <section className="pnl-race">
+      <header className="pnl-race__head">
+        <div>
+          <span>{t('raceChart.kicker')}</span>
+          <h3>{t('raceChart.title')}</h3>
+        </div>
+      </header>
+      <div className="lb-fight">
+        <div className="lb-fight__kicker">{t('leaderboard.fightStarts')}</div>
+        <div className="lb-fight__clock">
+          {units.map((unit, index) => (
+            <Fragment key={unit.key}>
+              {index > 0 && <span className="lb-fight__sep">:</span>}
+              <div className="lb-fight__cell">
+                <b>{unit.value}</b>
+                <small>{unit.label}</small>
+              </div>
+            </Fragment>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -683,21 +763,23 @@ function PodiumCard({ row, place }: { row?: LeaderboardRow; place: 1 | 2 | 3 }) 
       className={`lb-pod lb-pod--${place} h-full`}
     >
       <span className="lb-pod__rank">{place}</span>
-      <Avatar row={row} size={40} className="lb-pod__av" />
+      <Avatar row={row} size={44} className="lb-pod__av" />
       <div className="min-w-0 flex-1">
         <Link to={`/compete/player/${row.userId}`} className="flex min-w-0 items-center gap-1.5" title={t('playerProfile.viewProfile')}>
           <span className="lb-pod__name truncate underline-offset-2 hover:underline">{row.name}</span>
           <NameBadges badges={row.badges} compact />
         </Link>
-        <div className="lb-pod__k mt-1.5">{t('leaderboard.thPnlUsd')}</div>
-        <div className={`lb-pod__v ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
-          <AnimatedNumber value={row.pnlUsd} format={(v) => formatCompactSigned(v)} /> $
-        </div>
-      </div>
-      <div className="shrink-0 text-right">
-        <div className="lb-pod__k">{t('leaderboard.performance')}</div>
-        <div className={`lb-pod__v ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
-          <AnimatedNumber value={row.pnlPercent} format={(v) => formatPercent(v)} /> %
+        <div className="lb-pod__stats">
+          <div>
+            <div className="lb-pod__k">{t('leaderboard.performance')}</div>
+            <div className={`lb-pod__v lb-pod__v--main ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+              <AnimatedNumber value={row.pnlPercent} format={(v) => formatPercent(v)} /> %
+            </div>
+          </div>
+          <div className="lb-pod__trades">
+            <div className="lb-pod__k">{t('leaderboard.thTrades')}</div>
+            <div className="lb-pod__v">{row.tradesCount}</div>
+          </div>
         </div>
       </div>
     </motion.div>
@@ -710,9 +792,10 @@ function RankHeader() {
     <div className="lb-tr lb-tr--head">
       <div>{t('leaderboard.thRank')}</div>
       <div>{t('leaderboard.thTrader')}</div>
-      <div className="text-right">{t('leaderboard.thPnlUsd')}</div>
+      <div className="text-center">{t('leaderboard.thDivision')}</div>
+      <div className="hidden text-right min-[900px]:block">{t('leaderboard.thPnlUsd')}</div>
       <div className="text-right">{t('leaderboard.performance')}</div>
-      <div className="hidden text-right min-[900px]:block">{t('leaderboard.thTrades')}</div>
+      <div className="text-right">{t('leaderboard.thTrades')}</div>
       <div className="hidden text-right min-[900px]:block">{t('leaderboard.lastActivity')}</div>
     </div>
   );
@@ -741,7 +824,7 @@ function RankRow({
         <span className="lb-tr__num">{noTrade ? '—' : row.rank}</span>
       </div>
 
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className={`lb-tr__identity flex min-w-0 items-center gap-2.5 ${row.breached ? 'is-breached' : ''}`}>
         <Link
           to={`/compete/player/${row.userId}`}
           className="group flex min-w-0 items-center gap-2.5"
@@ -757,7 +840,6 @@ function RankRow({
             <NameBadges badges={row.badges} compact />
           </span>
         </Link>
-        <WorldRankChip row={row} />
         {isMe && <span className="lb-tag">{t('leaderboard.you')}</span>}
         {row.breached && (
           <span className="lb-tag" title={t('leaderboard.breachedTitle')}>{t('leaderboard.breached')}</span>
@@ -776,19 +858,23 @@ function RankRow({
         )}
       </div>
 
+      <div className="flex justify-center">
+        <WorldRankChip row={row} />
+      </div>
+
       {noTrade ? (
         <div className="col-span-2 text-right text-[11px] font-medium uppercase tracking-[0.12em] text-[#6f6f7a] min-[900px]:col-span-4">
           {t('leaderboard.noTrade')}
         </div>
       ) : (
         <>
-          <div className={`num truncate text-right text-[13px] font-bold ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
+          <div className={`num hidden truncate text-right text-[13px] font-bold min-[900px]:block ${pos ? 'text-[#10b981]' : 'text-[#ef4444]'}`}>
             <AnimatedNumber value={row.pnlUsd} format={(v) => formatCompactSigned(v)} /> $
           </div>
           <div className={`num truncate text-right text-[13px] font-bold ${pos ? 'text-[#34d399]' : 'text-[#fca5a5]'}`}>
             <AnimatedNumber value={row.pnlPercent} format={(v) => formatPercent(v)} /> %
           </div>
-          <div className="num hidden truncate text-right text-[13px] text-[#b8b8c2] min-[900px]:block">{row.tradesCount}</div>
+          <div className="num truncate text-right text-[13px] text-[#b8b8c2]">{row.tradesCount}</div>
           <div className="hidden items-center justify-end gap-2 text-right text-[11px] text-[#6f6f7a] min-[900px]:flex">
             {lastAt ? (
               <>
@@ -825,7 +911,6 @@ function EnrolledRow({ row, isMe = false }: { row: LeaderboardRow; isMe?: boolea
             <NameBadges badges={row.badges} compact />
           </span>
         </Link>
-        <WorldRankChip row={row} />
       </div>
       <div className="num text-right text-[13px] text-[#6f6f7a]">{row.tradesCount}</div>
       <div className="text-right text-[11px] text-[#6f6f7a]">{lastAt ? fmtAgo(lastAt) : '—'}</div>
@@ -923,64 +1008,120 @@ function PrizePanel({ prize }: { prize: CashPrize }) {
   );
 }
 
-/** Panneau offre partenaire (sidebar) : marque, accroche et CTA pleine largeur. */
+/** Carte cadeau partenaire + détail de l'offre dans une modale. */
 function PromoPanel({
   title,
   subtitle,
   href,
   cta,
+  offer1,
+  code1,
+  offer2,
+  code2,
   brandName,
   logoUrl,
   artUrl,
   accent,
 }: {
-  title?: string | null;
+  title: string;
   subtitle?: string | null;
   href?: string | null;
   cta?: string | null;
+  offer1?: string | null;
+  code1?: string | null;
+  offer2?: string | null;
+  code2?: string | null;
   brandName?: string | null;
   logoUrl?: string | null;
   artUrl?: string | null;
   accent?: string;
 }) {
   const { t } = useTranslation();
-  const heading = String(title || '').trim();
-  const line = String(subtitle || '').trim();
   const link = safeHttpHref(href);
-  if (!heading && !line) return null;
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const color = accent || '#ff7a3c';
+  const offers = [
+    { offer: offer1?.trim(), code: code1?.trim() },
+    { offer: offer2?.trim(), code: code2?.trim() },
+  ].filter((item): item is { offer: string; code: string } => Boolean(item.offer && item.code));
 
-  const inner = (
-    <>
-      {artUrl && <img src={artUrl} alt="" className="lb-promo__art" loading="lazy" />}
-      <div className="relative z-[2]">
-        <div className="micro text-[8px]" style={{ color }}>{t('leaderboard.promoOffer')}</div>
-        <div className="mt-2 flex items-center gap-2.5">
-          {logoUrl && (
-            <span className="lb-promo__logo"><img src={logoUrl} alt="" /></span>
-          )}
-          <span className="display truncate text-[14px] font-bold uppercase text-white">{brandName || heading}</span>
-        </div>
-        {heading && brandName && (
-          <p className="mt-2 max-w-[190px] text-[11px] font-semibold leading-snug text-[#d4d4d8]">{heading}</p>
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [open]);
+
+  async function copyCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(code);
+      window.setTimeout(() => setCopied((current) => current === code ? null : current), 1800);
+    } catch {
+      setCopied(null);
+    }
+  }
+
+  const modal = open ? createPortal(
+    <div className="lb-gift-modal" role="dialog" aria-modal="true" aria-labelledby="arena-gift-title">
+      <button className="lb-gift-modal__backdrop" type="button" aria-label={t('common.close')} onClick={() => setOpen(false)} />
+      <div className="lb-gift-modal__card" style={{ '--lb-accent': color } as CSSProperties}>
+        <button className="lb-gift-modal__close" type="button" aria-label={t('common.close')} onClick={() => setOpen(false)}>×</button>
+        <div className="lb-gift-modal__glow" aria-hidden="true" />
+        <div className="lb-gift-modal__icon" aria-hidden="true">🎁</div>
+        {logoUrl && <img className="lb-gift-modal__logo" src={logoUrl} alt={brandName || ''} />}
+        {subtitle && <p className="lb-gift-modal__eyebrow">{subtitle}</p>}
+        <h2 id="arena-gift-title">{title}</h2>
+        {offers.length > 0 && (
+          <div className="lb-gift-modal__offers">
+            {offers.map((item) => (
+              <div key={item.code}>
+                <p>{item.offer}</p>
+                <button type="button" onClick={() => copyCode(item.code)}>
+                  <code>{item.code}</code>
+                  <span>{copied === item.code ? t('leaderboard.codeCopied') : t('leaderboard.copyCode')}</span>
+                </button>
+              </div>
+            ))}
+          </div>
         )}
-        {line && <p className="mt-1 max-w-[190px] text-[11px] leading-snug text-[#8b8b96]">{line}</p>}
         {link && (
-          <span className="lb-btn" style={{ background: `linear-gradient(180deg, ${color}, ${color}bb)` }}>
-            {cta?.trim() || t('leaderboard.promoCta')}
-            <span className="lb-btn__arrow">→</span>
-          </span>
+          <a className="lb-gift-modal__cta" href={link} target="_blank" rel="noopener noreferrer">
+            {cta?.trim() || t('leaderboard.giftUseOffer')} <span>→</span>
+          </a>
         )}
       </div>
+    </div>,
+    document.body,
+  ) : null;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="lb-panel lb-promo"
+        style={{ '--lb-accent': color } as CSSProperties}
+        onClick={() => setOpen(true)}
+      >
+        {artUrl && <img src={artUrl} alt="" className="lb-promo__art" loading="lazy" />}
+        <span className="lb-promo__shine" aria-hidden="true" />
+        <span className="lb-promo__gift" aria-hidden="true">🎁</span>
+        <span className="lb-promo__content">
+          <span className="lb-promo__eyebrow">{t('leaderboard.promoGift')}</span>
+          <strong>{title}</strong>
+          <span>{subtitle || t('leaderboard.giftReveal')}</span>
+        </span>
+        <span className="lb-promo__reveal">{t('leaderboard.giftDiscover')} →</span>
+      </button>
+      {modal}
     </>
   );
-
-  if (link) {
-    return (
-      <a href={link} target="_blank" rel="noopener noreferrer" className="lb-panel lb-promo" style={{ borderColor: `${color}4d` }}>
-        {inner}
-      </a>
-    );
-  }
-  return <section className="lb-panel lb-promo" style={{ borderColor: `${color}4d` }}>{inner}</section>;
 }

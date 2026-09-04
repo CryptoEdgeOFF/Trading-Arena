@@ -95,3 +95,28 @@ test('reconstruction does not overwrite a live recorded history', () => {
   );
   assert.deepEqual(again, live);
 });
+
+test('forced reconstruction replaces a late synthetic snapshot with trade history', () => {
+  resetPnlHistoryStoreForTests();
+  maybeRecordPnlSample(
+    'arena-5',
+    [{ userId: 'trader-a', rank: 1, pnlPercent: 6 }],
+    { startAt: 1_000, now: 20_000 },
+  );
+  const rebuilt = reconstructPnlHistoryFromTrades(
+    'arena-5',
+    1_000,
+    80_000,
+    10_000,
+    [{
+      userId: 'trader-a',
+      trades: [{ time: 5_000, action: 'close', pnl: 100 }],
+      finalPnlPercent: 1,
+    }],
+    10_000,
+    true,
+  );
+  assert.equal(rebuilt[0]?.t, 1_000);
+  assert.ok(rebuilt.some((sample) => sample.t === 5_000));
+  assert.equal(rebuilt.at(-1)?.rows[0]?.pnlPercent, 1);
+});

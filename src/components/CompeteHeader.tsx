@@ -6,7 +6,9 @@ import { useTranslation } from 'react-i18next';
 import LanguageSwitcher from './LanguageSwitcher';
 import { AvatarImage } from './OptimizedImage';
 import {
+  COMPETE_SESSION_EVENT,
   COMPETE_SESSION_KEY,
+  mergeSessionUser,
   readCachedCompeteUser,
   writeCachedCompeteUser,
   type CompeteSessionUser,
@@ -185,9 +187,19 @@ export default function CompeteHeader({
   // Si le parent ne pilote pas la session, on garde la version cache à jour.
   useEffect(() => {
     if (userProp !== undefined) {
-      setCachedUser(userProp);
+      setCachedUser((current) => userProp ? mergeSessionUser(current, userProp) : null);
     }
   }, [userProp]);
+
+  useEffect(() => {
+    const syncUser = () => setCachedUser(readCachedCompeteUser());
+    window.addEventListener(COMPETE_SESSION_EVENT, syncUser);
+    window.addEventListener('storage', syncUser);
+    return () => {
+      window.removeEventListener(COMPETE_SESSION_EVENT, syncUser);
+      window.removeEventListener('storage', syncUser);
+    };
+  }, []);
 
   useEffect(() => {
     if (!menuOpen) return;

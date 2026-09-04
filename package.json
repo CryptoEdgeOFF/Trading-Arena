@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "tsx server/index.ts",
-    "start:server": "tsx server/index.ts"
+    "start:server": "tsx server/index.ts",
+    "staging:arena-sim": "tsx server/scripts/controlStagingArenaSimulation.ts"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",

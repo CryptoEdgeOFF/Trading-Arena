@@ -54,7 +54,7 @@ type HomeSeason = {
 
 function useCountdown(target: number): string {
   const { i18n } = useTranslation();
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
@@ -78,17 +78,15 @@ function MobileArenaCard({
   const { t } = useTranslation();
   const countdown = useCountdown(arena.status === 'live' ? arena.endAt : arena.startAt);
   const pnl = arena.myEntry?.pnlUsd ?? 0;
-  const ninjaBanner = ninjaTraderCupBanner(arena);
   const brand = resolveArenaBrand(arena, resolveMediaUrl);
-  const banner = ninjaBanner
-    || resolveMediaUrl(arena.bannerImageUrl)
-    || '/assets/pictures/arena-live-red.webp';
+  const clearBanner = resolveMediaUrl(arena.bannerImageUrl) || ninjaTraderCupBanner(arena);
+  const fallbackBanner = '/assets/pictures/arena-live-red.webp';
   const joining = variant === 'join';
 
   return (
-    <article className={`mobile-arena-card${joining ? ' is-join' : ''}${ninjaBanner ? ' is-ninja-cup' : ''}`}>
-      <img className="mobile-arena-card__banner" src={banner} alt="" loading="lazy" decoding="async" />
-      <div className="mobile-arena-card__shade" />
+    <article className={`mobile-arena-card${joining ? ' is-join' : ''}${clearBanner ? ' has-clear-banner' : ''}`}>
+      <img className="mobile-arena-card__banner" src={clearBanner || fallbackBanner} alt={clearBanner ? arena.title : ''} loading="lazy" decoding="async" />
+      {!clearBanner && <div className="mobile-arena-card__shade" />}
       <div className="mobile-arena-card__top">
         <span className={`mobile-arena-card__live${joining ? ' is-open' : ''}`}>
           <i />{joining ? t('home.openForJoin') : t('status.live')}
@@ -133,8 +131,8 @@ export default function MobileHome({
   arenas,
   joinableArenas,
   latestNews,
-  season: _season,
   authSlot,
+  onAuthIntent,
   onRefresh,
   onTrade,
   onJoin,
@@ -149,6 +147,7 @@ export default function MobileHome({
   latestNews: HomeNews[];
   season: HomeSeason | null;
   authSlot?: ReactNode;
+  onAuthIntent: (intent: 'login' | 'signup') => void;
   onRefresh: () => void;
   onTrade: (competitionId: string) => void;
   onJoin: (competitionId: string) => void;
@@ -157,6 +156,8 @@ export default function MobileHome({
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const [authOpen, setAuthOpen] = useState(false);
+  const showAuth = authOpen || location.hash === '#signup';
   const hour = new Date().getHours();
   const greeting = hour >= 18 || hour < 5 ? t('home.greetingEvening') : t('home.greetingMorning');
   const unread = hasUnreadNews(latestNews[0]?.publishedAt || latestNews[0]?.createdAt);
@@ -173,8 +174,16 @@ export default function MobileHome({
 
   useEffect(() => {
     if (location.hash !== '#signup') return;
-    document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const timer = window.setTimeout(() => {
+      document.getElementById('signup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [location.hash]);
+
+  function openAuth(intent: 'login' | 'signup') {
+    onAuthIntent(intent);
+    setAuthOpen(true);
+  }
 
   const liveArenas = useMemo(
     () => arenas.filter((arena) => arena.status === 'live').sort((a, b) => a.endAt - b.endAt),
@@ -259,29 +268,47 @@ export default function MobileHome({
           </section>
         </>
       ) : (
-        <section className="mobile-home-guest">
-          <div className="mobile-home-guest__news">{newsBell}</div>
-          <div className="eyebrow"><span /> {t('home.guestEyebrow')}</div>
-          <h1>{t('home.guestTitle')}<br /><em>{t('home.guestTitleEm')}</em></h1>
-          <p>{t('home.guestLead')}</p>
-          <figure className="mobile-home-platform">
-            <img
-              src="/assets/pictures/btf-arena-terminal.jpg"
-              alt={t('platform.alt')}
-              width={1024}
-              height={683}
-              loading="lazy"
-              decoding="async"
-            />
-          </figure>
-          <a className="mobile-home-guest__login" href="#signup">
-            {t('header.login')}
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-          </a>
-          <Link className="mobile-home-guest__rank" to="/compete/rank#season">{t('home.guestGlobal')}</Link>
-        </section>
+        <>
+          <section className="mobile-home-guest">
+            <img className="mobile-home-guest__backdrop" src="/assets/pictures/Traderpng.webp" alt="" fetchPriority="high" />
+            <i className="mobile-home-guest__shade" aria-hidden="true" />
+            <img className="mobile-home-guest__brand" src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" />
+            <div className="mobile-home-guest__news">{newsBell}</div>
+            <div className="mobile-home-guest__content">
+              <div className="eyebrow"><span /> {t('home.guestEyebrow')}</div>
+              <h1>{t('home.guestTitle')}<br /><em>{t('home.guestTitleEm')}</em></h1>
+              <p>{t('home.guestLead')}</p>
+              <div className="mobile-home-guest__actions">
+                <button type="button" onClick={() => openAuth('login')}>{t('auth.tabLogin')}</button>
+                <button type="button" onClick={() => openAuth('signup')}>{t('auth.tabSignup')}</button>
+              </div>
+            </div>
+          </section>
+
+          {showAuth && authSlot && (
+            <div id="signup" className="mobile-home-guest__auth">{authSlot}</div>
+          )}
+
+          <section className="mobile-home-process">
+            <div className="mobile-home-process__head">
+              <span>{t('process.eyebrow')}</span>
+              <h2>{t('process.title')}</h2>
+              <p>{t('process.sub')}</p>
+            </div>
+            <ol>
+              {[
+                [t('process.step1Title'), t('process.step1Text')],
+                [t('process.step2Title'), t('process.step2Text')],
+                [t('process.step3Title'), t('process.step3Text')],
+              ].map(([title, text], index) => (
+                <li key={title}>
+                  <b>{String(index + 1).padStart(2, '0')}</b>
+                  <span><strong>{title}</strong><small>{text}</small></span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </>
       )}
 
       {joinableArenas.length > 0 && (
@@ -368,9 +395,6 @@ export default function MobileHome({
       </section>
       <HomeBonusBanner compact />
 
-      {!user && authSlot && (
-        <div id="signup">{authSlot}</div>
-      )}
     </div>
   );
 }

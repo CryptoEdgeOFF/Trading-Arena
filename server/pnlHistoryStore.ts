@@ -221,8 +221,9 @@ export function reconstructPnlHistoryFromTrades(
     finalPnlPercent: number;
   }>,
   now = Date.now(),
+  force = false,
 ): PnlSample[] {
-  if (hasPnlHistory(competitionId)) return getPnlHistory(competitionId);
+  if (!force && hasPnlHistory(competitionId)) return getPnlHistory(competitionId);
   const balance = startingBalance > 0 ? startingBalance : 10_000;
   const series = traders.map((trader) => ({
     userId: trader.userId,
