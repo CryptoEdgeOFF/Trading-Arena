@@ -66,7 +66,7 @@ import {
   unblockChatUser,
   type ChatReportReason,
 } from './globalChatStore.js';
-import { deleteUserRating, getRatingLeaderboard, syncManyUserRatings, syncUserRating } from './ratingStore.js';
+import { deleteUserRating, getRatingLeaderboard, getRatingSnapshots, syncManyUserRatings, syncUserRating } from './ratingStore.js';
 import { getPnlHistoryWithLivePoint, getPnlMoments, hasPnlHistory, maybeRecordPnlSample, prunePnlHistories, reconstructPnlHistoryFromTrades, setPnlHistoryPersistHandler, slimPublicPnlHistory } from './pnlHistoryStore.js';
 import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
@@ -3771,6 +3771,45 @@ app.post('/api/competition/trade/session', async (req, res) => {
   }
 });
 
+function lastPaperTradeAt(paperPlayerId?: string | null): number | null {
+  if (!paperPlayerId) return null;
+  const player = manager.getPlayerById(paperPlayerId);
+  let last = 0;
+  for (const trade of player?.trades || []) {
+    const time = Number(trade.time) || 0;
+    if (time > last) last = time;
+  }
+  return last || null;
+}
+
+async function decoratePublicLeaderboard(
+  competitionId: string,
+  data: ReturnType<typeof competitionManager.getPublicLeaderboard>,
+) {
+  const ratings = await getRatingSnapshots().catch(() => new Map());
+  const paperByUser = new Map(
+    competitionManager.listCompetitionRoster(competitionId).map((member) => [member.userId, member.paperPlayerId]),
+  );
+  return {
+    ...data,
+    leaderboard: data.leaderboard.map((row) => {
+      const rating = ratings.get(row.userId);
+      const memberTimes = (row.members || [])
+        .map((member) => lastPaperTradeAt(paperByUser.get(member.userId)))
+        .filter((time): time is number => Boolean(time));
+      const lastTrade = memberTimes.length
+        ? Math.max(...memberTimes)
+        : lastPaperTradeAt(paperByUser.get(row.userId));
+      return {
+        ...row,
+        lastActivityAt: lastTrade || row.lastActivityAt || null,
+        worldRank: rating?.worldRank ?? null,
+        division: rating?.division ?? { id: 'bronze', label: 'Bronze', tier: 0 },
+      };
+    }),
+  };
+}
+
 app.get('/api/competition/leaderboard/:id', async (req, res) => {
   try {
     const competitionId = String(req.params.id || '');
@@ -3779,7 +3818,7 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     if (data.competition.status === 'live') {
       maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
     }
-    res.json(data);
+    res.json(await decoratePublicLeaderboard(competitionId, data));
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
   }

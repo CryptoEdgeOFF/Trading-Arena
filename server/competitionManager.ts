@@ -83,6 +83,11 @@ export interface CompetitionEntry {
   pnlPercent: number;
   tradesCount: number;
   updatedAt: number;
+  /**
+   * Dernier ordre réellement exécuté (ouverture ou clôture). Distinct de
+   * `updatedAt`, qui avance aussi quand seul le mark-to-market change.
+   */
+  lastActivityAt?: number;
   paperPlayerId?: string;
   /**
    * Identifiant public fourni par le participant pour satisfaire la condition
@@ -2903,6 +2908,7 @@ export class CompetitionManager {
         || entry.pnlPercent !== pnlPercent
         || entry.tradesCount !== tradesCount
       ) {
+        if (tradesCount > entry.tradesCount) entry.lastActivityAt = now;
         entry.pnlUsd = pnlUsd;
         entry.pnlPercent = pnlPercent;
         entry.tradesCount = tradesCount;
@@ -2987,9 +2993,11 @@ export class CompetitionManager {
         };
         competition.entries.push(entry);
       }
+      const nextTrades = Math.max(1, Math.floor(Number(bot.tradesCount) || 1));
+      if (nextTrades > entry.tradesCount) entry.lastActivityAt = now;
       entry.pnlUsd = Number(bot.pnlUsd) || 0;
       entry.pnlPercent = Number(bot.pnlPercent) || 0;
-      entry.tradesCount = Math.max(1, Math.floor(Number(bot.tradesCount) || 1));
+      entry.tradesCount = nextTrades;
       entry.updatedAt = now;
     }
     this.competitions.set(competition.id, competition);
@@ -4024,6 +4032,7 @@ export class CompetitionManager {
             pnlUsd: entry.pnlUsd,
             tradesCount: entry.tradesCount,
             updatedAt: entry.updatedAt,
+            lastActivityAt: entry.lastActivityAt || null,
             breached: Boolean(entry.breachedAt),
           };
         }),
@@ -4065,6 +4074,7 @@ export class CompetitionManager {
           pnlPercent: (pnlUsd / capital) * 100,
           tradesCount,
           updatedAt: Math.max(...members.map((entry) => entry.updatedAt)),
+          lastActivityAt: Math.max(0, ...members.map((entry) => entry.lastActivityAt || 0)) || null,
           breached: members.every((entry) => Boolean(entry.breachedAt)),
         };
       }),
@@ -4107,6 +4117,7 @@ export class CompetitionManager {
       pnlUsd: number;
       tradesCount: number;
       updatedAt: number;
+      lastActivityAt?: number | null;
       breached: boolean;
     }>;
   } {
@@ -4171,6 +4182,7 @@ export class CompetitionManager {
       pnlUsd: number;
       tradesCount: number;
       updatedAt: number;
+      lastActivityAt?: number | null;
       breached: boolean;
     }>;
   } | null {

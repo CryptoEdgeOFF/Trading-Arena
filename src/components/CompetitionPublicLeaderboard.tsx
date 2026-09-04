@@ -12,6 +12,7 @@ import {
 } from './competeMetrics';
 import { AvatarImage } from './OptimizedImage';
 import { NameBadges, type UserBadge } from './playerBadges';
+import { DivisionBadge, type RatingDivision } from './playerRating';
 import { resolveArenaBrand, safeHttpHref } from '../lib/sponsors';
 import { resolveMediaUrl } from '../utils/imageUrl';
 import ShareCardModal from './ShareCardModal';
@@ -44,6 +45,9 @@ interface LeaderboardRow {
   pnlUsd: number;
   tradesCount: number;
   updatedAt: number;
+  lastActivityAt?: number | null;
+  worldRank?: number | null;
+  division?: RatingDivision | null;
   breached?: boolean;
 }
 
@@ -628,6 +632,26 @@ function activityDotClass(value: number): string {
   return 'lb-dot lb-dot--off';
 }
 
+/** Dernier ordre (open/close), pas le tick PnL. `updatedAt` sert de repli si l'API n'a pas encore le champ. */
+function activityAt(row: LeaderboardRow): number | null {
+  return row.lastActivityAt || null;
+}
+
+function WorldRankChip({ row }: { row: LeaderboardRow }) {
+  const { t } = useTranslation();
+  if (!row.division && row.worldRank == null) return null;
+  const division = row.division || { id: 'bronze', label: 'Bronze', tier: 0 };
+  const title = row.worldRank != null
+    ? `${t('rating.worldRankLabel')} #${row.worldRank} · ${division.label}`
+    : `${t('rating.worldRankLabel')} · ${division.label}`;
+  return (
+    <span className="lb-world" title={title}>
+      {row.worldRank != null && <span className="lb-world__n">#{row.worldRank}</span>}
+      <DivisionBadge division={division} size={22} />
+    </span>
+  );
+}
+
 function Avatar({ row, size = 40, className = '' }: { row: LeaderboardRow; size?: number; className?: string }) {
   return (
     <span className={className} style={{ width: size, height: size }}>
@@ -709,6 +733,7 @@ function RankRow({
   const { t } = useTranslation();
   const noTrade = row.rank === 0 && !row.breached;
   const pos = row.pnlPercent >= 0;
+  const lastAt = activityAt(row);
   return (
     <div className={`lb-tr ${isMe ? 'lb-tr--me' : ''} ${pinned ? 'lb-tr--pinned' : ''}`}>
       <div className="flex min-w-0 items-center gap-2">
@@ -732,6 +757,7 @@ function RankRow({
             <NameBadges badges={row.badges} compact />
           </span>
         </Link>
+        <WorldRankChip row={row} />
         {isMe && <span className="lb-tag">{t('leaderboard.you')}</span>}
         {row.breached && (
           <span className="lb-tag" title={t('leaderboard.breachedTitle')}>{t('leaderboard.breached')}</span>
@@ -764,8 +790,12 @@ function RankRow({
           </div>
           <div className="num hidden truncate text-right text-[13px] text-[#b8b8c2] min-[900px]:block">{row.tradesCount}</div>
           <div className="hidden items-center justify-end gap-2 text-right text-[11px] text-[#6f6f7a] min-[900px]:flex">
-            {fmtAgo(row.updatedAt)}
-            <i className={activityDotClass(row.updatedAt)} />
+            {lastAt ? (
+              <>
+                {fmtAgo(lastAt)}
+                <i className={activityDotClass(lastAt)} />
+              </>
+            ) : '—'}
           </div>
         </>
       )}
@@ -776,25 +806,29 @@ function RankRow({
 /** Inscrit sans trade : visible dans la liste mais hors classement (pas de rang). */
 function EnrolledRow({ row, isMe = false }: { row: LeaderboardRow; isMe?: boolean }) {
   const { t } = useTranslation();
+  const lastAt = activityAt(row);
   return (
     <div className={`lb-tr ${isMe ? 'lb-tr--me' : ''}`} style={{ gridTemplateColumns: 'minmax(0,1.6fr) 80px minmax(0,1fr)' }}>
-      <Link
-        to={`/compete/player/${row.userId}`}
-        className="group flex min-w-0 items-center gap-2.5"
-        title={t('playerProfile.viewProfile')}
-      >
-        <Avatar
-          row={row}
-          size={28}
-          className="flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white"
-        />
-        <span className="display flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-white">
-          <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
-          <NameBadges badges={row.badges} compact />
-        </span>
-      </Link>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <Link
+          to={`/compete/player/${row.userId}`}
+          className="group flex min-w-0 items-center gap-2.5"
+          title={t('playerProfile.viewProfile')}
+        >
+          <Avatar
+            row={row}
+            size={28}
+            className="flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0d] text-[10px] font-bold uppercase text-white"
+          />
+          <span className="display flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-white">
+            <span className="truncate underline-offset-2 group-hover:underline">{row.name}</span>
+            <NameBadges badges={row.badges} compact />
+          </span>
+        </Link>
+        <WorldRankChip row={row} />
+      </div>
       <div className="num text-right text-[13px] text-[#6f6f7a]">{row.tradesCount}</div>
-      <div className="text-right text-[11px] text-[#6f6f7a]">{fmtAgo(row.updatedAt)}</div>
+      <div className="text-right text-[11px] text-[#6f6f7a]">{lastAt ? fmtAgo(lastAt) : '—'}</div>
     </div>
   );
 }
