@@ -91,11 +91,14 @@ export function getSponsor(key?: string | null): SponsorConfig | null {
   return SPONSORS[key] ?? null;
 }
 
+export const BTF_ARENA_LOGO = '/assets/pictures/BTF_ARENA_logo_sans_fond.png';
+
 export type ArenaBrandInput = {
   sponsor?: string | null;
   title?: string | null;
   sponsorName?: string | null;
   sponsorLogoUrl?: string | null;
+  hostLogoUrl?: string | null;
   bannerImageUrl?: string | null;
   bannerHref?: string | null;
 };
@@ -103,10 +106,16 @@ export type ArenaBrandInput = {
 export type ArenaBrand = {
   name: string;
   logoUrl: string | null;
+  hostLogoUrl: string;
   accent: string;
   bannerUrl: string | null;
   bannerHref: string | null;
 };
+
+function resolveAsset(src: string | null | undefined, resolveUrl?: (src?: string | null) => string | undefined): string | null {
+  if (!src) return null;
+  return (resolveUrl ? (resolveUrl(src) || src) : src);
+}
 
 /** Identité visuelle d'une arène : champs custom prioritaire, sinon preset Kraken/NT. */
 export function resolveArenaBrand(
@@ -115,15 +124,15 @@ export function resolveArenaBrand(
 ): ArenaBrand | null {
   const preset = getSponsor(arena.sponsor);
   const name = String(arena.sponsorName || '').trim() || preset?.name || '';
-  const rawLogo = arena.sponsorLogoUrl || preset?.logoUrl || null;
-  const logoUrl = (rawLogo && resolveUrl ? (resolveUrl(rawLogo) || rawLogo) : rawLogo);
-  const rawBanner = arena.bannerImageUrl || ninjaTraderCupBanner(arena) || null;
-  const bannerUrl = (rawBanner && resolveUrl ? (resolveUrl(rawBanner) || rawBanner) : rawBanner);
+  const logoUrl = resolveAsset(arena.sponsorLogoUrl || preset?.logoUrl || null, resolveUrl);
+  const hostLogoUrl = resolveAsset(arena.hostLogoUrl, resolveUrl) || BTF_ARENA_LOGO;
+  const bannerUrl = resolveAsset(arena.bannerImageUrl || ninjaTraderCupBanner(arena) || null, resolveUrl);
   const bannerHref = safeHttpHref(arena.bannerHref);
   if (!name && !logoUrl && !bannerUrl) return null;
   return {
     name: name || 'Sponsor',
     logoUrl,
+    hostLogoUrl,
     accent: preset?.accent ?? '#dc2626',
     bannerUrl,
     bannerHref,

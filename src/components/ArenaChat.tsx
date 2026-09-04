@@ -323,7 +323,7 @@ export default function ArenaChat({
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z" />
           </svg>
-          {t('arenaChat.open')}
+          <span className="arena-chat-btn__label">Chat</span>
           <UnreadBubble count={unread} />
         </button>
       )}

@@ -86,11 +86,16 @@ interface AdminCompetition {
   sponsorReferralUrl?: string | null;
   sponsorName?: string | null;
   sponsorLogoUrl?: string | null;
+  hostLogoUrl?: string | null;
   bannerHref?: string | null;
   promoTitle?: string | null;
   promoSubtitle?: string | null;
   promoHref?: string | null;
   promoCta?: string | null;
+  promoOffer1?: string | null;
+  promoCode1?: string | null;
+  promoOffer2?: string | null;
+  promoCode2?: string | null;
   seasonId?: string | null;
 }
 
@@ -136,10 +141,15 @@ interface CompetitionDraft {
   sponsorReferralUrl: string;
   sponsorName: string;
   sponsorLogoUrl: string;
+  hostLogoUrl: string;
   promoTitle: string;
   promoSubtitle: string;
   promoHref: string;
   promoCta: string;
+  promoOffer1: string;
+  promoCode1: string;
+  promoOffer2: string;
+  promoCode2: string;
   seasonId: string;
   entryMode?: 'solo' | 'team';
   prize: PrizeDraft;
@@ -165,10 +175,15 @@ const EMPTY_DRAFT: CompetitionDraft = {
   sponsorReferralUrl: '',
   sponsorName: '',
   sponsorLogoUrl: '',
+  hostLogoUrl: '',
   promoTitle: '',
   promoSubtitle: '',
   promoHref: '',
   promoCta: '',
+  promoOffer1: '',
+  promoCode1: '',
+  promoOffer2: '',
+  promoCode2: '',
   seasonId: '',
   entryMode: 'solo',
   prize: { currency: 'USD', total: '', first: '', second: '', third: '', label: '', imageUrl: '', description: '', items: [] },
@@ -522,10 +537,15 @@ export default function CompetitionAdmin() {
           sponsorReferralUrl: createDraft.sponsorReferralUrl.trim() || null,
           sponsorName: createDraft.sponsorName.trim() || null,
           sponsorLogoUrl: createDraft.sponsorLogoUrl.trim() || null,
+          hostLogoUrl: createDraft.hostLogoUrl.trim() || null,
           promoTitle: createDraft.promoTitle.trim() || null,
           promoSubtitle: createDraft.promoSubtitle.trim() || null,
           promoHref: createDraft.promoHref.trim() || null,
           promoCta: createDraft.promoCta.trim() || null,
+          promoOffer1: createDraft.promoOffer1.trim() || null,
+          promoCode1: createDraft.promoCode1.trim() || null,
+          promoOffer2: createDraft.promoOffer2.trim() || null,
+          promoCode2: createDraft.promoCode2.trim() || null,
           seasonId: createDraft.seasonId || null,
           entryMode: createDraft.entryMode,
           cashPrize,
@@ -562,10 +582,15 @@ export default function CompetitionAdmin() {
       sponsorReferralUrl: competition.sponsorReferralUrl || '',
       sponsorName: competition.sponsorName || '',
       sponsorLogoUrl: competition.sponsorLogoUrl || '',
+      hostLogoUrl: competition.hostLogoUrl || '',
       promoTitle: competition.promoTitle || '',
       promoSubtitle: competition.promoSubtitle || '',
       promoHref: competition.promoHref || '',
       promoCta: competition.promoCta || '',
+      promoOffer1: competition.promoOffer1 || '',
+      promoCode1: competition.promoCode1 || '',
+      promoOffer2: competition.promoOffer2 || '',
+      promoCode2: competition.promoCode2 || '',
       seasonId: competition.seasonId || seasons.find((s) => s.isActive)?.id || '',
       prize: {
         currency: competition.cashPrize?.currency || 'USD',
@@ -626,10 +651,15 @@ export default function CompetitionAdmin() {
           sponsorReferralUrl: editDraft.sponsorReferralUrl.trim() || null,
           sponsorName: editDraft.sponsorName.trim() || null,
           sponsorLogoUrl: editDraft.sponsorLogoUrl.trim() || null,
+          hostLogoUrl: editDraft.hostLogoUrl.trim() || null,
           promoTitle: editDraft.promoTitle.trim() || null,
           promoSubtitle: editDraft.promoSubtitle.trim() || null,
           promoHref: editDraft.promoHref.trim() || null,
           promoCta: editDraft.promoCta.trim() || null,
+          promoOffer1: editDraft.promoOffer1.trim() || null,
+          promoCode1: editDraft.promoCode1.trim() || null,
+          promoOffer2: editDraft.promoOffer2.trim() || null,
+          promoCode2: editDraft.promoCode2.trim() || null,
           seasonId: editDraft.seasonId || null,
           cashPrize,
         }),
@@ -1263,7 +1293,7 @@ function ArenaBrandFields({
   onUploadImage,
   onUploadLogo,
 }: {
-  draft: Pick<CompetitionDraft, 'sponsor' | 'sponsorName' | 'sponsorLogoUrl' | 'sponsorReferralUrl' | 'bannerImageUrl' | 'bannerHref'>;
+  draft: Pick<CompetitionDraft, 'sponsor' | 'sponsorName' | 'sponsorLogoUrl' | 'hostLogoUrl' | 'sponsorReferralUrl' | 'bannerImageUrl' | 'bannerHref'>;
   onChange: (patch: Partial<CompetitionDraft>) => void;
   onUploadImage: (file: File) => Promise<string>;
   onUploadLogo: (file: File) => Promise<string>;
@@ -1272,7 +1302,7 @@ function ArenaBrandFields({
     <div className="md:col-span-2 grid gap-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 md:grid-cols-2">
       <div className="md:col-span-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200">Marque / sponsor</p>
-        <p className="mt-1 text-[12px] text-slate-500">Nom et logo partout (cartes, classement, terminal). Bannière cliquable uniquement sur le leaderboard.</p>
+        <p className="mt-1 text-[12px] text-slate-500">La bannière du classement est un template automatique. Uploade juste les deux logos — BTF Arena à gauche, partenaire à droite.</p>
       </div>
       <Field label="Nom du sponsor">
         <input
@@ -1312,7 +1342,16 @@ function ArenaBrandFields({
         />
       </Field>
       <div>
-        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Logo du sponsor</label>
+        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Logo BTF Arena</label>
+        <BannerUpload
+          value={draft.hostLogoUrl}
+          onChange={(url) => onChange({ hostLogoUrl: url })}
+          onUpload={onUploadLogo}
+          variant="logo"
+        />
+      </div>
+      <div>
+        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Logo partenaire</label>
         <BannerUpload
           value={draft.sponsorLogoUrl}
           onChange={(url) => onChange({ sponsorLogoUrl: url })}
@@ -1320,8 +1359,8 @@ function ArenaBrandFields({
           variant="logo"
         />
       </div>
-      <div>
-        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Bannière leaderboard</label>
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-[11px] uppercase tracking-[0.2em] text-slate-500">Image cartes / SEO (optionnel)</label>
         <BannerUpload
           value={draft.bannerImageUrl}
           onChange={(url) => onChange({ bannerImageUrl: url })}
@@ -1336,20 +1375,20 @@ function ArenaPromoFields({
   draft,
   onChange,
 }: {
-  draft: Pick<CompetitionDraft, 'promoTitle' | 'promoSubtitle' | 'promoHref' | 'promoCta'>;
+  draft: Pick<CompetitionDraft, 'promoTitle' | 'promoSubtitle' | 'promoHref' | 'promoCta' | 'promoOffer1' | 'promoCode1' | 'promoOffer2' | 'promoCode2'>;
   onChange: (patch: Partial<CompetitionDraft>) => void;
 }) {
   return (
     <div className="md:col-span-2 grid gap-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 md:grid-cols-2">
       <div className="md:col-span-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200">Encart promo / CTA</p>
-        <p className="mt-1 text-[12px] text-slate-500">Affiché une seule fois sur le leaderboard, sous les lots. Laisse vide pour ne rien montrer.</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200">Cadeau de cette Cup</p>
+        <p className="mt-1 text-[12px] text-slate-500">Affiché uniquement sur le leaderboard de cette arène. Laisse le titre vide pour désactiver complètement le cadeau.</p>
       </div>
-      <Field label="Titre">
+      <Field label="Titre du cadeau">
         <input
           value={draft.promoTitle}
           onChange={(e) => onChange({ promoTitle: e.target.value })}
-          placeholder="Trade pour de vrai avec les Challenges Blueberry Funded"
+          placeholder="Réservé aux Arena Traders pendant 1 semaine"
           className="admin-input"
         />
       </Field>
@@ -1357,7 +1396,7 @@ function ArenaPromoFields({
         <input
           value={draft.promoCta}
           onChange={(e) => onChange({ promoCta: e.target.value })}
-          placeholder="Découvrir l'offre"
+          placeholder="Profiter de mon bonus"
           className="admin-input"
         />
       </Field>
@@ -1366,13 +1405,45 @@ function ArenaPromoFields({
           <input
             value={draft.promoSubtitle}
             onChange={(e) => onChange({ promoSubtitle: e.target.value })}
-            placeholder="-50% exceptionnellement pour les combattants BTF Arena"
+            placeholder="Bonus exclusif BTF Arena"
             className="admin-input"
           />
         </Field>
       </div>
+      <Field label="Offre 1">
+        <input
+          value={draft.promoOffer1}
+          onChange={(e) => onChange({ promoOffer1: e.target.value })}
+          placeholder="-50% sur vos Challenges Primes"
+          className="admin-input"
+        />
+      </Field>
+      <Field label="Code 1">
+        <input
+          value={draft.promoCode1}
+          onChange={(e) => onChange({ promoCode1: e.target.value })}
+          placeholder="BTF50"
+          className="admin-input"
+        />
+      </Field>
+      <Field label="Offre 2">
+        <input
+          value={draft.promoOffer2}
+          onChange={(e) => onChange({ promoOffer2: e.target.value })}
+          placeholder="-30% sur tous les Challenges"
+          className="admin-input"
+        />
+      </Field>
+      <Field label="Code 2">
+        <input
+          value={draft.promoCode2}
+          onChange={(e) => onChange({ promoCode2: e.target.value })}
+          placeholder="BTF35"
+          className="admin-input"
+        />
+      </Field>
       <div className="md:col-span-2">
-        <Field label="Lien du bouton">
+        <Field label="Lien d'affiliation du bouton">
           <input
             type="url"
             value={draft.promoHref}

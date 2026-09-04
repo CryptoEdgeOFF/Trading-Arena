@@ -1029,6 +1029,7 @@ export default function CompetitionPlatform() {
           latestNews={latestNews}
           season={activeSeason}
           authSlot={authPanel}
+          onAuthIntent={switchIntent}
           onRefresh={() => { void refreshData(); }}
           onTrade={(competitionId) => {
             const competition = myCompetitions.find((entry) => entry.id === competitionId);
@@ -1141,7 +1142,6 @@ export default function CompetitionPlatform() {
         </section>
 
         {!session && <ProcessSection />}
-        {!session && <PlatformWhereSection />}
 
         {/* MES COMPETITIONS */}
         {session && (
@@ -1305,52 +1305,6 @@ function SummerSeasonHomeSection({ seasons }: { seasons: HomeSeasonInfo[] }) {
   );
 }
 
-function PlatformWhereSection() {
-  const { t } = useTranslation();
-  const steps = [t('platform.step1'), t('platform.step2'), t('platform.step3')];
-
-  return (
-    <section id="platform" className="compete-platform mx-auto max-w-7xl px-6 pt-12 md:px-10">
-      <div className="compete-platform__grid">
-        <div className="compete-platform__copy">
-          <div className="flex items-center gap-2">
-            <span className="h-px w-6 bg-[#dc2626]" />
-            <span className="micro text-[10px] text-[#dc2626]">{t('platform.eyebrow')}</span>
-          </div>
-          <h2 className="display mt-2 text-2xl font-bold text-white sm:text-3xl md:text-4xl">{t('platform.title')}</h2>
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-[#b8b8c2] md:text-base">{t('platform.sub')}</p>
-          <ol className="compete-platform__steps">
-            {steps.map((step, index) => (
-              <li key={step}>
-                <b>{String(index + 1).padStart(2, '0')}</b>
-                <span>{step}</span>
-              </li>
-            ))}
-          </ol>
-          <a
-            href="#signup"
-            onClick={(event) => scrollToCompeteSection(event, 'signup')}
-            className="blood-cta mt-6 inline-flex items-center justify-center px-6 py-3.5 text-sm"
-          >
-            {t('platform.cta')}
-          </a>
-        </div>
-        <figure className="compete-platform__visual">
-          <OptimizedImage
-            src="/assets/pictures/btf-arena-terminal.jpg"
-            alt={t('platform.alt')}
-            displayWidth={900}
-            width={1024}
-            height={683}
-            sizes="(min-width: 1024px) 520px, 92vw"
-            className="compete-platform__shot"
-          />
-        </figure>
-      </div>
-    </section>
-  );
-}
-
 function ProcessSection() {
   const { t } = useTranslation();
   const steps = [
@@ -1366,26 +1320,46 @@ function ProcessSection() {
         title={t('process.title')}
         sub={t('process.sub')}
       />
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
-        {steps.map((step, index) => (
-          <motion.article
-            key={step.title}
-            initial={{ opacity: 0, y: 14 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.5, delay: index * 0.08, ease: [0.22, 1, 0.36, 1] }}
-            className="process-step"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="process-icon">
-                <StepIcon type={step.icon} />
+      <div id="platform" className="compete-process__grid mt-6">
+        <div className="compete-process__steps">
+          {steps.map((step, index) => (
+            <motion.article
+              key={step.title}
+              initial={{ opacity: 0, y: 14 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-80px' }}
+              transition={{ duration: 0.5, delay: index * 0.08, ease: [0.22, 1, 0.36, 1] }}
+              className="process-step"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="process-icon">
+                  <StepIcon type={step.icon} />
+                </div>
+                <div className="process-number">{String(index + 1).padStart(2, '0')}</div>
               </div>
-              <div className="process-number">{String(index + 1).padStart(2, '0')}</div>
-            </div>
-            <h3 className="display mt-5 text-xl font-bold text-white">{step.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-[#a1a1aa]">{step.text}</p>
-          </motion.article>
-        ))}
+              <h3 className="display mt-2.5 text-lg font-bold text-white">{step.title}</h3>
+              <p className="mt-1 text-[13px] leading-snug text-[#a1a1aa]">{step.text}</p>
+            </motion.article>
+          ))}
+          <a
+            href="#signup"
+            onClick={(event) => scrollToCompeteSection(event, 'signup')}
+            className="blood-cta inline-flex items-center justify-center px-6 py-3.5 text-sm"
+          >
+            {t('platform.cta')}
+          </a>
+        </div>
+        <figure className="compete-platform__visual">
+          <img
+            src="/assets/pictures/BTF%20arena%20platform.png"
+            alt={t('platform.alt')}
+            width={1535}
+            height={1024}
+            className="compete-platform__shot"
+            loading="lazy"
+            decoding="async"
+          />
+        </figure>
       </div>
     </section>
   );
@@ -1900,8 +1874,7 @@ function ArenaEventCard({
   const canJoin = competition.canJoin ?? competition.status === 'registration';
   const brand = resolveArenaBrand(competition, resolveMediaUrl);
   const accent = brand?.accent ?? '#dc2626';
-  const ninjaBanner = ninjaTraderCupBanner(competition);
-  const banner = ninjaBanner || resolveMediaUrl(competition.bannerImageUrl) || '/assets/pictures/btf-arena-seo.webp';
+  const banner = resolveMediaUrl(competition.bannerImageUrl) || ninjaTraderCupBanner(competition);
   const prize = getPrizeTitle(competition.cashPrize) || t('publicCard.freeEntry');
   const countdown = useCountdown(isLive ? competition.endAt : competition.startAt);
   const breakdown = competition.cashPrize?.breakdown?.slice(0, 3) || [];
@@ -1918,27 +1891,45 @@ function ArenaEventCard({
       initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.06 * (index ?? 0), ease: [0.22, 1, 0.36, 1] }}
-      className={`arena-event-card group relative isolate w-full overflow-hidden rounded-3xl border bg-[#08080b]${ninjaBanner ? ' is-ninja-cup' : ''}`}
+      className="arena-event-card group relative isolate w-full overflow-hidden rounded-[28px] border bg-[#08080b]"
       style={{ borderColor: `${accent}55`, boxShadow: `0 30px 90px -55px ${accent}` }}
     >
-      <img
-        src={encodeURI(banner)}
-        alt=""
-        className={ninjaBanner
-          ? 'pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-[72%] object-cover object-right opacity-90 transition duration-700 group-hover:scale-[1.03] group-hover:opacity-100 md:w-[58%]'
-          : 'pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-full object-contain object-right opacity-45 transition duration-700 group-hover:scale-[1.025] group-hover:opacity-55 md:w-[62%]'}
-        loading="lazy"
-        decoding="async"
-        draggable={false}
-      />
-      <div className={`pointer-events-none absolute inset-0 -z-10 ${ninjaBanner
-        ? 'bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.96)_40%,rgba(8,8,11,.55)_70%,rgba(8,8,11,.12)_100%)]'
-        : 'bg-[linear-gradient(90deg,#08080b_0%,rgba(8,8,11,.98)_38%,rgba(8,8,11,.74)_67%,rgba(8,8,11,.35)_100%)]'}`}
-      />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-[#08080b] to-transparent" />
-      <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+      {banner ? (
+        <div className="relative border-b border-white/10 bg-black">
+          {brand?.bannerHref ? (
+            <a href={brand.bannerHref} target="_blank" rel="noopener noreferrer" className="block">
+              <img
+                src={encodeURI(banner)}
+                alt={competition.title}
+                className="block aspect-[16/4.5] w-full object-contain object-center"
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+              />
+            </a>
+          ) : (
+            <img
+              src={encodeURI(banner)}
+              alt={competition.title}
+              className="block aspect-[16/4.5] w-full object-contain object-center"
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+            />
+          )}
+        </div>
+      ) : (
+        <img
+          src="/assets/pictures/btf-arena-seo.webp"
+          alt=""
+          className="pointer-events-none absolute inset-y-0 right-0 -z-20 h-full w-full object-contain object-right opacity-30 md:w-[58%]"
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+        />
+      )}
 
-      <div className="relative p-5 sm:p-7 md:p-8">
+      <div className="relative p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span
             className="micro inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[9px] text-white"
@@ -1957,36 +1948,37 @@ function ArenaEventCard({
           )}
         </div>
 
-        <div className="mt-7 grid items-end gap-7 md:grid-cols-[minmax(0,1.2fr)_minmax(210px,.8fr)]">
+        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(230px,.85fr)] lg:items-stretch">
           <div className="min-w-0">
-            <h3 className="display max-w-2xl text-3xl font-black uppercase leading-[0.92] text-white sm:text-4xl md:text-5xl">
+            <h3 className="display max-w-2xl text-3xl font-black uppercase leading-[0.95] text-white sm:text-4xl">
               {competition.title}
             </h3>
-            <p className="mt-3 text-sm text-[#a1a1aa]">
+            <p className="mt-2 text-xs text-[#8f8b93]">
               {competition.executionMode === 'paper' ? t('publicCard.paperCompetition') : t('publicCard.realCompetition')}
             </p>
 
-            <div className="mt-6 flex flex-wrap gap-x-6 gap-y-3 text-sm">
-              <span className="inline-flex items-center gap-2 text-[#d4d4d8]">
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <span className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 text-xs text-[#d4d4d8]">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
                   <circle cx="9" cy="8" r="4" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M17 11a4 4 0 0 1 4.5 4v5" />
                 </svg>
                 <b className="font-semibold text-white">{competition.participants ?? 0}</b> {t('publicCard.registeredTraders')}
               </span>
-              <span className="inline-flex items-center gap-2 text-[#d4d4d8]">
+              <span className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 text-xs text-[#d4d4d8]">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
                   <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" />
                 </svg>
-                {fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}
+                <span className="truncate">{fmtDateShort(competition.startAt)} → {fmtDateShort(competition.endAt)}</span>
               </span>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-black/40 p-5 backdrop-blur-md">
-            <div className="micro text-[9px] text-[#f5b300]">{t('publicCard.prizeToWin')}</div>
-            <div className="display mt-1 text-4xl font-black uppercase leading-none text-white sm:text-5xl">{prize}</div>
+          <div className="grid overflow-hidden rounded-2xl border border-amber-400/15 bg-[linear-gradient(135deg,rgba(245,179,0,.09),rgba(0,0,0,.35))] sm:grid-cols-2 lg:grid-cols-1">
+            <div className="p-4">
+              <div className="micro text-[9px] text-[#f5b300]">{t('publicCard.prizeToWin')}</div>
+              <div className="display mt-1 text-2xl font-black uppercase leading-[0.95] text-white sm:text-3xl">{prize}</div>
             {breakdown.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-[#a1a1aa]">
+                <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[9px] text-[#8f8b93]">
                 {breakdown.map((item) => (
                   <span key={item.rank}>
                     {t('publicCard.place', { rank: item.rank })} <b className="text-[#ffe7a3]">{formatPrizeAmount(item.amount, competition.cashPrize?.currency || 'USD')}</b>
@@ -1994,39 +1986,48 @@ function ArenaEventCard({
                 ))}
               </div>
             )}
+            </div>
             {!isEnded && (
-              <div className="mt-5 border-t border-white/10 pt-4">
+              <div className="border-t border-white/[0.07] p-4 sm:border-l sm:border-t-0 lg:border-l-0 lg:border-t">
                 <div className="micro text-[8px] text-[#77717a]">
                   {isLive ? t('publicCard.endsIn') : t('publicCard.startsIn')}
                 </div>
-                <div className="num mt-1 text-2xl font-black tabular-nums text-white sm:text-3xl">{countdown}</div>
+                <div className="num mt-1 text-xl font-black tabular-nums text-white sm:text-2xl">{countdown}</div>
                 {!isLive && <div className="mt-1 text-[10px] text-[#77717a]">{fmtDateTime(competition.startAt)}</div>}
               </div>
             )}
           </div>
         </div>
 
-        <div className="mt-7 flex flex-col gap-4 border-t border-white/10 pt-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#8b8490]">
-            <span>{competition.executionMode === 'paper' ? t('mode.paper') : t('mode.real')}</span>
-            <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
-            <span>{t('publicCard.freeEntry')}</span>
-            {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
-              <>
-                <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
-                <span>{t('publicCard.dailyDrawdown')} {competition.dailyDrawdownPercent}%</span>
-              </>
-            )}
+        <div className="mt-5 flex flex-col gap-4 border-t border-white/[0.07] pt-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#8b8490]">
+              <span>{competition.executionMode === 'paper' ? t('mode.paper') : t('mode.real')}</span>
+              <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
+              <span>{t('publicCard.freeEntry')}</span>
+              {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+                <>
+                  <i className="h-1 w-1 rounded-full bg-[#4f4a52]" />
+                  <span>{t('publicCard.dailyDrawdown')} {competition.dailyDrawdownPercent}%</span>
+                </>
+              )}
+            </div>
+            <Link
+              to="/reglement"
+              className="w-fit text-[10px] font-semibold text-[#77717a] underline decoration-white/20 underline-offset-4 transition-colors hover:text-white"
+            >
+              {t('publicCard.viewRules')}
+            </Link>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
             {joined ? (
               canTrade && onTrade ? (
-                <button type="button" onClick={onTrade} disabled={busy} className="blood-cta min-w-48 px-6 py-3.5 text-sm">
+                <button type="button" onClick={onTrade} disabled={busy} className="blood-cta min-w-44 px-5 py-3 text-xs">
                   {busy ? '...' : t('myCard.trade')}
                 </button>
               ) : (
-                <span className="inline-flex min-w-48 items-center justify-center gap-2 rounded-xl border border-[#10b981]/35 bg-[#10b981]/12 px-6 py-3.5 text-xs font-black uppercase tracking-[0.13em] text-[#6ee7b7]">
+                <span className="inline-flex min-w-44 items-center justify-center gap-2 rounded-xl border border-[#10b981]/35 bg-[#10b981]/12 px-5 py-3 text-[11px] font-black uppercase tracking-[0.13em] text-[#6ee7b7]">
                   ✓ {t('publicCard.youAreJoined')}
                 </span>
               )
@@ -2035,17 +2036,17 @@ function ArenaEventCard({
                 type="button"
                 onClick={onJoin}
                 disabled={isEnded || !canJoin}
-                className="blood-cta min-w-52 px-7 py-3.5 text-sm"
+                className="blood-cta min-w-48 px-6 py-3 text-xs"
                 style={!isEnded && canJoin ? { background: accent, boxShadow: `0 16px 42px -20px ${accent}` } : undefined}
               >
                 {isEnded ? t('publicCard.arenaClosed') : !canJoin ? t('publicCard.joinClosed') : t('publicCard.joinArena')}
               </button>
             )}
             <Link
-              to={joined ? `/compete/leaderboard/${competition.id}` : '/reglement'}
-              className="ghost-cta flex items-center justify-center px-5 py-3.5 text-xs uppercase tracking-[0.12em]"
+              to={`/compete/leaderboard/${competition.id}`}
+              className="ghost-cta flex items-center justify-center px-5 py-3 text-[11px] uppercase tracking-[0.12em]"
             >
-              {joined ? t('publicCard.viewArena') : t('publicCard.viewRules')} →
+              {t('publicCard.viewArena')} →
             </Link>
           </div>
         </div>
