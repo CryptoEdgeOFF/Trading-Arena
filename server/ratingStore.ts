@@ -259,6 +259,53 @@ export async function getUserRating(userId: string): Promise<PlayerRating> {
   };
 }
 
+type RatingSnapshot = {
+  points: number;
+  division: RatingDivision;
+  worldRank: number;
+};
+
+let snapshotsCache: { at: number; map: Map<string, RatingSnapshot> } | null = null;
+const SNAPSHOTS_TTL_MS = 30_000;
+
+async function listAllRatingTotals(): Promise<Array<{ userId: string; points: number }>> {
+  const db = getPool();
+  if (!db) {
+    return [...memoryTotals().entries()]
+      .map(([userId, points]) => ({ userId, points }))
+      .sort((a, b) => b.points - a.points || a.userId.localeCompare(b.userId));
+  }
+  await ensureTable();
+  const result = await db.query<{ user_id: string; total: string }>(`
+    select user_id, greatest(0, sum(points))::bigint as total
+    from comp_rating_ledger
+    group by user_id
+    order by total desc, user_id asc
+  `);
+  return result.rows.map((row) => ({ userId: row.user_id, points: Number(row.total) }));
+}
+
+/**
+ * Rang mondial + division de tous les joueurs notés, mis en cache 30 s pour
+ * pouvoir décorer le classement d'arène sans interroger Postgres à chaque poll.
+ */
+export async function getRatingSnapshots(): Promise<Map<string, RatingSnapshot>> {
+  if (snapshotsCache && Date.now() - snapshotsCache.at < SNAPSHOTS_TTL_MS) {
+    return snapshotsCache.map;
+  }
+  const totals = await listAllRatingTotals();
+  const map = new Map<string, RatingSnapshot>();
+  totals.forEach((row, index) => {
+    map.set(row.userId, {
+      points: row.points,
+      division: divisionForPoints(row.points).division,
+      worldRank: index + 1,
+    });
+  });
+  snapshotsCache = { at: Date.now(), map };
+  return map;
+}
+
 export async function getRatingLeaderboard(limit = 100): Promise<Array<{
   userId: string;
   points: number;
