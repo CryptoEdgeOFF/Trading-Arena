@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import AdvancedChart from './AdvancedChart';
 import type { MarketTicker, Player, Position, Trade } from '../stores/useGameStore';
-import { formatPnl } from '../utils/formatters';
+import { formatPnl, historyTradePnl } from '../utils/formatters';
 import { fmtMarketPrice } from '../utils/positionSizing';
 import { ADMIN_BASE } from '../lib/adminPath';
 
@@ -445,9 +445,7 @@ export default function PlayerTerminalReview() {
                               </span>
                               <span>{actionLabel(trade.action)}</span>
                               <span>{formatTradeClock(trade.time)}</span>
-                              {trade.action === 'close' && (
-                                <span style={{ color: trade.pnl >= 0 ? '#15c990' : '#f43f6e' }}>{formatPnl(trade.pnl)}</span>
-                              )}
+                              <span style={{ color: historyTradePnl(trade) >= 0 ? '#15c990' : '#f43f6e' }}>{formatPnl(historyTradePnl(trade))}</span>
                             </span>
                           </span>
                         </button>
@@ -577,8 +575,8 @@ export default function PlayerTerminalReview() {
                               <td className="px-3 py-2">{fmt(trade.price, 1)}</td>
                               <td className="px-3 py-2">{trade.size.toFixed(5)}</td>
                               <td className="px-3 py-2">{fmt(trade.fee, 4)}</td>
-                              <td className="px-3 py-2" style={{ color: trade.pnl >= 0 ? '#15c990' : '#f43f6e' }}>
-                                {trade.action === 'close' ? formatPnl(trade.pnl) : '–'}
+                              <td className="px-3 py-2" style={{ color: historyTradePnl(trade) >= 0 ? '#15c990' : '#f43f6e' }}>
+                                {formatPnl(historyTradePnl(trade))}
                               </td>
                             </tr>
                           );

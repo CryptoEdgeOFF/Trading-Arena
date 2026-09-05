@@ -342,6 +342,26 @@ function hasPrize(prize: CashPrize | null | undefined): prize is CashPrize {
   );
 }
 
+function prizeItemKey(item: CashPrizeItem): string {
+  return `${item.title || ''}\n${item.imageUrl || ''}\n${item.description || ''}`;
+}
+
+function groupPrizeItems(items: CashPrizeItem[]): Array<{ item: CashPrizeItem; ranks: number[] }> {
+  const ranked = items
+    .filter((item) => Number(item.rank) > 0)
+    .sort((a, b) => Number(a.rank) - Number(b.rank));
+  const groups: Array<{ item: CashPrizeItem; ranks: number[] }> = [];
+  for (const item of ranked) {
+    const last = groups[groups.length - 1];
+    if (last && prizeItemKey(last.item) === prizeItemKey(item)) {
+      if (item.rank) last.ranks.push(item.rank);
+    } else {
+      groups.push({ item, ranks: item.rank ? [item.rank] : [] });
+    }
+  }
+  return groups;
+}
+
 function PrizePreview({ prize, compact = false }: { prize: CashPrize | null | undefined; compact?: boolean }) {
   const { t } = useTranslation();
   if (!hasPrize(prize)) return null;
@@ -1877,7 +1897,37 @@ function ArenaEventCard({
   const banner = resolveMediaUrl(competition.bannerImageUrl) || ninjaTraderCupBanner(competition);
   const prize = getPrizeTitle(competition.cashPrize) || t('publicCard.freeEntry');
   const countdown = useCountdown(isLive ? competition.endAt : competition.startAt);
-  const breakdown = competition.cashPrize?.breakdown?.slice(0, 3) || [];
+  const prizeItems = competition.cashPrize?.items || [];
+  const prizeGroups = groupPrizeItems(prizeItems);
+  const breakdown = prizeItems.length === 0 ? competition.cashPrize?.breakdown || [] : [];
+  const prizeRankLabel = (rank: number) => (
+    rank === 1
+      ? t('leaderboard.rankTier1')
+      : rank === 2
+        ? t('leaderboard.rankTier2')
+        : rank === 3
+          ? t('leaderboard.rankTier3')
+          : t('leaderboard.rankTierN', { rank })
+  );
+  const prizeRows = breakdown.length > 0
+    ? breakdown.map((item) => ({
+        key: `cash-${item.rank}`,
+        rank: prizeRankLabel(item.rank),
+        label: formatPrizeAmount(item.amount, competition.cashPrize?.currency || 'USD'),
+      }))
+    : prizeGroups.map((group, groupIndex) => {
+        const first = group.ranks[0] || 0;
+        const last = group.ranks[group.ranks.length - 1] || first;
+        return {
+          key: `${prizeItemKey(group.item)}-${groupIndex}`,
+          rank: group.ranks.length > 1 ? `${first}–${last}` : prizeRankLabel(first),
+          label: group.item.title || t('prize.rewardAlt'),
+        };
+      });
+  const prizeCount = prizeItems.length || breakdown.length;
+  const prizeParts = prize.match(/^([\d\s.,\u00a0]+(?:\$|€|USD|EUR))\s*(.*)$/i);
+  const prizeTotal = prizeParts?.[1]?.trim() || prize;
+  const prizeSubtitle = prizeParts?.[2]?.trim() || '';
   const statusLabel = isLive
     ? t('publicCard.liveNow')
     : competition.status === 'registration' && canJoin
@@ -1948,7 +1998,7 @@ function ArenaEventCard({
           )}
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(230px,.85fr)] lg:items-stretch">
+        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(230px,.85fr)] lg:items-start">
           <div className="min-w-0">
             <h3 className="display max-w-2xl text-3xl font-black uppercase leading-[0.95] text-white sm:text-4xl">
               {competition.title}
@@ -1957,7 +2007,16 @@ function ArenaEventCard({
               {competition.executionMode === 'paper' ? t('publicCard.paperCompetition') : t('publicCard.realCompetition')}
             </p>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {!isEnded && (
+              <div className="mt-4 w-fit rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5">
+                <div className="micro text-[8px] text-[#77717a]">
+                  {isLive ? t('publicCard.endsIn') : t('publicCard.startsIn')}
+                </div>
+                <div className="num mt-1 text-xl font-black tabular-nums text-white">{countdown}</div>
+                {!isLive && <div className="mt-1 text-[10px] text-[#77717a]">{fmtDateTime(competition.startAt)}</div>}
+              </div>
+            )}
+            <div className="mt-3 grid gap-2">
               <span className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 text-xs text-[#d4d4d8]">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#ef5267]" aria-hidden="true">
                   <circle cx="9" cy="8" r="4" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0M17 11a4 4 0 0 1 4.5 4v5" />
@@ -1973,29 +2032,27 @@ function ArenaEventCard({
             </div>
           </div>
 
-          <div className="grid overflow-hidden rounded-2xl border border-amber-400/15 bg-[linear-gradient(135deg,rgba(245,179,0,.09),rgba(0,0,0,.35))] sm:grid-cols-2 lg:grid-cols-1">
+          <div className="overflow-hidden rounded-2xl border border-amber-400/15 bg-[linear-gradient(135deg,rgba(245,179,0,.09),rgba(0,0,0,.35))]">
             <div className="p-4">
               <div className="micro text-[9px] text-[#f5b300]">{t('publicCard.prizeToWin')}</div>
-              <div className="display mt-1 text-2xl font-black uppercase leading-[0.95] text-white sm:text-3xl">{prize}</div>
-            {breakdown.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[9px] text-[#8f8b93]">
-                {breakdown.map((item) => (
-                  <span key={item.rank}>
-                    {t('publicCard.place', { rank: item.rank })} <b className="text-[#ffe7a3]">{formatPrizeAmount(item.amount, competition.cashPrize?.currency || 'USD')}</b>
-                  </span>
-                ))}
+              <div className="display mt-1 text-2xl font-black uppercase leading-[0.95] text-white sm:text-3xl">{prizeTotal}</div>
+              {prizeSubtitle && <div className="mt-1 text-[11px] font-semibold text-amber-100/65">{prizeSubtitle}</div>}
+              {prizeRows.length > 0 && (
+                <div className="mt-3 overflow-hidden rounded-xl border border-amber-400/10 bg-black/20">
+                  {prizeRows.map((item) => (
+                    <div key={item.key} className="grid grid-cols-[44px_minmax(0,1fr)] gap-2 border-b border-white/[0.06] px-3 py-2 last:border-b-0">
+                      <span className="num text-[10px] font-black text-[#f5b300]">{item.rank}</span>
+                      <span className="truncate text-[10px] font-semibold text-white" title={item.label}>{item.label}</span>
+                    </div>
+                  ))}
+                  {prizeCount > 0 && (
+                    <div className="px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-200/50">
+                      {t('leaderboard.lotsTotal', { count: prizeCount })}
+                    </div>
+                  )}
               </div>
-            )}
+              )}
             </div>
-            {!isEnded && (
-              <div className="border-t border-white/[0.07] p-4 sm:border-l sm:border-t-0 lg:border-l-0 lg:border-t">
-                <div className="micro text-[8px] text-[#77717a]">
-                  {isLive ? t('publicCard.endsIn') : t('publicCard.startsIn')}
-                </div>
-                <div className="num mt-1 text-xl font-black tabular-nums text-white sm:text-2xl">{countdown}</div>
-                {!isLive && <div className="mt-1 text-[10px] text-[#77717a]">{fmtDateTime(competition.startAt)}</div>}
-              </div>
-            )}
           </div>
         </div>
 
