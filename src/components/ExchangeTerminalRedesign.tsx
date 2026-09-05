@@ -3240,15 +3240,28 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
     if (data?.competition !== undefined) mergeCompetitionFromMe(data.competition);
   }, [liveMarket, meta.startingBalance, reconcilePlayerWithPending]);
 
+  const liveSubscribeKey = [
+    selectedPair,
+    ...(livePlayer?.openPositions || []).map((position) => position.pair),
+    ...(livePlayer?.openOrders || []).map((order) => order.pair),
+  ].filter(Boolean).sort().join('|');
+  const liveSubscribePairs = useMemo(
+    () => (liveSubscribeKey ? liveSubscribeKey.split('|') : []),
+    [liveSubscribeKey],
+  );
+
   const applyMarketTick = useCallback((data: {
-    ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number }>;
+    ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number; change24h?: number | null }>;
+    source?: 'tick' | 'watch';
   }) => {
     const ticks = data?.ticks;
     if (!Array.isArray(ticks) || ticks.length === 0) return;
 
-    for (const tick of ticks) {
-      if (!tick?.pair || !Number.isFinite(tick.markPrice) || tick.markPrice <= 0) continue;
-      chartLiveTickRef.current?.(tick.pair, tick.markPrice, tick.updatedAt || Date.now());
+    if (data.source !== 'watch') {
+      for (const tick of ticks) {
+        if (!tick?.pair || !Number.isFinite(tick.markPrice) || tick.markPrice <= 0) continue;
+        chartLiveTickRef.current?.(tick.pair, tick.markPrice, tick.updatedAt || Date.now());
+      }
     }
 
     setLiveMarket((prev) => {
@@ -3263,7 +3276,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
           markPrice: tick.markPrice,
           bidPrice: tick.bidPrice ?? tick.markPrice,
           askPrice: tick.askPrice ?? tick.markPrice,
-          change24h: existing?.change24h ?? null,
+          change24h: tick.change24h ?? existing?.change24h ?? null,
           spreadBps: existing?.spreadBps ?? 0,
           updatedAt: tick.updatedAt || Date.now(),
         };
@@ -3329,6 +3342,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
     onPaperUpdate: applyPaperUpdate,
     onPaperPatch: applyPaperPatch,
     onMarketTick: applyMarketTick,
+    subscribePairs: liveSubscribePairs,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
     onOpen: () => { paperWsConnectedRef.current = true; },

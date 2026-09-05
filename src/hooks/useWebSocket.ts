@@ -9,9 +9,10 @@ export function useWebSocket(
     arenaId?: string | null;
     onPaperUpdate?: (payload: any) => void;
     onPaperPatch?: (payload: any) => void;
-    onMarketTick?: (payload: { ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number }> }) => void;
+    onMarketTick?: (payload: { ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number; change24h?: number | null }>; source?: 'tick' | 'watch' }) => void;
     onArenaInit?: (payload: any) => void;
     onArenaPatch?: (payload: any) => void;
+    subscribePairs?: string[];
     onOpen?: () => void;
     onClose?: () => void;
   } = {},
@@ -26,6 +27,7 @@ export function useWebSocket(
   const onArenaPatchRef = useRef(options.onArenaPatch);
   const onOpenRef = useRef(options.onOpen);
   const onCloseRef = useRef(options.onClose);
+  const subscribePairsRef = useRef(options.subscribePairs || []);
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
@@ -55,6 +57,14 @@ export function useWebSocket(
     onCloseRef.current = options.onClose;
   }, [options.onClose]);
 
+  const subscribeKey = (options.subscribePairs || []).join('|');
+  useEffect(() => {
+    subscribePairsRef.current = options.subscribePairs || [];
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }));
+  }, [subscribeKey]);
+
   useEffect(() => {
     if (!enabled) return;
     let closedByEffect = false;
@@ -68,7 +78,12 @@ export function useWebSocket(
       const ws = new WebSocket(getWebSocketUrl(path));
       wsRef.current = ws;
 
-      ws.onopen = () => onOpenRef.current?.();
+      ws.onopen = () => {
+        onOpenRef.current?.();
+        if (subscribePairsRef.current.length > 0) {
+          ws.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }));
+        }
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -85,6 +100,8 @@ export function useWebSocket(
             onPaperPatchRef.current?.(msg.data);
           } else if (msg.type === 'market:tick') {
             onMarketTickRef.current?.(msg.data);
+          } else if (msg.type === 'market:watch') {
+            onMarketTickRef.current?.({ ticks: msg.data?.quotes || [], source: 'watch' });
           } else if (msg.type === 'arena:init') {
             // Full leaderboard snapshot for the trader's competition shard.
             onArenaInitRef.current?.(msg.data);
