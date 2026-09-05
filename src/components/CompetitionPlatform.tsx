@@ -1029,8 +1029,8 @@ export default function CompetitionPlatform() {
           }))}
           joinableArenas={joinablePublicCompetitions
             .filter((competition) => (
-              competition.status !== 'live'
-              && (competition.status === 'registration' || competition.canJoin === true)
+              competition.status === 'registration'
+              || competition.canJoin === true
             ))
             .sort((a, b) => a.startAt - b.startAt)
             .map((competition) => ({

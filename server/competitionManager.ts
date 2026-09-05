@@ -586,7 +586,7 @@ function normalizeSocialUrl(value: unknown): string | undefined {
   return raw;
 }
 
-type CompetitionTiming = Pick<Competition, 'startAt' | 'endAt' | 'registrationEndsAt'>;
+type CompetitionTiming = Pick<Competition, 'startAt' | 'endAt' | 'registrationEndsAt' | 'title'>;
 
 function getRegistrationEndsAt(competition: CompetitionTiming): number {
   const raw = competition.registrationEndsAt;
@@ -604,7 +604,11 @@ function inferCompetitionStatus(competition: CompetitionTiming, now = Date.now()
 
 function canJoinCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
   if (now > competition.endAt) return false;
-  return now < getRegistrationEndsAt(competition);
+  if (now < getRegistrationEndsAt(competition)) return true;
+  // Staging test arenas stay joinable while live so a local front can see them.
+  return process.env.MOBILE_STAGING_TEST_MODE === 'true'
+    && /^(STAGING|MOBILE STAGING)\b/i.test(competition.title)
+    && now >= competition.startAt;
 }
 
 function canTradeCompetition(competition: CompetitionTiming, now = Date.now()): boolean {
