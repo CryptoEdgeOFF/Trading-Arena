@@ -1,5 +1,12 @@
-body.mobile-web-active {
+html:has(body.mobile-web-active),
+body.mobile-web-active,
+body.mobile-web-active #root {
+  height: var(--mobile-web-height, 100svh);
+  max-height: var(--mobile-web-height, 100svh);
   overflow: hidden;
+}
+
+body.mobile-web-active {
   background: #050507;
 }
 
@@ -14,7 +21,7 @@ body.mobile-web-active {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100dvh;
+  height: var(--mobile-web-height, 100svh);
   max-width: 540px;
   margin: 0 auto;
   overflow: hidden;

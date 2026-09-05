@@ -62,7 +62,30 @@ export default function MobileWebShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.body.classList.add('mobile-web-active');
-    return () => document.body.classList.remove('mobile-web-active');
+    const root = document.documentElement;
+    const syncHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      if (!Number.isFinite(height) || height <= 0) return;
+      root.style.setProperty('--mobile-web-height', `${Math.round(height)}px`);
+    };
+    syncHeight();
+    const frame = window.requestAnimationFrame(syncHeight);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener('resize', syncHeight);
+    viewport?.addEventListener('scroll', syncHeight);
+    window.addEventListener('resize', syncHeight);
+    window.addEventListener('orientationchange', syncHeight);
+    window.addEventListener('pageshow', syncHeight);
+    return () => {
+      document.body.classList.remove('mobile-web-active');
+      root.style.removeProperty('--mobile-web-height');
+      window.cancelAnimationFrame(frame);
+      viewport?.removeEventListener('resize', syncHeight);
+      viewport?.removeEventListener('scroll', syncHeight);
+      window.removeEventListener('resize', syncHeight);
+      window.removeEventListener('orientationchange', syncHeight);
+      window.removeEventListener('pageshow', syncHeight);
+    };
   }, []);
 
   const items: Array<{ id: NavId; to: string; label: string }> = [
