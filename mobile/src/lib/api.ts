@@ -837,18 +837,21 @@ export type PnlMoment = {
   userId: string
 }
 
-export async function getPnlHistory(competitionId: string): Promise<{
+export async function getPnlHistory(competitionId: string, after = 0): Promise<{
   samples: PnlHistorySample[]
   traders: PnlHistoryTrader[]
   moments: PnlMoment[]
+  cursor: number
 }> {
-  const data = await apiFetch<{ samples?: PnlHistorySample[]; traders?: PnlHistoryTrader[]; moments?: PnlMoment[] }>(
-    `/api/competition/leaderboard/${encodeURIComponent(competitionId)}/pnl-history`,
+  const query = after > 0 ? `?after=${encodeURIComponent(after)}` : ''
+  const data = await apiFetch<{ samples?: PnlHistorySample[]; traders?: PnlHistoryTrader[]; moments?: PnlMoment[]; cursor?: number }>(
+    `/api/competition/leaderboard/${encodeURIComponent(competitionId)}/pnl-history${query}`,
   )
   return {
     samples: Array.isArray(data.samples) ? data.samples : [],
     traders: Array.isArray(data.traders) ? data.traders : [],
     moments: Array.isArray(data.moments) ? data.moments : [],
+    cursor: Number(data.cursor) || after,
   }
 }
 
