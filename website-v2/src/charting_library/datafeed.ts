@@ -344,6 +344,10 @@ export class BtfDatafeed implements IBasicDataFeed {
     this.subscriptions.delete(listenerGuid);
   }
 
+  getServerTime(callback: (time: number) => void): void {
+    callback(Math.floor(Date.now() / 1000));
+  }
+
   pushTick(pair: string, price: number, timestampMs: number = Date.now()): void {
     if (!Number.isFinite(price) || price <= 0) return;
     // Mémorise le dernier tick pour pouvoir le rejouer si une subscription

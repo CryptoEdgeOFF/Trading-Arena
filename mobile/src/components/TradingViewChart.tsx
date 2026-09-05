@@ -17,6 +17,7 @@ import {
   type Position,
 } from '../lib/api'
 import { chartTradeMarkers, timeSecToPlotX } from '../lib/chartTradeMarkers'
+import { createTvSettingsAdapter, hasSavedTvChartProperties, loadTvChartLayout, persistTvChartLayout } from '../lib/tvChartSettings'
 
 type TvBar = {
   time: number
@@ -37,6 +38,7 @@ type Subscription = {
 type TvWidget = {
   onChartReady: (callback: () => void) => void
   applyOverrides?: (overrides: Record<string, unknown>) => void
+  save?: (callback: (state: object) => void, options?: { includeDrawings?: boolean }) => void
   activeChart: () => {
     setSymbol: (symbol: string, callback?: () => void) => void
     setResolution: (resolution: string, callback?: () => void) => void
@@ -69,7 +71,7 @@ type TvWidget = {
     onSymbolChanged?: () => { subscribe: (ctx: unknown, callback: () => void) => void }
     symbol?: () => string
   }
-  subscribe?: (event: string, callback: (id: string | number, eventType: string) => void) => void
+  subscribe?: (event: string, callback: (...args: unknown[]) => void) => void
   remove: () => void
 }
 
@@ -534,6 +536,7 @@ export function TradingViewChart({
   onPreviewEntryChange,
   onPreviewRiskChange,
   toolbarLeading,
+  settingsUserId = null,
 }: {
   pair: string
   pairs: string[]
@@ -557,6 +560,7 @@ export function TradingViewChart({
   onPreviewEntryChange: (price: number) => void
   onPreviewRiskChange: (patch: { stopLoss?: number | null; takeProfit?: number | null }) => void
   toolbarLeading?: ReactNode
+  settingsUserId?: string | null
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const paneRef = useRef<HTMLDivElement | null>(null)
@@ -642,6 +646,9 @@ export function TradingViewChart({
     void fetchInitialCandles(initial.pair, 5).catch(() => undefined)
     void loadTradingView().then(() => {
       if (disposed || !window.TradingView?.widget) return
+      const settingsAdapter = createTvSettingsAdapter(settingsUserId)
+      const keepDefaultCandleColors = !hasSavedTvChartProperties(settingsAdapter.initialSettings)
+      const savedLayout = loadTvChartLayout(settingsUserId)
       const widget = new window.TradingView.widget({
         container: containerId.current,
         library_path: '/charting_library/',
@@ -655,6 +662,9 @@ export function TradingViewChart({
         fullscreen: false,
         toolbar_bg: '#0b0a0d',
         custom_css_url: '',
+        settings_adapter: settingsAdapter,
+        saved_data: savedLayout || undefined,
+        auto_save_delay: 3,
         enabled_features: [
           'show_symbol_logos',
         ],
@@ -668,6 +678,7 @@ export function TradingViewChart({
           'timeframes_toolbar',
           'go_to_date',
           'popup_hints',
+          'use_localstorage_for_settings',
         ],
         handleScroll: {
           mouseWheel: true,
@@ -681,15 +692,20 @@ export function TradingViewChart({
           'paneProperties.vertGridProperties.color': 'rgba(255,255,255,0.04)',
           'paneProperties.horzGridProperties.color': 'rgba(255,255,255,0.04)',
           'scalesProperties.textColor': '#8d8791',
-          'mainSeriesProperties.candleStyle.upColor': '#38df8a',
-          'mainSeriesProperties.candleStyle.downColor': '#ff5066',
-          'mainSeriesProperties.candleStyle.borderUpColor': '#38df8a',
-          'mainSeriesProperties.candleStyle.borderDownColor': '#ff5066',
-          'mainSeriesProperties.candleStyle.wickUpColor': '#38df8a',
-          'mainSeriesProperties.candleStyle.wickDownColor': '#ff5066',
+          ...(keepDefaultCandleColors
+            ? {
+                'mainSeriesProperties.candleStyle.upColor': '#38df8a',
+                'mainSeriesProperties.candleStyle.downColor': '#ff5066',
+                'mainSeriesProperties.candleStyle.borderUpColor': '#38df8a',
+                'mainSeriesProperties.candleStyle.borderDownColor': '#ff5066',
+                'mainSeriesProperties.candleStyle.wickUpColor': '#38df8a',
+                'mainSeriesProperties.candleStyle.wickDownColor': '#ff5066',
+              }
+            : {}),
           'mainSeriesProperties.bidAsk.visible': false,
           'mainSeriesProperties.highLowAvgPrice.highLowPriceLinesVisible': false,
           'mainSeriesProperties.highLowAvgPrice.averagePriceLineVisible': false,
+          'mainSeriesProperties.showCountdown': true,
         },
       })
       widgetRef.current = widget
@@ -700,23 +716,42 @@ export function TradingViewChart({
           'mainSeriesProperties.highLowAvgPrice.highLowPriceLinesVisible': false,
           'mainSeriesProperties.highLowAvgPrice.averagePriceLineVisible': false,
         })
-        setChartReady(true)
         const chart = widget.activeChart()
+        let suppressSymbolSync = true
         chart.onSymbolChanged?.().subscribe(null, () => {
+          if (suppressSymbolSync) return
           const next = chart.symbol?.()
           const current = propsRef.current
           if (next && next !== pairRef.current && current.pairs.includes(next)) current.onPairChange(next)
         })
+        const finishReady = () => {
+          if (disposed) return
+          suppressSymbolSync = false
+          setChartReady(true)
+        }
+        try {
+          if (chart.symbol?.() !== initial.pair) {
+            chart.setSymbol(initial.pair, finishReady)
+          } else {
+            finishReady()
+          }
+        } catch {
+          finishReady()
+        }
         widget.subscribe?.('drawing_event', (id, eventType) => {
           if (eventType !== 'points_changed' && eventType !== 'move') return
-          const handler = fallbackHandlers.get(id)
+          const shapeId = id as string | number
+          const handler = fallbackHandlers.get(shapeId)
           if (!handler) return
-          const previous = fallbackTimers.get(id)
+          const previous = fallbackTimers.get(shapeId)
           if (previous) clearTimeout(previous)
-          fallbackTimers.set(id, setTimeout(() => {
-            fallbackTimers.delete(id)
+          fallbackTimers.set(shapeId, setTimeout(() => {
+            fallbackTimers.delete(shapeId)
             handler()
           }, 180))
+        })
+        widget.subscribe?.('onAutoSaveNeeded', () => {
+          if (widget.save) persistTvChartLayout(widget, settingsUserId)
         })
       })
     })
@@ -730,6 +765,7 @@ export function TradingViewChart({
       fallbackHandlers.clear()
       for (const timer of fallbackTimers.values()) clearTimeout(timer)
       fallbackTimers.clear()
+      if (widgetRef.current?.save) persistTvChartLayout(widgetRef.current, settingsUserId)
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeedRef.current = null
@@ -906,21 +942,10 @@ export function TradingViewChart({
 
   useEffect(() => {
     if (!chartReady) return
-    const chart = widgetRef.current?.activeChart()
     for (const line of managedLinesRef.current) {
       try { line.remove() } catch { /* déjà supprimée */ }
     }
     managedLinesRef.current = []
-    try {
-      const shapes = (chart as { getAllShapes?: () => Array<{ id: string | number; name?: string }> })?.getAllShapes?.() || []
-      for (const shape of shapes) {
-        if (shape.name === 'horizontal_line' || shape.name === 'arrow_up' || shape.name === 'arrow_down') {
-          try { chart?.removeEntity?.(shape.id) } catch { /* déjà supprimée */ }
-        }
-      }
-    } catch {
-      // Pas bloquant si l'API dessins n'est pas dispo.
-    }
   }, [candlesReady, chartReady, pair, tradingLinesSignature])
 
   const fillMarkers = useMemo(

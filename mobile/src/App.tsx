@@ -1039,6 +1039,7 @@ function App() {
             token && dashboard?.user ? (
               <TradingTerminal accountToken={token} competitions={dashboard.myCompetitions}
                 initialCompetitionId={tradeCompetitionId}
+                settingsUserId={dashboard.user.id}
                 onOpenLeaderboard={(id) => openLeaderboard(id, 'trade')} />
             ) : (
               <div className="empty-state empty-state--feature">

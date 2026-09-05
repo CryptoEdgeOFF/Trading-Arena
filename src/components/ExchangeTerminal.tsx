@@ -1642,6 +1642,7 @@ function ChartArea({
   isMobile = false,
   chartLiveTickRef,
   onPairMenuOpenChange,
+  settingsUserId = null,
 }: {
   pair: string;
   pairs: string[];
@@ -1675,6 +1676,7 @@ function ChartArea({
   isMobile?: boolean;
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
   onPairMenuOpenChange?: (open: boolean) => void;
+  settingsUserId?: string | null;
 }) {
   const positions = player?.openPositions ?? [];
   const pendingOrders = (player?.openOrders ?? [])
@@ -1744,6 +1746,7 @@ function ChartArea({
           onClosePosition={(positionId) => onClosePosition(positionId)}
           isMobile={isMobile}
           chartLiveTickRef={chartLiveTickRef}
+          settingsUserId={settingsUserId}
         />
       </div>
     </section>
@@ -4495,6 +4498,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       isMobile={isMobileViewport}
       chartLiveTickRef={chartLiveTickRef}
       onPairMenuOpenChange={handlePairMenuOpenChange}
+      settingsUserId={competitionContext?.userId ?? null}
     />
   );
 
