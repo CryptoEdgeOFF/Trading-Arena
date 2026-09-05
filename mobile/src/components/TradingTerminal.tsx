@@ -307,11 +307,13 @@ export function TradingTerminal({
   competitions,
   initialCompetitionId,
   onOpenLeaderboard,
+  settingsUserId = null,
 }: {
   accountToken: string
   competitions: MyCompetition[]
   initialCompetitionId?: string
   onOpenLeaderboard: (competitionId: string) => void
+  settingsUserId?: string | null
 }) {
   const { t } = useI18n()
   const [paperToken, setPaperToken] = useState<string | null>(null)
@@ -990,6 +992,7 @@ export function TradingTerminal({
           pairs={state.pairs}
           market={state.market}
           metadata={meta?.marketMetadata}
+          settingsUserId={settingsUserId}
           positions={state.player.openPositions}
           orders={state.player.openOrders}
           trades={state.player.trades}

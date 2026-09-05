@@ -203,6 +203,10 @@ export class ItickDatafeed implements IBasicDataFeed {
     this.subscriptions.delete(listenerGuid);
   }
 
+  getServerTime(callback: (time: number) => void): void {
+    callback(Math.floor(Date.now() / 1000));
+  }
+
   pushTick(code: string, price: number, timestampMs: number = Date.now()): void {
     if (!Number.isFinite(price) || price <= 0) return;
     for (const sub of this.subscriptions.values()) {

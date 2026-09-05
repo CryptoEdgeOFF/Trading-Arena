@@ -9,6 +9,12 @@ import type {
 import type { MarketTicker, Position } from '../stores/useGameStore';
 import { fmtMarketPrice, isValidRiskPrice, roundPriceForCategory } from '../utils/positionSizing';
 import { pnlToAccountCcy } from '../utils/positionPnl';
+import {
+  createTvSettingsAdapter,
+  hasSavedTvChartProperties,
+  loadTvChartLayout,
+  persistTvChartLayout,
+} from '../lib/tvChartSettings';
 
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js';
 
@@ -413,6 +419,7 @@ export default function AdvancedChart({
   const pendingAutoDragRef = useRef<{ key: string; pointerId: number; clientY: number } | null>(null);
   const placementDraftKeysRef = useRef<Set<string>>(new Set());
   const expandPeHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressChartSyncRef = useRef(false);
 
   const onUpdateRiskRef = useRef(onUpdateRisk);
   const onUpdateOrderRiskRef = useRef(onUpdateOrderRisk);
@@ -497,6 +504,10 @@ export default function AdvancedChart({
       .then(() => {
         if (disposed || !widgetContainerRef.current || !window.TradingView?.widget) return;
 
+        const settingsAdapter = createTvSettingsAdapter();
+        const keepDefaultCandleColors = !hasSavedTvChartProperties(settingsAdapter.initialSettings);
+        const savedLayout = loadTvChartLayout();
+
         const widget = new window.TradingView.widget({
           container: widgetContainerRef.current,
           datafeed,
@@ -510,6 +521,9 @@ export default function AdvancedChart({
           theme: 'dark',
           custom_css_url: undefined,
           loading_screen: { backgroundColor: '#0e0c0d' },
+          settings_adapter: settingsAdapter,
+          saved_data: savedLayout ?? undefined,
+          auto_save_delay: 3,
           disabled_features: [
             'header_symbol_search',
             'header_compare',
@@ -547,13 +561,18 @@ export default function AdvancedChart({
             'paneProperties.horzGridProperties.color': 'rgba(148, 152, 164, 0.06)',
             'scalesProperties.textColor': '#9498a4',
             'scalesProperties.lineColor': '#231f22',
-            'mainSeriesProperties.candleStyle.upColor': '#26a69a',
-            'mainSeriesProperties.candleStyle.downColor': '#ef5350',
-            'mainSeriesProperties.candleStyle.borderUpColor': '#26a69a',
-            'mainSeriesProperties.candleStyle.borderDownColor': '#ef5350',
-            'mainSeriesProperties.candleStyle.wickUpColor': '#26a69a',
-            'mainSeriesProperties.candleStyle.wickDownColor': '#ef5350',
+            ...(keepDefaultCandleColors
+              ? {
+                  'mainSeriesProperties.candleStyle.upColor': '#26a69a',
+                  'mainSeriesProperties.candleStyle.downColor': '#ef5350',
+                  'mainSeriesProperties.candleStyle.borderUpColor': '#26a69a',
+                  'mainSeriesProperties.candleStyle.borderDownColor': '#ef5350',
+                  'mainSeriesProperties.candleStyle.wickUpColor': '#26a69a',
+                  'mainSeriesProperties.candleStyle.wickDownColor': '#ef5350',
+                }
+              : {}),
             'mainSeriesProperties.bidAsk.visible': false,
+            'mainSeriesProperties.showCountdown': true,
           },
         });
 
@@ -561,16 +580,18 @@ export default function AdvancedChart({
 
         widget.onChartReady(() => {
           if (disposed) return;
-          setChartReady(true);
+          suppressChartSyncRef.current = true;
 
           const chart = widget.activeChart();
           chart.onIntervalChanged().subscribe(null, (newRes: ResolutionString) => {
+            if (suppressChartSyncRef.current) return;
             const minutes = TV_RESOLUTION_TO_MIN[String(newRes)];
             if (minutes && onIntervalChangeRef.current) {
               onIntervalChangeRef.current(minutes);
             }
           });
           chart.onSymbolChanged().subscribe(null, () => {
+            if (suppressChartSyncRef.current) return;
             const newSymbol = chart.symbol();
             if (newSymbol && onPairChangeRef.current) {
               onPairChangeRef.current(newSymbol);
@@ -709,6 +730,41 @@ export default function AdvancedChart({
             entityMetaRef.current.delete(sourceId);
             lineByKeyRef.current.delete(key);
           });
+
+          let finished = false;
+          const finishReady = () => {
+            if (disposed || finished) return;
+            finished = true;
+            suppressChartSyncRef.current = false;
+            setChartReady(true);
+            widget.subscribe('onAutoSaveNeeded', () => {
+              persistTvChartLayout(widget);
+            });
+          };
+          setTimeout(finishReady, 2000);
+
+          const desiredRes = intervalMinutesToResolution(intervalMinutes);
+          const applyResolution = (done: () => void) => {
+            try {
+              if (chart.resolution() !== desiredRes) {
+                void chart.setResolution(desiredRes, done);
+                return;
+              }
+            } catch {
+              // ignore
+            }
+            done();
+          };
+
+          try {
+            if (chart.symbol() !== pair) {
+              void chart.setSymbol(pair, () => applyResolution(finishReady));
+            } else {
+              applyResolution(finishReady);
+            }
+          } catch {
+            finishReady();
+          }
         });
       })
       .catch((error) => {
@@ -720,6 +776,7 @@ export default function AdvancedChart({
       setChartReady(false);
       const widget = widgetRef.current;
       if (widget) {
+        persistTvChartLayout(widget);
         try {
           const chart = widget.activeChart();
           for (const id of entityMetaRef.current.keys()) {
