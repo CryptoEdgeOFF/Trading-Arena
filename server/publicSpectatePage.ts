@@ -146,6 +146,8 @@ export function renderPublicSpectatePage(input: {
     const competitionId=${jsonForScript(competition.id)};
     let state=${initialData};
     let history=null;
+    let historyCursor=0;
+    let arenaSocketOpen=false;
     const money=new Intl.NumberFormat('fr-FR',{maximumFractionDigits:2});
     const esc=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
     const chatToken=localStorage.getItem('btf-comp-session');
@@ -213,12 +215,35 @@ export function renderPublicSpectatePage(input: {
     async function refresh(){
       try{
         const [leaderboardResult,historyResult]=await Promise.all([
-          fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)).then(r=>r.json()),
-          fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)+'/pnl-history').then(r=>r.json())
+          arenaSocketOpen?Promise.resolve(null):fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)).then(r=>r.json()),
+          fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)+'/pnl-history'+(historyCursor?'?after='+encodeURIComponent(historyCursor):'')).then(r=>r.json())
         ]);
-        if(leaderboardResult.competition){state=leaderboardResult;renderRows();renderStatus()}
-        if(historyResult){history=historyResult;drawChart()}
+        if(leaderboardResult?.competition){state=leaderboardResult;renderRows();renderStatus()}
+        if(historyResult){
+          const incoming=historyResult.samples||[];
+          const samples=history?[...(history.samples||[]),...incoming]:incoming;
+          const unique=[...new Map(samples.map(sample=>[sample.t,sample])).values()].sort((a,b)=>a.t-b.t);
+          history={...history,...historyResult,samples:unique,traders:historyResult.traders||history?.traders||[]};
+          historyCursor=Number(historyResult.cursor)||historyCursor;
+          drawChart()
+        }
       }catch{}
+    }
+    function applyArenaPatch(patch){
+      if(!patch||patch.competitionId!==competitionId)return;
+      const rows=new Map((state.leaderboard||[]).map(row=>[row.userId,row]));
+      (patch.removed||[]).forEach(userId=>rows.delete(userId));
+      (patch.upserts||[]).forEach(update=>{if(update?.userId)rows.set(update.userId,{...(rows.get(update.userId)||{}),...update})});
+      state={...state,competition:patch.competition||state.competition,leaderboard:[...rows.values()].sort((a,b)=>(a.rank||0)-(b.rank||0)||(b.pnlPercent||0)-(a.pnlPercent||0))};
+      renderRows();renderStatus()
+    }
+    function connectArena(){
+      const protocol=location.protocol==='https:'?'wss:':'ws:';
+      const socket=new WebSocket(protocol+'//'+location.host+'/ws?arenaId='+encodeURIComponent(competitionId));
+      socket.onopen=()=>{arenaSocketOpen=true};
+      socket.onmessage=event=>{try{const message=JSON.parse(event.data);if(message.type==='arena:init'&&message.data){state={...state,...message.data};renderRows();renderStatus()}else if(message.type==='arena:patch')applyArenaPatch(message.data)}catch{}};
+      socket.onclose=()=>{arenaSocketOpen=false;setTimeout(connectArena,1000)};
+      socket.onerror=()=>socket.close()
     }
     document.getElementById('share').onclick=async()=>{const data={title:document.title,text:'Regarde cette arène BTF en direct',url:location.href};try{if(navigator.share)await navigator.share(data);else{await navigator.clipboard.writeText(location.href);document.getElementById('share').textContent='LIEN COPIÉ'}}catch{}};
     const openChat=()=>{document.getElementById('chat-backdrop').classList.add('open');loadChat()};
@@ -226,7 +251,7 @@ export function renderPublicSpectatePage(input: {
     document.getElementById('chat-open-inline').onclick=openChat;
     document.getElementById('chat-close').onclick=()=>document.getElementById('chat-backdrop').classList.remove('open');
     document.getElementById('chat-backdrop').onclick=(event)=>{if(event.target.id==='chat-backdrop')event.currentTarget.classList.remove('open')};
-    renderChatFooter();renderRows();renderStatus();refresh();setInterval(renderStatus,1000);setInterval(refresh,5000);setInterval(()=>{if(document.getElementById('chat-backdrop').classList.contains('open'))loadChat()},5000);addEventListener('resize',drawChart);
+    renderChatFooter();renderRows();renderStatus();connectArena();refresh();setInterval(renderStatus,1000);setInterval(refresh,10000);setInterval(()=>{if(document.getElementById('chat-backdrop').classList.contains('open'))loadChat()},5000);addEventListener('resize',drawChart);
   </script>
 </body>
 </html>`;

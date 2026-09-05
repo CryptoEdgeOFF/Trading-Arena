@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
@@ -30,10 +30,12 @@ import PnlRaceChart, {
   type PnlHistoryTrader,
   type PnlMoment,
 } from './PnlRaceChart';
+import { useWebSocket } from '../hooks/useWebSocket';
 import './SpectateBroadcast.css';
 import './ArenaLeaderboard.css';
 
-const REFRESH_MS = 2000;
+const WS_RECONCILE_MS = 30_000;
+const HTTP_FALLBACK_MS = 5_000;
 const SESSION_KEY = 'btf-comp-session';
 
 interface LeaderboardRow {
@@ -267,17 +269,74 @@ export default function CompetitionPublicLeaderboard() {
   const [paused, setPaused] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [shareData, setShareData] = useState<ShareCardData | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
   const [pnlHistory, setPnlHistory] = useState<{
     samples: PnlHistorySample[];
     traders: PnlHistoryTrader[];
     moments?: PnlMoment[];
   } | null>(null);
   const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] });
+  const pnlCursorRef = useRef<{ competitionId: string; cursor: number }>({ competitionId: '', cursor: 0 });
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const isLive = data?.competition.status === 'live';
   const isEnded = data?.competition.status === 'ended';
   const showRace = Boolean(isLive || isEnded);
+
+  const applyArenaInit = useCallback((payload: any) => {
+    if (!payload?.competition || !Array.isArray(payload.leaderboard)) return;
+    setData((current) => {
+      const previousRows = new Map((current?.leaderboard || []).map((row) => [row.userId, row]));
+      return {
+        competition: { ...(current?.competition || {}), ...payload.competition },
+        leaderboard: payload.leaderboard.map((row: LeaderboardRow) => ({
+          ...previousRows.get(row.userId),
+          ...row,
+        })),
+      } as LeaderboardResponse;
+    });
+    setError('');
+  }, []);
+
+  const applyArenaPatch = useCallback((payload: any) => {
+    if (!payload?.competitionId) return;
+    setData((current) => {
+      if (!current || current.competition.id !== payload.competitionId) return current;
+      const rows = new Map(current.leaderboard.map((row) => [row.userId, row]));
+      for (const userId of Array.isArray(payload.removed) ? payload.removed : []) rows.delete(userId);
+      for (const patch of Array.isArray(payload.upserts) ? payload.upserts : []) {
+        if (!patch?.userId) continue;
+        const previous = rows.get(patch.userId);
+        rows.set(patch.userId, {
+          rank: patch.rank ?? previous?.rank ?? 0,
+          userId: patch.userId,
+          name: patch.name ?? previous?.name ?? 'Participant',
+          avatarUrl: patch.avatarUrl !== undefined ? patch.avatarUrl : previous?.avatarUrl ?? null,
+          pnlPercent: patch.pnlPercent ?? previous?.pnlPercent ?? 0,
+          pnlUsd: patch.pnlUsd ?? previous?.pnlUsd ?? 0,
+          tradesCount: patch.tradesCount ?? previous?.tradesCount ?? 0,
+          updatedAt: patch.updatedAt ?? previous?.updatedAt ?? Date.now(),
+          badges: previous?.badges,
+          lastActivityAt: previous?.lastActivityAt,
+          worldRank: previous?.worldRank,
+          division: previous?.division,
+          breached: previous?.breached,
+        });
+      }
+      return {
+        competition: payload.competition || current.competition,
+        leaderboard: [...rows.values()].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
+      };
+    });
+  }, []);
+
+  useWebSocket(Boolean(id), {
+    arenaId: id || null,
+    onArenaInit: applyArenaInit,
+    onArenaPatch: applyArenaPatch,
+    onOpen: () => setWsConnected(true),
+    onClose: () => setWsConnected(false),
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -287,7 +346,7 @@ export default function CompetitionPublicLeaderboard() {
     async function tick() {
       if (cancelled) return;
       if (pausedRef.current) {
-        timer = setTimeout(tick, REFRESH_MS);
+        timer = setTimeout(tick, wsConnected ? WS_RECONCILE_MS : HTTP_FALLBACK_MS);
         return;
       }
       try {
@@ -304,7 +363,7 @@ export default function CompetitionPublicLeaderboard() {
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : t('common.unknownError'));
       } finally {
-        if (!cancelled) timer = setTimeout(tick, REFRESH_MS);
+        if (!cancelled) timer = setTimeout(tick, wsConnected ? WS_RECONCILE_MS : HTTP_FALLBACK_MS);
       }
     }
 
@@ -316,7 +375,7 @@ export default function CompetitionPublicLeaderboard() {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [id, t]);
+  }, [id, t, wsConnected]);
 
   const applyPnlSnapshot = (competitionId: string, rows: LeaderboardRow[], moments?: PnlMoment[]) => {
     const rankedRows = rows.filter((row) => row.rank > 0).sort((a, b) => a.rank - b.rank).slice(0, 40);
@@ -348,6 +407,7 @@ export default function CompetitionPublicLeaderboard() {
     if (!id || !showRace) {
       setPnlHistory(null);
       pnlBufferRef.current = { competitionId: '', samples: [] };
+      pnlCursorRef.current = { competitionId: '', cursor: 0 };
       return;
     }
     const competitionId = id;
@@ -355,20 +415,36 @@ export default function CompetitionPublicLeaderboard() {
 
     async function loadHistory() {
       try {
-        const response = await fetch(`/api/competition/leaderboard/${competitionId}/pnl-history`);
+        const cursorState = pnlCursorRef.current;
+        const cursor = cursorState.competitionId === competitionId ? cursorState.cursor : 0;
+        const query = cursor > 0 ? `?after=${encodeURIComponent(cursor)}` : '';
+        const response = await fetch(`/api/competition/leaderboard/${competitionId}/pnl-history${query}`);
         if (!response.ok) return;
         const payload = await response.json() as {
           samples?: PnlHistorySample[];
           traders?: PnlHistoryTrader[];
           moments?: PnlMoment[];
+          cursor?: number;
         };
-        if (cancelled || !payload.samples?.length || !payload.traders?.length) return;
+        if (cancelled) return;
+        if (Number(payload.cursor) > 0) {
+          pnlCursorRef.current = { competitionId, cursor: Number(payload.cursor) };
+        }
+        if (!payload.samples?.length || !payload.traders?.length) return;
         const buffer = pnlBufferRef.current;
         const merged = buffer.competitionId === competitionId
           ? mergePnlSamples(buffer.samples, payload.samples)
           : mergePnlSamples([], payload.samples);
         pnlBufferRef.current = { competitionId, samples: merged };
-        setPnlHistory({ samples: merged, traders: payload.traders, moments: payload.moments });
+        setPnlHistory((current) => {
+          const allMoments = cursor > 0
+            ? [...(current?.moments || []), ...(payload.moments || [])]
+            : payload.moments;
+          const uniqueMoments = allMoments
+            ? [...new Map(allMoments.map((moment) => [`${moment.t}:${moment.type}:${moment.userId}`, moment])).values()]
+            : undefined;
+          return { samples: merged, traders: payload.traders!, moments: uniqueMoments };
+        });
       } catch {
         // Le snapshot leaderboard reste un fallback.
       }

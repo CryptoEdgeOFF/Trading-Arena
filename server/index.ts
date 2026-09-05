@@ -406,7 +406,13 @@ function notifyGlobalChatReply(
   });
 }
 let finalizingEndedCompetitions: Promise<void> | null = null;
-const paperClients = new Map<WebSocket, { token: string; playerId: string; competitionId: string | null }>();
+type PaperClientSubscription = {
+  token: string;
+  playerId: string;
+  competitionId: string | null;
+  lastPayload: ReturnType<typeof buildPaperUpdatePayload> | null;
+};
+const paperClients = new Map<WebSocket, PaperClientSubscription>();
 // Per-competition shard: every paperClient is also tracked under its
 // competitionId so we can broadcast a leaderboard diff only to the
 // traders of that arena, not to every connected client.
@@ -421,6 +427,7 @@ const arenaSnapshots = new Map<string, Map<string, {
   updatedAt: number;
   avatarUrl: string | null;
 }>>();
+const arenaCompetitionSnapshots = new Map<string, string>();
 
 // --- Admin auth (single shared code, configurable via env) ---
 // Aucun fallback en dur : si ADMIN_CODE n'est pas défini, l'accès admin est
@@ -473,7 +480,9 @@ const manager = new PlayerManager((patch: StatePatch) => {
   // 500+ trader competition.
   const msg = JSON.stringify({ type: 'state:patch', data: patch });
   clients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+    // Un terminal paper reçoit déjà market:tick + paper:patch + arena:patch.
+    // Lui renvoyer aussi le patch du dashboard global dupliquerait le marché.
+    if (!paperClients.has(ws) && ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
   syncAndBroadcastPaperRuntime();
 });
@@ -759,6 +768,12 @@ app.get('/api/itick/candles', async (req, res) => {
           to: to ? Math.floor(to) : undefined,
         });
       }
+      res.set(
+        'Cache-Control',
+        to
+          ? 'public, max-age=60, s-maxage=300, stale-while-revalidate=3600'
+          : 'public, max-age=5, s-maxage=5, stale-while-revalidate=20',
+      );
       res.json({ candles: bars, pair: inst.pair, asset: inst.asset });
       return;
     }
@@ -767,6 +782,12 @@ app.get('/api/itick/candles', async (req, res) => {
     const code = String(req.query.code || 'EURUSD').toUpperCase();
     const asset = parseAsset(req.query.asset);
     const bars = await itick.getKline(code, interval, limit, endTs, asset);
+    res.set(
+      'Cache-Control',
+      to
+        ? 'public, max-age=60, s-maxage=300, stale-while-revalidate=3600'
+        : 'public, max-age=5, s-maxage=5, stale-while-revalidate=20',
+    );
     res.json({ candles: bars });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message || 'iTick candles indisponibles' });
@@ -1070,11 +1091,117 @@ function buildPaperUpdatePayload(playerId: string, competitionId: string | null)
   };
 }
 
-function sendPaperUpdate(ws: WebSocket, sub: { playerId: string; competitionId: string | null }): void {
+function paperPositionSignature(player: NonNullable<ReturnType<typeof buildPaperUpdatePayload>>['player']): string {
+  return JSON.stringify((player?.openPositions || []).map((position) => ({
+    ...position,
+    // Ces valeurs sont recalculées côté client à partir de market:tick.
+    markPrice: undefined,
+    pnl: undefined,
+    unrealizedFunding: undefined,
+  })));
+}
+
+function buildPaperPatch(
+  previous: NonNullable<ReturnType<typeof buildPaperUpdatePayload>>,
+  next: NonNullable<ReturnType<typeof buildPaperUpdatePayload>>,
+) {
+  const previousPlayer = previous.player;
+  const nextPlayer = next.player;
+  if (!previousPlayer || !nextPlayer) return next;
+
+  const player: Record<string, unknown> = {};
+  const scalarKeys = [
+    'active',
+    'initialBalance',
+    'currentBalance',
+    'availableMargin',
+    'usedMargin',
+    'feesPaid',
+    'pnl',
+    'pnlPercent',
+    'pnlAdjustment',
+    'realizedPnlArchived',
+    'tradeCount',
+    'rank',
+    'previousRank',
+    'winStreak',
+    'longestPositionMinutes',
+    'biggestTradePnl',
+    'bestTradePercent',
+    'lastUpdate',
+    'connected',
+  ] as const;
+  for (const key of scalarKeys) {
+    if (previousPlayer[key] !== nextPlayer[key]) player[key] = nextPlayer[key];
+  }
+  if (paperPositionSignature(previousPlayer) !== paperPositionSignature(nextPlayer)) {
+    player.openPositions = nextPlayer.openPositions;
+  }
+  if (JSON.stringify(previousPlayer.openOrders) !== JSON.stringify(nextPlayer.openOrders)) {
+    player.openOrders = nextPlayer.openOrders;
+  }
+  if (JSON.stringify(previousPlayer.badges) !== JSON.stringify(nextPlayer.badges)) {
+    player.badges = nextPlayer.badges;
+  }
+  const previousTradeIds = new Set((previousPlayer.trades || []).map((trade) => trade.id));
+  const nextTradeIds = new Set((nextPlayer.trades || []).map((trade) => trade.id));
+  const addedTrades = (nextPlayer.trades || []).filter((trade) => !previousTradeIds.has(trade.id));
+  const historyWasTrimmed = (previousPlayer.trades || []).some((trade) => !nextTradeIds.has(trade.id));
+  // Un reset ou une troncature serveur doit rester réconciliable.
+  if (historyWasTrimmed || (nextPlayer.trades || []).length < (previousPlayer.trades || []).length) {
+    player.trades = nextPlayer.trades;
+  } else if (addedTrades.length > 0) {
+    player.tradesAdded = addedTrades;
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (Object.keys(player).length > 0) patch.player = player;
+  if (previous.canTrade !== next.canTrade) patch.canTrade = next.canTrade;
+  if (JSON.stringify(previous.competition) !== JSON.stringify(next.competition)) {
+    patch.competition = next.competition;
+  }
+  return patch;
+}
+
+function snapshotPaperPayload(
+  payload: NonNullable<ReturnType<typeof buildPaperUpdatePayload>>,
+): NonNullable<ReturnType<typeof buildPaperUpdatePayload>> {
+  return {
+    ...payload,
+    // Le marché voyage déjà dans market:tick ; inutile de le conserver pour
+    // calculer le diff compte.
+    market: {},
+    player: payload.player
+      ? {
+          ...payload.player,
+          openPositions: payload.player.openPositions.map((position) => ({ ...position })),
+          openOrders: payload.player.openOrders.map((order) => ({ ...order })),
+          trades: payload.player.trades.map((trade) => ({ ...trade })),
+          badges: payload.player.badges.map((badge) => ({ ...badge })),
+        }
+      : null,
+    competition: payload.competition
+      ? JSON.parse(JSON.stringify(payload.competition))
+      : payload.competition,
+  };
+}
+
+function sendPaperUpdate(ws: WebSocket, sub: PaperClientSubscription): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   try {
     const payload = buildPaperUpdatePayload(sub.playerId, sub.competitionId);
-    if (payload) ws.send(JSON.stringify({ type: 'paper:update', data: payload }));
+    if (!payload) return;
+    if (!sub.lastPayload) {
+      // Garder le nom historique pour les apps déjà installées : elles
+      // reçoivent le snapshot initial puis ignorent simplement paper:patch.
+      ws.send(JSON.stringify({ type: 'paper:update', data: payload }));
+    } else {
+      const patch = buildPaperPatch(sub.lastPayload, payload);
+      if (Object.keys(patch).length > 0) {
+        ws.send(JSON.stringify({ type: 'paper:patch', data: patch }));
+      }
+    }
+    sub.lastPayload = snapshotPaperPayload(payload);
   } catch {
     // A stale competition/player should not break the global websocket loop.
   }
@@ -1122,7 +1249,7 @@ function computeArenaPatch(
   data: ReturnType<typeof competitionManager.getLiveLeaderboard>,
 ): {
   competitionId: string;
-  competition: NonNullable<ReturnType<typeof competitionManager.getLiveLeaderboard>>['competition'];
+  competition?: NonNullable<ReturnType<typeof competitionManager.getLiveLeaderboard>>['competition'];
   upserts: ArenaPatchEntry[];
   removed: string[];
 } | null {
@@ -1171,10 +1298,13 @@ function computeArenaPatch(
       }]),
     ),
   );
-  if (upserts.length === 0 && removed.length === 0) return null;
+  const competitionSignature = JSON.stringify(data.competition);
+  const competitionChanged = arenaCompetitionSnapshots.get(competitionId) !== competitionSignature;
+  arenaCompetitionSnapshots.set(competitionId, competitionSignature);
+  if (upserts.length === 0 && removed.length === 0 && !competitionChanged) return null;
   return {
     competitionId,
-    competition: data.competition,
+    ...(competitionChanged ? { competition: data.competition } : {}),
     upserts,
     removed,
   };
@@ -1224,6 +1354,7 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
     // shards may already keep their own up-to-date baseline.
     if (!arenaSnapshots.has(competitionId)) {
       arenaSnapshots.set(competitionId, baseline);
+      arenaCompetitionSnapshots.set(competitionId, JSON.stringify(init.competition));
     }
   }
 }
@@ -1233,12 +1364,17 @@ function detachArenaClient(ws: WebSocket): void {
     if (sockets.delete(ws) && sockets.size === 0) {
       arenaClients.delete(competitionId);
       arenaSnapshots.delete(competitionId);
+      arenaCompetitionSnapshots.delete(competitionId);
     }
   }
 }
 
 wss.on('connection', (ws, req) => {
-  clients.add(ws);
+  const url = new URL(req.url || '/ws', `http://${req.headers.host || 'localhost'}`);
+  const paperToken = url.searchParams.get('paperToken');
+  const publicArenaId = url.searchParams.get('arenaId');
+  const arenaOnly = Boolean(publicArenaId && !paperToken);
+  if (!arenaOnly) clients.add(ws);
 
   // Heartbeat : le socket est marqué vivant à la connexion, puis à chaque pong.
   // L'interval ci-dessous ping périodiquement et termine les sockets muets
@@ -1251,18 +1387,24 @@ wss.on('connection', (ws, req) => {
   // Send a full snapshot to the freshly connected client. Subsequent
   // updates arrive as small diffs (`state:patch`), which keeps a 500-trader
   // competition under a few KB per broadcast.
-  const initialState = manager.getStateInit();
-  ws.send(JSON.stringify({ type: 'state:init', data: initialState }));
+  if (!arenaOnly) {
+    const initialState = manager.getStateInit();
+    ws.send(JSON.stringify({ type: 'state:init', data: initialState }));
+  }
 
-  const url = new URL(req.url || '/ws', `http://${req.headers.host || 'localhost'}`);
-  const paperToken = url.searchParams.get('paperToken');
+  if (publicArenaId) attachArenaClient(ws, publicArenaId);
   if (paperToken) {
     void competitionManager.getTraderSession(paperToken).then((info) => {
       if (!info || ws.readyState !== WebSocket.OPEN) return;
-      const sub = { token: paperToken, playerId: info.playerId, competitionId: info.competitionId };
+      const sub: PaperClientSubscription = {
+        token: paperToken,
+        playerId: info.playerId,
+        competitionId: info.competitionId,
+        lastPayload: null,
+      };
       paperClients.set(ws, sub);
       sendPaperUpdate(ws, sub);
-      if (info.competitionId) attachArenaClient(ws, info.competitionId);
+      if (info.competitionId && info.competitionId !== publicArenaId) attachArenaClient(ws, info.competitionId);
     }).catch(() => undefined);
   }
 
@@ -1984,7 +2126,11 @@ app.get('/api/paper/candles', async (req, res) => {
     if (candleOpts.from == null) {
       // Le snapshot initial est partagé et brièvement réutilisable. Les ticks
       // WebSocket prennent ensuite le relais pour la bougie en cours.
-      res.set('Cache-Control', 'public, max-age=5, stale-while-revalidate=20');
+      res.set('Cache-Control', 'public, max-age=5, s-maxage=5, stale-while-revalidate=20');
+    } else {
+      // Les pages historiques sont composées de bougies déjà closes : un CDN
+      // peut les servir longtemps sans toucher Railway.
+      res.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=3600');
     }
     if (Array.isArray(candles) && candles.length > MAX_PUBLIC_CANDLES) {
       candles = candles.slice(-MAX_PUBLIC_CANDLES);
@@ -3835,12 +3981,31 @@ const PNL_HISTORY_CACHE_MS = 8_000;
 const pnlTradeBackfillAttempted = new Set<string>();
 const PNL_BACKFILL_MAX_INITIAL_GAP_MS = 60 * 60 * 1000;
 
+type PublicPnlHistoryBody = {
+  status: string;
+  samples: Array<{ t: number; rows: Array<{ userId: string; pnlPercent: number }> }>;
+  moments: Array<{ t: number; type: string; userId: string }>;
+  traders: unknown[];
+  cursor: number;
+};
+
+function incrementalPnlHistory(body: PublicPnlHistoryBody, after: number): PublicPnlHistoryBody {
+  if (after <= 0) return body;
+  return {
+    ...body,
+    samples: body.samples.filter((sample) => sample.t > after),
+    moments: body.moments.filter((moment) => moment.t > after),
+  };
+}
+
 app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
   try {
     const competitionId = String(req.params.id || '');
+    const after = Math.max(0, Number(req.query.after) || 0);
     const cached = pnlHistoryResponseCache.get(competitionId);
     if (cached && Date.now() - cached.at < PNL_HISTORY_CACHE_MS) {
-      res.json(cached.body);
+      res.setHeader('Cache-Control', 'public, max-age=2, s-maxage=8, stale-while-revalidate=30');
+      res.json(incrementalPnlHistory(cached.body as PublicPnlHistoryBody, after));
       return;
     }
     const data = competitionManager.getPublicLeaderboard(competitionId);
@@ -3901,7 +4066,7 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
       data.leaderboard,
     );
     const tracked = new Set(samples.flatMap((sample) => sample.rows.map((row) => row.userId)));
-    const body = {
+    const body: PublicPnlHistoryBody = {
       status: data.competition.status,
       samples,
       moments: getPnlMoments(competitionId),
@@ -3915,9 +4080,16 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
           pnlPercent: row.pnlPercent,
           breached: row.breached,
         })),
+      cursor: samples[samples.length - 1]?.t || 0,
     };
     pnlHistoryResponseCache.set(competitionId, { at: Date.now(), body });
-    res.json(body);
+    res.setHeader(
+      'Cache-Control',
+      data.competition.status === 'ended'
+        ? 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400'
+        : 'public, max-age=2, s-maxage=8, stale-while-revalidate=30',
+    );
+    res.json(incrementalPnlHistory(body, after));
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Historique introuvable' });
   }
