@@ -107,6 +107,14 @@ export interface Trade {
   pnl: number;
   time: number;
   action: 'open' | 'close' | 'update';
+  requestedPrice?: number;
+  slippageBps?: number;
+  slippageSource?: 'legacy' | 'model' | 'itick-l5';
+  fillDetails?: Array<{
+    price: number;
+    size: number;
+    source: 'book' | 'estimated';
+  }>;
 }
 
 export interface Position {

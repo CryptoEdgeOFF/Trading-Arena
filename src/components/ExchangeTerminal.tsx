@@ -26,6 +26,7 @@ import {
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { applyPaperPlayerPatch } from '../utils/paperPatch';
+import FillDetailsModal from './FillDetailsModal';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
 import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
@@ -2491,6 +2492,7 @@ function BottomTabs({
   onUpdateRisk,
   onCancelOrder,
   onSelectPair,
+  onShowFill,
   busy,
   marketMetadata,
 }: {
@@ -2515,6 +2517,7 @@ function BottomTabs({
   ) => Promise<void> | void;
   onCancelOrder: (orderId: string) => void;
   onSelectPair: (pair: string) => void;
+  onShowFill: (trade: Trade) => void;
   busy: boolean;
   marketMetadata: Record<string, MarketMetadata>;
 }) {
@@ -2671,7 +2674,7 @@ function BottomTabs({
               <thead className="text-[10px] uppercase tracking-[0.05em] text-[#7a8090]">
                 <tr className="border-b border-[#231f22]">
                   <Th>{t('terminal.thTime')}</Th><Th>{t('terminal.thMarket')}</Th><Th>{t('terminal.thSide')}</Th><Th>{t('terminal.thAction')}</Th>
-                  <Th>{t('terminal.thPrice')}</Th><Th>{t('terminal.thQty')}</Th><Th>{t('terminal.thFees')}</Th><Th>PnL</Th>
+                  <Th>{t('terminal.thPrice')}</Th><Th>{t('terminal.thQty')}</Th><Th>{t('terminal.thFees')}</Th><Th>PnL</Th><Th>Fill</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1c181a] text-[#e0e2ea]">
@@ -2694,6 +2697,17 @@ function BottomTabs({
                     <Td>{trade.size.toFixed(5)}</Td>
                     <Td>{fmt(trade.fee, 4)}</Td>
                     <Td><span style={{ color: historyTradePnl(trade) >= 0 ? '#15c990' : '#c026d3' }}>{formatPnl(historyTradePnl(trade))}</span></Td>
+                    <Td>
+                      {trade.requestedPrice != null ? (
+                        <button
+                          type="button"
+                          onClick={() => onShowFill(trade)}
+                          className="rounded-lg border border-violet-400/20 bg-violet-400/[0.06] px-2 py-1 text-[10px] font-semibold text-violet-200 hover:bg-violet-400/[0.12]"
+                        >
+                          {Number(trade.slippageBps || 0).toFixed(2)} bps
+                        </button>
+                      ) : '—'}
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -3126,6 +3140,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tab, setTab] = useState<'positions' | 'ordres' | 'historique'>('positions');
+  const [fillDetailsTrade, setFillDetailsTrade] = useState<Trade | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTerminalTab>('orders');
   const [bottomTabsHeight, setBottomTabsHeight] = useState(190);
   const [bottomTabsExpanded, setBottomTabsExpanded] = useState(false);
@@ -4104,6 +4119,14 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }));
   }
 
+  function showFillDetails(trade: Trade) {
+    setFillDetailsTrade(trade);
+  }
+
+  function closeFillDetails() {
+    setFillDetailsTrade(null);
+  }
+
   async function submitOrder(
     extras?: { stopLoss: number | null; takeProfit: number | null },
     opts?: { side?: 'long' | 'short'; orderType?: OrderType },
@@ -4540,6 +4563,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       onUpdateRisk={updateRisk}
       onCancelOrder={cancelOrder}
       onSelectPair={setSelectedPair}
+      onShowFill={showFillDetails}
       busy={busy}
       marketMetadata={meta.marketMetadata}
     />
@@ -4651,6 +4675,8 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         </>
       )}
 
+      <FillDetailsModal trade={fillDetailsTrade} onClose={closeFillDetails} />
+
       {livePaperMode && session && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 p-2 pb-2 sm:gap-2 sm:p-3">
           <TopBar
@@ -4689,6 +4715,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
                 onUpdateRisk={updateRisk}
                 onCancelOrder={cancelOrder}
                 onSelectPair={setSelectedPair}
+                onShowFill={showFillDetails}
                 busy={busy}
                 marketMetadata={meta.marketMetadata}
               />
