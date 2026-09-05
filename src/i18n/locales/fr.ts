@@ -605,6 +605,7 @@ export const fr: TranslationResources = {
     avgPnl: 'PnL moyen',
     dailyRule: 'Drawdown journalier',
     dailyRisk: 'Drawdown journalier max {{percent}} %',
+    loadMore: 'Charger plus',
     totalTrades: 'Total trades',
     yourPosition: 'Ta position',
     livePodium: 'Podium en direct',

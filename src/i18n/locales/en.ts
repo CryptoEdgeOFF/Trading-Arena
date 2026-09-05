@@ -603,6 +603,7 @@ export const en = {
     avgPnl: 'Avg PnL',
     dailyRule: 'Daily Drawdown',
     dailyRisk: 'Daily Drawdown max {{percent}}%',
+    loadMore: 'Load more',
     totalTrades: 'Total trades',
     yourPosition: 'Your position',
     livePodium: 'Live podium',

@@ -611,6 +611,7 @@ export const fr: typeof en = {
     field: '{{count}} en lice',
     dailyRule: 'Drawdown journalier',
     dailyRisk: 'Drawdown journalier max {{percent}} %',
+    loadMore: 'Charger plus',
     youStrip: 'TOI',
     yourRank: 'TON CLASSEMENT',
     performance: 'PERFORMANCE',
