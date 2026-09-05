@@ -2627,7 +2627,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
     const result = await competitionManager.loginTestAccount(String(username || ''));
     let testCompetitionId: string | null = null;
     if (MOBILE_STAGING_TEST_MODE) {
-      const title = 'STAGING — PNL RACE LIVE TEST';
+      const title = 'MOBILE STAGING - TRADING TEST';
       let competition = competitionManager
         .listAdminCompetitions()
         .find((item) => item.title === title && item.status === 'live');
@@ -2663,7 +2663,6 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
         if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
       }
       await competitionManager.persist();
-      await startStagingSimulation();
       void syncLiveMarketFeeds();
     }
     res.json({ ...result, testCompetitionId });
@@ -4473,6 +4472,38 @@ async function stopStagingSimulation(removeArena: boolean): Promise<{ competitio
   return { competitionId, removed: Boolean(competitionId && removeArena) };
 }
 
+const STAGING_TEST_ARENA_TITLES = new Set([
+  STAGING_SIMULATION_TITLE,
+  'MOBILE STAGING - TRADING TEST',
+]);
+
+/** Coupe la simu et supprime les arènes de test live (boot staging uniquement). */
+async function removeStagingTestArenas(): Promise<number> {
+  if (!MOBILE_STAGING_TEST_MODE || process.env.NETLIFY) return 0;
+  if (stagingSimulation) {
+    clearInterval(stagingSimulation.timer);
+    stagingSimulation = null;
+  }
+  const toDelete = competitionManager
+    .listAdminCompetitions()
+    .filter((item) => STAGING_TEST_ARENA_TITLES.has(item.title));
+  for (const competition of toDelete) {
+    simulatedActivityByCompetition.delete(competition.id);
+    activityResponseCache.delete(competition.id);
+    const { paperPlayerIds } = competitionManager.deleteCompetition(competition.id);
+    manager.unmarkOnlineCompetitionPlayers(paperPlayerIds);
+    for (const playerId of paperPlayerIds) {
+      await competitionManager.deleteTraderSessionsForPlayer(playerId);
+      manager.removePlayer(playerId);
+    }
+  }
+  if (toDelete.length) {
+    await competitionManager.persist();
+    console.log(`[staging] removed ${toDelete.length} test arena(s)`);
+  }
+  return toDelete.length;
+}
+
 app.get('/api/admin/staging-simulation', requireAdmin, (_req, res) => {
   try {
     assertStagingSimulationAvailable();
@@ -4989,6 +5020,7 @@ const serverReady = Promise.all([
   // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes
   // dans le moteur paper pour SL/TP et ticks — sans mark-to-market de masse.
   manager.hydrateLiveEquityCompetitionPlayersAtBoot();
+  await removeStagingTestArenas();
 });
 
 if (!process.env.NETLIFY) {
