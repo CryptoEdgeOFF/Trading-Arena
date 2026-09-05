@@ -406,71 +406,111 @@ export function TradingTerminal({
 
   useEffect(() => {
     if (!paperToken) return
+    const activePaperToken = paperToken
     let timer: ReturnType<typeof setTimeout> | undefined
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let socket: WebSocket | null = null
+    let socketOpen = false
     let stopped = false
     async function poll() {
-      try { if (!stopped) await refresh(paperToken!) } catch { /* reconnexion WS/poll suivante */ }
-      if (!stopped) timer = setTimeout(poll, 5000)
+      try { if (!stopped) await refresh(activePaperToken) } catch { /* reconnexion WS/poll suivante */ }
+      if (!stopped) timer = setTimeout(poll, socketOpen ? 30_000 : 5000)
     }
     void poll()
 
-    const socket = new WebSocket(`${API_WS_URL}/ws?paperToken=${encodeURIComponent(paperToken)}`)
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(String(event.data))
-        if (message?.type === 'paper:update' && message.data) {
-          setState((current) => {
-            if (!current) return current
-            const next = {
-              ...current,
-              ...message.data,
-              player: message.data.player || current.player,
-              market: message.data.market || current.market,
-              competition: message.data.competition ?? current.competition,
-            } as PaperState
-            return reconcilePending(next)
-          })
-          return
-        }
-        if (message?.type === 'market:tick' && Array.isArray(message.data?.ticks)) {
-          setState((current) => {
-            if (!current) return current
-            const market = { ...current.market }
-            for (const tick of message.data.ticks) {
-              if (!tick?.pair || !Number.isFinite(tick.markPrice)) continue
-              market[tick.pair] = { ...market[tick.pair], ...tick }
-            }
-            const previousUnrealized = current.player.openPositions.reduce((sum, item) => sum + item.pnl, 0)
-            const openPositions = current.player.openPositions.map((item) => {
-              const mark = market[item.pair]?.markPrice
-              if (!Number.isFinite(mark)) return item
+    function connect() {
+      socket = new WebSocket(`${API_WS_URL}/ws?paperToken=${encodeURIComponent(activePaperToken)}`)
+      socket.onopen = () => { socketOpen = true }
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(String(event.data))
+          if (message?.type === 'paper:update' && message.data) {
+            setState((current) => {
+              if (!current) return current
+              const next = {
+                ...current,
+                ...message.data,
+                player: message.data.player || current.player,
+                market: message.data.market || current.market,
+                competition: message.data.competition ?? current.competition,
+              } as PaperState
+              return reconcilePending(next)
+            })
+            return
+          }
+          if (message?.type === 'paper:patch' && message.data) {
+            setState((current) => {
+              if (!current) return current
+              const playerPatch = message.data.player || {}
+              const currentTrades = current.player.trades || []
+              const trades = Array.isArray(playerPatch.trades)
+                ? playerPatch.trades
+                : Array.isArray(playerPatch.tradesAdded)
+                  ? [...currentTrades, ...playerPatch.tradesAdded.filter((trade: PaperTrade) => !currentTrades.some((item) => item.id === trade.id))]
+                  : currentTrades
+              return reconcilePending({
+                ...current,
+                ...message.data,
+                player: {
+                  ...current.player,
+                  ...playerPatch,
+                  trades,
+                  openPositions: playerPatch.openPositions ?? current.player.openPositions,
+                  openOrders: playerPatch.openOrders ?? current.player.openOrders,
+                },
+                market: current.market,
+                competition: message.data.competition ?? current.competition,
+              } as PaperState)
+            })
+            return
+          }
+          if (message?.type === 'market:tick' && Array.isArray(message.data?.ticks)) {
+            setState((current) => {
+              if (!current) return current
+              const market = { ...current.market }
+              for (const tick of message.data.ticks) {
+                if (!tick?.pair || !Number.isFinite(tick.markPrice)) continue
+                market[tick.pair] = { ...market[tick.pair], ...tick }
+              }
+              const previousUnrealized = current.player.openPositions.reduce((sum, item) => sum + item.pnl, 0)
+              const openPositions = current.player.openPositions.map((item) => {
+                const mark = market[item.pair]?.markPrice
+                if (!Number.isFinite(mark)) return item
+                return {
+                  ...item,
+                  markPrice: mark,
+                  pnl: positionPnl(item.pair, item.side, item.size, item.entryPrice, mark),
+                }
+              })
+              const nextUnrealized = openPositions.reduce((sum, item) => sum + item.pnl, 0)
+              const delta = nextUnrealized - previousUnrealized
               return {
-                ...item,
-                markPrice: mark,
-                pnl: positionPnl(item.pair, item.side, item.size, item.entryPrice, mark),
+                ...current,
+                market,
+                player: {
+                  ...current.player,
+                  openPositions,
+                  pnl: current.player.pnl + delta,
+                  currentBalance: current.player.currentBalance + delta,
+                  availableMargin: Math.max(0, current.player.availableMargin + delta),
+                },
               }
             })
-            const nextUnrealized = openPositions.reduce((sum, item) => sum + item.pnl, 0)
-            const delta = nextUnrealized - previousUnrealized
-            return {
-              ...current,
-              market,
-              player: {
-                ...current.player,
-                openPositions,
-                pnl: current.player.pnl + delta,
-                currentBalance: current.player.currentBalance + delta,
-                availableMargin: Math.max(0, current.player.availableMargin + delta),
-              },
-            }
-          })
-        }
-      } catch { /* message non JSON ignoré */ }
+          }
+        } catch { /* message non JSON ignoré */ }
+      }
+      socket.onclose = () => {
+        socketOpen = false
+        if (!stopped) reconnectTimer = setTimeout(connect, 1000)
+      }
+      socket.onerror = () => socket?.close()
     }
+    connect()
     return () => {
       stopped = true
       if (timer) clearTimeout(timer)
-      socket.close()
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      socket?.close()
     }
   }, [paperToken, reconcilePending, refresh])
 

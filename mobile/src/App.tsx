@@ -7,6 +7,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   API_BASE_URL,
+  API_WS_URL,
   apiAssetUrl,
   getBootstrap,
   getCompetitionLeaderboard,
@@ -1297,6 +1298,8 @@ function LeaderboardScreen({
   const [unreadChat, setUnreadChat] = useState(0)
   const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[]; moments: PnlMoment[] } | null>(null)
   const pnlBufferRef = useRef<{ competitionId: string; samples: PnlHistorySample[] }>({ competitionId: '', samples: [] })
+  const pnlCursorRef = useRef<{ competitionId: string; cursor: number }>({ competitionId: '', cursor: 0 })
+  const lastLivePnlSampleRef = useRef(0)
 
   useEffect(() => {
     if (initialCompetitionId && competitions.some((item) => item.id === initialCompetitionId)) {
@@ -1338,19 +1341,31 @@ function LeaderboardScreen({
     }
     setError('')
     try {
+      const cursorState = pnlCursorRef.current
+      const historyCursor = cursorState.competitionId === competitionId ? cursorState.cursor : 0
       const [nextRows, history] = await Promise.all([
         getCompetitionLeaderboard(competitionId),
-        isLiveCompetition ? getPnlHistory(competitionId).catch(() => null) : Promise.resolve(null),
+        isLiveCompetition ? getPnlHistory(competitionId, historyCursor).catch(() => null) : Promise.resolve(null),
       ])
       const sorted = nextRows.sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent)
       setRows(sorted)
+      if (history?.cursor) pnlCursorRef.current = { competitionId, cursor: history.cursor }
       if (history?.samples?.length && history.traders?.length) {
         const buffer = pnlBufferRef.current
         const merged = buffer.competitionId === competitionId
           ? mergePnlSamples(buffer.samples, history.samples)
           : mergePnlSamples([], history.samples)
         pnlBufferRef.current = { competitionId, samples: merged }
-        setPnlHistory({ samples: merged, traders: history.traders, moments: history.moments || [] })
+        setPnlHistory((current) => {
+          const moments = historyCursor > 0
+            ? [...(current?.moments || []), ...(history.moments || [])]
+            : history.moments || []
+          return {
+            samples: merged,
+            traders: history.traders,
+            moments: [...new Map(moments.map((moment) => [`${moment.t}:${moment.type}:${moment.userId}`, moment])).values()],
+          }
+        })
       } else if (isLiveCompetition) {
         const ranked = sorted.filter((row) => row.rank > 0).slice(0, 10)
         if (!ranked.length) {
@@ -1388,9 +1403,80 @@ function LeaderboardScreen({
   useEffect(() => {
     setLoadingRows(true)
     void loadLeaderboard()
-    const timer = window.setInterval(() => void loadLeaderboard(), 10_000)
+    const timer = window.setInterval(() => void loadLeaderboard(), 30_000)
     return () => window.clearInterval(timer)
   }, [loadLeaderboard])
+
+  useEffect(() => {
+    if (!isLiveCompetition || !competitionId) return
+    const ranked = rows.filter((row) => row.rank > 0).slice(0, 10)
+    const now = Date.now()
+    if (!ranked.length || now - lastLivePnlSampleRef.current < 2000) return
+    lastLivePnlSampleRef.current = now
+    const sample = {
+      t: now,
+      rows: ranked.map((row) => ({ userId: row.userId, pnlPercent: row.pnlPercent })),
+    }
+    const buffer = pnlBufferRef.current
+    const merged = mergePnlSamples(
+      buffer.competitionId === competitionId ? buffer.samples : [],
+      buffer.competitionId === competitionId ? [sample] : [{ ...sample, t: now - 30_000 }, sample],
+    )
+    pnlBufferRef.current = { competitionId, samples: merged }
+    setPnlHistory((current) => ({
+      samples: merged,
+      traders: ranked.map((row) => ({
+        userId: row.userId,
+        name: row.name,
+        avatarUrl: row.avatarUrl,
+        rank: row.rank,
+        pnlPercent: row.pnlPercent,
+        breached: row.breached,
+      })),
+      moments: current?.moments || [],
+    }))
+  }, [competitionId, isLiveCompetition, rows])
+
+  useEffect(() => {
+    if (!competitionId) return
+    let stopped = false
+    let socket: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    const connect = () => {
+      socket = new WebSocket(`${API_WS_URL}/ws?arenaId=${encodeURIComponent(competitionId)}`)
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(String(event.data))
+          if (message?.type === 'arena:init' && Array.isArray(message.data?.leaderboard)) {
+            setRows(message.data.leaderboard.sort((a: LeaderboardRow, b: LeaderboardRow) => a.rank - b.rank || b.pnlPercent - a.pnlPercent))
+            setLoadingRows(false)
+            return
+          }
+          if (message?.type !== 'arena:patch' || message.data?.competitionId !== competitionId) return
+          setRows((current) => {
+            const byUserId = new Map(current.map((row) => [row.userId, row]))
+            for (const userId of message.data.removed || []) byUserId.delete(userId)
+            for (const patch of message.data.upserts || []) {
+              if (!patch?.userId) continue
+              const previous = byUserId.get(patch.userId)
+              byUserId.set(patch.userId, { ...previous, ...patch } as LeaderboardRow)
+            }
+            return [...byUserId.values()].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent)
+          })
+        } catch { /* message invalide ignoré */ }
+      }
+      socket.onclose = () => {
+        if (!stopped) reconnectTimer = setTimeout(connect, 1000)
+      }
+      socket.onerror = () => socket?.close()
+    }
+    connect()
+    return () => {
+      stopped = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      socket?.close()
+    }
+  }, [competitionId])
 
   const competition = competitions.find((item) => item.id === competitionId)
   const myRow = rows.find((row) => row.userId === currentUserId)
