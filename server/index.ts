@@ -101,6 +101,25 @@ const wss = new WebSocketServer({
 // navigateurs sans toucher au pipeline /ws principal (compétition).
 const itickWss = new WebSocketServer({ noServer: true });
 const chatWss = new WebSocketServer({ noServer: true });
+const WS_MAX_BUFFERED_BYTES = Math.max(64 * 1024, Number(process.env.WS_MAX_BUFFERED_BYTES) || 1024 * 1024);
+
+/**
+ * Ne laisse jamais un navigateur lent accumuler une file WebSocket sans
+ * limite en RAM. Le client se reconnectera et recevra un snapshot frais.
+ */
+function sendWs(ws: WebSocket, payload: string): boolean {
+  if (ws.readyState !== WebSocket.OPEN) return false;
+  if (ws.bufferedAmount > WS_MAX_BUFFERED_BYTES) {
+    ws.terminate();
+    return false;
+  }
+  try {
+    ws.send(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Dispatcher manuel : ws.js fait un startsWith(path) qui ferait intercepter
 // /ws/itick par le serveur principal /ws. On route nous-mêmes selon le
@@ -482,7 +501,7 @@ const manager = new PlayerManager((patch: StatePatch) => {
   clients.forEach((ws) => {
     // Un terminal paper reçoit déjà market:tick + paper:patch + arena:patch.
     // Lui renvoyer aussi le patch du dashboard global dupliquerait le marché.
-    if (!paperClients.has(ws) && ws.readyState === WebSocket.OPEN) ws.send(msg);
+    if (!paperClients.has(ws)) sendWs(ws, msg);
   });
   syncAndBroadcastPaperRuntime();
 });
@@ -603,7 +622,7 @@ function broadcastMarketTicks(pairs: string[]): void {
   // Broadcast to every connected client: market prices are public data and
   // every chart consumer (logged-in or not) should see a live last-bar.
   clients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+    sendWs(ws, msg);
   });
 }
 
@@ -1194,11 +1213,11 @@ function sendPaperUpdate(ws: WebSocket, sub: PaperClientSubscription): void {
     if (!sub.lastPayload) {
       // Garder le nom historique pour les apps déjà installées : elles
       // reçoivent le snapshot initial puis ignorent simplement paper:patch.
-      ws.send(JSON.stringify({ type: 'paper:update', data: payload }));
+      sendWs(ws, JSON.stringify({ type: 'paper:update', data: payload }));
     } else {
       const patch = buildPaperPatch(sub.lastPayload, payload);
       if (Object.keys(patch).length > 0) {
-        ws.send(JSON.stringify({ type: 'paper:patch', data: patch }));
+        sendWs(ws, JSON.stringify({ type: 'paper:patch', data: patch }));
       }
     }
     sub.lastPayload = snapshotPaperPayload(payload);
@@ -1320,7 +1339,7 @@ function broadcastArenaPatches(): void {
     if (!patch) continue;
     const msg = JSON.stringify({ type: 'arena:patch', data: patch });
     sockets.forEach((ws) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+      sendWs(ws, msg);
     });
   }
 }
@@ -1335,7 +1354,7 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
   // Send full snapshot so the client can render the leaderboard immediately.
   const init = buildArenaInit(competitionId);
   if (init && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'arena:init', data: init }));
+    sendWs(ws, JSON.stringify({ type: 'arena:init', data: init }));
     // Prime the diff baseline with the snapshot we just sent.
     const baseline = new Map<string, {
       rank: number; pnlPercent: number; pnlUsd: number; tradesCount: number; updatedAt: number; avatarUrl: string | null;
@@ -1389,7 +1408,7 @@ wss.on('connection', (ws, req) => {
   // competition under a few KB per broadcast.
   if (!arenaOnly) {
     const initialState = manager.getStateInit();
-    ws.send(JSON.stringify({ type: 'state:init', data: initialState }));
+    sendWs(ws, JSON.stringify({ type: 'state:init', data: initialState }));
   }
 
   if (publicArenaId) attachArenaClient(ws, publicArenaId);
@@ -4382,6 +4401,33 @@ app.get('/api/admin/staging-simulation', requireAdmin, (_req, res) => {
   } catch (error) {
     res.status(404).json({ error: (error as Error).message });
   }
+});
+
+app.get('/api/staging/runtime-metrics', (_req, res) => {
+  if (!MOBILE_STAGING_TEST_MODE || process.env.NETLIFY) {
+    res.status(404).json({ error: 'Indisponible' });
+    return;
+  }
+  const memory = process.memoryUsage();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    uptime: process.uptime(),
+    memory: {
+      rss: memory.rss,
+      heapUsed: memory.heapUsed,
+      heapTotal: memory.heapTotal,
+      external: memory.external,
+      arrayBuffers: memory.arrayBuffers,
+    },
+    sockets: {
+      total: wss.clients.size,
+      global: clients.size,
+      paper: paperClients.size,
+      arena: Array.from(arenaClients.values()).reduce((total, bucket) => total + bucket.size, 0),
+      chat: chatWss.clients.size,
+    },
+    wsMaxBufferedBytes: WS_MAX_BUFFERED_BYTES,
+  });
 });
 
 app.post('/api/admin/staging-simulation/start', requireAdmin, async (_req, res) => {
