@@ -408,6 +408,13 @@ export default function AdvancedChart({
   // suppress drawing_event reactions while we're programmatically updating lines.
   const suppressEventsRef = useRef(false);
   const [chartReady, setChartReady] = useState(false);
+  const [showTrades, setShowTrades] = useState(() => {
+    try {
+      return localStorage.getItem('btf-show-trades') !== '0';
+    } catch {
+      return true;
+    }
+  });
   const [overlayButtons, setOverlayButtons] = useState<OverlayButton[]>([]);
   const buttonElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   // Live drag overrides: for a given key, the user is currently dragging it
@@ -1757,8 +1764,8 @@ export default function AdvancedChart({
             el.style.opacity = '0';
             continue;
           }
-          const yOffset = marker.direction === 'buy' ? 11 : -11;
-          const xOffset = marker.stack * 10;
+          const yOffset = marker.direction === 'buy' ? 8 : -8;
+          const xOffset = marker.stack * 7;
           const left = x + xOffset;
           const top = y + yOffset;
           const offscreen = left < rect.left - 8 || left > rect.right + 8
@@ -2145,9 +2152,25 @@ export default function AdvancedChart({
     </button>
   );
 
+  const toggleShowTrades = useCallback(() => {
+    setShowTrades((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem('btf-show-trades', next ? '1' : '0');
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#0e0c0d]">
       <div ref={widgetContainerRef} className="absolute inset-0 z-0" />
+      <label className="tv-show-trades">
+        <input type="checkbox" checked={showTrades} onChange={toggleShowTrades} />
+        Show trade
+      </label>
       <div
         ref={overlayRef}
         className={`${draggingKey || expandedPeKey ? 'pointer-events-auto' : 'pointer-events-none'} absolute inset-0 z-[30]`}
@@ -2156,7 +2179,7 @@ export default function AdvancedChart({
           cursor: draggingKey ? 'row-resize' : undefined,
         }}
       >
-        {fillMarkers.map((marker) => (
+        {showTrades && fillMarkers.map((marker) => (
           <div
             key={marker.key}
             ref={(el) => {
