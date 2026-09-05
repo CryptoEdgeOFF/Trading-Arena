@@ -585,7 +585,6 @@ export default function CompetitionPublicLeaderboard() {
                   </span>
                   {data.competition.dailyDrawdownPercent != null && data.competition.dailyDrawdownPercent > 0 && (
                     <span className="lb-stat lb-stat--rule">
-                      <small>{t('leaderboard.dailyRule')}</small>
                       <b>{t('leaderboard.dailyRisk', { percent: data.competition.dailyDrawdownPercent })}</b>
                     </span>
                   )}
