@@ -1272,6 +1272,7 @@ export const en = {
     competitions: 'COMPETITIONS',
     current: 'Live now',
     openForJoin: 'Registration open',
+    upcomingArenas: 'Upcoming',
     startsIn: 'Starts in',
     guestEyebrow: 'Trading competition',
     guestTitle: 'Enter the',

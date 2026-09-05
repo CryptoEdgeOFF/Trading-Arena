@@ -199,6 +199,9 @@ function ArenaCard({
         </div>
         <div className="arena-card__actions">
           {mine?.canTrade && <button type="button" onClick={() => onTrade(competition.id)}>{t('arena.trade')}</button>}
+          {joined && !mine?.canTrade && (
+            <span className="arena-card__joined">{t('home.joined')}</span>
+          )}
           {!joined && competition.canJoin !== false && (
             <button type="button" onClick={() => onJoin(competition)}>{t('arena.join')}</button>
           )}
@@ -530,14 +533,12 @@ function HomeScreen({
   const totalPnl = statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlUsd, 0)
   const mineById = new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))
   const active = competitions
-    .filter((competition) => competition.status === 'live' && mineById.has(competition.id))
+    .filter((competition) => competition.status === 'live' && competition.entryMode !== 'team')
     .sort((a, b) => a.endAt - b.endAt)
   const openForJoin = competitions
     .filter((competition) => (
       competition.entryMode !== 'team'
-      && competition.status !== 'ended'
-      && competition.status !== 'live'
-      && (competition.status === 'registration' || competition.canJoin === true)
+      && (competition.status === 'registration' || competition.status === 'starting_soon')
     ))
     .sort((a, b) => a.startAt - b.startAt)
   const hour = new Date().getHours()
@@ -652,7 +653,7 @@ function HomeScreen({
       {openForJoin.length > 0 && (
         <section className="home-arena-section">
           <div className="section-title">
-            <div><span>{t('home.competitions')}</span><h2>{t('home.openForJoin')}</h2></div>
+            <div><span>{t('home.competitions')}</span><h2>{t('home.upcomingArenas')}</h2></div>
           </div>
           <div className="home-join-list">
             {openForJoin.map((competition) => (
@@ -695,7 +696,7 @@ function HomeScreen({
         </section>
       )}
 
-      {user && (loading || active.length > 0) && <section className="home-arena-section">
+      {(loading || active.length > 0) && <section className="home-arena-section">
         {(loading || active.length > 0) && (
           <div className="section-title">
             <div><span>{t('home.competitions')}</span><h2>{t('live.current')}</h2></div>

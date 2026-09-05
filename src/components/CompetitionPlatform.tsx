@@ -1015,22 +1015,30 @@ export default function CompetitionPlatform() {
           rating={myRating}
           stats={myStats}
           totalPnl={totalPnl}
-          arenas={activeMyCompetitions.map((competition) => ({
-            id: competition.id,
-            title: competition.title,
-            status: competition.status,
-            startAt: competition.startAt,
-            endAt: competition.endAt,
-            sponsor: competition.sponsor,
-            sponsorName: competition.sponsorName,
-            sponsorLogoUrl: competition.sponsorLogoUrl,
-            bannerImageUrl: competition.bannerImageUrl,
-            myEntry: competition.myEntry,
-          }))}
-          joinableArenas={joinablePublicCompetitions
+          arenas={publicCompetitions
+            .filter((competition) => competition.status === 'live' && competition.entryMode !== 'team')
+            .sort((a, b) => a.endAt - b.endAt)
+            .map((competition) => {
+              const mine = myCompetitions.find((entry) => entry.id === competition.id);
+              return {
+                id: competition.id,
+                title: competition.title,
+                status: competition.status,
+                startAt: competition.startAt,
+                endAt: competition.endAt,
+                sponsor: competition.sponsor,
+                sponsorName: competition.sponsorName,
+                sponsorLogoUrl: competition.sponsorLogoUrl,
+                bannerImageUrl: competition.bannerImageUrl,
+                canJoin: competition.canJoin,
+                joined: Boolean(mine),
+                myEntry: mine?.myEntry,
+              };
+            })}
+          joinableArenas={publicCompetitions
             .filter((competition) => (
-              competition.status !== 'live'
-              && (competition.status === 'registration' || competition.canJoin === true)
+              competition.entryMode !== 'team'
+              && (competition.status === 'registration' || competition.status === 'starting_soon')
             ))
             .sort((a, b) => a.startAt - b.startAt)
             .map((competition) => ({

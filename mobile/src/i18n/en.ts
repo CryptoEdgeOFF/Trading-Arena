@@ -184,6 +184,7 @@ export const en = {
     guestGlobal: 'View the global leaderboard',
     competitions: 'COMPETITIONS',
     openForJoin: 'Registration open',
+    upcomingArenas: 'Upcoming',
     joined: 'Joined',
     arenas: 'Arenas',
     filterArenas: 'Filter arenas',

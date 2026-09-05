@@ -110,12 +110,16 @@ function MobileArenaCard({
           {joining ? (
             arena.joined ? (
               <span className="mobile-arena-card__joined">{t('publicCard.joined')}</span>
-            ) : (
+            ) : arena.canJoin !== false ? (
               <button type="button" onClick={() => onJoin?.(arena.id)}>{t('spotlight.join')}</button>
+            ) : (
+              <span className="mobile-arena-card__joined">{t('status.startingSoon')}</span>
             )
-          ) : (
+          ) : arena.joined ? (
             <button type="button" onClick={() => onTrade?.(arena.id)}>{t('header.trade')}</button>
-          )}
+          ) : arena.canJoin !== false ? (
+            <button type="button" onClick={() => onJoin?.(arena.id)}>{t('spotlight.join')}</button>
+          ) : null}
           <button type="button" onClick={() => onLeaderboard(arena.id)}>{t('common.leaderboard')}</button>
         </div>
       </div>
@@ -316,7 +320,7 @@ export default function MobileHome({
           <div className="mobile-home__section-title">
             <div>
               <span>{t('home.competitions')}</span>
-              <h2>{t('home.openForJoin')}</h2>
+              <h2>{t('home.upcomingArenas')}</h2>
             </div>
           </div>
           <div className="mobile-home__join">
@@ -359,7 +363,7 @@ export default function MobileHome({
         </section>
       )}
 
-      {user && liveArenas.length > 0 && (
+      {liveArenas.length > 0 && (
         <section>
           <div className="mobile-home__section-title">
             <div>
@@ -378,6 +382,7 @@ export default function MobileHome({
                 key={arena.id}
                 arena={arena}
                 onTrade={onTrade}
+                onJoin={onJoin}
                 onLeaderboard={onLeaderboard}
               />
             ))}

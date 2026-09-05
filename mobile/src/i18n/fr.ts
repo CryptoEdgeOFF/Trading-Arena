@@ -186,6 +186,7 @@ export const fr: typeof en = {
     guestGlobal: 'Voir le classement global',
     competitions: 'COMPÉTITIONS',
     openForJoin: 'Inscriptions ouvertes',
+    upcomingArenas: 'À venir',
     joined: 'Inscrit',
     arenas: 'Arènes',
     filterArenas: 'Filtrer les arènes',
