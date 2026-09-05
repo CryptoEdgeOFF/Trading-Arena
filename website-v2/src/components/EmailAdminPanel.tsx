@@ -6,6 +6,7 @@ type EmailKind =
   | 'prize_winner'
   | 'arena_start_soon'
   | 'arena_register_reminder_24h'
+  | 'arena_register_reminder_1h'
   | 'arena_no_trade_reminder'
   | 'arena_podium_lost'
   | 'arena_results';

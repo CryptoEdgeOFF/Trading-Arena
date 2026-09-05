@@ -52,6 +52,7 @@ export function shouldSendNewsPush(article: { published?: boolean; pushSentAt?: 
 }
 
 export const REGISTER_REMINDER_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const REGISTER_REMINDER_1H_MS = 60 * 60 * 1000;
 export const NO_TRADE_REMINDER_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
 export const NO_TRADE_REMINDER_GRACE_MS = 24 * 60 * 60 * 1000;
 
@@ -71,6 +72,28 @@ export function shouldSendRegisterReminder24h(input: {
 }
 
 export function shouldSkipRegisterReminder24h(input: {
+  alreadyNotified: boolean;
+  status: string;
+}): boolean {
+  return !input.alreadyNotified && (input.status === 'starting_soon' || input.status === 'live' || input.status === 'ended');
+}
+
+export function shouldSendRegisterReminder1h(input: {
+  isPublic: boolean;
+  alreadyNotified: boolean;
+  status: string;
+  msUntilStart: number;
+}): boolean {
+  return (
+    input.isPublic
+    && !input.alreadyNotified
+    && input.status === 'registration'
+    && input.msUntilStart > 0
+    && input.msUntilStart <= REGISTER_REMINDER_1H_MS
+  );
+}
+
+export function shouldSkipRegisterReminder1h(input: {
   alreadyNotified: boolean;
   status: string;
 }): boolean {

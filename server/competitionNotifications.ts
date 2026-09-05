@@ -3,8 +3,10 @@ import { isMailerConfigured, sendNewArenaEmail, sendNotificationEmail, sendPrize
 import { getEmailSettings } from './emailSettingsStore.js';
 import {
   shouldSendNoTradeReminder,
+  shouldSendRegisterReminder1h,
   shouldSendRegisterReminder24h,
   shouldSkipNoTradeReminder,
+  shouldSkipRegisterReminder1h,
   shouldSkipRegisterReminder24h,
 } from './notificationRules.js';
 
@@ -14,14 +16,16 @@ import {
  *     précède le départ, à tous les inscrits.
  *  2. « Plus que 24 h pour rejoindre » — envoyé une fois, dans les 24 h
  *     avant le départ, aux utilisateurs non inscrits (jamais aux inscrits).
- *  3. « Tu n'as pas encore tradé » — envoyé une fois, 2 jours après le
+ *  3. « Plus qu'1 h pour rejoindre » — envoyé une fois, dans l'heure qui
+ *     précède le départ, aux utilisateurs non inscrits (jamais aux inscrits).
+ *  4. « Tu n'as pas encore tradé » — envoyé une fois, 2 jours après le
  *     départ, aux inscrits dont tradesCount === 0.
- *  4. « Tu as perdu ta place sur le podium » — pendant le live, quand un
+ *  5. « Tu as perdu ta place sur le podium » — pendant le live, quand un
  *     joueur sort du top 3 (cooldown anti-spam par joueur).
- *  5. « Résultats de l'arène » — envoyé une fois à la fin, avec le rang et le
+ *  6. « Résultats de l'arène » — envoyé une fois à la fin, avec le rang et le
  *     PnL final de chaque participant.
  *
- * Les flags « déjà envoyé » des notifications 1, 2, 3 et 5 sont persistés sur
+ * Les flags « déjà envoyé » des notifications 1, 2, 3, 4 et 6 sont persistés sur
  * la compétition pour survivre aux redémarrages. Le suivi du podium est en
  * mémoire : après un restart, le premier tick reconstruit la photo du top 3
  * sans notifier.
@@ -203,15 +207,36 @@ export class CompetitionNotifier {
           }
         }
 
-        // Rappel 24 h : destinataires = tous les users plateforme SAUF les
-        // inscrits. Placé avant le filtre « arène vide » car c'est justement
-        // le cas le plus fréquent (personne encore inscrit).
-        if (shouldSendRegisterReminder24h({
+        // Rappels inscription : destinataires = tous les users plateforme
+        // SAUF les inscrits. Placés avant le filtre « arène vide » car c'est
+        // justement le cas le plus fréquent (personne encore inscrit).
+        // Si le premier tick tombe déjà dans la dernière heure, on n'envoie
+        // que le mail 1 h (plus pertinent) et on marque le 24 h sans l'envoyer.
+        const registerReminderInput = {
           isPublic: competition.isPublic,
-          alreadyNotified: Boolean(competition.notifiedRegisterReminder24hAt),
           status: competition.status,
           msUntilStart: competition.startAt - now,
+        };
+        const sendRegister1h = shouldSendRegisterReminder1h({
+          ...registerReminderInput,
+          alreadyNotified: Boolean(competition.notifiedRegisterReminder1hAt),
+        });
+        const sendRegister24h = shouldSendRegisterReminder24h({
+          ...registerReminderInput,
+          alreadyNotified: Boolean(competition.notifiedRegisterReminder24hAt),
+        });
+        if (sendRegister1h) {
+          await this.sendRegisterReminder1h(competition.id, competition.title);
+          if (sendRegister24h) {
+            this.competitionManager.markCompetitionNotified(competition.id, 'registerReminder24h');
+          }
+        } else if (shouldSkipRegisterReminder1h({
+          alreadyNotified: Boolean(competition.notifiedRegisterReminder1hAt),
+          status: competition.status,
         })) {
+          this.competitionManager.markCompetitionNotified(competition.id, 'registerReminder1h');
+        }
+        if (!sendRegister1h && sendRegister24h) {
           await this.sendRegisterReminder24h(competition.id, competition.title);
         } else if (shouldSkipRegisterReminder24h({
           alreadyNotified: Boolean(competition.notifiedRegisterReminder24hAt),
@@ -326,6 +351,39 @@ export class CompetitionNotifier {
       await sleep(SEND_SPACING_MS);
     }
     console.log(`[notifier] register-reminder-24h "${title}" → ${sent} emails`);
+  }
+
+  private async sendRegisterReminder1h(competitionId: string, title: string): Promise<void> {
+    this.competitionManager.markCompetitionNotified(competitionId, 'registerReminder1h');
+
+    const payload = this.competitionManager.getNewArenaPayload(competitionId);
+    if (!payload) return;
+
+    const startLabel = formatArenaDateTime(payload.startAt);
+    const prizeHead = prizeHeadline(payload.cashPrize);
+    const ctaUrl = joinArenaUrl(competitionId);
+    let sent = 0;
+    for (const recipient of payload.recipients) {
+      if (!recipient.email) continue;
+      if (this.competitionManager.isUserInCompetition(competitionId, recipient.id)) continue;
+      const bodyLines = [
+        `Salut ${recipient.name},`,
+        `L'arène « ${title} » démarre dans 1 heure (${startLabel}, heure de Paris) et tu n'es pas encore inscrit.`,
+      ];
+      if (prizeHead) bodyLines.push(`Il y a ${prizeHead} à gagner.`);
+      bodyLines.push("Dernière chance : inscris-toi maintenant pour ne pas rater le départ.");
+      await this.send(recipient.email, `Plus qu'1h pour rejoindre ${title}`, {
+        eyebrow: title,
+        heading: "L'arène démarre dans 1 heure",
+        bodyLines,
+        highlight: prizeHead,
+        ctaLabel: "Rejoindre l'arène",
+        ctaUrl,
+      }, 'arena_register_reminder_1h');
+      sent += 1;
+      await sleep(SEND_SPACING_MS);
+    }
+    console.log(`[notifier] register-reminder-1h "${title}" → ${sent} emails`);
   }
 
   private async sendNoTradeReminder(competitionId: string, title: string): Promise<void> {

@@ -9,8 +9,10 @@ import {
   shouldNotifyCompletedLimit,
   shouldSendNewsPush,
   shouldSendNoTradeReminder,
+  shouldSendRegisterReminder1h,
   shouldSendRegisterReminder24h,
   shouldSkipNoTradeReminder,
+  shouldSkipRegisterReminder1h,
   shouldSkipRegisterReminder24h,
   shouldWarnDailyDrawdown,
   tradingClosePushKind,
@@ -102,6 +104,35 @@ test('24h register reminder is public, joinable, and only inside the last day', 
   }), false);
   assert.equal(shouldSkipRegisterReminder24h({ alreadyNotified: false, status: 'starting_soon' }), true);
   assert.equal(shouldSkipRegisterReminder24h({ alreadyNotified: false, status: 'registration' }), false);
+});
+
+test('1h register reminder is public, joinable, and only inside the last hour', () => {
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: true, alreadyNotified: false, status: 'registration', msUntilStart: 60 * 60 * 1000,
+  }), true);
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: true, alreadyNotified: false, status: 'registration', msUntilStart: 30 * 60 * 1000,
+  }), true);
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: true, alreadyNotified: false, status: 'registration', msUntilStart: 61 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: false, alreadyNotified: false, status: 'registration', msUntilStart: 30 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: true, alreadyNotified: true, status: 'registration', msUntilStart: 30 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: true, alreadyNotified: false, status: 'starting_soon', msUntilStart: 30 * 60 * 1000,
+  }), false);
+  assert.equal(shouldSendRegisterReminder1h({
+    isPublic: true, alreadyNotified: false, status: 'live', msUntilStart: 0,
+  }), false);
+  assert.equal(shouldSkipRegisterReminder1h({ alreadyNotified: false, status: 'starting_soon' }), true);
+  assert.equal(shouldSkipRegisterReminder1h({ alreadyNotified: false, status: 'live' }), true);
+  assert.equal(shouldSkipRegisterReminder1h({ alreadyNotified: false, status: 'ended' }), true);
+  assert.equal(shouldSkipRegisterReminder1h({ alreadyNotified: false, status: 'registration' }), false);
+  assert.equal(shouldSkipRegisterReminder1h({ alreadyNotified: true, status: 'live' }), false);
 });
 
 test('J+2 no-trade reminder fires once while the arena is still live', () => {

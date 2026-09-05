@@ -388,6 +388,8 @@ export interface Competition {
   notifiedNewArenaPushAt?: number | null;
   /** Timestamp d'envoi du rappel 24 h aux non-inscrits (anti-doublon). */
   notifiedRegisterReminder24hAt?: number | null;
+  /** Timestamp d'envoi du rappel 1 h aux non-inscrits (anti-doublon). */
+  notifiedRegisterReminder1hAt?: number | null;
   /** Timestamp d'envoi du rappel J+2 aux inscrits sans trade (anti-doublon). */
   notifiedNoTradeReminderAt?: number | null;
   /** Saison du leaderboard global à laquelle cette arène contribue. */
@@ -3910,6 +3912,7 @@ export class CompetitionManager {
     notifiedNewArenaAt: number | null;
     notifiedNewArenaPushAt: number | null;
     notifiedRegisterReminder24hAt: number | null;
+    notifiedRegisterReminder1hAt: number | null;
     notifiedNoTradeReminderAt: number | null;
   }> {
     return Array.from(this.competitions.values()).map((competition) => ({
@@ -3926,6 +3929,7 @@ export class CompetitionManager {
       notifiedNewArenaAt: competition.notifiedNewArenaAt ?? null,
       notifiedNewArenaPushAt: competition.notifiedNewArenaPushAt ?? null,
       notifiedRegisterReminder24hAt: competition.notifiedRegisterReminder24hAt ?? null,
+      notifiedRegisterReminder1hAt: competition.notifiedRegisterReminder1hAt ?? null,
       notifiedNoTradeReminderAt: competition.notifiedNoTradeReminderAt ?? null,
     }));
   }
@@ -3938,7 +3942,7 @@ export class CompetitionManager {
   /** Marque une notification comme envoyée (persisté, anti-doublon). */
   markCompetitionNotified(
     competitionId: string,
-    kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush' | 'registerReminder24h' | 'noTradeReminder',
+    kind: 'startSoon' | 'ended' | 'newArena' | 'newArenaPush' | 'registerReminder24h' | 'registerReminder1h' | 'noTradeReminder',
   ): void {
     const competition = this.competitions.get(competitionId);
     if (!competition) return;
@@ -3948,6 +3952,7 @@ export class CompetitionManager {
     else if (kind === 'newArena') competition.notifiedNewArenaAt = now;
     else if (kind === 'newArenaPush') competition.notifiedNewArenaPushAt = now;
     else if (kind === 'registerReminder24h') competition.notifiedRegisterReminder24hAt = now;
+    else if (kind === 'registerReminder1h') competition.notifiedRegisterReminder1hAt = now;
     else competition.notifiedNoTradeReminderAt = now;
     this.competitions.set(competition.id, competition);
     this.save();
@@ -3979,6 +3984,10 @@ export class CompetitionManager {
       }
       if (!competition.notifiedRegisterReminder24hAt && (status === 'live' || status === 'ended')) {
         competition.notifiedRegisterReminder24hAt = now;
+        dirty = true;
+      }
+      if (!competition.notifiedRegisterReminder1hAt && (status === 'live' || status === 'ended')) {
+        competition.notifiedRegisterReminder1hAt = now;
         dirty = true;
       }
       if (!competition.notifiedNoTradeReminderAt && (status === 'ended' || (status === 'live' && now - competition.startAt >= 3 * 24 * 60 * 60 * 1000))) {

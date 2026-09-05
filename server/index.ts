@@ -1653,6 +1653,7 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
       const headings: Record<string, string> = {
         arena_start_soon: "L'arène démarre bientôt",
         arena_register_reminder_24h: "L'arène démarre dans 24 heures",
+        arena_register_reminder_1h: "L'arène démarre dans 1 heure",
         arena_no_trade_reminder: "L'arène a commencé il y a 2 jours",
         arena_podium_lost: 'On t’a pris ta place sur le podium !',
         arena_results: "Résultats — Arène de démonstration",
