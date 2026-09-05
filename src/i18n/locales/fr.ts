@@ -662,6 +662,8 @@ export const fr: TranslationResources = {
     rankTierN: '{{rank}}ème',
     rewardAlt: 'Récompense',
     openTerminal: 'Trade dans l’Arène',
+    signUp: 'S’inscrire',
+    enterArena: 'Rentrer dans l’arène',
     bannerKicker: 'Cup officielle',
     arenaLive: 'Arène en direct',
     arenaEnded: 'Arène terminée',

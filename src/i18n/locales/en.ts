@@ -660,6 +660,8 @@ export const en = {
     rankTierN: '{{rank}}th',
     rewardAlt: 'Reward',
     openTerminal: 'Trade in the Arena',
+    signUp: 'Sign up',
+    enterArena: 'Enter the arena',
     bannerKicker: 'Official cup',
     arenaLive: 'Live arena',
     arenaEnded: 'Arena ended',

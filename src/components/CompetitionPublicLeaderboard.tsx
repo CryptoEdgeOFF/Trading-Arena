@@ -19,6 +19,7 @@ import { resolveMediaUrl } from '../utils/imageUrl';
 import ShareCardModal from './ShareCardModal';
 import type { ShareCardData } from '../lib/shareCard';
 import Seo, { SITE_URL } from './Seo';
+import { buildCompeteTradeUrl } from '../lib/paperSession';
 import { dateLocale, fmtAgo, formatDHMS, getInitials } from '../utils/formatters';
 import { buildArenaEventJsonLd } from '../lib/structuredData';
 import ArenaChat from './ArenaChat';
@@ -174,12 +175,19 @@ function ArenaHeroBanner({
   sponsorName,
   accent,
   bannerHref,
+  cta,
 }: {
   hostLogoUrl: string;
   sponsorLogoUrl?: string | null;
   sponsorName?: string | null;
   accent?: string;
   bannerHref?: string | null;
+  cta: {
+    label: string;
+    to?: string;
+    disabled?: boolean;
+    live?: boolean;
+  };
 }) {
   const { t } = useTranslation();
   const color = accent || '#ef233c';
@@ -247,15 +255,26 @@ function ArenaHeroBanner({
             </>
           )}
         </div>
-        <Link to="/trade" className="lb-terminal">
-          <span className="lb-terminal__ico">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M5 8l3.5 3.5L5 15M11 16h8" />
-            </svg>
+        {cta.disabled || !cta.to ? (
+          <span className="lb-terminal is-disabled" aria-disabled="true">
+            <span className="lb-terminal__ico">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 8l3.5 3.5L5 15M11 16h8" />
+              </svg>
+            </span>
+            {cta.label}
           </span>
-          {t('leaderboard.openTerminal')}
-          <span className="lb-terminal__dot" />
-        </Link>
+        ) : (
+          <Link to={cta.to} className="lb-terminal">
+            <span className="lb-terminal__ico">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 8l3.5 3.5L5 15M11 16h8" />
+              </svg>
+            </span>
+            {cta.label}
+            {cta.live && <span className="lb-terminal__dot" />}
+          </Link>
+        )}
       </div>
     </section>
   );
@@ -541,6 +560,23 @@ export default function CompetitionPublicLeaderboard() {
             sponsorName={brand?.name}
             accent={brand?.accent}
             bannerHref={brand?.bannerHref}
+            cta={
+              myRow
+                ? {
+                    label: t('leaderboard.enterArena'),
+                    to: isLive ? buildCompeteTradeUrl({
+                      id: data.competition.id,
+                      title: data.competition.title,
+                    }) : undefined,
+                    disabled: !isLive,
+                    live: isLive,
+                  }
+                : {
+                    label: t('leaderboard.signUp'),
+                    to: isEnded ? undefined : `/compete?arena=${encodeURIComponent(data.competition.id)}&join=1`,
+                    disabled: isEnded,
+                  }
+            }
           />
         )}
 
@@ -893,17 +929,16 @@ function RankRow({
   const noTrade = row.rank === 0 && !row.breached;
   const pos = row.pnlPercent >= 0;
   const lastAt = activityAt(row);
-  return (
-    <div className={`lb-tr ${isMe ? 'lb-tr--me' : ''} ${pinned ? 'lb-tr--pinned' : ''}`}>
+  const cells = (
+    <>
       <div className="flex min-w-0 items-center gap-2">
-        {pinned && <span className="lb-tag">{t('leaderboard.yourPosition')}</span>}
         <span className="lb-tr__num">{noTrade ? '—' : row.rank}</span>
       </div>
 
       <div className={`lb-tr__identity flex min-w-0 items-center gap-2.5 ${row.breached ? 'is-breached' : ''}`}>
         <Link
           to={`/compete/player/${row.userId}`}
-          className="group flex min-w-0 items-center gap-2.5"
+          className="group flex min-w-0 flex-1 items-center gap-2.5"
           title={t('playerProfile.viewProfile')}
         >
           <Avatar
@@ -916,21 +951,9 @@ function RankRow({
             <NameBadges badges={row.badges} compact />
           </span>
         </Link>
-        {isMe && <span className="lb-tag">{t('leaderboard.you')}</span>}
+        {isMe && !pinned && <span className="lb-tag">{t('leaderboard.you')}</span>}
         {row.breached && (
           <span className="lb-tag" title={t('leaderboard.breachedTitle')}>{t('leaderboard.breached')}</span>
-        )}
-        {pinned && onShare && (
-          <button
-            type="button"
-            onClick={onShare}
-            title={t('share.cta')}
-            className="ml-auto shrink-0 text-[#fca5a5] transition-colors hover:text-white"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13" />
-            </svg>
-          </button>
         )}
       </div>
 
@@ -961,6 +984,29 @@ function RankRow({
           </div>
         </>
       )}
+    </>
+  );
+
+  return (
+    <div className={`lb-tr ${isMe ? 'lb-tr--me' : ''} ${pinned ? 'lb-tr--pinned' : ''}`}>
+      {pinned && (
+        <div className="lb-tr__pin">
+          <span className="lb-tag">{t('leaderboard.yourPosition')}</span>
+          {onShare && (
+            <button
+              type="button"
+              onClick={onShare}
+              title={t('share.cta')}
+              className="shrink-0 text-[#fca5a5] transition-colors hover:text-white"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
+      {pinned ? <div className="lb-tr__body">{cells}</div> : cells}
     </div>
   );
 }

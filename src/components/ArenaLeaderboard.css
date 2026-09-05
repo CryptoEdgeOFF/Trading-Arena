@@ -363,6 +363,16 @@
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 .lb-terminal:hover { border-color: rgba(239, 35, 60, 0.55); transform: translateY(-1px); }
+.lb-terminal.is-disabled,
+.lb-terminal:disabled {
+  opacity: 0.42;
+  color: #9a9aa3;
+  border-color: rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  transform: none;
+  box-shadow: none;
+}
+.lb-terminal.is-disabled .lb-terminal__dot { display: none; }
 .lb-terminal__ico {
   display: grid;
   place-items: center;
@@ -375,7 +385,8 @@
 }
 .lb-terminal__dot { width: 7px; height: 7px; border-radius: 999px; background: #ef233c; box-shadow: 0 0 9px #ef233c; }
 @media (max-width: 767px) {
-  .lb-terminal { justify-content: center; }
+  .lb-terminal { justify-content: center; padding: 9px 11px; font-size: 11px; gap: 7px; }
+  .lb-terminal__ico { width: 22px; height: 22px; }
 }
 
 /* ------------------------- PNL RACE / COMPTE À REBOURS ------------------- */
@@ -619,10 +630,28 @@
   padding: 12px 14px;
   background: rgba(220, 38, 38, 0.09);
 }
-/* Ma ligne épinglée : le badge « ta position » a besoin d'une colonne plus large. */
-.lb-tr--pinned { grid-template-columns: 104px minmax(0, 1.6fr) 44px minmax(0, 0.9fr) minmax(0, 0.9fr); }
+.lb-tr--pinned {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.lb-tr__pin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.lb-tr__body {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1.6fr) 44px minmax(0, 0.9fr) minmax(0, 0.9fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 @media (min-width: 900px) {
-  .lb-tr--pinned { grid-template-columns: 116px minmax(0, 1.6fr) 56px minmax(0, 0.9fr) minmax(0, 0.9fr) 70px minmax(0, 1fr); }
+  .lb-tr__body { grid-template-columns: 56px minmax(0, 1.6fr) 56px minmax(0, 0.9fr) minmax(0, 0.9fr) 70px minmax(0, 1fr); }
 }
 @media (max-width: 899px) {
   .lb-tr__identity.is-breached {
@@ -634,6 +663,7 @@
     margin-left: 38px;
   }
 }
+.lb-tr__identity { min-width: 0; overflow: hidden; }
 .lb-tr__num {
   font-family: 'Chakra Petch', monospace;
   font-size: 14px;
