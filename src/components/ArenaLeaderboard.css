@@ -493,6 +493,75 @@
   }
   .lb-prize-desktop { display: none; }
 }
+.lb-discord-mobile { display: none; }
+@media (max-width: 767px) {
+  .lb-discord-mobile {
+    display: block;
+    margin-bottom: 14px;
+  }
+  .lb-discord-desktop { display: none; }
+}
+
+.lb-discord {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 16px;
+  overflow: hidden;
+  border: 1px solid rgba(88, 101, 242, 0.55);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(88, 101, 242, 0.42), transparent 46%),
+    linear-gradient(145deg, #3b2a78, #1b1238 68%);
+  box-shadow: 0 16px 36px rgba(36, 22, 90, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.2s ease, filter 0.2s ease, border-color 0.2s ease;
+}
+.lb-discord:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+  border-color: rgba(155, 164, 255, 0.75);
+}
+.lb-discord__mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(155, 164, 255, 0.45);
+  border-radius: 14px;
+  background: rgba(88, 101, 242, 0.28);
+  color: #d7dbff;
+  box-shadow: 0 0 20px rgba(88, 101, 242, 0.35);
+}
+.lb-discord__copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.lb-discord__copy small {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #b7bfff;
+}
+.lb-discord__copy strong {
+  font-family: 'Barlow Condensed', 'Rajdhani', sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #fff;
+}
+.lb-discord__copy em {
+  color: #cfd3ff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
 
 /* -------------------------------- PANNEAUX ------------------------------- */
 
