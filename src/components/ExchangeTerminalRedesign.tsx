@@ -583,6 +583,8 @@ interface OrderFormProps {
   setTakeProfitInput: (value: string) => void;
   stopLossInput: string;
   setStopLossInput: (value: string) => void;
+  market: Record<string, MarketTicker>;
+  onPairMenuOpenChange?: (open: boolean) => void;
 }
 
 /* ------------------------------------------------------------------ PAIR SELECTOR */
@@ -599,6 +601,7 @@ function PairSelectorMenu({
   marketMetadata,
   market,
   onChange,
+  onOpenChange,
   className = '',
 }: {
   selectedPair: string;
@@ -606,11 +609,17 @@ function PairSelectorMenu({
   marketMetadata: Record<string, MarketMetadata>;
   market: Record<string, MarketTicker>;
   onChange: (pair: string) => void;
+  onOpenChange?: (open: boolean) => void;
   className?: string;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (open) onOpenChange?.(true);
+    return () => { if (open) onOpenChange?.(false); };
+  }, [open, onOpenChange]);
   const [activeCategory, setActiveCategory] = useState<MarketCategory>(
     (marketMetadata[selectedPair]?.category as MarketCategory) || 'crypto',
   );
@@ -901,6 +910,7 @@ function OrderForm(props: OrderFormProps) {
     tpSlEnabled, setTpSlEnabled,
     takeProfitInput, setTakeProfitInput,
     stopLossInput, setStopLossInput,
+    market, onPairMenuOpenChange,
   } = props;
 
   const isSell = side === 'short';
@@ -1108,8 +1118,9 @@ function OrderForm(props: OrderFormProps) {
             selectedPair={selectedPair}
             pairs={pairs}
             marketMetadata={meta.marketMetadata}
-            market={meta.market}
+            market={market}
             onChange={setSelectedPair}
+            onOpenChange={onPairMenuOpenChange}
           />
           <img
             src="/assets/pictures/kraken-logo-white.webp"
@@ -1617,6 +1628,7 @@ function ChartArea({
   setInterval,
   isMobile = false,
   chartLiveTickRef,
+  onPairMenuOpenChange,
 }: {
   pair: string;
   pairs: string[];
@@ -1649,6 +1661,7 @@ function ChartArea({
   setInterval: (interval: number) => void;
   isMobile?: boolean;
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
+  onPairMenuOpenChange?: (open: boolean) => void;
 }) {
   const positions = player?.openPositions ?? [];
   const pendingOrders = (player?.openOrders ?? [])
@@ -1678,6 +1691,7 @@ function ChartArea({
             marketMetadata={marketMetadata}
             market={market || {}}
             onChange={onPairChange}
+            onOpenChange={onPairMenuOpenChange}
             className="w-[140px] shrink-0"
           />
           <TimeframeSelect interval={interval} onChange={setInterval} className="w-[74px] shrink-0" />
@@ -3103,6 +3117,12 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
   const [livePlayer, setLivePlayer] = useState<Player | null>(null);
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
+  const watchOpenCountRef = useRef(0);
+  const [watchListOpen, setWatchListOpen] = useState(false);
+  const handlePairMenuOpenChange = useCallback((open: boolean) => {
+    watchOpenCountRef.current = Math.max(0, watchOpenCountRef.current + (open ? 1 : -1));
+    setWatchListOpen(watchOpenCountRef.current > 0);
+  }, []);
   const chartLiveTickRef = useRef<ChartLiveTickHandler | null>(null);
   const paperWsConnectedRef = useRef(false);
   // Animation de fin de round (podium / stats) rejouée sur le terminal trader.
@@ -3343,6 +3363,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
     onPaperPatch: applyPaperPatch,
     onMarketTick: applyMarketTick,
     subscribePairs: liveSubscribePairs,
+    watchList: watchListOpen,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
     onOpen: () => { paperWsConnectedRef.current = true; },
@@ -4356,6 +4377,8 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
       leverage={leverage}
       setLeverage={setLeverage}
       ticker={ticker}
+      market={market}
+      onPairMenuOpenChange={handlePairMenuOpenChange}
       player={player}
       busy={busy}
       eventStarted={canTradeNow}
@@ -4419,6 +4442,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
       setInterval={setChartInterval}
       isMobile={isMobileViewport}
       chartLiveTickRef={chartLiveTickRef}
+      onPairMenuOpenChange={handlePairMenuOpenChange}
     />
   );
 

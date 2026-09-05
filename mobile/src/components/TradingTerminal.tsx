@@ -174,15 +174,22 @@ function PairSelectorMenu({
   metadata,
   market,
   onChange,
+  onOpenChange,
 }: {
   selectedPair: string
   pairs: string[]
   metadata: PaperMeta['marketMetadata']
   market: PaperState['market']
   onChange: (pair: string) => void
+  onOpenChange?: (open: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    if (open) onOpenChange?.(true)
+    return () => { if (open) onOpenChange?.(false) }
+  }, [open, onOpenChange])
   const selectedCategory = (metadata?.[selectedPair]?.category || 'crypto') as MarketCategory
   const [activeCategory, setActiveCategory] = useState<MarketCategory>(selectedCategory)
 
@@ -353,6 +360,8 @@ export function TradingTerminal({
   const pendingCancelledOrders = useRef(new Map<string, number>())
   const socketRef = useRef<WebSocket | null>(null)
   const subscribePairsRef = useRef<string[]>([])
+  const watchListRef = useRef(false)
+  const [watchListOpen, setWatchListOpen] = useState(false)
 
   const reconcilePending = useCallback((next: PaperState): PaperState => {
     const now = Date.now()
@@ -428,6 +437,9 @@ export function TradingTerminal({
         socketOpen = true
         if (subscribePairsRef.current.length > 0) {
           socket?.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }))
+        }
+        if (watchListRef.current) {
+          socket?.send(JSON.stringify({ type: 'market:watch-subscribe', enabled: true }))
         }
       }
       socket.onmessage = (event) => {
@@ -545,6 +557,13 @@ export function TradingTerminal({
     if (!socket || socket.readyState !== WebSocket.OPEN || liveSubscribePairs.length === 0) return
     socket.send(JSON.stringify({ type: 'market:subscribe', pairs: liveSubscribePairs }))
   }, [liveSubscribePairs])
+
+  useEffect(() => {
+    watchListRef.current = watchListOpen
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    socket.send(JSON.stringify({ type: 'market:watch-subscribe', enabled: watchListOpen }))
+  }, [watchListOpen])
 
   const ticker = state?.market[selectedPair] || meta?.market[selectedPair]
   const selectedCategory = meta?.marketMetadata?.[selectedPair]?.category
@@ -1000,6 +1019,7 @@ export function TradingTerminal({
               metadata={meta?.marketMetadata}
               market={state.market}
               onChange={setSelectedPair}
+              onOpenChange={setWatchListOpen}
             />
           )}
         />

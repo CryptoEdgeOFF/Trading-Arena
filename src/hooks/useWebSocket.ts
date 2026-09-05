@@ -13,6 +13,7 @@ export function useWebSocket(
     onArenaInit?: (payload: any) => void;
     onArenaPatch?: (payload: any) => void;
     subscribePairs?: string[];
+    watchList?: boolean;
     onOpen?: () => void;
     onClose?: () => void;
   } = {},
@@ -28,6 +29,7 @@ export function useWebSocket(
   const onOpenRef = useRef(options.onOpen);
   const onCloseRef = useRef(options.onClose);
   const subscribePairsRef = useRef(options.subscribePairs || []);
+  const watchListRef = useRef(Boolean(options.watchList));
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
@@ -66,6 +68,13 @@ export function useWebSocket(
   }, [subscribeKey]);
 
   useEffect(() => {
+    watchListRef.current = Boolean(options.watchList);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'market:watch-subscribe', enabled: watchListRef.current }));
+  }, [options.watchList]);
+
+  useEffect(() => {
     if (!enabled) return;
     let closedByEffect = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -82,6 +91,9 @@ export function useWebSocket(
         onOpenRef.current?.();
         if (subscribePairsRef.current.length > 0) {
           ws.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }));
+        }
+        if (watchListRef.current) {
+          ws.send(JSON.stringify({ type: 'market:watch-subscribe', enabled: true }));
         }
       };
 

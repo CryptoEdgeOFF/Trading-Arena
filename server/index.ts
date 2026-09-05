@@ -433,6 +433,7 @@ type PaperClientSubscription = {
 };
 const paperClients = new Map<WebSocket, PaperClientSubscription>();
 const marketSubscriptions = new Map<WebSocket, Set<string>>();
+const marketWatchers = new Set<WebSocket>();
 const MARKET_WATCH_MS = 2_000;
 // Per-competition shard: every paperClient is also tracked under its
 // competitionId so we can broadcast a leaderboard diff only to the
@@ -663,20 +664,36 @@ function broadcastMarketTicks(pairs: string[]): void {
   });
 }
 
-function broadcastMarketWatch(): void {
-  if (paperClients.size === 0) return;
-  const quotes = Object.values(manager.getChartMarketSnapshot()).map((ticker) => ({
+function buildMarketWatchQuotes() {
+  return Object.values(manager.getChartMarketSnapshot()).map((ticker) => ({
     pair: ticker.pair,
     markPrice: ticker.markPrice,
-    bidPrice: ticker.bidPrice,
-    askPrice: ticker.askPrice,
     change24h: ticker.change24h ?? null,
     marketOpen: ticker.marketOpen,
-    updatedAt: ticker.updatedAt,
   }));
+}
+
+function sendMarketWatch(ws: WebSocket): void {
+  const quotes = buildMarketWatchQuotes();
+  if (quotes.length === 0) return;
+  sendWs(ws, JSON.stringify({ type: 'market:watch', data: { quotes } }));
+}
+
+function applyMarketWatchSubscribe(ws: WebSocket, enabled: unknown): void {
+  if (enabled) {
+    marketWatchers.add(ws);
+    sendMarketWatch(ws);
+    return;
+  }
+  marketWatchers.delete(ws);
+}
+
+function broadcastMarketWatch(): void {
+  if (marketWatchers.size === 0) return;
+  const quotes = buildMarketWatchQuotes();
   if (quotes.length === 0) return;
   const msg = JSON.stringify({ type: 'market:watch', data: { quotes } });
-  paperClients.forEach((_sub, ws) => sendWs(ws, msg));
+  marketWatchers.forEach((ws) => sendWs(ws, msg));
 }
 
 const CRYPTO_PREWARM_PAIRS = [
@@ -1484,6 +1501,7 @@ wss.on('connection', (ws, req) => {
     try {
       const msg = JSON.parse(String(raw));
       if (msg?.type === 'market:subscribe') applyMarketSubscribe(ws, msg.pairs);
+      if (msg?.type === 'market:watch-subscribe') applyMarketWatchSubscribe(ws, msg.enabled);
     } catch {
       // ignore malformed client frames
     }
@@ -1493,6 +1511,7 @@ wss.on('connection', (ws, req) => {
     clients.delete(ws);
     paperClients.delete(ws);
     marketSubscriptions.delete(ws);
+    marketWatchers.delete(ws);
     detachArenaClient(ws);
   });
 });
