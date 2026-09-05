@@ -1665,6 +1665,39 @@ function LeaderboardScreen({
             <PnlRaceChart samples={pnlHistory.samples} traders={pnlHistory.traders} moments={pnlHistory.moments} currentUserId={currentUserId} />
           )}
 
+          {hasPrize && prize && (
+            <section className="spectate-prizes">
+              <span>{t('leaderboard.prizes')}</span>
+              <div className="spectate-prizes__hero">
+                {prize.imageUrl && <img src={apiAssetUrl(prize.imageUrl)} alt="" />}
+                <div>
+                  <strong>{prizeTitle}</strong>
+                  {prize.description && <small>{prize.description}</small>}
+                </div>
+              </div>
+              {prize.breakdown && prize.breakdown.length > 0 && (
+                <div className="spectate-prizes__rows">
+                  {prize.breakdown.map((row) => (
+                    <div key={row.rank}>
+                      <span>{t('leaderboard.place', { rank: row.rank })}</span>
+                      <b>{row.amount.toLocaleString(locale)} {prize.currency}</b>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {prize.items && prize.items.length > 0 && (
+                <div className="spectate-prizes__items">
+                  {prize.items.map((item, index) => (
+                    <article key={`${item.title || 'lot'}-${index}`}>
+                      {item.imageUrl && <img src={apiAssetUrl(item.imageUrl)} alt="" />}
+                      <strong>{item.title || (item.rank ? t('leaderboard.place', { rank: item.rank }) : t('leaderboard.mainPrize'))}</strong>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
           {ranked.length >= 2 && <VersusStrip left={ranked[0]} right={ranked[1]} onOpenPlayer={onOpenPlayer} />}
 
           <button className="spectate-chat-cta" type="button" onClick={() => { setShowChat(true); setUnreadChat(0) }}>
@@ -1749,39 +1782,6 @@ function LeaderboardScreen({
             <button className="leaderboard-more" type="button" onClick={() => setVisibleCount((count) => count + 50)}>
               {t('leaderboard.loadMore')}
             </button>
-          )}
-
-          {hasPrize && prize && (
-            <section className="spectate-prizes">
-              <span>{t('leaderboard.prizes')}</span>
-              <div className="spectate-prizes__hero">
-                {prize.imageUrl && <img src={apiAssetUrl(prize.imageUrl)} alt="" />}
-                <div>
-                  <strong>{prizeTitle}</strong>
-                  {prize.description && <small>{prize.description}</small>}
-                </div>
-              </div>
-              {prize.breakdown && prize.breakdown.length > 0 && (
-                <div className="spectate-prizes__rows">
-                  {prize.breakdown.map((row) => (
-                    <div key={row.rank}>
-                      <span>{t('leaderboard.place', { rank: row.rank })}</span>
-                      <b>{row.amount.toLocaleString(locale)} {prize.currency}</b>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {prize.items && prize.items.length > 0 && (
-                <div className="spectate-prizes__items">
-                  {prize.items.map((item, index) => (
-                    <article key={`${item.title || 'lot'}-${index}`}>
-                      {item.imageUrl && <img src={apiAssetUrl(item.imageUrl)} alt="" />}
-                      <strong>{item.title || (item.rank ? t('leaderboard.place', { rank: item.rank }) : t('leaderboard.mainPrize'))}</strong>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
           )}
 
           <a className="spectate-discord" href="https://discord.gg/AH8ehHGd29" target="_blank" rel="noopener noreferrer">

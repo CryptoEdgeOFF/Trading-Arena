@@ -468,6 +468,7 @@
 }
 .lb-col { display: grid; gap: 14px; min-width: 0; }
 .lb-side { display: grid; gap: 14px; min-width: 0; }
+.lb-after-race,
 .lb-after-list { display: none; }
 .lb-more {
   width: 100%;
@@ -487,6 +488,7 @@
   .lb-prize-desktop,
   .lb-discord-desktop,
   .lb-side .lb-promo { display: none; }
+  .lb-after-race,
   .lb-after-list {
     display: grid;
     gap: 14px;
