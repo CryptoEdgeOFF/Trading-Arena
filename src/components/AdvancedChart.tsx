@@ -119,6 +119,8 @@ export interface AdvancedChartProps {
   onCancelOrder?: (orderId: string) => Promise<void> | void;
   onClosePosition?: (positionId: string) => Promise<void> | void;
   isMobile?: boolean;
+  showTrades?: boolean;
+  onShowTradesChange?: (show: boolean) => void;
   /** Optional bridge for high-frequency market:tick WS events (bypasses React market state). */
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
   /** Unix seconds — cadre le graphique sur une arène passée (revue de trades). */
@@ -382,6 +384,8 @@ export default function AdvancedChart({
   onCancelOrder,
   onClosePosition,
   isMobile = false,
+  showTrades: showTradesProp,
+  onShowTradesChange,
   chartLiveTickRef,
   focusRangeSec = null,
   settingsUserId = null,
@@ -408,13 +412,14 @@ export default function AdvancedChart({
   // suppress drawing_event reactions while we're programmatically updating lines.
   const suppressEventsRef = useRef(false);
   const [chartReady, setChartReady] = useState(false);
-  const [showTrades, setShowTrades] = useState(() => {
+  const [showTradesState, setShowTradesState] = useState(() => {
     try {
       return localStorage.getItem('btf-show-trades') !== '0';
     } catch {
       return true;
     }
   });
+  const showTrades = showTradesProp ?? showTradesState;
   const [overlayButtons, setOverlayButtons] = useState<OverlayButton[]>([]);
   const buttonElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   // Live drag overrides: for a given key, the user is currently dragging it
@@ -2153,24 +2158,25 @@ export default function AdvancedChart({
   );
 
   const toggleShowTrades = useCallback(() => {
-    setShowTrades((current) => {
-      const next = !current;
-      try {
-        localStorage.setItem('btf-show-trades', next ? '1' : '0');
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
+    const next = !showTrades;
+    try {
+      localStorage.setItem('btf-show-trades', next ? '1' : '0');
+    } catch {
+      // ignore
+    }
+    onShowTradesChange?.(next);
+    if (showTradesProp == null) setShowTradesState(next);
+  }, [onShowTradesChange, showTrades, showTradesProp]);
 
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#0e0c0d]">
       <div ref={widgetContainerRef} className="absolute inset-0 z-0" />
-      <label className="tv-show-trades">
-        <input type="checkbox" checked={showTrades} onChange={toggleShowTrades} />
-        Show trade
-      </label>
+      {!isMobile && (
+        <label className="tv-show-trades">
+          <input type="checkbox" checked={showTrades} onChange={toggleShowTrades} />
+          Show trade
+        </label>
+      )}
       <div
         ref={overlayRef}
         className={`${draggingKey || expandedPeKey ? 'pointer-events-auto' : 'pointer-events-none'} absolute inset-0 z-[30]`}

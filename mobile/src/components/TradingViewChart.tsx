@@ -1356,20 +1356,6 @@ export function TradingViewChart({
     <div ref={wrapRef} className="tradingview-mobile-wrap">
       <div className="tradingview-mobile-toolbar">
         <div className="tradingview-mobile-toolbar__leading">{toolbarLeading}</div>
-        <label className="tv-show-trades">
-          <input
-            type="checkbox"
-            checked={showTrades}
-            onChange={() => {
-              setShowTrades((current) => {
-                const next = !current
-                try { localStorage.setItem('btf-show-trades', next ? '1' : '0') } catch { /* ignore */ }
-                return next
-              })
-            }}
-          />
-          Show trade
-        </label>
         <div className="timeframe-selector" ref={timeframeMenuRef}>
           <button className="timeframe-selector-trigger" type="button" onClick={() => setTimeframeOpen((current) => !current)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -1387,6 +1373,20 @@ export function TradingViewChart({
             ))}
           </div>}
         </div>
+        <label className="tv-show-trades">
+          <input
+            type="checkbox"
+            checked={showTrades}
+            onChange={() => {
+              setShowTrades((current) => {
+                const next = !current
+                try { localStorage.setItem('btf-show-trades', next ? '1' : '0') } catch { /* ignore */ }
+                return next
+              })
+            }}
+          />
+          Show trade
+        </label>
       </div>
       <div ref={paneRef} className="tradingview-mobile-pane">
       <div id={containerId.current} className="tradingview-mobile-chart" />

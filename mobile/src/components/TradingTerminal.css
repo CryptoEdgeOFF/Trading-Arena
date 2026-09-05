@@ -78,7 +78,7 @@
 .tradingview-mobile-wrap { position: relative; width: 100%; height: calc(100% - 34px); }
 .tradingview-mobile-toolbar { position: absolute; z-index: 20; inset: 0 0 auto; height: 38px; padding: 4px 6px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #242129; background: #0b0a0d; }
 .tradingview-mobile-toolbar__leading { min-width: 0; width: 142px; flex: 0 1 142px; }
-.timeframe-selector { position: relative; }
+.timeframe-selector { position: relative; margin-left: auto; }
 .timeframe-selector-trigger { min-width: 68px; height: 30px; padding: 0 7px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #2c2731; border-radius: 7px; background: #15121a; color: #d8d3dc; }
 .timeframe-selector-trigger svg { color: #837d89; }
 .timeframe-selector-trigger span { font-size: 9px; font-weight: 900; }
@@ -106,7 +106,7 @@
 .chart-risk-drag-guide span,.chart-risk-drag-guide strong { transform: translateY(-50%); padding: 4px 6px; background: var(--risk-color); color: #08080a; font: 900 8px 'Barlow Condensed',sans-serif; }
 .chart-risk-drag-guide strong { margin-right: 7px; border-left: 1px solid rgba(0,0,0,.25); font-variant-numeric: tabular-nums; }
 .tv-fill-mark { position: absolute; z-index: 4; top: 0; left: 0; display: grid; width: 12px; height: 12px; place-items: center; border: 1px solid rgba(255,255,255,.88); border-radius: 999px; color: #06140f; font: 800 7px/1 'Barlow Condensed', sans-serif; box-shadow: 0 1px 6px rgba(0,0,0,.45); pointer-events: none; transform: translate(-50%, -50%); opacity: 0; }
-.tv-show-trades { margin-left: auto; display: flex; align-items: center; gap: 5px; height: 30px; padding: 0 7px; border: 1px solid #2c2731; border-radius: 7px; background: #15121a; color: #d8d3dc; font: 700 9px/1 Inter, sans-serif; cursor: pointer; user-select: none; }
+.tv-show-trades { display: flex; align-items: center; gap: 5px; height: 30px; padding: 0 7px; border: 1px solid #2c2731; border-radius: 7px; background: #15121a; color: #d8d3dc; font: 700 9px/1 Inter, sans-serif; cursor: pointer; user-select: none; }
 .tv-show-trades input { width: 12px; height: 12px; margin: 0; accent-color: #26a69a; }
 .tv-fill-mark.is-sell { color: #fff; }
 .chart-trade-chip { --line-color: #409cff; position: absolute; z-index: 2; top: 0; display: flex; align-items: center; min-height: 23px; max-width: calc(100% - 82px); border: 1px solid var(--line-color); border-radius: 4px; background: rgba(12,11,15,.94); color: #fff; box-shadow: 0 3px 10px rgba(0,0,0,.38); pointer-events: auto; user-select: none; -webkit-user-select: none; }
