@@ -209,7 +209,7 @@ body.app-scroll-lock {
   position: absolute;
   z-index: 45;
   top: 7px;
-  right: 42px;
+  right: 100px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -224,6 +224,14 @@ body.app-scroll-lock {
   cursor: pointer;
   user-select: none;
   pointer-events: auto;
+}
+.tv-show-trades.is-inline {
+  position: static;
+  top: auto;
+  right: auto;
+  z-index: auto;
+  height: 30px;
+  flex-shrink: 0;
 }
 .tv-show-trades input {
   width: 13px;

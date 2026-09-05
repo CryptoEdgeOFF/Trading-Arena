@@ -1676,6 +1676,13 @@ function ChartArea({
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
   onPairMenuOpenChange?: (open: boolean) => void;
 }) {
+  const [showTrades, setShowTrades] = useState(() => {
+    try {
+      return localStorage.getItem('btf-show-trades') !== '0';
+    } catch {
+      return true;
+    }
+  });
   const positions = player?.openPositions ?? [];
   const pendingOrders = (player?.openOrders ?? [])
     .filter((order) => order.status === 'open' && order.limitPrice != null)
@@ -1708,6 +1715,18 @@ function ChartArea({
             className="w-[140px] shrink-0"
           />
           <TimeframeSelect interval={interval} onChange={setInterval} className="w-[74px] shrink-0" />
+          <label className="tv-show-trades is-inline">
+            <input
+              type="checkbox"
+              checked={showTrades}
+              onChange={() => {
+                const next = !showTrades;
+                try { localStorage.setItem('btf-show-trades', next ? '1' : '0'); } catch { /* ignore */ }
+                setShowTrades(next);
+              }}
+            />
+            Show trade
+          </label>
           {ticker?.markPrice != null && (
             <span
               className="num ml-auto shrink-0 text-[12px] font-semibold tabular-nums text-white"
@@ -1743,6 +1762,8 @@ function ChartArea({
           onCancelOrder={onCancelOrder}
           onClosePosition={(positionId) => onClosePosition(positionId)}
           isMobile={isMobile}
+          showTrades={showTrades}
+          onShowTradesChange={setShowTrades}
           chartLiveTickRef={chartLiveTickRef}
         />
       </div>
