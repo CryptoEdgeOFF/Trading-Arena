@@ -484,22 +484,29 @@
 }
 .lb-col { display: grid; gap: 14px; min-width: 0; }
 .lb-side { display: grid; gap: 14px; min-width: 0; }
-.lb-prize-mobile { display: none; }
+.lb-after-list { display: none; }
+.lb-more {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f2f2f6;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 
 @media (max-width: 767px) {
-  .lb-prize-mobile {
-    display: block;
-    margin-bottom: 14px;
+  .lb-prize-desktop,
+  .lb-discord-desktop,
+  .lb-side .lb-promo { display: none; }
+  .lb-after-list {
+    display: grid;
+    gap: 14px;
   }
-  .lb-prize-desktop { display: none; }
-}
-.lb-discord-mobile { display: none; }
-@media (max-width: 767px) {
-  .lb-discord-mobile {
-    display: block;
-    margin-bottom: 14px;
-  }
-  .lb-discord-desktop { display: none; }
 }
 
 .lb-discord {

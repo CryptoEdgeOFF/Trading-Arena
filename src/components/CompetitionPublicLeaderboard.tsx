@@ -25,6 +25,7 @@ import { buildArenaEventJsonLd } from '../lib/structuredData';
 import ArenaChat from './ArenaChat';
 import ArenaActivityFeed from './ArenaActivityFeed';
 import CompeteHeader from './CompeteHeader';
+import { useIsMobileWeb } from '../lib/mobileWeb';
 import PnlRaceChart, {
   mergePnlSamples,
   type PnlHistorySample,
@@ -281,9 +282,14 @@ function ArenaHeroBanner({
   );
 }
 
+const MOBILE_LIST_INITIAL = 20;
+const MOBILE_LIST_STEP = 50;
+
 export default function CompetitionPublicLeaderboard() {
   const { t } = useTranslation();
   const { id } = useParams();
+  const isMobile = useIsMobileWeb();
+  const [visibleCount, setVisibleCount] = useState(MOBILE_LIST_INITIAL);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [error, setError] = useState('');
   const [paused, setPaused] = useState(false);
@@ -507,6 +513,15 @@ export default function CompetitionPublicLeaderboard() {
     [myRow, ranked],
   );
 
+  useEffect(() => {
+    setVisibleCount(MOBILE_LIST_INITIAL);
+  }, [id]);
+
+  const visibleListRows = isMobile ? listRows.slice(0, visibleCount) : listRows;
+  const enrolledBudget = isMobile ? Math.max(0, visibleCount - listRows.length) : notTraded.length;
+  const visibleNotTraded = isMobile ? notTraded.slice(0, enrolledBudget) : notTraded;
+  const hasMoreRows = isMobile && (visibleListRows.length < listRows.length || visibleNotTraded.length < notTraded.length);
+
   const targetCountdown = data ? (data.competition.status === 'live' ? data.competition.endAt : data.competition.startAt) : Date.now();
   const countdown = useCountdownParts(targetCountdown);
 
@@ -631,14 +646,6 @@ export default function CompetitionPublicLeaderboard() {
                   )}
                 </div>
               </div>
-              {hasPrize(data.competition.cashPrize) && (
-                <div className="lb-prize-mobile">
-                  <PrizePanel prize={data.competition.cashPrize} />
-                </div>
-              )}
-              <div className="lb-discord-mobile">
-                <DiscordPanel />
-              </div>
               <div className="lb-grid">
                 <div className="lb-col">
                   {showRace && pnlHistory ? (
@@ -680,7 +687,7 @@ export default function CompetitionPublicLeaderboard() {
                     ) : (
                       <div className="lb-table">
                         <RankHeader />
-                        {listRows.map((row) => (
+                        {visibleListRows.map((row) => (
                           <RankRow key={row.userId} row={row} isMe={row.userId === currentUserId} />
                         ))}
                         {myRow && (
@@ -725,7 +732,7 @@ export default function CompetitionPublicLeaderboard() {
                     </section>
                   )}
 
-                  {notTraded.length > 0 && (
+                  {visibleNotTraded.length > 0 && (
                     <section className="lb-panel">
                       <div className="lb-panel__head">
                         <div>
@@ -735,12 +742,45 @@ export default function CompetitionPublicLeaderboard() {
                         <span className="num text-[11px] text-[#6f6f7a]">{notTraded.length}</span>
                       </div>
                       <div className="lb-table">
-                        {notTraded.map((row) => (
+                        {visibleNotTraded.map((row) => (
                           <EnrolledRow key={row.userId} row={row} isMe={row.userId === currentUserId} />
                         ))}
                       </div>
                     </section>
                   )}
+
+                  {hasMoreRows && (
+                    <button
+                      type="button"
+                      className="lb-more"
+                      onClick={() => setVisibleCount((count) => count + MOBILE_LIST_STEP)}
+                    >
+                      {t('leaderboard.loadMore')}
+                    </button>
+                  )}
+
+                  <div className="lb-after-list">
+                    {hasPrize(data.competition.cashPrize) && (
+                      <PrizePanel prize={data.competition.cashPrize} />
+                    )}
+                    {data.competition.promoTitle && (
+                      <PromoPanel
+                        title={data.competition.promoTitle}
+                        subtitle={data.competition.promoSubtitle}
+                        href={data.competition.promoHref || data.competition.sponsorReferralUrl}
+                        cta={data.competition.promoCta}
+                        offer1={data.competition.promoOffer1}
+                        code1={data.competition.promoCode1}
+                        offer2={data.competition.promoOffer2}
+                        code2={data.competition.promoCode2}
+                        brandName={brand?.name}
+                        logoUrl={brand?.logoUrl}
+                        artUrl={brand?.bannerUrl}
+                        accent={brand?.accent}
+                      />
+                    )}
+                    <DiscordPanel />
+                  </div>
                 </div>
 
                 {/* ----------------------------- SIDEBAR ---------------------------- */}

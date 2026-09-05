@@ -602,6 +602,7 @@ export const en = {
     field: '{{count}} in the field',
     dailyRule: 'Daily Drawdown',
     dailyRisk: 'Daily Drawdown max {{percent}}%',
+    loadMore: 'Load more',
     youStrip: 'YOU',
     yourRank: 'YOUR RANK',
     performance: 'PERFORMANCE',
