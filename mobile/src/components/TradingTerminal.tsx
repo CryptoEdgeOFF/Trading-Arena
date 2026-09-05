@@ -351,6 +351,8 @@ export function TradingTerminal({
   const [fillDetailsTrade, setFillDetailsTrade] = useState<PaperTrade | null>(null)
   const pendingClosedPositions = useRef(new Map<string, number>())
   const pendingCancelledOrders = useRef(new Map<string, number>())
+  const socketRef = useRef<WebSocket | null>(null)
+  const subscribePairsRef = useRef<string[]>([])
 
   const reconcilePending = useCallback((next: PaperState): PaperState => {
     const now = Date.now()
@@ -412,6 +414,7 @@ export function TradingTerminal({
     let socket: WebSocket | null = null
     let socketOpen = false
     let stopped = false
+    socketRef.current = null
     async function poll() {
       try { if (!stopped) await refresh(activePaperToken) } catch { /* reconnexion WS/poll suivante */ }
       if (!stopped) timer = setTimeout(poll, socketOpen ? 30_000 : 5000)
@@ -420,7 +423,13 @@ export function TradingTerminal({
 
     function connect() {
       socket = new WebSocket(`${API_WS_URL}/ws?paperToken=${encodeURIComponent(activePaperToken)}`)
-      socket.onopen = () => { socketOpen = true }
+      socketRef.current = socket
+      socket.onopen = () => {
+        socketOpen = true
+        if (subscribePairsRef.current.length > 0) {
+          socket?.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }))
+        }
+      }
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(String(event.data))
@@ -464,11 +473,15 @@ export function TradingTerminal({
             })
             return
           }
-          if (message?.type === 'market:tick' && Array.isArray(message.data?.ticks)) {
+          if (
+            (message?.type === 'market:tick' && Array.isArray(message.data?.ticks))
+            || (message?.type === 'market:watch' && Array.isArray(message.data?.quotes))
+          ) {
+            const ticks = message.type === 'market:watch' ? message.data.quotes : message.data.ticks
             setState((current) => {
               if (!current) return current
               const market = { ...current.market }
-              for (const tick of message.data.ticks) {
+              for (const tick of ticks) {
                 if (!tick?.pair || !Number.isFinite(tick.markPrice)) continue
                 market[tick.pair] = { ...market[tick.pair], ...tick }
               }
@@ -501,6 +514,7 @@ export function TradingTerminal({
       }
       socket.onclose = () => {
         socketOpen = false
+        if (socketRef.current === socket) socketRef.current = null
         if (!stopped) reconnectTimer = setTimeout(connect, 1000)
       }
       socket.onerror = () => socket?.close()
@@ -510,9 +524,27 @@ export function TradingTerminal({
       stopped = true
       if (timer) clearTimeout(timer)
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      socketRef.current = null
       socket?.close()
     }
   }, [paperToken, reconcilePending, refresh])
+
+  const liveSubscribeKey = [
+    selectedPair,
+    ...(state?.player.openPositions || []).map((position) => position.pair),
+    ...(state?.player.openOrders || []).map((order) => order.pair),
+  ].filter(Boolean).sort().join('|')
+  const liveSubscribePairs = useMemo(
+    () => (liveSubscribeKey ? liveSubscribeKey.split('|') : []),
+    [liveSubscribeKey],
+  )
+
+  useEffect(() => {
+    subscribePairsRef.current = liveSubscribePairs
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN || liveSubscribePairs.length === 0) return
+    socket.send(JSON.stringify({ type: 'market:subscribe', pairs: liveSubscribePairs }))
+  }, [liveSubscribePairs])
 
   const ticker = state?.market[selectedPair] || meta?.market[selectedPair]
   const selectedCategory = meta?.marketMetadata?.[selectedPair]?.category

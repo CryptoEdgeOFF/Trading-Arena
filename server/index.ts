@@ -432,6 +432,8 @@ type PaperClientSubscription = {
   lastPayload: ReturnType<typeof buildPaperUpdatePayload> | null;
 };
 const paperClients = new Map<WebSocket, PaperClientSubscription>();
+const marketSubscriptions = new Map<WebSocket, Set<string>>();
+const MARKET_WATCH_MS = 2_000;
 // Per-competition shard: every paperClient is also tracked under its
 // competitionId so we can broadcast a leaderboard diff only to the
 // traders of that arena, not to every connected client.
@@ -602,10 +604,20 @@ async function sendDrawdownWarning(update: {
   });
 }
 
-function broadcastMarketTicks(pairs: string[]): void {
-  if (pairs.length === 0 || clients.size === 0) return;
+type MarketTick = {
+  pair: string;
+  markPrice: number;
+  bidPrice?: number;
+  askPrice?: number;
+  updatedAt?: number;
+  marketOpen?: boolean;
+  marketClosedLabel?: string | null;
+  change24h?: number | null;
+};
+
+function buildMarketTicks(pairs: string[]): MarketTick[] {
   const market = manager.getPaperMarketSnapshot();
-  const ticks = pairs
+  return pairs
     .map((pair) => market[pair])
     .filter((ticker): ticker is NonNullable<typeof ticker> => Boolean(ticker))
     .map((ticker) => ({
@@ -617,13 +629,54 @@ function broadcastMarketTicks(pairs: string[]): void {
       marketOpen: ticker.marketOpen,
       marketClosedLabel: ticker.marketClosedLabel,
     }));
+}
+
+function sendMarketTicks(ws: WebSocket, ticks: MarketTick[]): void {
   if (ticks.length === 0) return;
-  const msg = JSON.stringify({ type: 'market:tick', data: { ticks } });
-  // Broadcast to every connected client: market prices are public data and
-  // every chart consumer (logged-in or not) should see a live last-bar.
+  sendWs(ws, JSON.stringify({ type: 'market:tick', data: { ticks } }));
+}
+
+function applyMarketSubscribe(ws: WebSocket, pairs: unknown): void {
+  const next = new Set(
+    (Array.isArray(pairs) ? pairs : [])
+      .map((pair) => String(pair || '').trim().toUpperCase())
+      .filter((pair) => /^[A-Z0-9]{2,10}\/[A-Z0-9]{2,10}$/.test(pair))
+      .slice(0, 24),
+  );
+  marketSubscriptions.set(ws, next);
+  sendMarketTicks(ws, buildMarketTicks([...next]));
+}
+
+function broadcastMarketTicks(pairs: string[]): void {
+  if (pairs.length === 0 || clients.size === 0) return;
+  const ticks = buildMarketTicks(pairs);
+  if (ticks.length === 0) return;
+  const allMsg = JSON.stringify({ type: 'market:tick', data: { ticks } });
   clients.forEach((ws) => {
-    sendWs(ws, msg);
+    if (paperClients.has(ws)) {
+      const wanted = marketSubscriptions.get(ws);
+      if (!wanted || wanted.size === 0) return;
+      sendMarketTicks(ws, ticks.filter((tick) => wanted.has(tick.pair)));
+      return;
+    }
+    sendWs(ws, allMsg);
   });
+}
+
+function broadcastMarketWatch(): void {
+  if (paperClients.size === 0) return;
+  const quotes = Object.values(manager.getChartMarketSnapshot()).map((ticker) => ({
+    pair: ticker.pair,
+    markPrice: ticker.markPrice,
+    bidPrice: ticker.bidPrice,
+    askPrice: ticker.askPrice,
+    change24h: ticker.change24h ?? null,
+    marketOpen: ticker.marketOpen,
+    updatedAt: ticker.updatedAt,
+  }));
+  if (quotes.length === 0) return;
+  const msg = JSON.stringify({ type: 'market:watch', data: { quotes } });
+  paperClients.forEach((_sub, ws) => sendWs(ws, msg));
 }
 
 const CRYPTO_PREWARM_PAIRS = [
@@ -1427,9 +1480,19 @@ wss.on('connection', (ws, req) => {
     }).catch(() => undefined);
   }
 
+  ws.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(String(raw));
+      if (msg?.type === 'market:subscribe') applyMarketSubscribe(ws, msg.pairs);
+    } catch {
+      // ignore malformed client frames
+    }
+  });
+
   ws.on('close', () => {
     clients.delete(ws);
     paperClients.delete(ws);
+    marketSubscriptions.delete(ws);
     detachArenaClient(ws);
   });
 });
@@ -4205,6 +4268,13 @@ app.get('/api/competition/champion-of-week', async (_req, res) => {
 // Échantillonneur d'arrière-plan : construit l'historique PnL des arènes live
 // même sans spectateur connecté. Serveur persistant uniquement (Railway) —
 // en serverless, l'échantillonnage se fait au fil des GET leaderboard.
+if (!process.env.NETLIFY) {
+  const watchTimer = setInterval(() => {
+    try { broadcastMarketWatch(); } catch { /* watchlist best-effort */ }
+  }, MARKET_WATCH_MS);
+  if (typeof watchTimer.unref === 'function') watchTimer.unref();
+}
+
 if (!process.env.NETLIFY) {
   setInterval(() => {
     void (async () => {

@@ -51,12 +51,15 @@ async function main() {
   let unexpectedCloses = 0;
   let cleaningUp = false;
 
-  const connect = (url: string) => new Promise<void>((resolve, reject) => {
+  const connect = (url: string, subscribePairs?: string[]) => new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(url);
     sockets.push(socket);
     const timeout = setTimeout(() => reject(new Error(`WebSocket timeout: ${url}`)), 30_000);
     socket.on('open', () => {
       clearTimeout(timeout);
+      if (subscribePairs?.length) {
+        socket.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairs }));
+      }
       resolve();
     });
     socket.on('message', (raw) => {
@@ -73,18 +76,37 @@ async function main() {
     });
     socket.on('error', (error) => {
       clearTimeout(timeout);
+      socket.terminate();
       reject(error);
     });
   });
 
-  await Promise.all([
+  const connectionJobs = [
     ...Array.from({ length: paperSocketCount }, () => (
-      connect(`${wsBase}/ws?paperToken=${encodeURIComponent(paperToken)}`)
+      () => connect(`${wsBase}/ws?paperToken=${encodeURIComponent(paperToken)}`, ['BTC/USD'])
     )),
     ...Array.from({ length: spectatorSocketCount }, () => (
-      connect(`${wsBase}/ws?arenaId=${encodeURIComponent(competitionId)}`)
+      () => connect(`${wsBase}/ws?arenaId=${encodeURIComponent(competitionId)}`)
     )),
-  ]);
+  ];
+  // Une rampe séquentielle reproduit l'arrivée d'utilisateurs réels et évite
+  // de mesurer surtout la limite de handshakes TLS depuis une seule IP.
+  for (let offset = 0; offset < connectionJobs.length; offset += 1) {
+    let connected = false;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3 && !connected; attempt += 1) {
+      try {
+        await connectionJobs[offset]();
+        connected = true;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    }
+    if (!connected) throw lastError;
+    if ((offset + 1) % 10 === 0) console.log(`connected ${offset + 1}/${connectionJobs.length}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 
   // Laisse arriver les snapshots initiaux avant les mutations.
   await new Promise((resolve) => setTimeout(resolve, 3_000));
@@ -145,7 +167,7 @@ async function main() {
 
   const after = (await api('/api/staging/runtime-metrics')).payload as RuntimeMetrics;
   cleaningUp = true;
-  for (const socket of sockets) socket.close();
+  for (const socket of sockets) socket.terminate();
 
   const maxRss = Math.max(before.memory.rss, after.memory.rss, ...runtimeSamples.map((sample) => sample.memory.rss));
   const summary = {
@@ -182,5 +204,7 @@ async function main() {
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  // Les sockets déjà ouverts sont fermés par l'OS ; sortie explicite pour ne
+  // jamais laisser un test en échec tourner en arrière-plan.
+  process.exit(1);
 });
