@@ -23,6 +23,7 @@ import {
   sizeUnitLabel,
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
+import { applyPaperPlayerPatch } from '../utils/paperPatch';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
 import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
@@ -3103,6 +3104,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
   const [liveMarket, setLiveMarket] = useState<Record<string, MarketTicker> | null>(null);
   const [liveCanTrade, setLiveCanTrade] = useState<boolean | null>(null);
   const chartLiveTickRef = useRef<ChartLiveTickHandler | null>(null);
+  const paperWsConnectedRef = useRef(false);
   // Animation de fin de round (podium / stats) rejouée sur le terminal trader.
   const { result: liveEndResult, dismiss: dismissLiveEnd } = useLiveEventEndSnapshot();
 
@@ -3224,6 +3226,20 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
     mergeCompetitionFromMe(data?.competition);
   }, [meta.startingBalance, reconcilePlayerWithPending]);
 
+  const applyPaperPatch = useCallback((data: any) => {
+    if (data?.player) {
+      setLivePlayer((current) => {
+        if (!current) return current;
+        const merged = reconcilePlayerWithPending(applyPaperPlayerPatch(current, data.player));
+        return merged && liveMarket
+          ? refreshPlayerPaperMetrics(merged, liveMarket, meta.startingBalance)
+          : merged;
+      });
+    }
+    if (typeof data?.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
+    if (data?.competition !== undefined) mergeCompetitionFromMe(data.competition);
+  }, [liveMarket, meta.startingBalance, reconcilePlayerWithPending]);
+
   const applyMarketTick = useCallback((data: {
     ticks?: Array<{ pair: string; markPrice: number; bidPrice?: number; askPrice?: number; updatedAt?: number }>;
   }) => {
@@ -3311,9 +3327,12 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
   useWebSocket(!demoMode, {
     paperToken: session?.token || null,
     onPaperUpdate: applyPaperUpdate,
+    onPaperPatch: applyPaperPatch,
     onMarketTick: applyMarketTick,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
+    onOpen: () => { paperWsConnectedRef.current = true; },
+    onClose: () => { paperWsConnectedRef.current = false; },
   });
 
   const market = useMemo(() => {
@@ -3657,7 +3676,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
       } finally {
         // WebSocket paper:update is now the primary live feed; polling remains
         // only as a safety net if the socket disconnects.
-        if (!cancelled) timer = setTimeout(tick, 5000);
+        if (!cancelled) timer = setTimeout(tick, paperWsConnectedRef.current ? 30_000 : 5_000);
       }
     }
 
