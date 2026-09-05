@@ -85,6 +85,10 @@ export function AuthSheet({
     setBusy(true)
     setError('')
     try {
+      if (ENABLE_TEST_TOOLS && /artem\s*test/i.test(email.trim())) {
+        await testLogin()
+        return
+      }
       const result = await requestAuthCode({
         email: email.trim(),
         intent,

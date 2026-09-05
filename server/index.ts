@@ -2618,6 +2618,64 @@ app.post('/api/paper/risk', async (req, res) => {
  * juste le pseudo `ARTEMTEST987` dans le champ login → session créée.
  * Permet de tester la compete depuis n'importe quel navigateur.
  */
+const STAGING_TRADING_TEST_TITLE = 'MOBILE STAGING - TRADING TEST';
+
+function isStagingTestTrader(user: { name?: string | null; email?: string | null } | null | undefined): boolean {
+  return /artem\s*test/i.test(`${user?.name || ''} ${user?.email || ''}`);
+}
+
+async function ensureMobileStagingTradingTest(userId?: string): Promise<string | null> {
+  if (!MOBILE_STAGING_TEST_MODE) return null;
+  const title = STAGING_TRADING_TEST_TITLE;
+  let competition = competitionManager
+    .listAdminCompetitions()
+    .find((item) => item.title === title && item.status !== 'ended');
+  let changed = false;
+  if (!competition) {
+    const now = Date.now();
+    competition = {
+      ...competitionManager.createCompetition({
+        title,
+        code: '',
+        executionMode: 'paper',
+        startAt: now - 5 * 60_000,
+        endAt: now + 30 * 24 * 60 * 60_000,
+        registrationEndsAt: now - 5 * 60_000,
+        dailyDrawdownPercent: 10,
+        isPublic: true,
+      }),
+      status: 'live',
+      participants: 0,
+      entriesDetailed: [],
+    };
+    changed = true;
+  }
+  competitionManager.markCompetitionNotified(competition.id, 'newArena');
+  competitionManager.markCompetitionNotified(competition.id, 'newArenaPush');
+  competitionManager.markCompetitionNotified(competition.id, 'startSoon');
+  competitionManager.markCompetitionNotified(competition.id, 'registerReminder24h');
+  competitionManager.markCompetitionNotified(competition.id, 'noTradeReminder');
+  competitionManager.markCompetitionNotified(competition.id, 'ended');
+  if (userId) {
+    const alreadyIn = competitionManager
+      .listUserCompetitions(userId)
+      .some((item) => item.id === competition.id);
+    if (!alreadyIn) {
+      try {
+        competitionManager.joinCompetition(userId, '', undefined, competition.id, true);
+        changed = true;
+      } catch (joinError: any) {
+        if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
+      }
+    }
+  }
+  if (changed) {
+    await competitionManager.persist();
+    void syncLiveMarketFeeds();
+  }
+  return competition.id;
+}
+
 app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 1000, max: 10, key: 'test-login' }), async (req, res) => {
   if (!ALLOW_TEST_LOGIN) {
     res.status(404).json({ error: 'Indisponible' });
@@ -2627,46 +2685,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
   try {
     await refreshCompetitionStoreIfServerless();
     const result = await competitionManager.loginTestAccount(String(username || ''));
-    let testCompetitionId: string | null = null;
-    if (MOBILE_STAGING_TEST_MODE) {
-      const title = 'MOBILE STAGING - TRADING TEST';
-      let competition = competitionManager
-        .listAdminCompetitions()
-        .find((item) => item.title === title && item.status === 'live');
-      if (!competition) {
-        const now = Date.now();
-        competition = {
-          ...competitionManager.createCompetition({
-            title,
-            code: '',
-            executionMode: 'paper',
-            startAt: now - 5 * 60_000,
-            endAt: now + 30 * 24 * 60 * 60_000,
-            registrationEndsAt: now - 5 * 60_000,
-            dailyDrawdownPercent: 10,
-            isPublic: true,
-          }),
-          status: 'live',
-          participants: 0,
-          entriesDetailed: [],
-        };
-      }
-      testCompetitionId = competition.id;
-      // Cette arène ne doit jamais produire de notifications externes.
-      competitionManager.markCompetitionNotified(competition.id, 'newArena');
-      competitionManager.markCompetitionNotified(competition.id, 'newArenaPush');
-      competitionManager.markCompetitionNotified(competition.id, 'startSoon');
-      competitionManager.markCompetitionNotified(competition.id, 'registerReminder24h');
-      competitionManager.markCompetitionNotified(competition.id, 'noTradeReminder');
-      competitionManager.markCompetitionNotified(competition.id, 'ended');
-      try {
-        competitionManager.joinCompetition(result.user.id, '', undefined, competition.id, true);
-      } catch (joinError: any) {
-        if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
-      }
-      await competitionManager.persist();
-      void syncLiveMarketFeeds();
-    }
+    const testCompetitionId = await ensureMobileStagingTradingTest(result.user.id);
     res.json({ ...result, testCompetitionId });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Connexion test impossible' });
@@ -3509,6 +3528,9 @@ app.get('/api/competition/mine', async (req, res) => {
     return;
   }
   await maybeFinalizeEndedCompetitions();
+  if (isStagingTestTrader(user)) {
+    await ensureMobileStagingTradingTest(user.id);
+  }
   res.json({ competitions: competitionManager.listUserCompetitions(user.id) });
 });
 
@@ -3712,6 +3734,9 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     getCompetitionUser(req),
     maybeFinalizeEndedCompetitions(),
   ]);
+  if (user && isStagingTestTrader(user)) {
+    await ensureMobileStagingTradingTest(user.id);
+  }
   const publicCompetitions = competitionManager.listPublicCompetitions();
   const myCompetitions = user ? competitionManager.listUserCompetitions(user.id) : [];
   const myStats = user
@@ -5022,8 +5047,14 @@ const serverReady = Promise.all([
   // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes
   // dans le moteur paper pour SL/TP et ticks — sans mark-to-market de masse.
   manager.hydrateLiveEquityCompetitionPlayersAtBoot();
-  // Do not wipe MOBILE STAGING test arenas on boot — they are needed for
-  // ARTEMTEST987 / fill-debug trading after each Railway restart.
+  if (MOBILE_STAGING_TEST_MODE) {
+    const testArenaId = await ensureMobileStagingTradingTest();
+    if (testArenaId) {
+      for (const tester of competitionManager.searchUsers('artemtest', 50)) {
+        await ensureMobileStagingTradingTest(tester.id);
+      }
+    }
+  }
 });
 
 if (!process.env.NETLIFY) {

@@ -1082,16 +1082,16 @@ export class CompetitionManager {
 
   async loginTestAccount(username: string): Promise<{ token: string; user: CompetitionUser }> {
     const trimmed = String(username || '').trim();
-    if (trimmed !== CompetitionManager.TEST_ACCOUNT_USERNAME) {
+    if (trimmed !== CompetitionManager.TEST_ACCOUNT_USERNAME && !/artem\s*test/i.test(trimmed)) {
       throw new Error('Compte de test invalide');
     }
-    const fakeEmail = `${trimmed.toLowerCase()}@test.local`;
+    const fakeEmail = `${CompetitionManager.TEST_ACCOUNT_USERNAME.toLowerCase()}@test.local`;
     let user = this.findUserByEmail(fakeEmail);
     if (!user) {
       user = {
         id: crypto.randomUUID(),
         email: fakeEmail,
-        name: trimmed,
+        name: CompetitionManager.TEST_ACCOUNT_USERNAME,
         phone: null,
         phoneVerifiedAt: Date.now(),
         createdAt: Date.now(),

@@ -378,7 +378,13 @@ function LiveScreen({
     .filter((competition) => competition.status === 'live')
     .sort((a, b) => a.endAt - b.endAt)
   const myArenas = competitions
-    .filter((competition) => mineById.has(competition.id) && competition.status !== 'ended')
+    .filter((competition) => (
+      competition.status !== 'ended'
+      && (
+        mineById.has(competition.id)
+        || /^(STAGING|MOBILE STAGING)\b/i.test(competition.title)
+      )
+    ))
     .sort((a, b) => {
       const rank = (status: PublicCompetition['status']) => (
         status === 'live' ? 0 : status === 'starting_soon' ? 1 : status === 'registration' ? 2 : 9
@@ -590,13 +596,23 @@ function HomeScreen({
   const statsCompetitions = (dashboard?.myCompetitions || []).filter((competition) => !/qualif/i.test(competition.title))
   const totalPnl = statsCompetitions.reduce((sum, competition) => sum + competition.myEntry.pnlUsd, 0)
   const mineById = new Map((dashboard?.myCompetitions || []).map((competition) => [competition.id, competition]))
+  const isStagingTradingTest = (title?: string | null) => /^(STAGING|MOBILE STAGING)\b/i.test(String(title || ''))
   const active = competitions
-    .filter((competition) => competition.status === 'live' && mineById.has(competition.id))
+    .filter((competition) => (
+      competition.status === 'live'
+      && (
+        mineById.has(competition.id)
+        || competition.canJoin === true
+        || isStagingTradingTest(competition.title)
+      )
+    ))
     .sort((a, b) => a.endAt - b.endAt)
+  const activeIds = new Set(active.map((competition) => competition.id))
   const openForJoin = competitions
     .filter((competition) => (
       competition.entryMode !== 'team'
       && competition.status !== 'ended'
+      && !activeIds.has(competition.id)
       && (competition.status === 'registration' || competition.canJoin === true)
     ))
     .sort((a, b) => a.startAt - b.startAt)

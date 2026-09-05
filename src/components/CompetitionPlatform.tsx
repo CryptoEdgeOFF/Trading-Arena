@@ -632,11 +632,11 @@ export default function CompetitionPlatform() {
       // Backdoor compte de test : si le pseudo magique est tapé dans
       // le champ email (intent login), on bypass complètement l'OTP.
       const trimmedEmail = email.trim();
-      if (ENABLE_TEST_LOGIN && intent === 'login' && trimmedEmail === 'ARTEMTEST987') {
+      if (ENABLE_TEST_LOGIN && intent === 'login' && /artem\s*test/i.test(trimmedEmail)) {
         const response = await fetch('/api/competition/auth/test-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: trimmedEmail }),
+          body: JSON.stringify({ username: 'ARTEMTEST987' }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || t('authErrors.testLogin'));
@@ -1015,18 +1015,37 @@ export default function CompetitionPlatform() {
           rating={myRating}
           stats={myStats}
           totalPnl={totalPnl}
-          arenas={activeMyCompetitions.map((competition) => ({
-            id: competition.id,
-            title: competition.title,
-            status: competition.status,
-            startAt: competition.startAt,
-            endAt: competition.endAt,
-            sponsor: competition.sponsor,
-            sponsorName: competition.sponsorName,
-            sponsorLogoUrl: competition.sponsorLogoUrl,
-            bannerImageUrl: competition.bannerImageUrl,
-            myEntry: competition.myEntry,
-          }))}
+          arenas={[
+            ...activeMyCompetitions.map((competition) => ({
+              id: competition.id,
+              title: competition.title,
+              status: competition.status,
+              startAt: competition.startAt,
+              endAt: competition.endAt,
+              sponsor: competition.sponsor,
+              sponsorName: competition.sponsorName,
+              sponsorLogoUrl: competition.sponsorLogoUrl,
+              bannerImageUrl: competition.bannerImageUrl,
+              myEntry: competition.myEntry,
+            })),
+            ...joinablePublicCompetitions
+              .filter((competition) => (
+                competition.status === 'live'
+                && (competition.canJoin === true || /^(STAGING|MOBILE STAGING)\b/i.test(competition.title))
+                && !activeMyCompetitions.some((entry) => entry.id === competition.id)
+              ))
+              .map((competition) => ({
+                id: competition.id,
+                title: competition.title,
+                status: competition.status,
+                startAt: competition.startAt,
+                endAt: competition.endAt,
+                sponsor: competition.sponsor,
+                sponsorName: competition.sponsorName,
+                sponsorLogoUrl: competition.sponsorLogoUrl,
+                bannerImageUrl: competition.bannerImageUrl,
+              })),
+          ]}
           joinableArenas={joinablePublicCompetitions
             .filter((competition) => (
               competition.status === 'registration'

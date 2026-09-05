@@ -619,11 +619,11 @@ export default function CompetitionPlatform() {
       // Backdoor compte de test : si le pseudo magique est tapé dans
       // le champ email (intent login), on bypass complètement l'OTP.
       const trimmedEmail = email.trim();
-      if (ENABLE_TEST_LOGIN && intent === 'login' && trimmedEmail === 'ARTEMTEST987') {
+      if (ENABLE_TEST_LOGIN && intent === 'login' && /artem\s*test/i.test(trimmedEmail)) {
         const response = await fetch('/api/competition/auth/test-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: trimmedEmail }),
+          body: JSON.stringify({ username: 'ARTEMTEST987' }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || t('authErrors.testLogin'));
