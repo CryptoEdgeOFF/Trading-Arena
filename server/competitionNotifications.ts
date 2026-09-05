@@ -184,6 +184,10 @@ export class CompetitionNotifier {
       }
 
       for (const competition of competitions) {
+        // Les arènes de simulation sont réservées aux tests staging : elles ne
+        // doivent jamais déclencher d'email, même si les réglages globaux sont
+        // activés sur l'environnement.
+        if (/^(STAGING|MOBILE STAGING)\b/i.test(competition.title)) continue;
         if (competition.status === 'live') liveIds.add(competition.id);
 
         // Annonce « nouvelle arène disponible » : arène publique, pas encore

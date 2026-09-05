@@ -2526,7 +2526,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
     const result = await competitionManager.loginTestAccount(String(username || ''));
     let testCompetitionId: string | null = null;
     if (MOBILE_STAGING_TEST_MODE) {
-      const title = 'MOBILE STAGING - TRADING TEST';
+      const title = 'STAGING — PNL RACE LIVE TEST';
       let competition = competitionManager
         .listAdminCompetitions()
         .find((item) => item.title === title && item.status === 'live');
@@ -2549,12 +2549,20 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
         };
       }
       testCompetitionId = competition.id;
+      // Cette arène ne doit jamais produire de notifications externes.
+      competitionManager.markCompetitionNotified(competition.id, 'newArena');
+      competitionManager.markCompetitionNotified(competition.id, 'newArenaPush');
+      competitionManager.markCompetitionNotified(competition.id, 'startSoon');
+      competitionManager.markCompetitionNotified(competition.id, 'registerReminder24h');
+      competitionManager.markCompetitionNotified(competition.id, 'noTradeReminder');
+      competitionManager.markCompetitionNotified(competition.id, 'ended');
       try {
         competitionManager.joinCompetition(result.user.id, '', undefined, competition.id, true);
       } catch (joinError: any) {
         if (!String(joinError?.message || '').toLowerCase().includes('deja inscrit')) throw joinError;
       }
       await competitionManager.persist();
+      await startStagingSimulation();
       void syncLiveMarketFeeds();
     }
     res.json({ ...result, testCompetitionId });
@@ -4228,16 +4236,6 @@ const STAGING_SIMULATION_BOTS = [
   { userId: 'sim-live-alpha', name: 'AlphaFlow', drift: 0.07, vol: 0.8 },
   { userId: 'sim-live-satoshi', name: 'SatoshiKid', drift: 0.02, vol: 1.1 },
   { userId: 'sim-live-pulse', name: 'MarketPulse', drift: 0.04, vol: 0.75 },
-  { userId: 'sim-live-crypto', name: 'CryptoNico', drift: -0.01, vol: 1.25 },
-  { userId: 'sim-live-bull', name: 'BullRunner', drift: 0.06, vol: 1.05 },
-  { userId: 'sim-live-bear', name: 'BearHunter', drift: 0.01, vol: 1.35 },
-  { userId: 'sim-live-orbit', name: 'OrbitTrade', drift: 0.03, vol: 0.7 },
-  { userId: 'sim-live-flash', name: 'FlashEntry', drift: -0.03, vol: 1.5 },
-  { userId: 'sim-live-wave', name: 'WaveRider', drift: 0.05, vol: 0.95 },
-  { userId: 'sim-live-edge', name: 'RiskEdge', drift: 0.02, vol: 0.85 },
-  { userId: 'sim-live-liquid', name: 'LiquidityX', drift: 0.04, vol: 1.15 },
-  { userId: 'sim-live-candle', name: 'RedCandle', drift: -0.02, vol: 1.3 },
-  { userId: 'sim-live-vertex', name: 'VertexFX', drift: 0.06, vol: 0.9 },
 ] as const;
 
 type StagingSimulationState = {
