@@ -1614,6 +1614,9 @@ function LeaderboardScreen({
           <span className="ranking-scope-badge is-live">{t('rankingScope.liveArena')}</span>
           {remaining && <strong>{remaining}</strong>}
           <em>{t('leaderboard.field', { count: competition?.participants ?? rows.length })}</em>
+          {competition?.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+            <em className="spectate-hud__rule">{t('leaderboard.dailyRisk', { percent: competition.dailyDrawdownPercent })}</em>
+          )}
         </div>
         <button className="spectate-hud__share" type="button" onClick={() => void shareArena()}>
           {linkCopied ? '✓' : '↗'}

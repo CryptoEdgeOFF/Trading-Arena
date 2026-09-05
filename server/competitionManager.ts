@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
 import { countryFromPhone } from './phoneCountry.js';
+import { drawdownDayKey } from './drawdownDay.js';
 import { drawdownBufferConsumedRatio, shouldWarnDailyDrawdown } from './notificationRules.js';
 import { hydratePnlHistory } from './pnlHistoryStore.js';
 
@@ -97,16 +98,16 @@ export interface CompetitionEntry {
   sponsorAccountId?: string | null;
   /**
    * Règle de drawdown journalier (si l'arène en définit une).
-   * - `dailyBaselineDayKey` : jour UTC ('YYYY-MM-DD') pour lequel la baseline
+   * - `dailyBaselineDayKey` : jour Paris ('YYYY-MM-DD') pour lequel la baseline
    *   ci-dessous est valable. La baseline est recapturée au premier calcul
-   *   d'équité de chaque nouveau jour UTC.
+   *   d'équité après 09:00 heure de Paris.
    * - `dailyBaselineEquity` : équité (mark-to-market) de début de journée.
    * - `breachedAt` : timestamp d'élimination (drawdown atteint). Une fois posé,
    *   le joueur est éliminé DÉFINITIVEMENT de l'arène et ne peut plus trader.
    */
   dailyBaselineDayKey?: string | null;
   dailyBaselineEquity?: number | null;
-  /** Jour UTC où l'alerte des 80 % du drawdown a déjà été envoyée. */
+  /** Jour Paris (reset 09:00) où l'alerte des 80 % du drawdown a déjà été envoyée. */
   dailyDrawdownWarnedDayKey?: string | null;
   breachedAt?: number | null;
   /** Présent uniquement sur les arènes `entryMode === 'team'`. */
@@ -631,11 +632,6 @@ function isTeamCompetition(competition: Pick<Competition, 'entryMode'>): boolean
 function teamRequiredSize(competition: Pick<Competition, 'teamSize'>): number {
   const size = Number(competition.teamSize);
   return Number.isFinite(size) && size >= 2 ? Math.floor(size) : TEAM_REQUIRED_SIZE;
-}
-
-/** Clé de jour UTC ('YYYY-MM-DD') pour le reset journalier du drawdown. */
-function utcDayKey(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
 }
 
 /**
@@ -2968,12 +2964,12 @@ export class CompetitionManager {
       }
 
       // Règle de drawdown journalier : on n'évalue que pendant le live, avec
-      // une équité finie. La baseline se recapture au 1er échantillon du jour UTC.
+      // une équité finie. La baseline se recapture au 1er échantillon après 09:00 Paris.
       const ddPercent = competition.dailyDrawdownPercent;
       const equity = Number(result.equity);
       if (ddPercent && ddPercent > 0 && Number.isFinite(equity)
         && inferCompetitionStatus(competition, now) === 'live') {
-        const dayKey = utcDayKey(now);
+        const dayKey = drawdownDayKey(now);
         if (entry.dailyBaselineDayKey !== dayKey || entry.dailyBaselineEquity == null) {
           entry.dailyBaselineDayKey = dayKey;
           entry.dailyBaselineEquity = equity;
@@ -4173,6 +4169,7 @@ export class CompetitionManager {
       canJoin: boolean;
       canTrade: boolean;
       participants: number;
+      dailyDrawdownPercent: number | null;
       cashPrize: CashPrize | null;
       sponsor: string | null;
       sponsorReferralUrl: string | null;
@@ -4225,6 +4222,7 @@ export class CompetitionManager {
         participants: isTeamCompetition(competition)
           ? new Set(competition.entries.map((entry) => entry.teamId).filter(Boolean)).size
           : competition.entries.length,
+        dailyDrawdownPercent: competition.dailyDrawdownPercent ?? null,
         cashPrize: competition.cashPrize ?? null,
         sponsor: competition.sponsor ?? null,
         sponsorReferralUrl: competition.sponsorReferralUrl ?? null,
@@ -4252,6 +4250,7 @@ export class CompetitionManager {
       canJoin: boolean;
       canTrade: boolean;
       participants: number;
+      dailyDrawdownPercent: number | null;
       cashPrize: CashPrize | null;
     };
     leaderboard: Array<{
@@ -4291,6 +4290,7 @@ export class CompetitionManager {
         participants: isTeamCompetition(competition)
           ? new Set(competition.entries.map((entry) => entry.teamId).filter(Boolean)).size
           : competition.entries.length,
+        dailyDrawdownPercent: competition.dailyDrawdownPercent ?? null,
         cashPrize: competition.cashPrize ?? null,
       },
       leaderboard,

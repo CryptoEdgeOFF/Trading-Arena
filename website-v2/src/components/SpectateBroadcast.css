@@ -118,6 +118,9 @@
 .spec-hud__value { margin-top: 6px; font: italic 800 clamp(19px, 2.6vw, 27px)/1 'Barlow Condensed', sans-serif; color: #fff; font-variant-numeric: tabular-nums; }
 .spec-hud__value.is-pos { color: #38df8a; text-shadow: 0 0 16px rgba(56,223,138,.4); }
 .spec-hud__value.is-neg { color: #ff5066; text-shadow: 0 0 16px rgba(255,80,102,.4); }
+.spec-hud__chip--rule { border-color: rgba(239,68,68,.45); background: linear-gradient(160deg, rgba(70,16,24,.86), rgba(18,6,8,.9)); }
+.spec-hud__chip--rule .spec-hud__label { color: #ff8b98; }
+.spec-hud__chip--rule .spec-hud__value { color: #ff4d63; font-size: clamp(14px, 1.8vw, 18px); text-transform: uppercase; }
 
 /* --------------------------- TICKER D'ÉVÉNEMENTS -------------------------- */
 .spec-ticker {

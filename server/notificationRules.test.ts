@@ -22,7 +22,7 @@ test('daily drawdown warning starts after 80 percent of the buffer is consumed',
   assert.ok(drawdownBufferConsumedRatio(100_000, 96_001, limit) < DRAWDOWN_WARNING_RATIO);
 });
 
-test('drawdown warning is once per UTC day and resets the next day', () => {
+test('drawdown warning is once per drawdown day and resets the next day', () => {
   const ratio = drawdownBufferConsumedRatio(100_000, 96_000, 95_000);
   assert.equal(shouldWarnDailyDrawdown(ratio, null, '2026-08-24'), true);
   assert.equal(shouldWarnDailyDrawdown(ratio, '2026-08-24', '2026-08-24'), false);

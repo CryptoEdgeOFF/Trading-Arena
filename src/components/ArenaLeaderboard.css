@@ -299,6 +299,27 @@
   font-weight: 700;
   color: #fff;
 }
+.lb-stat--rule {
+  padding: 4px 9px 4px 10px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.12);
+}
+.lb-stat--rule + .lb-stat::before,
+.lb-stat + .lb-stat--rule::before {
+  display: none;
+}
+.lb-stat--rule small {
+  color: #ff8b98;
+}
+.lb-stat--rule b {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ff4d63;
+}
 @media (max-width: 767px) {
   .lb-id__chat {
     display: inline-flex;

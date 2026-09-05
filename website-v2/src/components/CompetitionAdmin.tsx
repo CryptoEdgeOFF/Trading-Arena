@@ -811,7 +811,7 @@ export default function CompetitionAdmin() {
                 placeholder="Vide = aucune règle (ex. 5)"
               />
               <p className="mt-1 text-[11px] leading-snug text-slate-500">
-                Élimine un joueur dès que son équité perd ce % depuis son solde de début de journée (reset minuit UTC).
+                Élimine un joueur dès que son équité perd ce % depuis son solde de début de journée (reset 9h00 heure de Paris).
               </p>
             </Field>
             <Field label="Mode">

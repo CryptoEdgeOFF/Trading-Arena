@@ -80,6 +80,7 @@ interface LeaderboardResponse {
     endAt: number;
     status: 'registration' | 'starting_soon' | 'live' | 'ended';
     participants: number;
+    dailyDrawdownPercent?: number | null;
     cashPrize?: CashPrize | null;
     sponsor?: string | null;
     sponsorReferralUrl?: string | null;
@@ -582,6 +583,12 @@ export default function CompetitionPublicLeaderboard() {
                       {formatPercent(aggregates.avgPnl)}
                     </b>
                   </span>
+                  {data.competition.dailyDrawdownPercent != null && data.competition.dailyDrawdownPercent > 0 && (
+                    <span className="lb-stat lb-stat--rule">
+                      <small>{t('leaderboard.dailyRule')}</small>
+                      <b>{t('leaderboard.dailyRisk', { percent: data.competition.dailyDrawdownPercent })}</b>
+                    </span>
+                  )}
                   {id && (
                     <span className="lb-id__chat">
                       <ArenaChat competitionId={id} title={data.competition.title} />
