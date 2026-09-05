@@ -660,6 +660,12 @@ export default function CompetitionPublicLeaderboard() {
                     <RaceCountdown clock={countdown} />
                   ) : null}
 
+                  {hasPrize(data.competition.cashPrize) && (
+                    <div className="lb-after-race">
+                      <PrizePanel prize={data.competition.cashPrize} />
+                    </div>
+                  )}
+
                   {top3.length > 0 && (
                     <div className="lb-podium">
                       <div className="order-2 md:order-1"><PodiumCard row={top3[1]} place={2} /></div>
@@ -760,9 +766,6 @@ export default function CompetitionPublicLeaderboard() {
                   )}
 
                   <div className="lb-after-list">
-                    {hasPrize(data.competition.cashPrize) && (
-                      <PrizePanel prize={data.competition.cashPrize} />
-                    )}
                     {data.competition.promoTitle && (
                       <PromoPanel
                         title={data.competition.promoTitle}
