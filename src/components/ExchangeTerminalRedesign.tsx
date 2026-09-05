@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
-import { formatPnl, formatTime, timeAgo } from '../utils/formatters';
+import { formatPnl, formatTime, historyTradePnl, timeAgo } from '../utils/formatters';
 import { EVENT_INTRO_COUNTDOWN_MS } from '../utils/liveEvent';
 import { getMarketSession } from '../utils/marketHours';
 import {
@@ -2621,7 +2621,7 @@ function BottomTabs({
                     <Td>{fmt(trade.price, 1)}</Td>
                     <Td>{trade.size.toFixed(5)}</Td>
                     <Td>{fmt(trade.fee, 4)}</Td>
-                    <Td><span style={{ color: trade.pnl >= 0 ? '#15c990' : '#c026d3' }}>{formatPnl(trade.pnl)}</span></Td>
+                    <Td><span style={{ color: historyTradePnl(trade) >= 0 ? '#15c990' : '#c026d3' }}>{formatPnl(historyTradePnl(trade))}</span></Td>
                   </tr>
                 ))}
               </tbody>
