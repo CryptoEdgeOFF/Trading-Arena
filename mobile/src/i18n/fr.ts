@@ -575,7 +575,7 @@ export const fr: typeof en = {
   terminal: {
     dailyDrawdownLabel: 'Limite de perte journalière ({{percent}} %)',
     dailyDrawdownValue: 'Plancher {{amount}} $',
-    dailyDrawdownHint: 'Compte éliminé si ton équité atteint ce niveau aujourd’hui. Reset à 00h00 UTC.',
+    dailyDrawdownHint: 'Compte éliminé si ton équité atteint ce niveau aujourd’hui. Reset à 9h00 Paris.',
     pickArena: 'Choisis ton arène',
     pickArenaLead: 'Même compte, mêmes positions que sur ordinateur.',
     switchArena: 'Changer d’arène',
@@ -602,6 +602,8 @@ export const fr: typeof en = {
     arena: 'ARÈNE',
     participants: 'PARTICIPANTS',
     field: '{{count}} en lice',
+    dailyRule: 'Règle',
+    dailyRisk: '{{percent}} % / jour sinon éliminé',
     youStrip: 'TOI',
     yourRank: 'TON CLASSEMENT',
     performance: 'PERFORMANCE',

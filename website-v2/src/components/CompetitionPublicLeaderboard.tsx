@@ -72,6 +72,7 @@ interface LeaderboardResponse {
     endAt: number;
     status: 'registration' | 'starting_soon' | 'live' | 'ended';
     participants: number;
+    dailyDrawdownPercent?: number | null;
     cashPrize?: CashPrize | null;
     sponsor?: string | null;
     bannerImageUrl?: string | null;
@@ -469,6 +470,12 @@ export default function CompetitionPublicLeaderboard() {
                         <AnimatedNumber value={aggregates.avgPnl} format={(v) => formatPercent(v)} />%
                       </div>
                     </div>
+                    {data.competition.dailyDrawdownPercent != null && data.competition.dailyDrawdownPercent > 0 && (
+                      <div className="spec-hud__chip spec-hud__chip--rule">
+                        <div className="spec-hud__label">{t('leaderboard.dailyRule')}</div>
+                        <div className="spec-hud__value">{t('leaderboard.dailyRisk', { percent: data.competition.dailyDrawdownPercent })}</div>
+                      </div>
+                    )}
                     <div className="spec-hud__chip">
                       <div className="spec-hud__label">{t('leaderboard.totalTrades')}</div>
                       <div className="spec-hud__value">

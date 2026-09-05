@@ -573,7 +573,7 @@ export const en = {
   terminal: {
     dailyDrawdownLabel: 'Daily loss limit ({{percent}}%)',
     dailyDrawdownValue: 'Floor {{amount}} $',
-    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today. Resets at 00:00 UTC.',
+    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today. Resets at 9:00 AM Paris time.',
     pickArena: 'Choose your arena',
     pickArenaLead: 'Same account, same positions as on desktop.',
     switchArena: 'Switch arena',
@@ -600,6 +600,8 @@ export const en = {
     arena: 'ARENA',
     participants: 'PARTICIPANTS',
     field: '{{count}} in the field',
+    dailyRule: 'Rule',
+    dailyRisk: '{{percent}}%/day or you’re out',
     youStrip: 'YOU',
     yourRank: 'YOUR RANK',
     performance: 'PERFORMANCE',
