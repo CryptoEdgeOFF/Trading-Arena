@@ -199,10 +199,15 @@
   margin-left: 0;
 }
 @media (max-width: 767px) {
-  .lb-banner__inner { padding: 52px 14px 22px; gap: 10px; }
+  .lb-banner__inner { padding: 22px 14px; gap: 12px; }
   .lb-banner__logo { width: min(140px, 36vw); height: 72px; padding: 8px 10px; border-radius: 14px; }
   .lb-banner__candles { height: 72px; }
-  .lb-banner .lb-terminal { top: 10px; right: 10px; }
+  .lb-banner .lb-terminal {
+    position: static;
+    top: auto;
+    right: auto;
+    margin: 0 auto;
+  }
 }
 
 @keyframes lb-aurora {
@@ -385,7 +390,7 @@
 }
 .lb-terminal__dot { width: 7px; height: 7px; border-radius: 999px; background: #ef233c; box-shadow: 0 0 9px #ef233c; }
 @media (max-width: 767px) {
-  .lb-terminal { justify-content: center; padding: 9px 11px; font-size: 11px; gap: 7px; }
+  .lb-terminal { justify-content: center; padding: 10px 16px; font-size: 11px; gap: 7px; }
   .lb-terminal__ico { width: 22px; height: 22px; }
 }
 
