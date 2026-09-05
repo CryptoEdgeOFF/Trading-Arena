@@ -5022,7 +5022,8 @@ const serverReady = Promise.all([
   // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes
   // dans le moteur paper pour SL/TP et ticks — sans mark-to-market de masse.
   manager.hydrateLiveEquityCompetitionPlayersAtBoot();
-  await removeStagingTestArenas();
+  // Do not wipe MOBILE STAGING test arenas on boot — they are needed for
+  // ARTEMTEST987 / fill-debug trading after each Railway restart.
 });
 
 if (!process.env.NETLIFY) {

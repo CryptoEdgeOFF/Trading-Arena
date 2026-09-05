@@ -597,7 +597,6 @@ function HomeScreen({
     .filter((competition) => (
       competition.entryMode !== 'team'
       && competition.status !== 'ended'
-      && competition.status !== 'live'
       && (competition.status === 'registration' || competition.canJoin === true)
     ))
     .sort((a, b) => a.startAt - b.startAt)
