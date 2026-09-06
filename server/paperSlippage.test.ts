@@ -28,6 +28,13 @@ test('BTC is penalized less than TRX for the same notional', () => {
   );
 });
 
+test('small BTC tickets barely move, TRX keeps a real impact', () => {
+  const btcSmall = estimatePaperSlippageBps('BTC/USD', 45_000);
+  const trxSame = estimatePaperSlippageBps('TRX/USD', 45_000);
+  assert.ok(btcSmall < 0.3);
+  assert.ok(trxSame > 4 && trxSame < 6);
+});
+
 test('unknown crypto impact is capped at 50 bps', () => {
   assert.equal(estimatePaperSlippageBps('BONK/USD', 1_000_000_000), 50);
 });
