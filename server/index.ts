@@ -4371,13 +4371,35 @@ const STAGING_SIMULATION_BOTS = [
   { userId: 'sim-live-satoshi', name: 'SatoshiKid', drift: 0.02, vol: 1.1 },
   { userId: 'sim-live-pulse', name: 'MarketPulse', drift: 0.04, vol: 0.75 },
 ] as const;
+const STAGING_SIMULATION_MAX_BOTS = 400;
 
+type StagingSimulationBot = { userId: string; name: string; drift: number; vol: number };
 type StagingSimulationState = {
   competitionId: string;
   startedAt: number;
   timer: ReturnType<typeof setInterval>;
+  botDefs: StagingSimulationBot[];
   bots: Map<string, { pnlPercent: number; tradesCount: number }>;
 };
+
+function clampStagingSimulationTraders(count: unknown): number {
+  const parsed = Number(count);
+  if (!Number.isFinite(parsed)) return STAGING_SIMULATION_BOTS.length;
+  return Math.max(1, Math.min(STAGING_SIMULATION_MAX_BOTS, Math.floor(parsed)));
+}
+
+function buildStagingSimulationBots(count: number): StagingSimulationBot[] {
+  const bots: StagingSimulationBot[] = STAGING_SIMULATION_BOTS.slice(0, count).map((bot) => ({ ...bot }));
+  for (let index = bots.length; index < count; index += 1) {
+    bots.push({
+      userId: `sim-load-${String(index + 1).padStart(3, '0')}`,
+      name: `LoadBot ${index + 1}`,
+      drift: (Math.random() - 0.45) * 0.12,
+      vol: 0.5 + Math.random() * 1.2,
+    });
+  }
+  return bots;
+}
 let stagingSimulation: StagingSimulationState | null = null;
 
 function assertStagingSimulationAvailable(): void {
@@ -4388,7 +4410,7 @@ function assertStagingSimulationAvailable(): void {
 
 function runStagingSimulationTick(state: StagingSimulationState): void {
   const current = competitionManager.getPublicLeaderboard(state.competitionId);
-  const updates = STAGING_SIMULATION_BOTS.map((bot) => {
+  const updates = state.botDefs.map((bot) => {
     let botState = state.bots.get(bot.userId);
     if (!botState) {
       const existing = current.leaderboard.find((row) => row.userId === bot.userId);
@@ -4418,7 +4440,7 @@ function runStagingSimulationTick(state: StagingSimulationState): void {
   const activity = simulatedActivityByCompetition.get(state.competitionId) || [];
   const eventCount = 3 + Math.floor(Math.random() * 4);
   for (let index = 0; index < eventCount; index += 1) {
-    const bot = STAGING_SIMULATION_BOTS[Math.floor(Math.random() * STAGING_SIMULATION_BOTS.length)];
+    const bot = state.botDefs[Math.floor(Math.random() * state.botDefs.length)];
     const pair = STAGING_SIMULATION_ASSETS[Math.floor(Math.random() * STAGING_SIMULATION_ASSETS.length)];
     activity.unshift({
       id: `sim-${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
@@ -4435,10 +4457,19 @@ function runStagingSimulationTick(state: StagingSimulationState): void {
   pnlHistoryResponseCache.delete(state.competitionId);
 }
 
-async function startStagingSimulation(): Promise<{ competitionId: string; startedAt: number }> {
+async function startStagingSimulation(traderCount = STAGING_SIMULATION_BOTS.length): Promise<{ competitionId: string; startedAt: number; traders: number }> {
   assertStagingSimulationAvailable();
+  const botDefs = buildStagingSimulationBots(clampStagingSimulationTraders(traderCount));
+  if (stagingSimulation && stagingSimulation.botDefs.length === botDefs.length) {
+    return {
+      competitionId: stagingSimulation.competitionId,
+      startedAt: stagingSimulation.startedAt,
+      traders: stagingSimulation.botDefs.length,
+    };
+  }
   if (stagingSimulation) {
-    return { competitionId: stagingSimulation.competitionId, startedAt: stagingSimulation.startedAt };
+    clearInterval(stagingSimulation.timer);
+    stagingSimulation = null;
   }
 
   const now = Date.now();
@@ -4466,6 +4497,7 @@ async function startStagingSimulation(): Promise<{ competitionId: string; starte
     competitionId,
     startedAt: now,
     timer: 0 as unknown as ReturnType<typeof setInterval>,
+    botDefs,
     bots: new Map(),
   };
   runStagingSimulationTick(state);
@@ -4477,7 +4509,7 @@ async function startStagingSimulation(): Promise<{ competitionId: string; starte
     }
   }, STAGING_SIMULATION_TICK_MS);
   stagingSimulation = state;
-  return { competitionId: state.competitionId, startedAt: state.startedAt };
+  return { competitionId: state.competitionId, startedAt: state.startedAt, traders: state.botDefs.length };
 }
 
 async function stopStagingSimulation(removeArena: boolean): Promise<{ competitionId: string | null; removed: boolean }> {
@@ -4542,7 +4574,7 @@ app.get('/api/admin/staging-simulation', requireAdmin, (_req, res) => {
       running: Boolean(stagingSimulation),
       competitionId: existingCompetitionId,
       startedAt: stagingSimulation?.startedAt || null,
-      traders: STAGING_SIMULATION_BOTS.length,
+      traders: stagingSimulation?.botDefs.length || STAGING_SIMULATION_BOTS.length,
       tickMs: STAGING_SIMULATION_TICK_MS,
     });
   } catch (error) {
@@ -4577,10 +4609,10 @@ app.get('/api/staging/runtime-metrics', (_req, res) => {
   });
 });
 
-app.post('/api/admin/staging-simulation/start', requireAdmin, async (_req, res) => {
+app.post('/api/admin/staging-simulation/start', requireAdmin, async (req, res) => {
   try {
-    const simulation = await startStagingSimulation();
-    res.json({ ok: true, running: true, traders: STAGING_SIMULATION_BOTS.length, ...simulation });
+    const simulation = await startStagingSimulation(req.body?.traders);
+    res.json({ ok: true, running: true, ...simulation });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
