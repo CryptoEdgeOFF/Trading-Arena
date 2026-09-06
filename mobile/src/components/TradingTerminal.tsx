@@ -26,6 +26,8 @@ import {
 import { TradingViewChart, type MobileOrderPreview } from './TradingViewChart'
 import { ArenaPickerList, ArenaPickerSheet } from './ArenaPicker'
 import ExecutionFillSheet from './ExecutionFillSheet'
+import { useTerminalTradeSounds } from '../hooks/useTerminalTradeSounds'
+import { playNewPositionSound } from '../lib/terminalSounds'
 import { useI18n } from '../i18n'
 import './TradingTerminal.css'
 
@@ -307,12 +309,16 @@ export function TradingTerminal({
   competitions,
   initialCompetitionId,
   onOpenLeaderboard,
+  onHome,
+  onSessionOpen,
   settingsUserId = null,
 }: {
   accountToken: string
   competitions: MyCompetition[]
   initialCompetitionId?: string
   onOpenLeaderboard: (competitionId: string) => void
+  onHome?: () => void
+  onSessionOpen?: (open: boolean) => void
   settingsUserId?: string | null
 }) {
   const { t } = useI18n()
@@ -398,6 +404,12 @@ export function TradingTerminal({
     setSelectedPair((current) => current || next.pairs[0] || Object.keys(next.market)[0] || '')
     return next
   }, [reconcilePending])
+
+  const sessionOpen = Boolean(paperToken && state)
+  useEffect(() => {
+    onSessionOpen?.(sessionOpen)
+    return () => onSessionOpen?.(false)
+  }, [sessionOpen, onSessionOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -675,6 +687,7 @@ export function TradingTerminal({
     : competitions.find((competition) => competition.id === activeCompetition?.id)?.rank
   const playerRank = state?.player.rank
   const displayedRank = competitionRank ?? (playerRank != null && playerRank > 0 ? playerRank : null)
+  useTerminalTradeSounds(state?.player.trades)
   const accountBreached = isBreached(state?.competition ?? null)
   const canTradeNow = Boolean(state?.canTrade) && !accountBreached && ticker?.marketOpen !== false
   const selectedCompetition = competitions.find((item) => item.id === (activeCompetition?.id || competitionId))
@@ -729,6 +742,7 @@ export function TradingTerminal({
     }
     setBusy(true)
     setError('')
+    playNewPositionSound()
     try {
       await placePaperOrder(paperToken, {
         pair: selectedPair,
@@ -792,6 +806,7 @@ export function TradingTerminal({
     }
     setBusy(true)
     setError('')
+    if (nextStopLoss != null || nextTakeProfit != null) playNewPositionSound()
     try {
       await updatePaperRisk(paperToken, {
         positionId,
@@ -828,6 +843,7 @@ export function TradingTerminal({
     }
     setBusy(true)
     setError('')
+    if (nextStopLoss != null || nextTakeProfit != null) playNewPositionSound()
     try {
       await updatePaperRisk(paperToken, {
         orderId,
@@ -970,11 +986,18 @@ export function TradingTerminal({
             <strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)}</strong>
           </div>
         </div>
-        <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
-          onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
-          <small>Rang</small>
-          <strong>#{displayedRank ?? '—'}</strong>
-        </button>
+        <div className="terminal-head__nav">
+          {onHome && (
+            <button className="terminal-home" type="button" onClick={onHome}>
+              <small>{t('terminal.home')}</small>
+            </button>
+          )}
+          <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
+            onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
+            <small>Rang</small>
+            <strong>#{displayedRank ?? '—'}</strong>
+          </button>
+        </div>
       </header>
       <ArenaPickerSheet
         open={pickerOpen}

@@ -16,8 +16,10 @@ import {
   type PaperTrade,
   type Position,
 } from '../lib/api'
-import { chartTradeMarkers, timeSecToPlotX } from '../lib/chartTradeMarkers'
+import { chartTradeMarkers, snapBarTime, timeSecToPlotX, type ChartTradeMarker } from '../lib/chartTradeMarkers'
 import { createTvSettingsAdapter, hasSavedTvChartProperties, loadTvChartLayout, persistTvChartLayout } from '../lib/tvChartSettings'
+import { TerminalChartSettingsMenu } from './TerminalChartSettings'
+import { useTerminalSoundEnabled } from '../hooks/useTerminalSoundEnabled'
 
 type TvBar = {
   time: number
@@ -591,6 +593,7 @@ export function TradingViewChart({
       return true
     }
   })
+  const [soundEnabled, setSoundEnabled] = useTerminalSoundEnabled()
   const [expandedPeKey, setExpandedPeKey] = useState<string | null>(null)
   const timeframeMenuRef = useRef<HTMLDivElement>(null)
   const propsRef = useRef({
@@ -758,7 +761,7 @@ export function TradingViewChart({
           }, 180))
         })
         widget.subscribe?.('onAutoSaveNeeded', () => {
-          if (widget.save) persistTvChartLayout(widget, settingsUserId)
+          if (widget.save) persistTvChartLayout({ save: widget.save }, settingsUserId)
         })
       })
     })
@@ -772,7 +775,7 @@ export function TradingViewChart({
       fallbackHandlers.clear()
       for (const timer of fallbackTimers.values()) clearTimeout(timer)
       fallbackTimers.clear()
-      if (widgetRef.current?.save) persistTvChartLayout(widgetRef.current, settingsUserId)
+      if (widgetRef.current?.save) persistTvChartLayout({ save: widgetRef.current.save }, settingsUserId)
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeedRef.current = null
@@ -955,10 +958,29 @@ export function TradingViewChart({
     managedLinesRef.current = []
   }, [candlesReady, chartReady, pair, tradingLinesSignature])
 
-  const fillMarkers = useMemo(
-    () => chartTradeMarkers(trades, pair, RESOLUTION_MINUTES[resolution] || 1),
-    [pair, resolution, trades],
-  )
+  const fillMarkers = useMemo(() => {
+    const intervalMinutes = RESOLUTION_MINUTES[resolution] || 1
+    const fromTrades = chartTradeMarkers(trades, pair, intervalMinutes, 400)
+    const extras: ChartTradeMarker[] = []
+    const known = new Set(fromTrades.map((marker) => marker.key))
+    for (const pos of positions) {
+      if (pos.pair !== pair || !pos.openedAt) continue
+      const key = `pos:${pos.id}:open`
+      if (known.has(key) || known.has(`fill:${pos.id}:open`)) continue
+      const buy = pos.side === 'long'
+      extras.push({
+        key,
+        timeSec: snapBarTime(pos.openedAt > 1e12 ? pos.openedAt / 1000 : pos.openedAt, intervalMinutes),
+        price: pos.entryPrice,
+        direction: buy ? 'buy' : 'sell',
+        color: buy ? '#18c98e' : '#f43f6e',
+        text: buy ? 'B' : 'S',
+        tooltip: `${buy ? 'Buy' : 'Sell'} · ${pos.entryPrice}`,
+        stack: 0,
+      })
+    }
+    return extras.length ? [...fromTrades, ...extras] : fromTrades
+  }, [pair, positions, resolution, trades])
 
   const collectCanvases = useCallback((root: ParentNode) => {
     const canvases: HTMLCanvasElement[] = []
@@ -1373,20 +1395,15 @@ export function TradingViewChart({
             ))}
           </div>}
         </div>
-        <label className="tv-show-trades">
-          <input
-            type="checkbox"
-            checked={showTrades}
-            onChange={() => {
-              setShowTrades((current) => {
-                const next = !current
-                try { localStorage.setItem('btf-show-trades', next ? '1' : '0') } catch { /* ignore */ }
-                return next
-              })
-            }}
-          />
-          Show trade
-        </label>
+        <TerminalChartSettingsMenu
+          showTrades={showTrades}
+          onShowTradesChange={(next) => {
+            try { localStorage.setItem('btf-show-trades', next ? '1' : '0') } catch { /* ignore */ }
+            setShowTrades(next)
+          }}
+          soundEnabled={soundEnabled}
+          onSoundChange={setSoundEnabled}
+        />
       </div>
       <div ref={paneRef} className="tradingview-mobile-pane">
       <div id={containerId.current} className="tradingview-mobile-chart" />

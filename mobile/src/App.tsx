@@ -137,6 +137,130 @@ function TeamOrPlayerName({
   )
 }
 
+type PrizeItem = NonNullable<NonNullable<PublicCompetition['cashPrize']>['items']>[number]
+
+function prizeItemKey(item: PrizeItem): string {
+  return `${item.title || ''}\n${item.imageUrl || ''}\n${item.description || ''}`
+}
+
+function groupPrizeItems(items: PrizeItem[]): Array<{ item: PrizeItem; ranks: number[] }> {
+  const ranked = items.filter((item) => Number(item.rank) > 0).sort((a, b) => Number(a.rank) - Number(b.rank))
+  const unranked = items.filter((item) => !Number(item.rank))
+  const ordered = ranked.length > 0 ? [...ranked, ...unranked] : items
+  const groups: Array<{ item: PrizeItem; ranks: number[] }> = []
+  for (const item of ordered) {
+    const last = groups[groups.length - 1]
+    if (last && prizeItemKey(last.item) === prizeItemKey(item)) {
+      if (item.rank) last.ranks.push(item.rank)
+    } else {
+      groups.push({ item, ranks: item.rank ? [item.rank] : [] })
+    }
+  }
+  return groups
+}
+
+function rankTierLabel(rank: number, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  if (rank === 1) return t('leaderboard.rankTier1')
+  if (rank === 2) return t('leaderboard.rankTier2')
+  if (rank === 3) return t('leaderboard.rankTier3')
+  return t('leaderboard.rankTierN', { rank })
+}
+
+type CashPrize = NonNullable<PublicCompetition['cashPrize']>
+
+function formatPrizeAmount(amount: number, currency: string): string {
+  return `${Math.round(amount).toLocaleString('en-US').replace(/,/g, ' ')} ${currency}`
+}
+
+function getPrizeTitle(prize: CashPrize | null | undefined): string {
+  if (!prize) return ''
+  if (prize.label) return prize.label
+  if (prize.total > 0) return formatPrizeAmount(prize.total, prize.currency)
+  return ''
+}
+
+function hasCashPrize(prize: PublicCompetition['cashPrize']): prize is CashPrize {
+  return Boolean(prize && (prize.label || prize.imageUrl || prize.total > 0 || prize.items?.length || prize.breakdown?.length))
+}
+
+function prizeRowsFrom(prize: CashPrize, t: (key: string, vars?: Record<string, string | number>) => string) {
+  const items = prize.items || []
+  const groups = groupPrizeItems(items)
+  const breakdown = items.length === 0 ? prize.breakdown || [] : []
+  if (breakdown.length > 0) {
+    return breakdown.map((item) => ({
+      key: `cash-${item.rank}`,
+      rank: rankTierLabel(item.rank, t),
+      label: formatPrizeAmount(item.amount, prize.currency || 'USD'),
+    }))
+  }
+  return groups.map((group, index) => {
+    const first = group.ranks[0] || 0
+    const last = group.ranks[group.ranks.length - 1] || first
+    return {
+      key: `${prizeItemKey(group.item)}-${index}`,
+      rank: group.ranks.length > 1 ? `${first}–${last}` : rankTierLabel(first, t),
+      label: group.item.title || t('leaderboard.rewardAlt'),
+    }
+  })
+}
+
+function useCountdown(target: number): string {
+  const { locale } = useI18n()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  return formatCountdown(target - now, locale.startsWith('fr') ? 'j' : 'd')
+}
+
+function ArenaPrizeList({ prize }: { prize: PublicCompetition['cashPrize'] }) {
+  const { t } = useI18n()
+  if (!hasCashPrize(prize)) return null
+  const title = getPrizeTitle(prize)
+  const rows = prizeRowsFrom(prize, t)
+  const count = prize.items?.length || prize.breakdown?.length || 0
+  return (
+    <div className="arena-card__prizes">
+      <small>{t('leaderboard.prizes')}</small>
+      {title && <strong>{title}</strong>}
+      {rows.length > 0 && (
+        <ul>
+          {rows.map((row) => (
+            <li key={row.key}>
+              <span>{row.rank}</span>
+              <b>{row.label}</b>
+            </li>
+          ))}
+        </ul>
+      )}
+      {count > 0 && <em>{t('leaderboard.lotsTotal', { count })}</em>}
+    </div>
+  )
+}
+
+function PrizeTrophy({ place, size = 18 }: { place: number; size?: number }) {
+  const id = `lb-trophy-${place}-${size}`
+  const stops = place === 1
+    ? ['#ffe08a', '#f5b300', '#a86b00']
+    : place === 2
+      ? ['#f1f5f9', '#cbd5e1', '#8a94a4']
+      : ['#f0c39a', '#d08a5a', '#8a5330']
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stops[0]} />
+          <stop offset="55%" stopColor={stops[1]} />
+          <stop offset="100%" stopColor={stops[2]} />
+        </linearGradient>
+      </defs>
+      <path fill={`url(#${id})`} d="M7 4h10v2.2c1.7.4 3 1.9 3 3.8 0 2.4-1.7 4.3-3.9 4.8L15.4 20H8.6l-.7-5.2C5.7 14.3 4 12.4 4 10c0-1.9 1.3-3.4 3-3.8V4Zm2 2v1.1C7.8 7.4 7 8.6 7 10s.8 2.6 2 2.9V6Zm6 0v6.9c1.2-.3 2-1.5 2-2.9s-.8-2.6-2-2.9V6Z" />
+    </svg>
+  )
+}
+
 const ARENA_VISUALS = {
   weekly: '/assets/pictures/arena-live-gold.webp',
   blitz: '/assets/pictures/arena-live-red.webp',
@@ -155,6 +279,7 @@ function ArenaCard({
   onTrade,
   joined,
   mine,
+  variant = 'live',
 }: {
   competition: PublicCompetition
   onLeaderboard: (competitionId: string) => void
@@ -162,51 +287,98 @@ function ArenaCard({
   onTrade: (competitionId: string) => void
   joined: boolean
   mine?: MyCompetition
+  variant?: 'live' | 'join'
 }) {
   const { t, locale } = useI18n()
+  const joining = variant === 'join'
   const title = competition.title || t('arena.fallbackTitle')
   const players = competition.participants ?? 0
-  const status = competition.status === 'live' ? t('arena.live')
-    : competition.status === 'registration' ? t('arena.registration')
-      : competition.status === 'starting_soon' ? t('arena.startingSoon')
-        : t('arena.ended')
+  const status = joining ? t('arena.registration')
+    : competition.status === 'live' ? t('arena.live')
+      : competition.status === 'registration' ? t('arena.registration')
+        : competition.status === 'starting_soon' ? t('arena.startingSoon')
+          : t('arena.ended')
+  const clearBanner = Boolean(competition.bannerImageUrl)
+  const bannerSrc = clearBanner
+    ? apiAssetUrl(competition.bannerImageUrl)
+    : joining ? '/assets/pictures/arena-live-red.webp' : '/assets/pictures/btf-arena-seo.webp'
+  const countdown = useCountdown(competition.status === 'live' ? competition.endAt : competition.startAt)
   return (
-    <motion.article className={`arena-card is-${competition.status}`} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-      <img className="arena-card__banner"
-        src={competition.bannerImageUrl ? apiAssetUrl(competition.bannerImageUrl) : '/assets/pictures/btf-arena-seo.webp'} alt="" />
-      <div className="arena-card__shade" />
-      <div className="arena-card__glow" />
+    <motion.article
+      className={`arena-card is-${competition.status}${joining ? ' is-join' : ''}${joining && clearBanner ? ' has-clear-banner' : ''}`}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <img className="arena-card__banner" src={bannerSrc} alt={clearBanner ? title : ''} />
+      {!(joining && clearBanner) && <div className="arena-card__shade" />}
+      {!joining && <div className="arena-card__glow" />}
       <div className="arena-card__top">
-        <span className="live-pill"><i />{status}</span>
-        <FormatChip format={competition.format} />
-        {competition.entryMode === 'team' && <span className="format-chip is-team">{t('arena.teamChip')}</span>}
-        <span className="arena-card__players">{competition.entryMode === 'team' ? t('arena.teams', { count: players }) : t('arena.players', { count: players })}</span>
+        <span className={`live-pill${joining ? ' is-open' : ''}`}><i />{status}</span>
+        {!joining && <FormatChip format={competition.format} />}
+        {!joining && competition.entryMode === 'team' && <span className="format-chip is-team">{t('arena.teamChip')}</span>}
+        {!joining && (
+          <span className="arena-card__players">{competition.entryMode === 'team' ? t('arena.teams', { count: players }) : t('arena.players', { count: players })}</span>
+        )}
       </div>
       <h3>{title}</h3>
-      <div className="arena-card__schedule">
-        <span><small>{t('arena.start')}</small><strong>{new Date(competition.startAt).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</strong></span>
-        <span><small>{t('arena.end')}</small><strong>{new Date(competition.endAt).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</strong></span>
-        {mine && <span><small>{t('arena.myRank')}</small><strong>#{mine.rank ?? '—'}</strong></span>}
-      </div>
-      <div className="arena-card__meta">
-        <div>
-          <small>{t('arena.prize')}</small>
-          <strong>
-            {competition.cashPrize?.total
-              ? `${competition.cashPrize.total.toLocaleString(locale)} ${competition.cashPrize.currency || '€'}`
-              : t('arena.toConfirm')}
-          </strong>
-        </div>
-        <div className="arena-card__actions">
-          {mine?.canTrade && <button type="button" onClick={() => onTrade(competition.id)}>{t('arena.trade')}</button>}
-          {!joined && competition.canJoin !== false && (
-            <button type="button" onClick={() => onJoin(competition)}>{t('arena.join')}</button>
+      {joining ? (
+        <>
+          <ArenaPrizeList prize={competition.cashPrize} />
+          {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+            <div className="arena-card__rule">{t('arena.dailyDrawdown', { percent: competition.dailyDrawdownPercent })}</div>
           )}
-          <button type="button" onClick={() => onLeaderboard(competition.id)} aria-label={t('arena.leaderboardAria', { title })}>
-            {t('arena.leaderboard')} <Icon name="arrow" size={16} />
-          </button>
-        </div>
-      </div>
+          <div className="arena-card__meta">
+            <div>
+              <small>{t('live.startsIn')}</small>
+              <strong>{countdown}</strong>
+            </div>
+            <div className="arena-card__actions">
+              {joined ? (
+                <span className="arena-card__joined">{t('home.joined')}</span>
+              ) : competition.canJoin !== false ? (
+                <button type="button" onClick={() => onJoin(competition)}>{t('arena.join')}</button>
+              ) : null}
+              <button type="button" onClick={() => onLeaderboard(competition.id)} aria-label={t('arena.leaderboardAria', { title })}>
+                {t('arena.leaderboard')} <Icon name="arrow" size={16} />
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="arena-card__schedule">
+            <span><small>{t('arena.start')}</small><strong>{new Date(competition.startAt).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</strong></span>
+            <span><small>{t('arena.end')}</small><strong>{new Date(competition.endAt).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</strong></span>
+            {mine && <span><small>{t('arena.myRank')}</small><strong>#{mine.rank ?? '—'}</strong></span>}
+            {mine && Number.isFinite(mine.myEntry?.pnlPercent) && (
+              <span>
+                <small>{t('arena.myPnl')}</small>
+                <strong className={(mine.myEntry?.pnlPercent || 0) >= 0 ? 'positive' : 'negative'}>
+                  {(mine.myEntry?.pnlPercent || 0) >= 0 ? '+' : ''}{(mine.myEntry?.pnlPercent || 0).toFixed(2)}%
+                </strong>
+              </span>
+            )}
+          </div>
+          {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+            <div className="arena-card__rule">{t('arena.dailyDrawdown', { percent: competition.dailyDrawdownPercent })}</div>
+          )}
+          <div className="arena-card__meta">
+            <div>
+              <small>{t('arena.prize')}</small>
+              <strong>{getPrizeTitle(competition.cashPrize) || t('arena.toConfirm')}</strong>
+            </div>
+            <div className="arena-card__actions">
+              {mine?.canTrade && <button type="button" onClick={() => onTrade(competition.id)}>{t('arena.trade')}</button>}
+              {!joined && competition.canJoin !== false && (
+                <button type="button" onClick={() => onJoin(competition)}>{t('arena.join')}</button>
+              )}
+              <button type="button" onClick={() => onLeaderboard(competition.id)} aria-label={t('arena.leaderboardAria', { title })}>
+                {t('arena.leaderboard')} <Icon name="arrow" size={16} />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </motion.article>
   )
 }
@@ -737,6 +909,7 @@ function HomeScreen({
                 competition={competition}
                 mine={mineById.get(competition.id)}
                 joined={mineById.has(competition.id)}
+                variant="join"
                 onJoin={onJoin}
                 onTrade={onTrade}
                 onLeaderboard={onLeaderboard}
@@ -803,6 +976,10 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [joiningArena, setJoiningArena] = useState<PublicCompetition | null>(null)
   const [tradeCompetitionId, setTradeCompetitionId] = useState('')
+  const [tradeSessionOpen, setTradeSessionOpen] = useState(false)
+  const handleTradeSessionOpen = useCallback((open: boolean) => {
+    setTradeSessionOpen(open)
+  }, [])
   const [selectedPlayerId, setSelectedPlayerId] = useState('')
   const [playerBackTab, setPlayerBackTab] = useState<'leaderboard' | 'community' | 'rank'>('leaderboard')
   const [leaderboardCompetitionId, setLeaderboardCompetitionId] = useState('')
@@ -1024,7 +1201,7 @@ function App() {
       <div className="ambient ambient--two" />
 
       <AnimatePresence mode="wait">
-        <motion.section key={tab} className={`screen ${tab === 'trade' ? 'screen--trade' : ''} ${tab === 'community' ? 'screen--community' : ''}`} initial={{ opacity: 0, x: 10 }}
+        <motion.section key={tab} className={`screen ${tab === 'trade' && tradeSessionOpen ? 'screen--trade' : ''} ${tab === 'community' ? 'screen--community' : ''}`} initial={{ opacity: 0, x: 10 }}
           animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.22 }}>
           {tab === 'home' && (
             <HomeScreen
@@ -1113,6 +1290,8 @@ function App() {
               <TradingTerminal accountToken={token} competitions={dashboard.myCompetitions}
                 initialCompetitionId={tradeCompetitionId}
                 settingsUserId={dashboard.user.id}
+                onHome={() => selectTab('home')}
+                onSessionOpen={handleTradeSessionOpen}
                 onOpenLeaderboard={(id) => openLeaderboard(id, 'trade')} />
             ) : (
               <div className="empty-state empty-state--feature">
@@ -1199,14 +1378,16 @@ function App() {
         </motion.section>
       </AnimatePresence>
 
-      <nav className="bottom-nav" aria-label={t('nav.main')}>
-        {navItems.map((item) => (
-          <button key={item.id} type="button" className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-primary-trade' : ''}`}
-            onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
-            <span><Icon name={item.id} size={22} /></span>{item.label}
-          </button>
-        ))}
-      </nav>
+      {!(tab === 'trade' && tradeSessionOpen) && (
+        <nav className="bottom-nav" aria-label={t('nav.main')}>
+          {navItems.map((item) => (
+            <button key={item.id} type="button" className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-primary-trade' : ''}`}
+              onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
+              <span><Icon name={item.id} size={22} /></span>{item.label}
+            </button>
+          ))}
+        </nav>
+      )}
       <AnimatePresence>
         {showAuth && <AuthSheet onClose={() => setShowAuth(false)} onAuthenticated={handleAuthenticated} />}
         {joiningArena && token && (
@@ -1369,7 +1550,8 @@ function LeaderboardScreen({
   const [error, setError] = useState('')
   const [shareRow, setShareRow] = useState<LeaderboardRow | null>(null)
   const [linkCopied, setLinkCopied] = useState(false)
-  const [visibleCount, setVisibleCount] = useState(20)
+  const [visibleRanked, setVisibleRanked] = useState(20)
+  const [visibleEnrolled, setVisibleEnrolled] = useState(20)
   const [showChat, setShowChat] = useState(false)
   const [unreadChat, setUnreadChat] = useState(0)
   const [pnlHistory, setPnlHistory] = useState<{ samples: PnlHistorySample[]; traders: PnlHistoryTrader[]; moments: PnlMoment[] } | null>(null)
@@ -1388,7 +1570,8 @@ function LeaderboardScreen({
   }, [competitionId, competitions, initialCompetitionId])
 
   useEffect(() => {
-    setVisibleCount(20)
+    setVisibleRanked(20)
+    setVisibleEnrolled(20)
   }, [competitionId])
 
   const isLiveCompetition = competitions.find((item) => item.id === competitionId)?.status === 'live'
@@ -1599,14 +1782,15 @@ function LeaderboardScreen({
   const remaining = competition?.status === 'live' && competition.endAt
     ? formatCountdown(competition.endAt - now, t('nextArena.dayUnit'))
     : null
-  const ranked = rows.filter((row) => row.rank > 0 && !row.breached)
+  const ranked = rows.filter((row) => row.rank > 0)
   const podium = [ranked[1], ranked[0], ranked[2]].filter((row): row is LeaderboardRow => Boolean(row))
   const breachedRows = rows.filter((row) => row.breached)
   const notTraded = rows.filter((row) => row.rank === 0 && !row.breached)
-  const rest = ranked.slice(3)
-  const visibleRest = rest.slice(0, visibleCount)
-  const visibleNotTraded = notTraded.slice(0, Math.max(0, visibleCount - rest.length))
-  const hasMoreRows = visibleRest.length < rest.length || visibleNotTraded.length < notTraded.length
+  const rest = ranked.slice(3).filter((row) => !isMyLeaderboardRow(row, currentUserId))
+  const visibleRest = rest.slice(0, visibleRanked)
+  const visibleNotTraded = notTraded.slice(0, visibleEnrolled)
+  const rankedRemaining = rest.length - visibleRest.length
+  const enrolledRemaining = notTraded.length - visibleNotTraded.length
   const bestPnl = ranked.reduce((best, row) => Math.max(best, row.pnlPercent), 0)
   const prize = competition?.cashPrize
   const hasPrize = Boolean(prize && (prize.label || prize.imageUrl || prize.total > 0 || prize.items?.length || prize.breakdown?.length))
@@ -1668,33 +1852,62 @@ function LeaderboardScreen({
           {hasPrize && prize && (
             <section className="spectate-prizes">
               <span>{t('leaderboard.prizes')}</span>
-              <div className="spectate-prizes__hero">
-                {prize.imageUrl && <img src={apiAssetUrl(prize.imageUrl)} alt="" />}
-                <div>
-                  <strong>{prizeTitle}</strong>
-                  {prize.description && <small>{prize.description}</small>}
-                </div>
-              </div>
-              {prize.breakdown && prize.breakdown.length > 0 && (
-                <div className="spectate-prizes__rows">
-                  {prize.breakdown.map((row) => (
-                    <div key={row.rank}>
-                      <span>{t('leaderboard.place', { rank: row.rank })}</span>
-                      <b>{row.amount.toLocaleString(locale)} {prize.currency}</b>
+              {(() => {
+                const items = prize.items && prize.items.length > 0 ? prize.items : null
+                const groups = items ? groupPrizeItems(items) : []
+                const breakdown = !items && prize.breakdown && prize.breakdown.length > 0 ? prize.breakdown : null
+                const itemCount = items?.length ?? breakdown?.length ?? 0
+                const labelParts = prizeTitle.match(/^([\d\s.,\u00a0]+(?:\$|€|USD|EUR))\s*(.*)$/i)
+                const total = labelParts
+                  ? labelParts[1].trim()
+                  : prize.total > 0
+                    ? `${Math.round(prize.total).toLocaleString(locale)} ${prize.currency || ''}`
+                    : prizeTitle
+                const subtitle = labelParts
+                  ? (labelParts[2].trim() || t('leaderboard.toWin'))
+                  : prize.description || t('leaderboard.toWin')
+                const rows = breakdown
+                  ? breakdown.map((row) => ({
+                      key: `cash-${row.rank}`,
+                      rank: rankTierLabel(row.rank, t),
+                      label: `${row.amount.toLocaleString(locale)} ${prize.currency}`,
+                      place: row.rank,
+                    }))
+                  : groups.map((group, index) => {
+                      const first = group.ranks[0] || 0
+                      return {
+                        key: `${prizeItemKey(group.item)}-${index}`,
+                        rank: group.ranks.length > 1
+                          ? `${first}–${group.ranks[group.ranks.length - 1]}`
+                          : rankTierLabel(first, t),
+                        label: group.item.title || t('leaderboard.rewardAlt'),
+                        place: group.ranks.length > 1 ? 0 : first,
+                      }
+                    })
+                return (
+                  <>
+                    <div className="spectate-prizes__head">
+                      <PrizeTrophy place={1} size={28} />
+                      <div>
+                        <strong>{total}</strong>
+                        <small>{subtitle}</small>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
-              {prize.items && prize.items.length > 0 && (
-                <div className="spectate-prizes__items">
-                  {prize.items.map((item, index) => (
-                    <article key={`${item.title || 'lot'}-${index}`}>
-                      {item.imageUrl && <img src={apiAssetUrl(item.imageUrl)} alt="" />}
-                      <strong>{item.title || (item.rank ? t('leaderboard.place', { rank: item.rank }) : t('leaderboard.mainPrize'))}</strong>
-                    </article>
-                  ))}
-                </div>
-              )}
+                    <div className="spectate-prizes__list">
+                      {rows.map((row) => (
+                        <div key={row.key} className={`spectate-prizes__row ${row.place > 0 && row.place <= 3 ? 'is-top' : ''}`}>
+                          <span>{row.rank}</span>
+                          <b>{row.label}</b>
+                          {row.place > 0 && row.place <= 3 && <PrizeTrophy place={row.place} size={16} />}
+                        </div>
+                      ))}
+                    </div>
+                    {itemCount > 0 && (
+                      <em className="spectate-prizes__foot">{t('leaderboard.lotsTotal', { count: itemCount })}</em>
+                    )}
+                  </>
+                )
+              })()}
             </section>
           )}
 
@@ -1749,6 +1962,7 @@ function LeaderboardScreen({
                   <button type="button" className="leaderboard-table__player" onClick={() => { if (!isTeamLeaderboardRow(row)) onOpenPlayer(row.userId) }}>
                     <TraderPhoto avatarUrl={row.avatarUrl} name={row.name} />
                     <TeamOrPlayerName row={row} currentUserId={currentUserId} youLabel={t('common.you')} />
+                    <small className="lb-breached-tag">{t('leaderboard.breached')}</small>
                   </button>
                   <span>{row.tradesCount}</span>
                   <span className={row.pnlUsd >= 0 ? 'positive' : 'negative'}><strong>{row.pnlUsd >= 0 ? '+' : ''}{row.pnlUsd.toLocaleString(locale, { maximumFractionDigits: 2 })} $</strong><small>{row.pnlPercent >= 0 ? '+' : ''}{row.pnlPercent.toFixed(2)}%</small></span>
@@ -1778,9 +1992,14 @@ function LeaderboardScreen({
             </section>
           )}
 
-          {hasMoreRows && (
-            <button className="leaderboard-more" type="button" onClick={() => setVisibleCount((count) => count + 50)}>
-              {t('leaderboard.loadMore')}
+          {rankedRemaining > 0 && (
+            <button className="leaderboard-more" type="button" onClick={() => setVisibleRanked((count) => count + 20)}>
+              {t('leaderboard.loadMore')} · {t('leaderboard.remaining', { count: rankedRemaining })}
+            </button>
+          )}
+          {enrolledRemaining > 0 && (
+            <button className="leaderboard-more" type="button" onClick={() => setVisibleEnrolled((count) => count + 20)}>
+              {t('leaderboard.loadMore')} · {t('leaderboard.remaining', { count: enrolledRemaining })}
             </button>
           )}
 

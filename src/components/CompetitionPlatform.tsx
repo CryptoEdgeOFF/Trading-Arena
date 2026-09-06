@@ -1026,6 +1026,7 @@ export default function CompetitionPlatform() {
               sponsorName: competition.sponsorName,
               sponsorLogoUrl: competition.sponsorLogoUrl,
               bannerImageUrl: competition.bannerImageUrl,
+              cashPrize: competition.cashPrize,
               myEntry: competition.myEntry,
             })),
             ...joinablePublicCompetitions
@@ -1044,6 +1045,7 @@ export default function CompetitionPlatform() {
                 sponsorName: competition.sponsorName,
                 sponsorLogoUrl: competition.sponsorLogoUrl,
                 bannerImageUrl: competition.bannerImageUrl,
+                cashPrize: competition.cashPrize,
               })),
           ]}
           joinableArenas={joinablePublicCompetitions
@@ -1062,6 +1064,7 @@ export default function CompetitionPlatform() {
               sponsorName: competition.sponsorName,
               sponsorLogoUrl: competition.sponsorLogoUrl,
               bannerImageUrl: competition.bannerImageUrl,
+              cashPrize: competition.cashPrize,
               canJoin: competition.canJoin,
               joined: myCompetitions.some((entry) => entry.id === competition.id),
             }))}

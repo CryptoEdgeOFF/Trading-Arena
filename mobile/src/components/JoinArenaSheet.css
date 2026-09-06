@@ -13,6 +13,9 @@
 .join-arena-sheet header span { color: var(--red-bright); font-size: 8px; font-weight: 700; letter-spacing: .16em; }
 .join-arena-sheet h3 { margin: 4px 0 0; font: 800 27px/1 'Barlow Condensed', sans-serif; text-transform: uppercase; }
 .join-arena-sheet header button { width: 36px; height: 36px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: #aaa3ad; font-size: 22px; }
+.join-arena-rule { margin: 0; padding: 10px 12px; display: grid; gap: 4px; border: 1px solid rgba(239,68,68,.28); border-radius: 8px; background: rgba(239,68,68,.08); }
+.join-arena-rule strong { color: #fca5a5; font-size: 11px; }
+.join-arena-rule small { color: #c4b8bc; font-size: 10px; line-height: 1.4; }
 .join-arena-details { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
 .join-arena-details > div { min-width: 0; padding: 11px 8px; display: grid; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
 .join-arena-details small { color: #77717a; font-size: 7px; text-transform: uppercase; }
