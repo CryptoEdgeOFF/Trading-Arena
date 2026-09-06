@@ -2625,7 +2625,7 @@ function isStagingTestTrader(user: { name?: string | null; email?: string | null
   return /artem\s*test/i.test(`${user?.name || ''} ${user?.email || ''}`);
 }
 
-async function ensureMobileStagingTradingTest(userId?: string): Promise<string | null> {
+async function ensureMobileStagingTradingTest(userId?: string, options?: { persist?: boolean }): Promise<string | null> {
   if (!MOBILE_STAGING_TEST_MODE) return null;
   const title = STAGING_TRADING_TEST_TITLE;
   let competition = competitionManager
@@ -2670,7 +2670,7 @@ async function ensureMobileStagingTradingTest(userId?: string): Promise<string |
       }
     }
   }
-  if (changed) {
+  if (changed && options?.persist !== false) {
     await competitionManager.persist();
     void syncLiveMarketFeeds();
   }
@@ -4642,14 +4642,15 @@ app.post('/api/admin/staging-loadtest/terminals', requireAdmin, async (req, res)
   try {
     assertStagingSimulationAvailable();
     const count = Math.max(1, Math.min(300, Math.floor(Number(req.body?.count) || 300)));
+    const start = Math.max(1, Math.floor(Number(req.body?.start) || 1));
     const competitionId = await ensureMobileStagingTradingTest();
     if (!competitionId) throw new Error('Arène de test staging introuvable');
 
     const terminals: Array<{ name: string; paperToken: string; playerId: string }> = [];
     for (let index = 0; index < count; index += 1) {
-      const label = String(index + 1).padStart(3, '0');
+      const label = String(start + index).padStart(3, '0');
       const user = competitionManager.ensureLoadTestUser(`loadterm-${label}@test.local`, `LoadTerm ${label}`);
-      await ensureMobileStagingTradingTest(user.id);
+      await ensureMobileStagingTradingTest(user.id, { persist: false });
       const { entry } = competitionManager.getCompetitionForUser(competitionId, user.id);
       let player = entry.paperPlayerId ? manager.getPlayerById(entry.paperPlayerId) : null;
       if (!player) {
