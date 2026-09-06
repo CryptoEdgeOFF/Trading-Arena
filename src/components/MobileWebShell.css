@@ -11,7 +11,8 @@ body.mobile-web-active #root {
   overflow: hidden;
 }
 
-body.mobile-web-keyboard .mobile-web-nav {
+body.mobile-web-keyboard .mobile-web-nav,
+.mobile-web-shell.is-trade .mobile-web-nav {
   display: none;
 }
 

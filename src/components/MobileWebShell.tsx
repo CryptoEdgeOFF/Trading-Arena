@@ -140,25 +140,27 @@ export default function MobileWebShell({ children }: { children: ReactNode }) {
   ];
 
   return (
-    <div className="mobile-web-shell">
+    <div className={`mobile-web-shell${isTrade ? ' is-trade' : ''}`}>
       <div className="mobile-web-shell__ambient mobile-web-shell__ambient--one" />
       <div className="mobile-web-shell__ambient mobile-web-shell__ambient--two" />
       <div ref={screenRef} className={`mobile-web-shell__screen${isTrade ? ' is-trade' : ''}`}>
         {children}
       </div>
-      <nav className="mobile-web-nav" aria-label={t('header.play')}>
-        {items.map((item) => (
-          <Link
-            key={item.id}
-            to={item.to}
-            className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-trade' : ''}`}
-            aria-current={tab === item.id ? 'page' : undefined}
-          >
-            <span><NavIcon name={item.id} /></span>
-            {item.label}
-          </Link>
-        ))}
-      </nav>
+      {!isTrade && (
+        <nav className="mobile-web-nav" aria-label={t('header.play')}>
+          {items.map((item) => (
+            <Link
+              key={item.id}
+              to={item.to}
+              className={`${tab === item.id ? 'is-active' : ''} ${item.id === 'trade' ? 'is-trade' : ''}`}
+              aria-current={tab === item.id ? 'page' : undefined}
+            >
+              <span><NavIcon name={item.id} /></span>
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }
