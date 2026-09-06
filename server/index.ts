@@ -291,7 +291,8 @@ setInterval(() => {
 // les scripts qui martèlent des centaines de requêtes/seconde. /api/health est
 // exempté pour ne jamais bloquer le healthcheck de la plateforme.
 const GLOBAL_API_WINDOW_MS = Number(process.env.GLOBAL_RATE_WINDOW_MS) || 60_000;
-const GLOBAL_API_MAX = Number(process.env.GLOBAL_RATE_MAX) || 600;
+const GLOBAL_API_MAX = Number(process.env.GLOBAL_RATE_MAX)
+  || (process.env.MOBILE_STAGING_TEST_MODE === 'true' ? 8000 : 600);
 const globalApiLimiter = rateLimit({ windowMs: GLOBAL_API_WINDOW_MS, max: GLOBAL_API_MAX, key: 'global-api' });
 app.use('/api', (req, res, next) => {
   if (req.path === '/health') {
@@ -4632,6 +4633,37 @@ app.post('/api/admin/staging-simulation/stop', requireAdmin, async (req, res) =>
   try {
     const result = await stopStagingSimulation(req.body?.removeArena === true);
     res.json({ ok: true, running: false, ...result });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+});
+
+app.post('/api/admin/staging-loadtest/terminals', requireAdmin, async (req, res) => {
+  try {
+    assertStagingSimulationAvailable();
+    const count = Math.max(1, Math.min(300, Math.floor(Number(req.body?.count) || 300)));
+    const competitionId = await ensureMobileStagingTradingTest();
+    if (!competitionId) throw new Error('Arène de test staging introuvable');
+
+    const terminals: Array<{ name: string; paperToken: string; playerId: string }> = [];
+    for (let index = 0; index < count; index += 1) {
+      const label = String(index + 1).padStart(3, '0');
+      const user = competitionManager.ensureLoadTestUser(`loadterm-${label}@test.local`, `LoadTerm ${label}`);
+      await ensureMobileStagingTradingTest(user.id);
+      const { entry } = competitionManager.getCompetitionForUser(competitionId, user.id);
+      let player = entry.paperPlayerId ? manager.getPlayerById(entry.paperPlayerId) : null;
+      if (!player) {
+        player = manager.registerPlayer(user.name, '', '');
+        competitionManager.linkPaperPlayer(competitionId, user.id, player.id);
+      }
+      const ready = await manager.setupCompetitionPaperPlayer(player.id);
+      if (!ready) throw new Error(`Initialisation ${user.name} impossible`);
+      const paperToken = crypto.randomBytes(24).toString('hex');
+      await competitionManager.setTraderSession(paperToken, ready.id, competitionId);
+      terminals.push({ name: user.name, paperToken, playerId: ready.id });
+    }
+    await competitionManager.persist();
+    res.json({ ok: true, competitionId, terminals });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }

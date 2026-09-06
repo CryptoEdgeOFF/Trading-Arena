@@ -1100,6 +1100,23 @@ export class CompetitionManager {
     return { token, user };
   }
 
+  /** Compte de charge staging : créé une seule fois, réutilisé aux tests suivants. */
+  ensureLoadTestUser(email: string, name: string): CompetitionUser {
+    const normalized = normalizeEmail(email);
+    const existing = this.findUserByEmail(normalized);
+    if (existing) return existing;
+    const user: CompetitionUser = {
+      id: crypto.randomUUID(),
+      email: normalized,
+      name: String(name || normalized).trim() || normalized,
+      phone: null,
+      phoneVerifiedAt: Date.now(),
+      createdAt: Date.now(),
+    };
+    this.users.set(user.id, user);
+    return user;
+  }
+
   /**
    * Etape 2 (login) : valide directement et cree la session.
    * Etape 2 (signup) : valide le code email puis bascule en attente du SMS.
