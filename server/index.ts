@@ -101,18 +101,30 @@ const wss = new WebSocketServer({
 // navigateurs sans toucher au pipeline /ws principal (compétition).
 const itickWss = new WebSocketServer({ noServer: true });
 const chatWss = new WebSocketServer({ noServer: true });
-const WS_MAX_BUFFERED_BYTES = Math.max(64 * 1024, Number(process.env.WS_MAX_BUFFERED_BYTES) || 1024 * 1024);
+const WS_SKIP_CRITICAL_BYTES = Math.max(64 * 1024, Number(process.env.WS_MAX_BUFFERED_BYTES) || 1024 * 1024);
+const WS_SKIP_NORMAL_BYTES = Math.max(16 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 4));
+const WS_SKIP_LOW_BYTES = Math.max(8 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 16));
+const ARENA_BROADCAST_MS = Math.max(250, Number(process.env.ARENA_BROADCAST_MS) || 1000);
+
+type WsPriority = 'critical' | 'normal' | 'low';
+
+function wsSkipLimit(priority: WsPriority): number {
+  if (priority === 'critical') return WS_SKIP_CRITICAL_BYTES;
+  if (priority === 'low') return WS_SKIP_LOW_BYTES;
+  return WS_SKIP_NORMAL_BYTES;
+}
+
+function wsCanSend(ws: WebSocket, priority: WsPriority): boolean {
+  return ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= wsSkipLimit(priority);
+}
 
 /**
- * Ne laisse jamais un navigateur lent accumuler une file WebSocket sans
- * limite en RAM. Le client se reconnectera et recevra un snapshot frais.
+ * Envoie un frame WS. Si le client est à la traîne, on saute ce message
+ * au lieu de couper la socket : le moteur, les trades et le chart doivent
+ * continuer. Le classement (priority `low`) est le premier à être droppé.
  */
-function sendWs(ws: WebSocket, payload: string): boolean {
-  if (ws.readyState !== WebSocket.OPEN) return false;
-  if (ws.bufferedAmount > WS_MAX_BUFFERED_BYTES) {
-    ws.terminate();
-    return false;
-  }
+function sendWs(ws: WebSocket, payload: string, priority: WsPriority = 'normal'): boolean {
+  if (!wsCanSend(ws, priority)) return false;
   try {
     ws.send(payload);
     return true;
@@ -634,7 +646,7 @@ function buildMarketTicks(pairs: string[]): MarketTick[] {
 
 function sendMarketTicks(ws: WebSocket, ticks: MarketTick[]): void {
   if (ticks.length === 0) return;
-  sendWs(ws, JSON.stringify({ type: 'market:tick', data: { ticks } }));
+  sendWs(ws, JSON.stringify({ type: 'market:tick', data: { ticks } }), 'critical');
 }
 
 function applyMarketSubscribe(ws: WebSocket, pairs: unknown): void {
@@ -660,7 +672,7 @@ function broadcastMarketTicks(pairs: string[]): void {
       sendMarketTicks(ws, ticks.filter((tick) => wanted.has(tick.pair)));
       return;
     }
-    sendWs(ws, allMsg);
+    sendWs(ws, allMsg, 'critical');
   });
 }
 
@@ -1276,29 +1288,43 @@ function snapshotPaperPayload(
 }
 
 function sendPaperUpdate(ws: WebSocket, sub: PaperClientSubscription): void {
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (!wsCanSend(ws, 'critical')) return;
   try {
     const payload = buildPaperUpdatePayload(sub.playerId, sub.competitionId);
     if (!payload) return;
+    let sent = true;
     if (!sub.lastPayload) {
       // Garder le nom historique pour les apps déjà installées : elles
       // reçoivent le snapshot initial puis ignorent simplement paper:patch.
-      sendWs(ws, JSON.stringify({ type: 'paper:update', data: payload }));
+      sent = sendWs(ws, JSON.stringify({ type: 'paper:update', data: payload }), 'critical');
     } else {
       const patch = buildPaperPatch(sub.lastPayload, payload);
       if (Object.keys(patch).length > 0) {
-        sendWs(ws, JSON.stringify({ type: 'paper:patch', data: patch }));
+        sent = sendWs(ws, JSON.stringify({ type: 'paper:patch', data: patch }), 'critical');
       }
     }
-    sub.lastPayload = snapshotPaperPayload(payload);
+    // Si le frame a été sauté, on garde le baseline : le prochain patch
+    // rattrapera le delta sans perdre d'exécution côté client.
+    if (sent) sub.lastPayload = snapshotPaperPayload(payload);
   } catch {
     // A stale competition/player should not break the global websocket loop.
   }
 }
 
+let arenaBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleArenaPatches(): void {
+  if (arenaBroadcastTimer) return;
+  arenaBroadcastTimer = setTimeout(() => {
+    arenaBroadcastTimer = null;
+    broadcastArenaPatches();
+  }, ARENA_BROADCAST_MS);
+  if (typeof arenaBroadcastTimer.unref === 'function') arenaBroadcastTimer.unref();
+}
+
 function broadcastPaperUpdates(): void {
   paperClients.forEach((sub, ws) => sendPaperUpdate(ws, sub));
-  broadcastArenaPatches();
+  scheduleArenaPatches();
 }
 
 type ArenaLeaderboardEntry = {
@@ -1403,13 +1429,18 @@ function broadcastArenaPatches(): void {
   if (arenaClients.size === 0) return;
   for (const [competitionId, sockets] of arenaClients) {
     if (sockets.size === 0) continue;
+    let ready = 0;
+    sockets.forEach((ws) => {
+      if (wsCanSend(ws, 'low')) ready += 1;
+    });
+    if (ready === 0) continue;
     const data = competitionManager.getLiveLeaderboard(competitionId);
     if (!data) continue;
     const patch = computeArenaPatch(competitionId, data);
     if (!patch) continue;
     const msg = JSON.stringify({ type: 'arena:patch', data: patch });
     sockets.forEach((ws) => {
-      sendWs(ws, msg);
+      sendWs(ws, msg, 'low');
     });
   }
 }
@@ -1424,7 +1455,7 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
   // Send full snapshot so the client can render the leaderboard immediately.
   const init = buildArenaInit(competitionId);
   if (init && ws.readyState === WebSocket.OPEN) {
-    sendWs(ws, JSON.stringify({ type: 'arena:init', data: init }));
+    sendWs(ws, JSON.stringify({ type: 'arena:init', data: init }), 'low');
     // Prime the diff baseline with the snapshot we just sent.
     const baseline = new Map<string, {
       rank: number; pnlPercent: number; pnlUsd: number; tradesCount: number; updatedAt: number; avatarUrl: string | null;
@@ -4518,7 +4549,7 @@ app.get('/api/staging/runtime-metrics', (_req, res) => {
       arena: Array.from(arenaClients.values()).reduce((total, bucket) => total + bucket.size, 0),
       chat: chatWss.clients.size,
     },
-    wsMaxBufferedBytes: WS_MAX_BUFFERED_BYTES,
+    wsMaxBufferedBytes: WS_SKIP_CRITICAL_BYTES,
   });
 });
 
