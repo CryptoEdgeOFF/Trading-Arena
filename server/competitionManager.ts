@@ -6,6 +6,14 @@ import { countryFromPhone } from './phoneCountry.js';
 import { drawdownDayKey } from './drawdownDay.js';
 import { drawdownBufferConsumedRatio, shouldWarnDailyDrawdown } from './notificationRules.js';
 import { hydratePnlHistory } from './pnlHistoryStore.js';
+import {
+  buildBreachGiftOffers,
+  DEFAULT_BLUEBERRY_GIFT_CTA,
+  DEFAULT_BLUEBERRY_GIFT_PATH,
+  DEFAULT_BLUEBERRY_GIFT_SUBTITLE,
+  isMainBlueberryArena,
+  type BreachEmailClaim,
+} from './breachEmail.js';
 
 export interface CompetitionUser {
   id: string;
@@ -110,6 +118,8 @@ export interface CompetitionEntry {
   /** Jour Paris (reset 09:00) où l'alerte des 80 % du drawdown a déjà été envoyée. */
   dailyDrawdownWarnedDayKey?: string | null;
   breachedAt?: number | null;
+  /** Timestamp d'envoi de l'email d'élimination (anti-doublon, persisté). */
+  notifiedBreachAt?: number | null;
   /** Présent uniquement sur les arènes `entryMode === 'team'`. */
   teamId?: string | null;
 }
@@ -4120,6 +4130,43 @@ export class CompetitionManager {
         };
       }),
     );
+  }
+
+  /**
+   * Réserve l'email d'élimination (anti-doublon) si l'arène est la main
+   * Blueberry et que le joueur vient d'être éliminé. Marque avant l'envoi.
+   * Ne jamais appeler depuis un leftover flatten / boot.
+   */
+  claimBreachEmailPayload(competitionId: string, paperPlayerId: string): BreachEmailClaim | null {
+    const competition = this.competitions.get(competitionId);
+    if (!competition || !isMainBlueberryArena(competition)) return null;
+    const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
+    if (!entry?.breachedAt || entry.notifiedBreachAt) return null;
+
+    const user = this.users.get(entry.userId);
+    const email = user && !user.deletedAt ? String(user.email || '').trim() : '';
+    const recipientName = user?.name?.trim() || 'Participant';
+    entry.notifiedBreachAt = Date.now();
+    this.competitions.set(competition.id, competition);
+    this.save();
+    if (!email) return null;
+
+    const promoHref = String(competition.promoHref || '').trim();
+    return {
+      email,
+      userId: entry.userId,
+      recipientName,
+      competitionId: competition.id,
+      title: competition.title,
+      dailyDrawdownPercent: Number(competition.dailyDrawdownPercent) || 5,
+      promo: {
+        sponsorName: String(competition.sponsorName || '').trim() || 'Blueberry Markets',
+        subtitle: String(competition.promoSubtitle || '').trim() || DEFAULT_BLUEBERRY_GIFT_SUBTITLE,
+        hrefPath: /^https?:\/\//i.test(promoHref) ? promoHref : DEFAULT_BLUEBERRY_GIFT_PATH,
+        cta: String(competition.promoCta || '').trim() || DEFAULT_BLUEBERRY_GIFT_CTA,
+        offers: buildBreachGiftOffers(competition),
+      },
+    };
   }
 
   private buildLeaderboardRows(competition: Competition) {

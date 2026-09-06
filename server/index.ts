@@ -26,7 +26,7 @@ import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine
 import { CompetitionManager, inferSeasonStatus } from './competitionManager.js';
 import { CompetitionNotifier } from './competitionNotifications.js';
 import { computeTradeStats, type TradeStats } from './tradeStats.js';
-import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail, sendPayoutRequestSubmittedEmail, sendPayoutRequestAdminEmail, sendPayoutApprovedEmail, PRIZE_CONTACT_EMAIL, isEmailTestFilterActive } from './mailer.js';
+import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail, sendBreachEmail, sendPayoutRequestSubmittedEmail, sendPayoutRequestAdminEmail, sendPayoutApprovedEmail, PRIZE_CONTACT_EMAIL, isEmailTestFilterActive } from './mailer.js';
 import {
   getEmailSettings,
   updateEmailSettings,
@@ -72,6 +72,7 @@ import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
 import { renderPublicSpectatePage } from './publicSpectatePage.js';
 import { buildTradingPushPayload, shouldNotifyCompletedLimit, shouldSendNewsPush, tradingClosePushKind } from './notificationRules.js';
+import { shouldQueueBreachEmail } from './breachEmail.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -359,6 +360,7 @@ app.get('/uploads/:filename', (req, res) => {
 
 const clients = new Set<WebSocket>();
 const competitionManager = new CompetitionManager();
+const competitionNotifier = new CompetitionNotifier(competitionManager);
 setPnlHistoryPersistHandler((competitionId, snapshot) => {
   competitionManager.setPnlRace(competitionId, snapshot);
 });
@@ -546,6 +548,9 @@ function syncAndBroadcastPaperRuntime(): void {
       || (paperPlayerHasOpenRisk(player) && competitionManager.isPaperPlayerBreachedAnywhere(player.id))
     ) {
       void finalizeBreachedPaperPlayer(player.id);
+    }
+    if (update && shouldQueueBreachEmail(update)) {
+      void competitionNotifier.notifyNewlyBreached(update.competitionId, player.id);
     }
     void sendTradingPushNotifications(player);
   }
@@ -1075,6 +1080,11 @@ async function syncCompetitionResultForPlayer(
     || (paperPlayerHasOpenRisk(player) && competitionManager.isPaperPlayerBreachedAnywhere(player.id))
   ) {
     await finalizeBreachedPaperPlayer(player.id);
+  }
+  // Email d'élimination : seulement un breach tout juste posé, jamais le
+  // leftover flatten au boot (ça enverrait un blast historique).
+  if (update && shouldQueueBreachEmail(update)) {
+    void competitionNotifier.notifyNewlyBreached(update.competitionId, player.id);
   }
   if (options?.persist === false) return;
   if (IS_SERVERLESS) {
@@ -1708,6 +1718,24 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
         rankLabel: '1ʳᵉ place',
         prizeLines: ['2 500 USDT', 'MacBook Pro'],
         totalParticipants: 128,
+      });
+    } else if (kind === 'arena_breach') {
+      result = await sendBreachEmail(to, {
+        recipientName: 'Trader Test',
+        title: 'BTF x BLUEBERRY',
+        dailyDrawdownPercent: 5,
+        ratingRank: 128,
+        ctaUrl: `${(process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim().replace(/\/$/, '')}/compete`,
+        giftUrl: `${(process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim().replace(/\/$/, '')}/compete/bonus`,
+        gift: {
+          sponsorName: 'Blueberry Markets',
+          subtitle: 'Réservé aux traders BTF Arena pendant 1 semaine',
+          cta: 'Ouvrir les offres',
+          offers: [
+            { title: '-50 % sur vos challenges PRIMES', code: 'BTF50' },
+            { title: '-30 % sur tous les Challenges', code: 'BTF35' },
+          ],
+        },
       });
     } else if (kind === 'new_arena') {
       result = await sendNewArenaEmail(to, {
@@ -3459,7 +3487,6 @@ async function maybeFinalizeEndedCompetitions(): Promise<void> {
 // Netlify) ; en prod Railway / dev local elle tourne toutes les 60s. On
 // finalise d'abord les arènes terminées pour que les emails de résultats
 // partent avec des classements définitifs.
-const competitionNotifier = new CompetitionNotifier(competitionManager);
 const competitionPushNotifier = new CompetitionPushNotifier(competitionManager);
 if (!IS_SERVERLESS) {
   const notifierTimer = setInterval(() => {
