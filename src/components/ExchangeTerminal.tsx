@@ -26,6 +26,7 @@ import {
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { applyPaperPlayerPatch } from '../utils/paperPatch';
+import { previewMarketExecutionPrice } from '../utils/paperSlippage';
 import {
   confirmPendingOpen,
   createPendingMutations,
@@ -1022,10 +1023,13 @@ function OrderForm(props: OrderFormProps) {
     const slRaw = Number(stopLossInput);
     const tpCandidate = tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
     const slCandidate = tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
-    const takeProfit = isValidTakeProfit(side, refPrice, tpCandidate) ? tpCandidate : null;
-    const stopLoss = isValidStopLoss(side, refPrice, slCandidate) ? slCandidate : null;
+    const previewEntry = orderType === 'limit'
+      ? refPrice
+      : previewMarketExecutionPrice(selectedPair, refPrice, engineQty, side);
+    const takeProfit = isValidTakeProfit(side, previewEntry, tpCandidate) ? tpCandidate : null;
+    const stopLoss = isValidStopLoss(side, previewEntry, slCandidate) ? slCandidate : null;
 
-    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(refPrice) || refPrice <= 0) {
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(previewEntry) || previewEntry <= 0) {
       onPreviewChange(null);
       return;
     }
@@ -1039,7 +1043,7 @@ function OrderForm(props: OrderFormProps) {
       pair: selectedPair,
       side,
       orderType,
-      entryPrice: refPrice,
+      entryPrice: previewEntry,
       size: engineQty,
       stopLoss,
       takeProfit,
@@ -4060,9 +4064,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     }
     if (!session || !livePlayer) return;
     const ticker = liveMarket?.[selectedPair];
-    const price = effType === 'limit'
+    const requested = effType === 'limit'
       ? Number(limitPrice)
       : (effSide === 'long' ? ticker?.askPrice : ticker?.bidPrice) || ticker?.markPrice || 0;
+    const price = effType === 'limit'
+      ? requested
+      : previewMarketExecutionPrice(selectedPair, requested, qty, effSide);
     if (!Number.isFinite(price) || price <= 0) {
       setError(t('terminal.orderRejected'));
       return;
@@ -4167,14 +4174,27 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('terminal.orderRejected'));
-      confirmPendingOpen(pendingMutationsRef.current, localId, data.trade?.id);
+      confirmPendingOpen(pendingMutationsRef.current, localId, {
+        id: data.trade?.id,
+        price: data.trade?.price,
+        fee: data.trade?.fee,
+      });
       setLivePlayer((prev) => {
-        if (!prev || !data.trade?.id) return reconcilePlayerWithPending(prev);
-        const serverId = String(data.trade.id);
+        const pending = pendingMutationsRef.current.opens.get(localId);
+        if (!prev) return reconcilePlayerWithPending(prev);
+        const serverId = pending?.serverId || String(data.trade?.id || localId);
         return reconcilePlayerWithPending({
           ...prev,
-          openPositions: prev.openPositions.map((entry) => (entry.id === localId ? { ...entry, id: serverId } : entry)),
-          openOrders: prev.openOrders.map((entry) => (entry.id === localId ? { ...entry, id: serverId } : entry)),
+          openPositions: prev.openPositions.map((entry) => (
+            entry.id === localId || entry.id === serverId
+              ? (pending?.position ?? { ...entry, id: serverId })
+              : entry
+          )),
+          openOrders: prev.openOrders.map((entry) => (
+            entry.id === localId || entry.id === serverId
+              ? (pending?.order ?? { ...entry, id: serverId })
+              : entry
+          )),
         });
       });
       analytics.tradePlaced({
