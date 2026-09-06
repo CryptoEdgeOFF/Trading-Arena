@@ -4473,18 +4473,28 @@ async function startStagingSimulation(traderCount = STAGING_SIMULATION_BOTS.leng
   }
 
   const now = Date.now();
+  const startAt = now - 5 * 60_000;
+  const registrationEndsAt = startAt;
+  const endAt = now + 6 * 60 * 60_000;
   const existingCompetition = competitionManager
     .listAdminCompetitions()
-    .find((item) => item.title === STAGING_SIMULATION_TITLE && item.status === 'live');
+    .find((item) => item.title === STAGING_SIMULATION_TITLE);
   let competitionId = existingCompetition?.id || '';
-  if (!competitionId) {
+  if (competitionId) {
+    competitionManager.updateCompetition(competitionId, {
+      startAt,
+      endAt,
+      registrationEndsAt,
+    });
+    await competitionManager.persist();
+  } else {
     const created = competitionManager.createCompetition({
       title: STAGING_SIMULATION_TITLE,
       code: '',
       executionMode: 'paper',
-      startAt: now - 5 * 60_000,
-      endAt: now + 6 * 60 * 60_000,
-      registrationEndsAt: now - 60_000,
+      startAt,
+      endAt,
+      registrationEndsAt,
       dailyDrawdownPercent: null,
       isPublic: true,
       cashPrize: { label: 'Simulation', total: 10_000, currency: 'USD' },
