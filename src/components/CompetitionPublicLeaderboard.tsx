@@ -25,7 +25,6 @@ import { buildArenaEventJsonLd } from '../lib/structuredData';
 import ArenaChat from './ArenaChat';
 import ArenaActivityFeed from './ArenaActivityFeed';
 import CompeteHeader from './CompeteHeader';
-import { useIsMobileWeb } from '../lib/mobileWeb';
 import PnlRaceChart, {
   mergePnlSamples,
   type PnlHistorySample,
@@ -282,14 +281,14 @@ function ArenaHeroBanner({
   );
 }
 
-const MOBILE_LIST_INITIAL = 20;
-const MOBILE_LIST_STEP = 50;
+const LIST_INITIAL = 20;
+const LIST_STEP = 20;
 
 export default function CompetitionPublicLeaderboard() {
   const { t } = useTranslation();
   const { id } = useParams();
-  const isMobile = useIsMobileWeb();
-  const [visibleCount, setVisibleCount] = useState(MOBILE_LIST_INITIAL);
+  const [visibleRanked, setVisibleRanked] = useState(LIST_INITIAL);
+  const [visibleEnrolled, setVisibleEnrolled] = useState(LIST_INITIAL);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [error, setError] = useState('');
   const [paused, setPaused] = useState(false);
@@ -514,13 +513,14 @@ export default function CompetitionPublicLeaderboard() {
   );
 
   useEffect(() => {
-    setVisibleCount(MOBILE_LIST_INITIAL);
+    setVisibleRanked(LIST_INITIAL);
+    setVisibleEnrolled(LIST_INITIAL);
   }, [id]);
 
-  const visibleListRows = isMobile ? listRows.slice(0, visibleCount) : listRows;
-  const enrolledBudget = isMobile ? Math.max(0, visibleCount - listRows.length) : notTraded.length;
-  const visibleNotTraded = isMobile ? notTraded.slice(0, enrolledBudget) : notTraded;
-  const hasMoreRows = isMobile && (visibleListRows.length < listRows.length || visibleNotTraded.length < notTraded.length);
+  const visibleListRows = listRows.slice(0, visibleRanked);
+  const visibleNotTraded = notTraded.slice(0, visibleEnrolled);
+  const hasMoreRanked = visibleListRows.length < listRows.length;
+  const hasMoreEnrolled = visibleNotTraded.length < notTraded.length;
 
   const targetCountdown = data ? (data.competition.status === 'live' ? data.competition.endAt : data.competition.startAt) : Date.now();
   const countdown = useCountdownParts(targetCountdown);
@@ -718,6 +718,15 @@ export default function CompetitionPublicLeaderboard() {
                         )}
                       </div>
                     )}
+                    {hasMoreRanked && (
+                      <button
+                        type="button"
+                        className="lb-more"
+                        onClick={() => setVisibleRanked((count) => count + LIST_STEP)}
+                      >
+                        {t('leaderboard.loadMore')} · {listRows.length - visibleListRows.length}
+                      </button>
+                    )}
                   </section>
 
                   {breachedRows.length > 0 && (
@@ -752,17 +761,16 @@ export default function CompetitionPublicLeaderboard() {
                           <EnrolledRow key={row.userId} row={row} isMe={row.userId === currentUserId} />
                         ))}
                       </div>
+                      {hasMoreEnrolled && (
+                        <button
+                          type="button"
+                          className="lb-more"
+                          onClick={() => setVisibleEnrolled((count) => count + LIST_STEP)}
+                        >
+                          {t('leaderboard.loadMore')} · {notTraded.length - visibleNotTraded.length}
+                        </button>
+                      )}
                     </section>
-                  )}
-
-                  {hasMoreRows && (
-                    <button
-                      type="button"
-                      className="lb-more"
-                      onClick={() => setVisibleCount((count) => count + MOBILE_LIST_STEP)}
-                    >
-                      {t('leaderboard.loadMore')}
-                    </button>
                   )}
 
                   <div className="lb-after-list">
