@@ -6,7 +6,7 @@ import ArenaSwitcher from './ArenaSwitcher';
 import CompeteHeader from './CompeteHeader';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { type MarketDataSource, type MarketTicker, type Order, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
+import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, formatTime, historyTradePnl, timeAgo } from '../utils/formatters';
 import { EVENT_INTRO_COUNTDOWN_MS } from '../utils/liveEvent';
 import { getMarketSession } from '../utils/marketHours';
@@ -28,15 +28,11 @@ import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { applyPaperPlayerPatch } from '../utils/paperPatch';
 import { playNewPositionSound } from '../utils/terminalSounds';
 import { useTerminalTradeSounds } from '../hooks/useTerminalTradeSounds';
-import { previewMarketExecutionPrice } from '../utils/paperSlippage';
 import {
-  confirmPendingOpen,
   createPendingMutations,
-  dropPendingOpen,
   markOrderPendingCancel as markOrderPendingCancelOn,
   markPositionPendingClose as markPositionPendingCloseOn,
   markPositionPendingPartial as markPositionPendingPartialOn,
-  pendingReservedMargin,
   reconcilePlayerWithPending as reconcilePlayerWithPendingMutations,
 } from '../utils/paperOptimistic';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
@@ -1025,13 +1021,10 @@ function OrderForm(props: OrderFormProps) {
     const slRaw = Number(stopLossInput);
     const tpCandidate = tpSlEnabled && Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
     const slCandidate = tpSlEnabled && Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
-    const previewEntry = orderType === 'limit'
-      ? refPrice
-      : previewMarketExecutionPrice(selectedPair, refPrice, engineQty, side);
-    const takeProfit = isValidTakeProfit(side, previewEntry, tpCandidate) ? tpCandidate : null;
-    const stopLoss = isValidStopLoss(side, previewEntry, slCandidate) ? slCandidate : null;
+    const takeProfit = isValidTakeProfit(side, refPrice, tpCandidate) ? tpCandidate : null;
+    const stopLoss = isValidStopLoss(side, refPrice, slCandidate) ? slCandidate : null;
 
-    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(previewEntry) || previewEntry <= 0) {
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(refPrice) || refPrice <= 0) {
       onPreviewChange(null);
       return;
     }
@@ -1045,7 +1038,7 @@ function OrderForm(props: OrderFormProps) {
       pair: selectedPair,
       side,
       orderType,
-      entryPrice: previewEntry,
+      entryPrice: refPrice,
       size: engineQty,
       stopLoss,
       takeProfit,
@@ -4066,99 +4059,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       submitDemoOrder(extras, opts);
       return;
     }
-    if (!session || !livePlayer) return;
-    const ticker = liveMarket?.[selectedPair];
-    const requested = effType === 'limit'
-      ? Number(limitPrice)
-      : (effSide === 'long' ? ticker?.askPrice : ticker?.bidPrice) || ticker?.markPrice || 0;
-    const price = effType === 'limit'
-      ? requested
-      : previewMarketExecutionPrice(selectedPair, requested, qty, effSide);
-    if (!Number.isFinite(price) || price <= 0) {
-      setError(t('terminal.orderRejected'));
-      return;
-    }
-    const category = meta.marketMetadata[selectedPair]?.category;
-    const notional = price * qty;
-    const margin = leverage > 0 ? notional / leverage : 0;
-    const fee = notional * assetFeeRate(category, effType === 'market' ? 'taker' : 'maker', meta.fees);
-    if (margin + fee > livePlayer.availableMargin - pendingReservedMargin(pendingMutationsRef.current)) {
-      setError(`Capital disponible insuffisant (${livePlayer.availableMargin.toFixed(2)}$)`);
-      return;
-    }
-
-    const localId = crypto.randomUUID();
-    const openedAt = Date.now();
-    if (effType === 'limit') {
-      const limit = Number(limitPrice);
-      pendingMutationsRef.current.opens.set(localId, {
-        localId,
-        kind: 'order',
-        pair: selectedPair,
-        side: effSide,
-        size: qty,
-        limitPrice: limit,
-        margin,
-        fee,
-        knownPositionIds: livePlayer.openPositions.map((entry) => entry.id),
-        knownOrderIds: livePlayer.openOrders.map((entry) => entry.id),
-        order: {
-          id: localId,
-          pair: selectedPair,
-          side: effSide,
-          size: qty,
-          orderType: 'limit',
-          status: 'open',
-          limitPrice: limit,
-          leverage,
-          marginReserved: margin,
-          feeEstimate: fee,
-          createdAt: openedAt,
-          updatedAt: openedAt,
-          stopLoss: extras?.stopLoss ?? null,
-          takeProfit: extras?.takeProfit ?? null,
-          placedAtMark: ticker?.markPrice ?? limit,
-        } satisfies Order,
-      });
-      resetLimitOrderDraft();
-    } else {
-      pendingMutationsRef.current.opens.set(localId, {
-        localId,
-        kind: 'position',
-        pair: selectedPair,
-        side: effSide,
-        size: qty,
-        limitPrice: null,
-        margin,
-        fee,
-        knownPositionIds: livePlayer.openPositions.map((entry) => entry.id),
-        knownOrderIds: livePlayer.openOrders.map((entry) => entry.id),
-        position: {
-          id: localId,
-          pair: selectedPair,
-          side: effSide,
-          size: qty,
-          entryPrice: price,
-          markPrice: ticker?.markPrice || price,
-          pnl: 0,
-          unrealizedFunding: 0,
-          leverage,
-          margin,
-          feesPaid: fee,
-          liquidationPrice: effSide === 'long'
-            ? price * (1 - 0.9 / leverage)
-            : price * (1 + 0.9 / leverage),
-          stopLoss: extras?.stopLoss ?? null,
-          takeProfit: extras?.takeProfit ?? null,
-          openedAt,
-        } satisfies Position,
-      });
-      clearOrderDraftRisk();
-    }
+    if (!session) return;
+    setBusy(true);
     setError('');
     playNewPositionSound();
-    setLivePlayer((prev) => reconcilePlayerWithPending(prev));
-
     try {
       const response = await fetch('/api/paper/order', {
         method: 'POST',
@@ -4179,29 +4083,6 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('terminal.orderRejected'));
-      confirmPendingOpen(pendingMutationsRef.current, localId, {
-        id: data.trade?.id,
-        price: data.trade?.price,
-        fee: data.trade?.fee,
-      });
-      setLivePlayer((prev) => {
-        const pending = pendingMutationsRef.current.opens.get(localId);
-        if (!prev) return reconcilePlayerWithPending(prev);
-        const serverId = pending?.serverId || String(data.trade?.id || localId);
-        return reconcilePlayerWithPending({
-          ...prev,
-          openPositions: prev.openPositions.map((entry) => (
-            entry.id === localId || entry.id === serverId
-              ? (pending?.position ?? { ...entry, id: serverId })
-              : entry
-          )),
-          openOrders: prev.openOrders.map((entry) => (
-            entry.id === localId || entry.id === serverId
-              ? (pending?.order ?? { ...entry, id: serverId })
-              : entry
-          )),
-        });
-      });
       analytics.tradePlaced({
         pair: selectedPair,
         side: effSide,
@@ -4210,10 +4091,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         platform: terminalPlatform,
         competitionId: urlCompetitionId,
       });
-    } catch (err: any) {
-      dropPendingOpen(pendingMutationsRef.current, localId);
-      setError(err.message);
+      if (orderType === 'limit') {
+        resetLimitOrderDraft();
+      } else {
+        clearOrderDraftRisk();
+      }
       void refreshLive();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
     }
   }
 
