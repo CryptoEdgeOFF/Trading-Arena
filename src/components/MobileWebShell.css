@@ -1,9 +1,18 @@
 html:has(body.mobile-web-active),
 body.mobile-web-active,
 body.mobile-web-active #root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
   height: var(--mobile-web-height, 100svh);
   max-height: var(--mobile-web-height, 100svh);
   overflow: hidden;
+}
+
+body.mobile-web-keyboard .mobile-web-nav {
+  display: none;
 }
 
 body.mobile-web-active {

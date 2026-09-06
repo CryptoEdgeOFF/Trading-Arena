@@ -63,28 +63,71 @@ export default function MobileWebShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.body.classList.add('mobile-web-active');
     const root = document.documentElement;
+    let lastStable = 0;
+    let blurTimer = 0;
+
+    const isField = (el: Element | null) =>
+      el instanceof HTMLElement && (
+        el.tagName === 'INPUT'
+        || el.tagName === 'TEXTAREA'
+        || el.tagName === 'SELECT'
+        || el.isContentEditable
+      );
+
     const syncHeight = () => {
-      const height = window.visualViewport?.height ?? window.innerHeight;
-      if (!Number.isFinite(height) || height <= 0) return;
-      root.style.setProperty('--mobile-web-height', `${Math.round(height)}px`);
+      const viewport = window.visualViewport;
+      const visual = viewport?.height ?? window.innerHeight;
+      if (!Number.isFinite(visual) || visual <= 0) return;
+      const keyboard = isField(document.activeElement) && (
+        (lastStable > 0 && visual < lastStable - 80)
+        || window.innerHeight - visual > 120
+        || (viewport?.offsetTop ?? 0) > 40
+      );
+      document.body.classList.toggle('mobile-web-keyboard', keyboard);
+      if (keyboard) return;
+      lastStable = Math.round(visual);
+      root.style.setProperty('--mobile-web-height', `${lastStable}px`);
     };
+
+    const onFocusIn = (event: FocusEvent) => {
+      window.clearTimeout(blurTimer);
+      syncHeight();
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !isField(target)) return;
+      window.setTimeout(() => {
+        target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      }, 280);
+    };
+    const onFocusOut = () => {
+      window.clearTimeout(blurTimer);
+      blurTimer = window.setTimeout(syncHeight, 80);
+    };
+    const onOrientation = () => {
+      lastStable = 0;
+      syncHeight();
+    };
+
     syncHeight();
     const frame = window.requestAnimationFrame(syncHeight);
     const viewport = window.visualViewport;
     viewport?.addEventListener('resize', syncHeight);
-    viewport?.addEventListener('scroll', syncHeight);
     window.addEventListener('resize', syncHeight);
-    window.addEventListener('orientationchange', syncHeight);
+    window.addEventListener('orientationchange', onOrientation);
     window.addEventListener('pageshow', syncHeight);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
     return () => {
       document.body.classList.remove('mobile-web-active');
+      document.body.classList.remove('mobile-web-keyboard');
       root.style.removeProperty('--mobile-web-height');
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(blurTimer);
       viewport?.removeEventListener('resize', syncHeight);
-      viewport?.removeEventListener('scroll', syncHeight);
       window.removeEventListener('resize', syncHeight);
-      window.removeEventListener('orientationchange', syncHeight);
+      window.removeEventListener('orientationchange', onOrientation);
       window.removeEventListener('pageshow', syncHeight);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
     };
   }, []);
 

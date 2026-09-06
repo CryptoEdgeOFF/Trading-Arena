@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="shortcut icon" href="/favicon-32.png" />
     <meta name="theme-color" content="#dc2626" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual" />
 
     <!-- Primary SEO -->
     <title>BTF Arena : compétition de trading en ligne 100% gratuite & lots à gagner</title>
@@ -87,15 +87,16 @@
     <div id="root"></div>
     <script>
       (function () {
+        var last = 0;
         function syncMobileWebHeight() {
-          var height = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-          if (!height) return;
-          document.documentElement.style.setProperty('--mobile-web-height', Math.round(height) + 'px');
+          var visual = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+          if (!visual) return;
+          // Keyboard: keep the last chrome height so the page does not jump.
+          if (last && window.innerHeight - visual > 120) return;
+          last = Math.round(visual);
+          document.documentElement.style.setProperty('--mobile-web-height', last + 'px');
         }
         syncMobileWebHeight();
-        if (window.visualViewport) window.visualViewport.addEventListener('resize', syncMobileWebHeight);
-        window.addEventListener('resize', syncMobileWebHeight);
-        window.addEventListener('pageshow', syncMobileWebHeight);
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
