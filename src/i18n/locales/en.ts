@@ -855,6 +855,9 @@ export const en = {
     noParticipant: 'No participant in the ranking.',
     noActiveTrader: 'No active trader in the roster.',
     trades: 'trades',
+    showTrades: 'Show trades',
+    enableSound: 'Enable sound',
+    chartSettings: 'Settings',
 
     connectionFailed: 'Connection failed',
     demoInvalidQty: 'Invalid quantity for the demo.',

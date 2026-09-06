@@ -857,6 +857,9 @@ export const fr: TranslationResources = {
     noParticipant: 'Aucun participant dans le classement.',
     noActiveTrader: 'Aucun trader actif dans le roster.',
     trades: 'trades',
+    showTrades: 'Afficher les trades',
+    enableSound: 'Activer le son',
+    chartSettings: 'Paramètres',
 
     connectionFailed: 'Connexion impossible',
     demoInvalidQty: 'Quantité invalide pour la démo.',

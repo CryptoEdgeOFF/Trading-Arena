@@ -16,6 +16,9 @@ import {
   loadTvChartLayout,
   persistTvChartLayout,
 } from '../lib/tvChartSettings';
+import { useTranslation } from 'react-i18next';
+import { ChartSettingToggle } from './TerminalChartSettings';
+import { useTerminalSoundEnabled } from '../hooks/useTerminalSoundEnabled';
 
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js';
 
@@ -2157,6 +2160,8 @@ export default function AdvancedChart({
     </button>
   );
 
+  const { t } = useTranslation();
+  const [soundEnabled, setSoundEnabled] = useTerminalSoundEnabled();
   const toggleShowTrades = useCallback(() => {
     const next = !showTrades;
     try {
@@ -2172,10 +2177,20 @@ export default function AdvancedChart({
     <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#0e0c0d]">
       <div ref={widgetContainerRef} className="absolute inset-0 z-0" />
       {!isMobile && (
-        <label className="tv-show-trades">
-          <input type="checkbox" checked={showTrades} onChange={toggleShowTrades} />
-          Show trade
-        </label>
+        <div className="tv-chart-toggles">
+          <ChartSettingToggle
+            className="is-grouped"
+            checked={showTrades}
+            onChange={() => toggleShowTrades()}
+            label={t('terminal.showTrades')}
+          />
+          <ChartSettingToggle
+            className="is-grouped"
+            checked={soundEnabled}
+            onChange={setSoundEnabled}
+            label={t('terminal.enableSound')}
+          />
+        </div>
       )}
       <div
         ref={overlayRef}
