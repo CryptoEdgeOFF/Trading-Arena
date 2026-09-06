@@ -154,6 +154,12 @@ export function JoinArenaSheet({
               <div><small>{t('join.start')}</small><strong>{new Date(competition.startAt).toLocaleDateString(locale)}</strong></div>
               <div><small>{t('join.prize')}</small><strong>{competition.cashPrize?.total ? `${competition.cashPrize.total.toLocaleString(locale)} ${competition.cashPrize.currency}` : '—'}</strong></div>
             </div>
+            {competition.dailyDrawdownPercent != null && competition.dailyDrawdownPercent > 0 && (
+              <div className="join-arena-rule">
+                <strong>{t('join.dailyDrawdownRule', { percent: competition.dailyDrawdownPercent })}</strong>
+                <small>{t('join.dailyDrawdownRuleDesc', { percent: competition.dailyDrawdownPercent })}</small>
+              </div>
+            )}
             {isIntroGate && sponsor && sponsorAccountId && (
               <p className="join-arena-team is-ready">{sponsor.name} · {sponsorAccountId}</p>
             )}

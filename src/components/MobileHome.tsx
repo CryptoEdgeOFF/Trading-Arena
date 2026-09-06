@@ -32,6 +32,23 @@ type HomeNews = {
   createdAt: number;
 };
 
+type HomePrizeItem = {
+  rank?: number;
+  imageUrl?: string;
+  title?: string;
+  description?: string;
+};
+
+type HomePrize = {
+  currency: string;
+  total: number;
+  label?: string;
+  imageUrl?: string;
+  description?: string;
+  breakdown?: Array<{ rank: number; amount: number }>;
+  items?: HomePrizeItem[];
+};
+
 type HomeArena = {
   id: string;
   title: string;
@@ -42,10 +59,41 @@ type HomeArena = {
   sponsor?: string | null;
   sponsorName?: string | null;
   sponsorLogoUrl?: string | null;
+  cashPrize?: HomePrize | null;
   canJoin?: boolean;
   joined?: boolean;
   myEntry?: { pnlUsd: number; pnlPercent: number };
 };
+
+function formatPrizeAmount(amount: number, currency: string): string {
+  return `${Math.round(amount).toLocaleString('en-US').replace(/,/g, ' ')} ${currency}`;
+}
+
+function prizeItemKey(item: HomePrizeItem): string {
+  return `${item.title || ''}\n${item.imageUrl || ''}\n${item.description || ''}`;
+}
+
+function groupPrizeItems(items: HomePrizeItem[]): Array<{ item: HomePrizeItem; ranks: number[] }> {
+  const ranked = items.filter((item) => Number(item.rank) > 0).sort((a, b) => Number(a.rank) - Number(b.rank));
+  const unranked = items.filter((item) => !Number(item.rank));
+  const ordered = ranked.length > 0 ? [...ranked, ...unranked] : items;
+  const groups: Array<{ item: HomePrizeItem; ranks: number[] }> = [];
+  for (const item of ordered) {
+    const last = groups[groups.length - 1];
+    if (last && prizeItemKey(last.item) === prizeItemKey(item)) {
+      if (item.rank) last.ranks.push(item.rank);
+    } else {
+      groups.push({ item, ranks: item.rank ? [item.rank] : [] });
+    }
+  }
+  return groups;
+}
+
+function hasPrize(prize: HomePrize | null | undefined): prize is HomePrize {
+  return Boolean(
+    prize && (prize.label || prize.imageUrl || prize.total > 0 || prize.items?.length || prize.breakdown?.length),
+  );
+}
 
 type HomeSeason = {
   nameKey: string;
@@ -82,6 +130,36 @@ function MobileArenaCard({
   const clearBanner = resolveMediaUrl(arena.bannerImageUrl) || ninjaTraderCupBanner(arena);
   const fallbackBanner = '/assets/pictures/arena-live-red.webp';
   const joining = variant === 'join';
+  const prize = arena.cashPrize;
+  const prizeTitle = prize?.label || (prize && prize.total > 0 ? formatPrizeAmount(prize.total, prize.currency) : '');
+  const prizeItems = prize?.items || [];
+  const prizeGroups = groupPrizeItems(prizeItems);
+  const prizeBreakdown = prizeItems.length === 0 ? prize?.breakdown || [] : [];
+  const prizeRankLabel = (rank: number) => (
+    rank === 1
+      ? t('leaderboard.rankTier1')
+      : rank === 2
+        ? t('leaderboard.rankTier2')
+        : rank === 3
+          ? t('leaderboard.rankTier3')
+          : t('leaderboard.rankTierN', { rank })
+  );
+  const prizeRows = prizeBreakdown.length > 0
+    ? prizeBreakdown.map((item) => ({
+        key: `cash-${item.rank}`,
+        rank: prizeRankLabel(item.rank),
+        label: formatPrizeAmount(item.amount, prize?.currency || 'USD'),
+      }))
+    : prizeGroups.map((group, groupIndex) => {
+        const first = group.ranks[0] || 0;
+        const last = group.ranks[group.ranks.length - 1] || first;
+        return {
+          key: `${prizeItemKey(group.item)}-${groupIndex}`,
+          rank: group.ranks.length > 1 ? `${first}–${last}` : prizeRankLabel(first),
+          label: group.item.title || t('leaderboard.rewardAlt'),
+        };
+      });
+  const prizeCount = prizeItems.length || prizeBreakdown.length;
 
   return (
     <article className={`mobile-arena-card${joining ? ' is-join' : ''}${clearBanner ? ' has-clear-banner' : ''}`}>
@@ -96,6 +174,23 @@ function MobileArenaCard({
         )}
       </div>
       <h3>{arena.title}</h3>
+      {hasPrize(prize) && (
+        <div className="mobile-arena-card__prizes">
+          <small>{t('leaderboard.prizes')}</small>
+          {prizeTitle && <strong>{prizeTitle}</strong>}
+          {prizeRows.length > 0 && (
+            <ul>
+              {prizeRows.map((row) => (
+                <li key={row.key}>
+                  <span>{row.rank}</span>
+                  <b>{row.label}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+          {prizeCount > 0 && <em>{t('leaderboard.lotsTotal', { count: prizeCount })}</em>}
+        </div>
+      )}
       <div className="mobile-arena-card__meta">
         <div>
           <small>{joining ? t('home.startsIn') : t('spotlight.endsIn')}</small>

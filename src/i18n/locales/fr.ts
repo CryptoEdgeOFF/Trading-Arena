@@ -631,6 +631,7 @@ export const fr: TranslationResources = {
     thLastUpdate: 'Dernière maj',
     podiumOnly: 'Podium uniquement — pas encore de challenger en dehors du top 3.',
     reward: 'Récompense',
+    prizes: 'LOTS À GAGNER',
     toWin: 'À gagner',
     mainPrize: 'Lot principal',
     cashValue: 'Valeur cash {{amount}}',

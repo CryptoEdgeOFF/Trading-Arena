@@ -629,6 +629,7 @@ export const en = {
     thLastUpdate: 'Last update',
     podiumOnly: 'Podium only — no challenger outside the top 3 yet.',
     reward: 'Reward',
+    prizes: 'PRIZES TO WIN',
     toWin: 'To win',
     mainPrize: 'Main prize',
     cashValue: 'Cash value {{amount}}',

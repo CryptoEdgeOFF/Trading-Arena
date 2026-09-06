@@ -22,6 +22,12 @@ function NavIcon({ name }: { name: NavId }) {
   );
 }
 
+function isImmersiveTrade(pathname: string, search: string): boolean {
+  if (!pathname.startsWith('/trade')) return false;
+  const params = new URLSearchParams(search);
+  return params.get('live') === 'true' || Boolean(params.get('competitionId')?.trim());
+}
+
 function activeTab(pathname: string): NavId | null {
   if (pathname.startsWith('/trade')) return 'trade';
   if (pathname.startsWith('/compete/live')) return 'live';
@@ -38,7 +44,7 @@ function activeTab(pathname: string): NavId | null {
 
 export default function MobileWebShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [user, setUser] = useState(() => readCachedCompeteUser());
   const screenRef = useRef<HTMLDivElement | null>(null);
   const tab = activeTab(pathname);
@@ -57,7 +63,8 @@ export default function MobileWebShell({ children }: { children: ReactNode }) {
       window.removeEventListener('storage', sync);
     };
   }, [pathname]);
-  const isTrade = pathname.startsWith('/trade');
+  const isTradeTab = pathname.startsWith('/trade');
+  const isTradeTerminal = isImmersiveTrade(pathname, search);
   const profileTo = user ? `/compete/player/${user.id}` : '/compete#signup';
 
   useEffect(() => {
@@ -140,13 +147,13 @@ export default function MobileWebShell({ children }: { children: ReactNode }) {
   ];
 
   return (
-    <div className={`mobile-web-shell${isTrade ? ' is-trade' : ''}`}>
+    <div className={`mobile-web-shell${isTradeTab ? ' is-trade' : ''}${isTradeTerminal ? ' is-immersive' : ''}`}>
       <div className="mobile-web-shell__ambient mobile-web-shell__ambient--one" />
       <div className="mobile-web-shell__ambient mobile-web-shell__ambient--two" />
-      <div ref={screenRef} className={`mobile-web-shell__screen${isTrade ? ' is-trade' : ''}`}>
+      <div ref={screenRef} className={`mobile-web-shell__screen${isTradeTab ? ' is-trade' : ''}`}>
         {children}
       </div>
-      {!isTrade && (
+      {!isTradeTerminal && (
         <nav className="mobile-web-nav" aria-label={t('header.play')}>
           {items.map((item) => (
             <Link

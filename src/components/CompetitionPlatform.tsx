@@ -1030,6 +1030,7 @@ export default function CompetitionPlatform() {
                 sponsorName: competition.sponsorName,
                 sponsorLogoUrl: competition.sponsorLogoUrl,
                 bannerImageUrl: competition.bannerImageUrl,
+                cashPrize: competition.cashPrize,
                 canJoin: competition.canJoin,
                 joined: Boolean(mine),
                 myEntry: mine?.myEntry,
@@ -1051,6 +1052,7 @@ export default function CompetitionPlatform() {
               sponsorName: competition.sponsorName,
               sponsorLogoUrl: competition.sponsorLogoUrl,
               bannerImageUrl: competition.bannerImageUrl,
+              cashPrize: competition.cashPrize,
               canJoin: competition.canJoin,
               joined: myCompetitions.some((entry) => entry.id === competition.id),
             }))}
