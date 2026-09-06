@@ -6,7 +6,7 @@ import ArenaSwitcher from './ArenaSwitcher';
 import CompeteHeader from './CompeteHeader';
 import AdvancedChart, { type ChartLiveTickHandler, type ChartOrderPreview } from './AdvancedChart';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { type MarketDataSource, type MarketTicker, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
+import { type MarketDataSource, type MarketTicker, type Order, type OrderType, type Player, type Position, type Trade, useGameStore } from '../stores/useGameStore';
 import { formatPnl, formatTime, historyTradePnl, timeAgo } from '../utils/formatters';
 import { EVENT_INTRO_COUNTDOWN_MS } from '../utils/liveEvent';
 import { getMarketSession } from '../utils/marketHours';
@@ -26,6 +26,16 @@ import {
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { applyPaperPlayerPatch } from '../utils/paperPatch';
+import {
+  confirmPendingOpen,
+  createPendingMutations,
+  dropPendingOpen,
+  markOrderPendingCancel as markOrderPendingCancelOn,
+  markPositionPendingClose as markPositionPendingCloseOn,
+  markPositionPendingPartial as markPositionPendingPartialOn,
+  pendingReservedMargin,
+  reconcilePlayerWithPending as reconcilePlayerWithPendingMutations,
+} from '../utils/paperOptimistic';
 import FillDetailsModal from './FillDetailsModal';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
@@ -3214,93 +3224,22 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     clearOrderDraftRisk();
   }, [clearOrderDraftRisk]);
 
-  // Tracks ids of positions/orders that the user has just closed/cancelled
-  // optimistically. Each entry expires after a short delay so an in-flight
-  // WS paper:update broadcast (which still contains the just-closed
-  // position) cannot make it visually re-appear before the server-side
-  // close has been broadcasted. Once expired, the filter releases the id
-  // either way so a real server divergence is never hidden permanently.
-  const pendingClosedPositionsRef = useRef<Map<string, number>>(new Map());
-  const pendingCancelledOrdersRef = useRef<Map<string, number>>(new Map());
-  // Partial closes track the size we've already removed locally so the
-  // visible position size keeps shrinking instead of bouncing back to its
-  // pre-close value when an old WS payload arrives.
-  const pendingPartialClosesRef = useRef<Map<string, { delta: number; expiresAt: number }>>(new Map());
-
-  const PENDING_MUTATION_TTL_MS = 4000;
+  // Clôtures / annulations / achats déjà affichés. Un WS en retard ne peut
+  // ni faire réapparaître une ligne fermée, ni doubler un achat.
+  const pendingMutationsRef = useRef(createPendingMutations());
 
   const markPositionPendingClose = useCallback((positionId: string) => {
-    pendingClosedPositionsRef.current.set(positionId, Date.now() + PENDING_MUTATION_TTL_MS);
+    markPositionPendingCloseOn(pendingMutationsRef.current, positionId);
   }, []);
   const markOrderPendingCancel = useCallback((orderId: string) => {
-    pendingCancelledOrdersRef.current.set(orderId, Date.now() + PENDING_MUTATION_TTL_MS);
+    markOrderPendingCancelOn(pendingMutationsRef.current, orderId);
   }, []);
   const markPositionPendingPartial = useCallback((positionId: string, delta: number) => {
-    const existing = pendingPartialClosesRef.current.get(positionId);
-    pendingPartialClosesRef.current.set(positionId, {
-      delta: (existing?.delta || 0) + delta,
-      expiresAt: Date.now() + PENDING_MUTATION_TTL_MS,
-    });
+    markPositionPendingPartialOn(pendingMutationsRef.current, positionId, delta);
   }, []);
 
   const reconcilePlayerWithPending = useCallback((incoming: Player | null): Player | null => {
-    if (!incoming) return incoming;
-    const now = Date.now();
-
-    // Drop expired entries first so they cannot mask real state divergence.
-    for (const [id, expiresAt] of pendingClosedPositionsRef.current) {
-      if (expiresAt <= now) pendingClosedPositionsRef.current.delete(id);
-    }
-    for (const [id, expiresAt] of pendingCancelledOrdersRef.current) {
-      if (expiresAt <= now) pendingCancelledOrdersRef.current.delete(id);
-    }
-    for (const [id, info] of pendingPartialClosesRef.current) {
-      if (info.expiresAt <= now) pendingPartialClosesRef.current.delete(id);
-    }
-
-    const openPositions = (incoming.openPositions || []).reduce<Position[]>((acc, position) => {
-      if (pendingClosedPositionsRef.current.has(position.id)) {
-        // Server has not yet processed (or broadcast) the close, so keep
-        // hiding the position. Once it really disappears from the payload
-        // we can release the marker.
-        return acc;
-      }
-      const partial = pendingPartialClosesRef.current.get(position.id);
-      if (partial && partial.delta > 0) {
-        const newSize = position.size - partial.delta;
-        if (newSize <= 0.000_000_1) {
-          // Effective full close while the user requested a partial: drop
-          // it entirely and clear the pending entry.
-          pendingPartialClosesRef.current.delete(position.id);
-          return acc;
-        }
-        acc.push({ ...position, size: newSize });
-        return acc;
-      }
-      acc.push(position);
-      return acc;
-    }, []);
-
-    // If the incoming payload no longer contains a pending-closed id, the
-    // optimistic update has been confirmed: drop the marker so any future
-    // payload is rendered unchanged.
-    const incomingPositionIds = new Set((incoming.openPositions || []).map((p) => p.id));
-    for (const id of Array.from(pendingClosedPositionsRef.current.keys())) {
-      if (!incomingPositionIds.has(id)) pendingClosedPositionsRef.current.delete(id);
-    }
-    for (const id of Array.from(pendingPartialClosesRef.current.keys())) {
-      if (!incomingPositionIds.has(id)) pendingPartialClosesRef.current.delete(id);
-    }
-
-    const openOrders = (incoming.openOrders || []).filter(
-      (order) => !pendingCancelledOrdersRef.current.has(order.id),
-    );
-    const incomingOrderIds = new Set((incoming.openOrders || []).map((o) => o.id));
-    for (const id of Array.from(pendingCancelledOrdersRef.current.keys())) {
-      if (!incomingOrderIds.has(id)) pendingCancelledOrdersRef.current.delete(id);
-    }
-
-    return { ...incoming, openPositions, openOrders };
+    return reconcilePlayerWithPendingMutations(incoming, pendingMutationsRef.current);
   }, []);
 
   const applyPaperUpdate = useCallback((data: any) => {
@@ -4142,9 +4081,95 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       submitDemoOrder(extras, opts);
       return;
     }
-    if (!session) return;
-    setBusy(true);
+    if (!session || !livePlayer) return;
+    const ticker = liveMarket?.[selectedPair];
+    const price = effType === 'limit'
+      ? Number(limitPrice)
+      : (effSide === 'long' ? ticker?.askPrice : ticker?.bidPrice) || ticker?.markPrice || 0;
+    if (!Number.isFinite(price) || price <= 0) {
+      setError(t('terminal.orderRejected'));
+      return;
+    }
+    const category = meta.marketMetadata[selectedPair]?.category;
+    const notional = price * qty;
+    const margin = leverage > 0 ? notional / leverage : 0;
+    const fee = notional * assetFeeRate(category, effType === 'market' ? 'taker' : 'maker', meta.fees);
+    if (margin + fee > livePlayer.availableMargin - pendingReservedMargin(pendingMutationsRef.current)) {
+      setError(`Capital disponible insuffisant (${livePlayer.availableMargin.toFixed(2)}$)`);
+      return;
+    }
+
+    const localId = crypto.randomUUID();
+    const openedAt = Date.now();
+    if (effType === 'limit') {
+      const limit = Number(limitPrice);
+      pendingMutationsRef.current.opens.set(localId, {
+        localId,
+        kind: 'order',
+        pair: selectedPair,
+        side: effSide,
+        size: qty,
+        limitPrice: limit,
+        margin,
+        fee,
+        knownPositionIds: livePlayer.openPositions.map((entry) => entry.id),
+        knownOrderIds: livePlayer.openOrders.map((entry) => entry.id),
+        order: {
+          id: localId,
+          pair: selectedPair,
+          side: effSide,
+          size: qty,
+          orderType: 'limit',
+          status: 'open',
+          limitPrice: limit,
+          leverage,
+          marginReserved: margin,
+          feeEstimate: fee,
+          createdAt: openedAt,
+          updatedAt: openedAt,
+          stopLoss: extras?.stopLoss ?? null,
+          takeProfit: extras?.takeProfit ?? null,
+          placedAtMark: ticker?.markPrice ?? limit,
+        } satisfies Order,
+      });
+      resetLimitOrderDraft();
+    } else {
+      pendingMutationsRef.current.opens.set(localId, {
+        localId,
+        kind: 'position',
+        pair: selectedPair,
+        side: effSide,
+        size: qty,
+        limitPrice: null,
+        margin,
+        fee,
+        knownPositionIds: livePlayer.openPositions.map((entry) => entry.id),
+        knownOrderIds: livePlayer.openOrders.map((entry) => entry.id),
+        position: {
+          id: localId,
+          pair: selectedPair,
+          side: effSide,
+          size: qty,
+          entryPrice: price,
+          markPrice: ticker?.markPrice || price,
+          pnl: 0,
+          unrealizedFunding: 0,
+          leverage,
+          margin,
+          feesPaid: fee,
+          liquidationPrice: effSide === 'long'
+            ? price * (1 - 0.9 / leverage)
+            : price * (1 + 0.9 / leverage),
+          stopLoss: extras?.stopLoss ?? null,
+          takeProfit: extras?.takeProfit ?? null,
+          openedAt,
+        } satisfies Position,
+      });
+      clearOrderDraftRisk();
+    }
     setError('');
+    setLivePlayer((prev) => reconcilePlayerWithPending(prev));
+
     try {
       const response = await fetch('/api/paper/order', {
         method: 'POST',
@@ -4165,6 +4190,16 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('terminal.orderRejected'));
+      confirmPendingOpen(pendingMutationsRef.current, localId, data.trade?.id);
+      setLivePlayer((prev) => {
+        if (!prev || !data.trade?.id) return reconcilePlayerWithPending(prev);
+        const serverId = String(data.trade.id);
+        return reconcilePlayerWithPending({
+          ...prev,
+          openPositions: prev.openPositions.map((entry) => (entry.id === localId ? { ...entry, id: serverId } : entry)),
+          openOrders: prev.openOrders.map((entry) => (entry.id === localId ? { ...entry, id: serverId } : entry)),
+        });
+      });
       analytics.tradePlaced({
         pair: selectedPair,
         side: effSide,
@@ -4173,16 +4208,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
         platform: terminalPlatform,
         competitionId: urlCompetitionId,
       });
-      if (orderType === 'limit') {
-        resetLimitOrderDraft();
-      } else {
-        clearOrderDraftRisk();
-      }
-      void refreshLive();
     } catch (err: any) {
+      dropPendingOpen(pendingMutationsRef.current, localId);
       setError(err.message);
-    } finally {
-      setBusy(false);
+      void refreshLive();
     }
   }
 
