@@ -2920,6 +2920,7 @@ export class CompetitionManager {
   updatePaperResultByPlayerId(
     paperPlayerId: string,
     result: { pnlUsd: number; pnlPercent: number; tradesCount: number; equity?: number },
+    options?: { evenIfBreached?: boolean },
   ): {
     newlyBreached: boolean;
     competitionId: string;
@@ -2946,9 +2947,9 @@ export class CompetitionManager {
       if (competition.finalizedAt) continue;
       const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
       if (!entry) continue;
-      // Compte déjà éliminé : on fige le PnL affiché et on évite un write
-      // Postgres à chaque poll du classement.
-      if (entry.breachedAt) continue;
+      // Compte déjà éliminé : on fige le PnL, sauf après la clôture forcée
+      // qui doit poser le realized une seule fois.
+      if (entry.breachedAt && !options?.evenIfBreached) continue;
 
       const pnlUsd = Number(result.pnlUsd) || 0;
       const pnlPercent = Number(result.pnlPercent) || 0;
@@ -2970,7 +2971,7 @@ export class CompetitionManager {
       // une équité finie. La baseline se recapture au 1er échantillon après 09:00 Paris.
       const ddPercent = competition.dailyDrawdownPercent;
       const equity = Number(result.equity);
-      if (ddPercent && ddPercent > 0 && Number.isFinite(equity)
+      if (!entry.breachedAt && ddPercent && ddPercent > 0 && Number.isFinite(equity)
         && inferCompetitionStatus(competition, now) === 'live') {
         const dayKey = drawdownDayKey(now);
         if (entry.dailyBaselineDayKey !== dayKey || entry.dailyBaselineEquity == null) {
@@ -3060,6 +3061,26 @@ export class CompetitionManager {
     if (!competition) return false;
     const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
     return Boolean(entry?.breachedAt);
+  }
+
+  isPaperPlayerBreachedAnywhere(paperPlayerId: string): boolean {
+    for (const competition of this.competitions.values()) {
+      if (competition.finalizedAt) continue;
+      const entry = competition.entries.find((item) => item.paperPlayerId === paperPlayerId);
+      if (entry?.breachedAt) return true;
+    }
+    return false;
+  }
+
+  listBreachedPaperPlayerIds(): string[] {
+    const ids = new Set<string>();
+    for (const competition of this.competitions.values()) {
+      if (competition.finalizedAt) continue;
+      for (const entry of competition.entries) {
+        if (entry.breachedAt && entry.paperPlayerId) ids.add(entry.paperPlayerId);
+      }
+    }
+    return [...ids];
   }
 
   listUserCompetitions(userId: string): Array<{

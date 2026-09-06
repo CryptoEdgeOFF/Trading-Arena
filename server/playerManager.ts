@@ -1595,25 +1595,8 @@ export class PlayerManager {
     if (!player) return;
 
     await this.ensureCompetitionPaperRuntime(player);
-
-    for (const order of [...player.openOrders]) {
-      if (order.status === 'open') {
-        this.paperEngine.cancelOrder(player, order.id);
-      }
-    }
-
-    for (const position of [...player.openPositions]) {
-      if (player.openPositions.some((entry) => entry.id === position.id)) {
-        try {
-          await this.paperEngine.closePosition(player, position.id);
-        } catch (err) {
-          console.warn(
-            `[paper] finalize compete skip close ${player.name} ${position.pair}: `
-            + `${(err as Error).message}`,
-          );
-        }
-      }
-    }
+    await this.paperEngine.forceFlattenPlayer(player, 'drawdown');
+    this.liveEquityCompetitionPlayerIds.delete(player.id);
 
     player.connected = false;
     player.lastUpdate = Date.now();

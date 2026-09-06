@@ -1040,7 +1040,7 @@ export class PaperTradingEngine {
     player: Player,
     positionRef: string,
     exitPrice: number,
-    reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'take-profit',
+    reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' | 'drawdown' = 'take-profit',
   ): Promise<Trade> {
     return this.withPlayerLock(player.id, () => {
       const existing = player.openPositions.find((position) => position.id === positionRef)
@@ -1057,6 +1057,40 @@ export class PaperTradingEngine {
         throw new Error(`Fermeture refusée pour ${existing.pair} ${existing.side} @ ${exitPrice}`);
       }
       return trade;
+    });
+  }
+
+  /**
+   * Clôture forcée (drawdown / fin d'arène) : ignore les horaires de marché
+   * et le ticker manquant. Le PnL ne doit plus flotter après ça.
+   */
+  async forceFlattenPlayer(
+    player: Player,
+    reason: 'drawdown' | 'liquidation' = 'drawdown',
+  ): Promise<void> {
+    return this.withPlayerLock(player.id, () => {
+      for (const order of [...player.openOrders]) {
+        if (order.status === 'open') this.cancelOrder(player, order.id);
+      }
+      for (const position of [...player.openPositions]) {
+        if (!player.openPositions.includes(position)) continue;
+        const ticker = this.market[position.pair];
+        const liveExit = isUsableTicker(ticker)
+          ? (position.side === 'long' ? ticker.bidPrice : ticker.askPrice)
+          : NaN;
+        const exitPrice = isValidQuotePrice(liveExit)
+          ? liveExit
+          : (isValidQuotePrice(position.markPrice) ? position.markPrice : position.entryPrice);
+        this.closePositionAtPrice(player, position, exitPrice, undefined, reason, false);
+      }
+      if (player.openPositions.length > 0) {
+        console.warn(
+          `[paper] forceFlatten leftover ${player.name}: `
+          + player.openPositions.map((item) => item.pair).join(','),
+        );
+        player.openPositions = [];
+        this.updatePlayerEquity(player);
+      }
     });
   }
 
@@ -2056,7 +2090,7 @@ export class PaperTradingEngine {
     existing: Position,
     exitPrice: number,
     partialSize?: number,
-    reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' = 'manual',
+    reason: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' | 'drawdown' = 'manual',
     applyImpact = true,
   ): Trade | null {
     if (!isValidQuotePrice(exitPrice)) {
