@@ -415,6 +415,140 @@ export async function sendNotificationEmail(
   return dispatch({ kind, to, subject, html, text });
 }
 
+export interface BreachEmailOptions {
+  recipientName: string;
+  title: string;
+  dailyDrawdownPercent: number;
+  ratingRank: number | null;
+  ctaUrl: string;
+  giftUrl: string;
+  gift: {
+    sponsorName: string;
+    subtitle: string;
+    cta: string;
+    offers: Array<{ title: string; code: string }>;
+  };
+}
+
+/**
+ * Email d'élimination (drawdown) — arène main Blueberry. Même thème sombre
+ * que les autres mails, avec le bloc cadeau partenaire.
+ */
+export async function sendBreachEmail(
+  to: string,
+  options: BreachEmailOptions,
+): Promise<SendOtpResult> {
+  const subject = `Éliminé — ${options.title}`;
+  const html = renderBreachHtml(options);
+  const text = renderBreachText(options);
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[mailer] breach "${options.title}" -> ${to}`);
+  }
+
+  return dispatch({ kind: 'arena_breach', to, subject, html, text });
+}
+
+function renderBreachText(o: BreachEmailOptions): string {
+  const pct = formatBreachDrawdown(o.dailyDrawdownPercent);
+  const lines = [
+    o.title.toUpperCase(),
+    '',
+    'Dommage, tu es éliminé.',
+    '',
+    `Salut ${o.recipientName},`,
+    `Tu as atteint la limite de drawdown de cette arène : tu as perdu plus de ${pct} % aujourd'hui. Tes positions ont été coupées. Tu ne peux plus trader ici.`,
+    'Attention : être éliminé te fait perdre des points au classement BTF Rating.',
+  ];
+  if (o.ratingRank != null) lines.push(`Tu es actuellement #${o.ratingRank}.`);
+  lines.push('', 'Profite quand même d’un cadeau');
+  lines.push(o.gift.sponsorName);
+  for (const offer of o.gift.offers) {
+    lines.push(`- ${offer.title}${offer.code ? ` · ${offer.code}` : ''}`);
+  }
+  lines.push(o.giftUrl);
+  lines.push('');
+  lines.push('Tu pourras toujours te battre la semaine prochaine. Une nouvelle arène arrive, tes points se rejouent.');
+  lines.push(`Voir le classement : ${o.ctaUrl}`);
+  return lines.join('\n');
+}
+
+function formatBreachDrawdown(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '5';
+  return Number.isInteger(value) ? String(value) : String(value).replace('.', ',');
+}
+
+function renderBreachHtml(o: BreachEmailOptions): string {
+  const pct = formatBreachDrawdown(o.dailyDrawdownPercent);
+  const rankBox = o.ratingRank != null
+    ? `<div style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:26px;font-weight:700;color:#fbbf24;background:#15100a;border:1px solid #3a2c12;border-radius:12px;padding:16px;text-align:center;margin:8px 0 20px;">#${escapeHtml(String(o.ratingRank))}</div>`
+    : '';
+  const rankLine = o.ratingRank != null
+    ? 'Attention : être éliminé te fait perdre des points au classement BTF Rating. Tu es actuellement'
+    : 'Attention : être éliminé te fait perdre des points au classement BTF Rating.';
+  const offerRows = o.gift.offers.map((offer) => `
+                  <tr>
+                    <td style="padding:0 16px 12px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#0c0c10" style="background-color:#0c0c10;border:1px solid #23262f;border-radius:10px;">
+                        <tr>
+                          <td style="padding:12px 14px;">
+                            <div style="font-size:13px;font-weight:700;color:#ffffff;">${escapeHtml(offer.title)}</div>
+                            ${offer.code ? `<div style="margin-top:8px;display:inline-block;padding:7px 10px;border:1px dashed #3a2c12;border-radius:8px;color:#ffd166;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:13px;font-weight:700;letter-spacing:0.08em;">${escapeHtml(offer.code)}</div>` : ''}
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>`).join('');
+
+  return `<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark only" />
+    <meta name="supported-color-schemes" content="dark only" />
+  </head>
+  <body style="margin:0;padding:0;background-color:#050507;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e5e7eb;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#050507" style="background-color:#050507;padding:24px 0;">
+      <tr><td align="center" bgcolor="#050507" style="background-color:#050507;">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" bgcolor="#0c0c10" style="width:480px;max-width:100%;background-color:#0c0c10;border:1px solid #1a1a20;border-radius:16px;overflow:hidden;">
+          ${bannerRowHtml()}
+          <tr><td bgcolor="#0c0c10" style="background-color:#0c0c10;padding:20px 32px 32px;">
+            <div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#dc2626;font-weight:700;margin-bottom:8px;">${escapeHtml(o.title)}</div>
+            <h1 style="margin:0 0 16px;font-size:22px;line-height:1.25;color:#ffffff;">Dommage, tu es éliminé.</h1>
+            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#b8b8c2;">Salut ${escapeHtml(o.recipientName)},</p>
+            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#b8b8c2;">Tu as atteint la limite de drawdown de cette arène : tu as perdu plus de ${escapeHtml(pct)}&nbsp;% aujourd’hui. Tes positions ont été coupées. Tu ne peux plus trader ici.</p>
+            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#b8b8c2;">${escapeHtml(rankLine)}</p>
+            ${rankBox}
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#ffd166;font-weight:800;margin:8px 0 10px;">▍ Profite quand même d’un cadeau</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#13151d" style="background-color:#13151d;border:1px solid #23262f;border-radius:14px;margin:0 0 18px;">
+              <tr>
+                <td style="padding:16px 16px 10px;">
+                  <div style="font-size:16px;font-weight:800;color:#ffffff;">${escapeHtml(o.gift.sponsorName)}</div>
+                  <div style="margin-top:4px;font-size:12px;line-height:1.5;color:#aab0c0;">${escapeHtml(o.gift.subtitle)}</div>
+                </td>
+              </tr>
+              ${offerRows}
+              <tr>
+                <td style="padding:0 16px 16px;">
+                  <a href="${escapeHtml(o.giftUrl)}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:11px 18px;border-radius:10px;">${escapeHtml(o.gift.cta)}</a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#b8b8c2;">Tu pourras toujours te battre la semaine prochaine. Une nouvelle arène arrive, tes points se rejouent.</p>
+            <a href="${escapeHtml(o.ctaUrl)}" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:13px 26px;border-radius:10px;">Voir le classement</a>
+          </td></tr>
+          <tr><td bgcolor="#08090e" style="background-color:#08090e;border-top:1px solid #1a1a20;padding:18px 30px;text-align:center;">
+            <div style="font-size:13px;font-weight:900;letter-spacing:4px;color:#ffffff;text-transform:uppercase;">BTF<span style="color:#dc2626;">·</span>ARENA</div>
+          </td></tr>
+        </table>
+        <p style="margin:24px 0 0;font-size:11px;color:#475569;">${APP_NAME}</p>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

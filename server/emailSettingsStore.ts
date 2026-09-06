@@ -27,6 +27,7 @@ export const EMAIL_KINDS = [
   'arena_no_trade_reminder',
   'arena_podium_lost',
   'arena_results',
+  'arena_breach',
 ] as const;
 
 export type EmailKind = (typeof EMAIL_KINDS)[number];
@@ -119,6 +120,12 @@ export const EMAIL_CATALOG: EmailKindMeta[] = [
     kind: 'arena_results',
     label: 'Arène — résultats de fin',
     description: 'Notification automatique des résultats à la clôture d’une arène. Texte dynamique (non éditable).',
+    fields: [],
+  },
+  {
+    kind: 'arena_breach',
+    label: 'Arène — éliminé (drawdown)',
+    description: 'Envoyé au moment de l’élimination, uniquement sur l’arène main Blueberry. Pas de rattrapage des comptes déjà hors jeu.',
     fields: [],
   },
 ];

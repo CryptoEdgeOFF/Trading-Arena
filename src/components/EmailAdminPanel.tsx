@@ -8,7 +8,8 @@ type EmailKind =
   | 'arena_register_reminder_24h'
   | 'arena_no_trade_reminder'
   | 'arena_podium_lost'
-  | 'arena_results';
+  | 'arena_results'
+  | 'arena_breach';
 
 type EmailMode = 'on' | 'off' | 'test';
 

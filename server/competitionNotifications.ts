@@ -1,5 +1,6 @@
 import type { CashPrize, CompetitionManager } from './competitionManager.js';
-import { isMailerConfigured, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
+import { isMailerConfigured, sendBreachEmail, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
+import { getUserRating } from './ratingStore.js';
 import { getEmailSettings } from './emailSettingsStore.js';
 import {
   shouldSendNoTradeReminder,
@@ -20,6 +21,8 @@ import {
  *     joueur sort du top 3 (cooldown anti-spam par joueur).
  *  5. « Résultats de l'arène » — envoyé une fois à la fin, avec le rang et le
  *     PnL final de chaque participant.
+ *  6. « Tu es éliminé » — au moment du drawdown, uniquement sur l'arène main
+ *     Blueberry. Jamais en rattrapage des comptes déjà hors jeu.
  *
  * Les flags « déjà envoyé » des notifications 1, 2, 3 et 5 sont persistés sur
  * la compétition pour survivre aux redémarrages. Le suivi du podium est en
@@ -123,6 +126,7 @@ interface PodiumState {
 type SendFn = typeof sendNotificationEmail;
 type SendArenaFn = typeof sendNewArenaEmail;
 type SendPrizeFn = typeof sendPrizeWinnerEmail;
+type SendBreachFn = typeof sendBreachEmail;
 
 /**
  * Construit les lots gagnés par rang à partir de la dotation : breakdown cash
@@ -153,17 +157,62 @@ export class CompetitionNotifier {
   private readonly send: SendFn;
   private readonly sendArena: SendArenaFn;
   private readonly sendPrize: SendPrizeFn;
+  private readonly sendBreach: SendBreachFn;
   private readonly mailerReady: () => boolean;
 
   constructor(
     private readonly competitionManager: CompetitionManager,
     // Injection pour les tests : envoi factice sans toucher Resend.
-    deps: { send?: SendFn; sendArena?: SendArenaFn; sendPrize?: SendPrizeFn; mailerReady?: () => boolean } = {},
+    deps: { send?: SendFn; sendArena?: SendArenaFn; sendPrize?: SendPrizeFn; sendBreach?: SendBreachFn; mailerReady?: () => boolean } = {},
   ) {
     this.send = deps.send || sendNotificationEmail;
     this.sendArena = deps.sendArena || sendNewArenaEmail;
     this.sendPrize = deps.sendPrize || sendPrizeWinnerEmail;
+    this.sendBreach = deps.sendBreach || sendBreachEmail;
     this.mailerReady = deps.mailerReady || isMailerConfigured;
+  }
+
+  /**
+   * Email d'élimination — uniquement un breach tout juste posé, et uniquement
+   * l'arène main Blueberry. Pas de rattrapage des comptes déjà hors jeu.
+   */
+  async notifyNewlyBreached(competitionId: string, paperPlayerId: string): Promise<void> {
+    try {
+      if (!this.mailerReady()) return;
+      const payload = this.competitionManager.claimBreachEmailPayload(competitionId, paperPlayerId);
+      if (!payload) return;
+
+      let ratingRank: number | null = null;
+      try {
+        const rating = await getUserRating(payload.userId);
+        if (rating.worldRank && rating.worldRank > 0) ratingRank = rating.worldRank;
+      } catch {
+        ratingRank = null;
+      }
+
+      const ctaUrl = arenaUrl(payload.competitionId) || `${APP_PUBLIC_URL}/compete`;
+      const giftUrl = /^https?:\/\//i.test(payload.promo.hrefPath)
+        ? payload.promo.hrefPath
+        : `${APP_PUBLIC_URL}${payload.promo.hrefPath.startsWith('/') ? '' : '/'}${payload.promo.hrefPath}`;
+
+      await this.sendBreach(payload.email, {
+        recipientName: payload.recipientName,
+        title: payload.title,
+        dailyDrawdownPercent: payload.dailyDrawdownPercent,
+        ratingRank,
+        ctaUrl,
+        giftUrl,
+        gift: {
+          sponsorName: payload.promo.sponsorName,
+          subtitle: payload.promo.subtitle,
+          cta: payload.promo.cta,
+          offers: payload.promo.offers,
+        },
+      });
+      console.log(`[notifier] breach "${payload.title}" → ${payload.recipientName}`);
+    } catch (error) {
+      console.error('[notifier] breach email failed:', (error as Error)?.message);
+    }
   }
 
   /** Un passage complet. Conçu pour être appelé toutes les ~60s. */
