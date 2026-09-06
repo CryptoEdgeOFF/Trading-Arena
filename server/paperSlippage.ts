@@ -62,22 +62,23 @@ function cryptoBase(pair: string): string | null {
 /**
  * Impact paper déterministe, en plus du bid/ask.
  *
- * La racine carrée évite une pénalité linéaire excessive tout en rendant les
- * gros notionnels nettement plus coûteux. Le plafond protège le moteur contre
- * des prix absurdes lors d'un ordre hors norme.
+ * Utilisé seulement si le carnet iTick L5 est absent/périmé, ou pour le
+ * reliquat après avoir vidé les 5 niveaux visibles.
+ * BTC/ETH : petits notionnels restent près du touch (un market $50k ne
+ * "mange" pas le book). TRX et moins liquides gardent un impact réel.
  */
 export function estimatePaperSlippageBps(pair: string, notionalUsd: number): number {
   const base = cryptoBase(pair);
   if (!base || !Number.isFinite(notionalUsd) || notionalUsd <= 0) return 0;
 
   const coefficient = VERY_LIQUID.has(base)
-    ? 1
+    ? 0.25
     : LIQUID.has(base)
       ? 2
       : MEDIUM.has(base)
         ? 4
         : 7;
-  const floorBps = VERY_LIQUID.has(base) ? 0.5 : LIQUID.has(base) ? 1 : MEDIUM.has(base) ? 2 : 3;
+  const floorBps = VERY_LIQUID.has(base) ? 0.05 : LIQUID.has(base) ? 1 : MEDIUM.has(base) ? 2 : 3;
   const impact = floorBps + coefficient * Math.sqrt(notionalUsd / 100_000);
   return Math.min(50, Math.max(floorBps, impact));
 }
