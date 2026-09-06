@@ -169,9 +169,10 @@ test('HTTP confirm then server payload replaces the local id without a second ro
     knownOrderIds: [],
     position: position({ id: 'opt-1', pair: 'ETH/USD', side: 'short', size: 0.5 }),
   });
-  confirmPendingOpen(state, 'opt-1', 'srv-eth');
+  confirmPendingOpen(state, 'opt-1', { id: 'srv-eth', price: 2400 });
   const afterHttp = reconcilePlayerWithPending(player({ openPositions: [] }), state);
   assert.deepEqual(afterHttp?.openPositions.map((item) => item.id), ['srv-eth']);
+  assert.equal(afterHttp?.openPositions[0]?.entryPrice, 2400);
 
   const afterWs = reconcilePlayerWithPending(player({
     openPositions: [position({ id: 'srv-eth', pair: 'ETH/USD', side: 'short', size: 0.5 })],

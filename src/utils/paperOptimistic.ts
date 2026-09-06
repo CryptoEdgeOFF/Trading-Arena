@@ -51,12 +51,34 @@ export function markPositionPendingPartial(state: PendingMutations, positionId: 
   });
 }
 
-export function confirmPendingOpen(state: PendingMutations, localId: string, serverId?: string): void {
+export function confirmPendingOpen(
+  state: PendingMutations,
+  localId: string,
+  server?: { id?: string; price?: number; fee?: number },
+): void {
   const pending = state.opens.get(localId);
-  if (!pending || !serverId) return;
-  pending.serverId = serverId;
-  if (pending.position) pending.position = { ...pending.position, id: serverId };
-  if (pending.order) pending.order = { ...pending.order, id: serverId };
+  if (!pending) return;
+  const serverId = server?.id ? String(server.id) : pending.serverId;
+  if (serverId) pending.serverId = serverId;
+  const fillPrice = Number(server?.price);
+  const fillFee = Number(server?.fee);
+  if (pending.position) {
+    const entryPrice = Number.isFinite(fillPrice) && fillPrice > 0 ? fillPrice : pending.position.entryPrice;
+    const leverage = pending.position.leverage;
+    pending.position = {
+      ...pending.position,
+      id: serverId || pending.position.id,
+      entryPrice,
+      margin: leverage > 0 ? (entryPrice * pending.position.size) / leverage : pending.position.margin,
+      feesPaid: Number.isFinite(fillFee) ? fillFee : pending.position.feesPaid,
+    };
+  }
+  if (pending.order) {
+    pending.order = {
+      ...pending.order,
+      id: serverId || pending.order.id,
+    };
+  }
 }
 
 export function dropPendingOpen(state: PendingMutations, localId: string): void {
