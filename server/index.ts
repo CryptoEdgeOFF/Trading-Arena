@@ -524,6 +524,10 @@ const manager = new PlayerManager((patch: StatePatch) => {
   syncAndBroadcastPaperRuntime();
 });
 
+function paperPlayerHasOpenRisk(player: { openPositions?: unknown[]; openOrders?: unknown[] }): boolean {
+  return (player.openPositions?.length ?? 0) > 0 || (player.openOrders?.length ?? 0) > 0;
+}
+
 function syncAndBroadcastPaperRuntime(): void {
   // Sync online-competition (paper) traders whose PnL changed into their
   // competition.entries before pushing arena diffs. This also propagates
@@ -540,6 +544,12 @@ function syncAndBroadcastPaperRuntime(): void {
       equity: player.currentBalance,
     });
     if (update?.drawdownWarning) void sendDrawdownWarning(update);
+    if (
+      update?.newlyBreached
+      || (paperPlayerHasOpenRisk(player) && competitionManager.isPaperPlayerBreachedAnywhere(player.id))
+    ) {
+      void finalizeBreachedPaperPlayer(player.id);
+    }
     void sendTradingPushNotifications(player);
   }
   if (targetIds.size === 0) {
@@ -1003,7 +1013,9 @@ async function syncCompetitionResultsForCompetition(competitionId: string): Prom
   const playerIds = competitionManager.getPaperPlayerIdsForCompetition(competitionId);
   state.inflight = (async () => {
     try {
-      await manager.syncCompetitionLeaderboardEquity(playerIds);
+      await flattenLeftoverBreachedPaperPlayers();
+      const liveIds = playerIds.filter((id) => !competitionManager.isPaperPlayerBreachedAnywhere(id));
+      await manager.syncCompetitionLeaderboardEquity(liveIds);
       for (const playerId of playerIds) {
         await syncCompetitionResultForPlayer(playerId, { persist: false });
       }
@@ -1019,6 +1031,30 @@ async function syncCompetitionResultsForCompetition(competitionId: string): Prom
 
 async function refreshCompetitionStoreIfServerless(): Promise<void> {
   if (IS_SERVERLESS) await competitionManager.refresh();
+}
+
+async function finalizeBreachedPaperPlayer(playerId: string): Promise<void> {
+  try {
+    await manager.finalizeCompetitionPaperPlayer(playerId);
+    const after = manager.getPlayerById(playerId);
+    if (!after) return;
+    competitionManager.updatePaperResultByPlayerId(after.id, {
+      pnlUsd: after.pnl,
+      pnlPercent: after.pnlPercent,
+      tradesCount: after.tradeCount,
+      equity: after.currentBalance,
+    }, { evenIfBreached: true });
+  } catch (err) {
+    console.error('[drawdown] breach finalize failed:', (err as Error)?.message);
+  }
+}
+
+async function flattenLeftoverBreachedPaperPlayers(): Promise<void> {
+  for (const playerId of competitionManager.listBreachedPaperPlayerIds()) {
+    const player = manager.getPlayerById(playerId);
+    if (!player || !paperPlayerHasOpenRisk(player)) continue;
+    await finalizeBreachedPaperPlayer(playerId);
+  }
 }
 
 async function syncCompetitionResultForPlayer(
@@ -1037,21 +1073,11 @@ async function syncCompetitionResultForPlayer(
   // Drawdown journalier atteint → on élimine le joueur : annulation des ordres,
   // clôture de toutes les positions (PnL figé) et déconnexion. Il ne pourra
   // plus trader (cf. assertCompetitionTraderCanTrade + canTrade côté client).
-  if (update?.newlyBreached) {
-    try {
-      await manager.finalizeCompetitionPaperPlayer(player.id);
-      const after = manager.getPlayerById(player.id);
-      if (after) {
-        competitionManager.updatePaperResultByPlayerId(after.id, {
-          pnlUsd: after.pnl,
-          pnlPercent: after.pnlPercent,
-          tradesCount: after.tradeCount,
-          equity: after.currentBalance,
-        });
-      }
-    } catch (err) {
-      console.error('[drawdown] breach finalize failed:', (err as Error)?.message);
-    }
+  if (
+    update?.newlyBreached
+    || (paperPlayerHasOpenRisk(player) && competitionManager.isPaperPlayerBreachedAnywhere(player.id))
+  ) {
+    await finalizeBreachedPaperPlayer(player.id);
   }
   if (options?.persist === false) return;
   if (IS_SERVERLESS) {
@@ -5168,6 +5194,7 @@ const serverReady = Promise.all([
   // (poll 2s). Au boot on enregistre seulement les joueurs avec positions ouvertes
   // dans le moteur paper pour SL/TP et ticks — sans mark-to-market de masse.
   manager.hydrateLiveEquityCompetitionPlayersAtBoot();
+  await flattenLeftoverBreachedPaperPlayers();
   if (MOBILE_STAGING_TEST_MODE) {
     const testArenaId = await ensureMobileStagingTradingTest();
     if (testArenaId) {

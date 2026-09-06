@@ -101,7 +101,7 @@ export interface Trade {
   pnl: number;
   time: number;
   action: 'open' | 'close' | 'update';
-  closeReason?: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation';
+  closeReason?: 'manual' | 'stop-loss' | 'take-profit' | 'liquidation' | 'drawdown';
   /** Prix d'entrée de la position (rempli sur les trades de clôture). */
   entryPrice?: number;
   /** Prix bid/ask avant impact de taille (audit du modèle paper). */
