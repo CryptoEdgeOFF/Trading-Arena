@@ -136,6 +136,8 @@ export class PlayerManager {
   // Postgres. User-driven mutations call persistPlayer() directly and bypass
   // this throttle.
   private dirtyPlayerIds = new Set<string>();
+  /** Joueurs paper mutés par un clic (ordre/close/SL) — à pousser en WS même si le PnL n'a pas encore bougé. */
+  private mutatedPaperPlayerIds = new Set<string>();
   private rosterFlushTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly ROSTER_FLUSH_INTERVAL = 2000;
   // Throttle outbound WebSocket state broadcasts so we never push more than
@@ -640,15 +642,22 @@ export class PlayerManager {
     await this.dbWriteQueue;
   }
 
+  drainMutatedPaperPlayerIds(): string[] {
+    const ids = Array.from(this.mutatedPaperPlayerIds);
+    this.mutatedPaperPlayerIds.clear();
+    return ids;
+  }
+
   private persistTradingMutation(playerId: string): Promise<void> {
+    this.mutatedPaperPlayerIds.add(playerId);
     if (this.isServerless) {
       return this.persistPlayer(playerId);
     }
 
-    // On a persistent Node server the in-memory trading engine is the live
-    // source of truth. Persist in the background so order/close endpoints can
-    // answer immediately and the UI feels like local mode.
-    void this.persistPlayer(playerId);
+    // Moteur en mémoire = source de vérité. On marque dirty pour le flush
+    // roster (2s) au lieu d'écrire Postgres sur le clic : ça libère le pool
+    // et l'event loop pour ACK l'ordre tout de suite.
+    this.markRosterDirty(playerId);
     return Promise.resolve();
   }
 

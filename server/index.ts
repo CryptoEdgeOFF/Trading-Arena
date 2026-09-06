@@ -530,7 +530,9 @@ function syncAndBroadcastPaperRuntime(): void {
   // order-only partial-fill progress, even though competition players are
   // intentionally absent from the public state patch.
   const dirtyPaperPlayers = manager.drainDirtyPaperPlayers();
+  const targetIds = new Set<string>(manager.drainMutatedPaperPlayerIds());
   for (const player of dirtyPaperPlayers) {
+    targetIds.add(player.id);
     const update = competitionManager.updatePaperResultByPlayerId(player.id, {
       pnlUsd: player.pnl,
       pnlPercent: player.pnlPercent,
@@ -540,7 +542,11 @@ function syncAndBroadcastPaperRuntime(): void {
     if (update?.drawdownWarning) void sendDrawdownWarning(update);
     void sendTradingPushNotifications(player);
   }
-  broadcastPaperUpdates();
+  if (targetIds.size === 0) {
+    scheduleArenaPatches();
+    return;
+  }
+  broadcastPaperUpdates(targetIds);
 }
 
 manager.setMarketTickBroadcaster((pairs) => broadcastMarketTicks(pairs));
@@ -1055,6 +1061,12 @@ async function syncCompetitionResultForPlayer(
   }
 }
 
+/** Mise à jour classement / drawdown après ACK — ne bloque pas le clic. */
+function queueCompetitionResultSync(playerId: string, competitionId: string | null): void {
+  if (!competitionId) return;
+  void syncCompetitionResultForPlayer(playerId, { persist: false });
+}
+
 async function finalizeEndedCompetitions(): Promise<void> {
   if (finalizingEndedCompetitions) {
     await finalizingEndedCompetitions;
@@ -1113,7 +1125,7 @@ async function assertCompetitionTraderCanTrade(token: string | null, playerId?: 
   const competitionId = await getCompetitionIdForTraderToken(token);
   if (!competitionId) return null;
   if (IS_SERVERLESS) await competitionManager.refresh();
-  await finalizeEndedCompetitions();
+  await maybeFinalizeEndedCompetitions();
   competitionManager.assertCompetitionTradingOpen(competitionId);
   // Élimination par drawdown journalier : aucun ordre/clôture/modif possible.
   if (playerId && competitionManager.isPaperPlayerBreached(competitionId, playerId)) {
@@ -1325,8 +1337,11 @@ function scheduleArenaPatches(): void {
   if (typeof arenaBroadcastTimer.unref === 'function') arenaBroadcastTimer.unref();
 }
 
-function broadcastPaperUpdates(): void {
-  paperClients.forEach((sub, ws) => sendPaperUpdate(ws, sub));
+function broadcastPaperUpdates(playerIds?: Set<string>): void {
+  paperClients.forEach((sub, ws) => {
+    if (playerIds && !playerIds.has(sub.playerId)) return;
+    sendPaperUpdate(ws, sub);
+  });
   scheduleArenaPatches();
 }
 
@@ -2473,7 +2488,7 @@ app.post('/api/paper/order', async (req, res) => {
       stopLoss: stopLoss == null || stopLoss === '' ? null : Number(stopLoss),
       takeProfit: takeProfit == null || takeProfit === '' ? null : Number(takeProfit),
     });
-    if (competitionId) await syncCompetitionResultForPlayer(player.id);
+    queueCompetitionResultSync(player.id, competitionId);
     res.json({ ok: true, trade: result.trade });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Ordre refusé' });
@@ -2495,7 +2510,7 @@ app.post('/api/paper/order/limit', async (req, res) => {
     const price = Number(limitPrice);
     if (competitionId) {
       await manager.updateCompetitionPaperOrderLimitPrice(player.id, oid, price);
-      await syncCompetitionResultForPlayer(player.id);
+      queueCompetitionResultSync(player.id, competitionId);
     } else {
       manager.updatePaperOrderLimitPrice(player.id, oid, price);
     }
@@ -2523,7 +2538,7 @@ app.post('/api/paper/cancel', async (req, res) => {
     const orderId = String(req.body?.orderId || '');
     if (competitionId) {
       const result = await manager.cancelCompetitionPaperOrder(player.id, orderId);
-      await syncCompetitionResultForPlayer(player.id);
+      queueCompetitionResultSync(player.id, competitionId);
       res.json({ ok: true, alreadyClosed: result.alreadyClosed });
     } else {
       manager.cancelPaperOrder(player.id, orderId);
@@ -2575,7 +2590,7 @@ app.post('/api/paper/close', async (req, res) => {
     }
     if (competitionId) {
       const result = await manager.closeCompetitionPaperPosition(player.id, positionRef, partialSize);
-      await syncCompetitionResultForPlayer(player.id);
+      queueCompetitionResultSync(player.id, competitionId);
       res.json({ ok: true, alreadyClosed: result.alreadyClosed, trade: result.trade });
     } else {
       const result = await manager.closePaperPosition(player.id, positionRef, partialSize);
@@ -2617,7 +2632,7 @@ app.post('/api/paper/risk', async (req, res) => {
       const oid = String(orderId);
       if (isCompetition) {
         await manager.updateCompetitionPaperOrderRisk(player.id, oid, sl, tp);
-        await syncCompetitionResultForPlayer(player.id);
+        queueCompetitionResultSync(player.id, competitionId);
       } else {
         manager.updatePaperOrderRisk(player.id, oid, sl, tp);
       }
@@ -2627,7 +2642,7 @@ app.post('/api/paper/risk', async (req, res) => {
     const positionRef = String(positionId || pair || '');
     if (isCompetition) {
       await manager.updateCompetitionPaperPositionRisk(player.id, positionRef, sl, tp, options);
-      await syncCompetitionResultForPlayer(player.id);
+      queueCompetitionResultSync(player.id, competitionId);
     } else {
       manager.updatePaperPositionRisk(player.id, positionRef, sl, tp, options);
     }

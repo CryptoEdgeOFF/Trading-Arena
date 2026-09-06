@@ -795,9 +795,9 @@ export class CompetitionManager {
   private payouts = new Map<string, PlayerPayout>();
   private teams = new Map<string, CompetitionTeam>();
   private localTeamImages = new Map<string, { mime: string; data: Buffer }>();
-  // In serverless, sessions/OTPs/trader-sessions use dedicated Postgres
-  // tables (one row per token/email). The maps below are only used as a
-  // local fallback when no Postgres pool is configured (development mode).
+  // Sessions/OTPs/trader-sessions : tables Postgres en prod, Maps en local.
+  // traderSessions sert aussi de cache mémoire sur le chemin ordre (le clic
+  // ne doit pas attendre une requête SQL).
   private sessions = new Map<string, string>();
   private pendingOtps = new Map<string, PendingOtp>();
   private traderSessions = new Map<string, { playerId: string; competitionId: string | null }>();
@@ -1421,21 +1421,26 @@ export class CompetitionManager {
 
   async getTraderSession(token: string): Promise<{ playerId: string; competitionId: string | null } | null> {
     if (!token) return null;
-    if (this.pool) {
-      const result = await this.pool.query(
-        `select player_id, competition_id from comp_trader_sessions
-         where token = $1 and created_at > now() - interval '${USER_SESSION_TTL_DAYS} days'
-         limit 1`,
-        [token],
-      );
-      const row = result.rows[0];
-      if (!row) {
-        void this.pool.query('delete from comp_trader_sessions where token = $1', [token]).catch(() => undefined);
-        return null;
-      }
-      return { playerId: row.player_id as string, competitionId: (row.competition_id as string | null) || null };
+    const cached = this.traderSessions.get(token);
+    if (cached) return cached;
+    if (!this.pool) return null;
+    const result = await this.pool.query(
+      `select player_id, competition_id from comp_trader_sessions
+       where token = $1 and created_at > now() - interval '${USER_SESSION_TTL_DAYS} days'
+       limit 1`,
+      [token],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      void this.pool.query('delete from comp_trader_sessions where token = $1', [token]).catch(() => undefined);
+      return null;
     }
-    return this.traderSessions.get(token) || null;
+    const session = {
+      playerId: row.player_id as string,
+      competitionId: (row.competition_id as string | null) || null,
+    };
+    this.traderSessions.set(token, session);
+    return session;
   }
 
   async deleteTraderSession(token: string): Promise<void> {
