@@ -205,6 +205,16 @@ body.app-scroll-lock {
   transform: translate(-50%, -50%);
   opacity: 0;
 }
+.tv-chart-toggles {
+  position: absolute;
+  z-index: 45;
+  top: 7px;
+  right: 168px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
 .tv-show-trades {
   position: absolute;
   z-index: 45;
@@ -225,13 +235,57 @@ body.app-scroll-lock {
   user-select: none;
   pointer-events: auto;
 }
-.tv-show-trades.is-inline {
+.tv-show-trades.is-inline,
+.tv-show-trades.is-grouped,
+.tv-show-trades.is-menu {
   position: static;
   top: auto;
   right: auto;
   z-index: auto;
+}
+.tv-show-trades.is-inline {
   height: 30px;
   flex-shrink: 0;
+}
+.tv-show-trades.is-menu {
+  width: 100%;
+  height: 34px;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.tv-show-trades.is-menu + .tv-show-trades.is-menu {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.tv-chart-settings {
+  position: relative;
+  z-index: 45;
+  flex-shrink: 0;
+}
+.tv-chart-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(19, 19, 23, 0.92);
+  color: #d8d4dc;
+  cursor: pointer;
+}
+.tv-chart-settings-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 188px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #16121f;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
 }
 .tv-show-trades input {
   width: 13px;

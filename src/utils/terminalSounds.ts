@@ -4,8 +4,20 @@ const TERMINAL_SOUND_URLS = {
   loss: '/assets/Sounds/Sounds btfarena/Lose.wav',
 } as const;
 
+const SOUND_STORAGE_KEY = 'btf-terminal-sound';
 const preloaded = new Map<string, HTMLAudioElement>();
 let unlocked = false;
+const enabledListeners = new Set<(enabled: boolean) => void>();
+
+function readSoundEnabled(): boolean {
+  try {
+    return localStorage.getItem(SOUND_STORAGE_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+let soundEnabled = readSoundEnabled();
 
 function resolveSrc(src: string): string {
   return encodeURI(src);
@@ -22,7 +34,30 @@ function getPrototype(src: string): HTMLAudioElement | null {
   return audio;
 }
 
+export function isTerminalSoundEnabled(): boolean {
+  return soundEnabled;
+}
+
+export function setTerminalSoundEnabled(enabled: boolean): void {
+  soundEnabled = enabled;
+  try {
+    localStorage.setItem(SOUND_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // ignore
+  }
+  if (enabled) unlockTerminalSounds();
+  for (const listener of enabledListeners) listener(enabled);
+}
+
+export function subscribeTerminalSoundEnabled(listener: (enabled: boolean) => void): () => void {
+  enabledListeners.add(listener);
+  return () => {
+    enabledListeners.delete(listener);
+  };
+}
+
 function playFx(src: string, volume = 0.88): void {
+  if (!soundEnabled) return;
   const proto = getPrototype(src);
   if (!proto) return;
   const audio = proto.cloneNode(true) as HTMLAudioElement;
@@ -59,12 +94,14 @@ export function unlockTerminalSounds(): void {
 
 /** Market, limit, SL ou TP que le trader vient de poser. */
 export function playNewPositionSound(): void {
+  if (!soundEnabled) return;
   unlockTerminalSounds();
   playFx(TERMINAL_SOUND_URLS.newPosition);
 }
 
 /** Clôture manuelle, SL ou TP — uniquement selon le PnL. */
 export function playTradeCloseSound(pnl: number): void {
+  if (!soundEnabled) return;
   unlockTerminalSounds();
   playFx(Number(pnl) > 0 ? TERMINAL_SOUND_URLS.win : TERMINAL_SOUND_URLS.loss);
 }
