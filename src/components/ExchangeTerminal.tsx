@@ -26,6 +26,8 @@ import {
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import { applyPaperPlayerPatch } from '../utils/paperPatch';
+import { playNewPositionSound } from '../utils/terminalSounds';
+import { useTerminalTradeSounds } from '../hooks/useTerminalTradeSounds';
 import { previewMarketExecutionPrice } from '../utils/paperSlippage';
 import {
   confirmPendingOpen,
@@ -3421,6 +3423,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     if (livePlayer) return livePlayer;
     return wsPlayer;
   }, [competitionContext?.id, demoMode, demoPlayer, livePlayer, wsPlayer]);
+  useTerminalTradeSounds(player?.trades);
 
   const playerTrades = useMemo(() => {
     if (demoMode) {
@@ -4082,6 +4085,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return;
     }
     if (demoMode) {
+      playNewPositionSound();
       submitDemoOrder(extras, opts);
       return;
     }
@@ -4175,6 +4179,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       clearOrderDraftRisk();
     }
     setError('');
+    playNewPositionSound();
     setLivePlayer((prev) => reconcilePlayerWithPending(prev));
 
     try {
@@ -4372,10 +4377,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     takeProfit: number | null,
   ) {
     if (demoMode) {
+      if (stopLoss != null || takeProfit != null) playNewPositionSound();
       updateDemoOrderRisk(orderId, stopLoss, takeProfit);
       return;
     }
     if (!session) return;
+    if (stopLoss != null || takeProfit != null) playNewPositionSound();
     setError('');
     const response = await fetch('/api/paper/risk', {
       method: 'POST',
@@ -4397,10 +4404,12 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     options?: { stopLossSize?: number | null; takeProfitSize?: number | null },
   ) {
     if (demoMode) {
+      if (stopLoss != null || takeProfit != null) playNewPositionSound();
       updateDemoRisk(positionId, stopLoss, takeProfit, options);
       return;
     }
     if (!session) return;
+    if (stopLoss != null || takeProfit != null) playNewPositionSound();
     setError('');
     const response = await fetch('/api/paper/risk', {
       method: 'POST',
