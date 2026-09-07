@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyPaperSlippage, estimatePaperSlippageBps, walkPaperLimitOrderBook } from './paperSlippage.js';
+import { applyPaperSlippage, configuredPaperExecutionModel, estimatePaperSlippageBps, walkPaperLimitOrderBook } from './paperSlippage.js';
 
 test('legacy execution never changes the requested price', () => {
   const quote = applyPaperSlippage('TRX/USD', 0.333, 4_000_000, 'buy', 'legacy');
   assert.equal(quote.executionPrice, 0.333);
   assert.equal(quote.slippageBps, 0);
   assert.equal(quote.source, 'legacy');
+});
+
+test('slippage is on by default and only opt-out via false', () => {
+  const previous = process.env.PAPER_SLIPPAGE_ENABLED;
+  try {
+    delete process.env.PAPER_SLIPPAGE_ENABLED;
+    assert.equal(configuredPaperExecutionModel(), 'slippage-v1');
+    process.env.PAPER_SLIPPAGE_ENABLED = 'true';
+    assert.equal(configuredPaperExecutionModel(), 'slippage-v1');
+    process.env.PAPER_SLIPPAGE_ENABLED = 'false';
+    assert.equal(configuredPaperExecutionModel(), 'legacy');
+  } finally {
+    if (previous === undefined) delete process.env.PAPER_SLIPPAGE_ENABLED;
+    else process.env.PAPER_SLIPPAGE_ENABLED = previous;
+  }
 });
 
 test('TRX million-dollar orders receive meaningful adverse impact', () => {

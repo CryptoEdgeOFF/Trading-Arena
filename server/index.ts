@@ -347,7 +347,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     runtime: process.env.NETLIFY ? 'netlify-function' : 'node-server',
     uptime: process.uptime(),
-    paperSlippageEnabled: process.env.PAPER_SLIPPAGE_ENABLED === 'true',
+    paperSlippageEnabled: process.env.PAPER_SLIPPAGE_ENABLED !== 'false',
     paperLimitPartialFills: process.env.PAPER_LIMIT_PARTIAL_FILLS === 'true',
   });
 });
