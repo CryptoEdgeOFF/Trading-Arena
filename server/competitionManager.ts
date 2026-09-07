@@ -1779,11 +1779,33 @@ export class CompetitionManager {
     if (!this.pool) return;
     try {
       await this.ensureDbStore();
+      const payload = this.currentStore();
+      // Garde anti-wipe : un process qui boot sur un store vide (load raté,
+      // course au redéploiement) ne doit jamais écraser un roster existant.
+      if (payload.competitions.length === 0 && payload.users.length === 0) {
+        const existing = await this.pool.query(
+          `select jsonb_array_length(coalesce(value->'competitions', '[]'::jsonb)) as competitions,
+                  jsonb_array_length(coalesce(value->'users', '[]'::jsonb)) as users
+           from competition_store where key = $1 limit 1`,
+          [STORE_DB_KEY],
+        );
+        const existingCompetitions = Number(existing.rows[0]?.competitions || 0);
+        const existingUsers = Number(existing.rows[0]?.users || 0);
+        if (existingCompetitions > 0 || existingUsers > 0) {
+          console.error(
+            `[competition-store] refuse to persist empty store over existing data `
+            + `(db competitions=${existingCompetitions} users=${existingUsers})`,
+          );
+          return;
+        }
+        console.error('[competition-store] refuse to persist empty store');
+        return;
+      }
       await this.pool.query(
         `insert into competition_store (key, value, updated_at)
          values ($1, $2::jsonb, now())
          on conflict (key) do update set value = excluded.value, updated_at = now()`,
-        [STORE_DB_KEY, JSON.stringify(this.currentStore())],
+        [STORE_DB_KEY, JSON.stringify(payload)],
       );
     } catch (error) {
       console.error('Competition store Postgres save failed:', error);
