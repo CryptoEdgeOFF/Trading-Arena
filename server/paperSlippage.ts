@@ -237,6 +237,11 @@ export function walkPaperLimitOrderBook(
   };
 }
 
+export function isPaperSlippageEnabled(): boolean {
+  // Opt-out : les positions/ordres déjà ouverts restent legacy (executionModel absent).
+  return process.env.PAPER_SLIPPAGE_ENABLED !== 'false';
+}
+
 export function configuredPaperExecutionModel(): PaperExecutionModel {
-  return process.env.PAPER_SLIPPAGE_ENABLED === 'true' ? 'slippage-v1' : 'legacy';
+  return isPaperSlippageEnabled() ? 'slippage-v1' : 'legacy';
 }
