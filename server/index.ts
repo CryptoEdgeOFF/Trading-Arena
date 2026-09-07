@@ -1667,6 +1667,18 @@ app.post('/api/admin/logout', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/admin/competition/reload-store', requireAdmin, async (_req, res) => {
+  await competitionManager.refresh();
+  resyncCompetitionPlayerIsolation();
+  void syncLiveMarketFeeds();
+  const competitions = competitionManager.listPublicCompetitions();
+  res.json({
+    ok: true,
+    competitions: competitions.length,
+    titles: competitions.map((competition) => competition.title),
+  });
+});
+
 // --- Suivi & configuration des emails (panneau admin « Emails ») ---------
 app.get('/api/admin/emails/config', requireAdmin, async (_req, res) => {
   try {

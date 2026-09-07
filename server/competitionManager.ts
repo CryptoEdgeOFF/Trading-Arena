@@ -1780,25 +1780,24 @@ export class CompetitionManager {
     try {
       await this.ensureDbStore();
       const payload = this.currentStore();
-      // Garde anti-wipe : un process qui boot sur un store vide (load raté,
-      // course au redéploiement) ne doit jamais écraser un roster existant.
-      if (payload.competitions.length === 0 && payload.users.length === 0) {
-        const existing = await this.pool.query(
-          `select jsonb_array_length(coalesce(value->'competitions', '[]'::jsonb)) as competitions,
-                  jsonb_array_length(coalesce(value->'users', '[]'::jsonb)) as users
-           from competition_store where key = $1 limit 1`,
-          [STORE_DB_KEY],
+      // Garde anti-wipe : un process qui a booté sur un store vide ou partiel
+      // ne doit jamais écraser un roster existant pendant son shutdown.
+      const existing = await this.pool.query(
+        `select jsonb_array_length(coalesce(value->'competitions', '[]'::jsonb)) as competitions,
+                jsonb_array_length(coalesce(value->'users', '[]'::jsonb)) as users
+         from competition_store where key = $1 limit 1`,
+        [STORE_DB_KEY],
+      );
+      const existingCompetitions = Number(existing.rows[0]?.competitions || 0);
+      const existingUsers = Number(existing.rows[0]?.users || 0);
+      const losesAllCompetitions = existingCompetitions > 0 && payload.competitions.length === 0;
+      const losesMostUsers = existingUsers >= 10 && payload.users.length < existingUsers / 2;
+      if (losesAllCompetitions || losesMostUsers) {
+        console.error(
+          `[competition-store] refuse destructive persist `
+          + `(memory competitions=${payload.competitions.length} users=${payload.users.length}; `
+          + `db competitions=${existingCompetitions} users=${existingUsers})`,
         );
-        const existingCompetitions = Number(existing.rows[0]?.competitions || 0);
-        const existingUsers = Number(existing.rows[0]?.users || 0);
-        if (existingCompetitions > 0 || existingUsers > 0) {
-          console.error(
-            `[competition-store] refuse to persist empty store over existing data `
-            + `(db competitions=${existingCompetitions} users=${existingUsers})`,
-          );
-          return;
-        }
-        console.error('[competition-store] refuse to persist empty store');
         return;
       }
       await this.pool.query(
