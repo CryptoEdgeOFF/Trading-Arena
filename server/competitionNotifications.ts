@@ -1,5 +1,6 @@
 import type { CashPrize, CompetitionManager } from './competitionManager.js';
-import { isMailerConfigured, sendBreachEmail, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
+import { isMailerConfigured, sendBlueberryResultsEmail, sendBreachEmail, sendNewArenaEmail, sendNotificationEmail, sendPrizeWinnerEmail } from './mailer.js';
+import { DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL } from './breachEmail.js';
 import { getUserRating } from './ratingStore.js';
 import { getEmailSettings } from './emailSettingsStore.js';
 import {
@@ -521,9 +522,9 @@ export class CompetitionNotifier {
 
     const ranked = this.competitionManager.getRankedEntriesForNotifier(competitionId);
     const total = ranked.length;
-    // Lots par rang : sert à envoyer un email distinct (demande d'adresse
-    // ERC20) aux gagnants, et l'email de résultats classique aux autres.
+    // Lots par rang : email gagnant (Blueberry Funded ou payout ERC20) vs résultats.
     const winningByRank = prizeLinesByRank(this.competitionManager.getCompetitionCashPrize(competitionId));
+    const claim = this.competitionManager.getPrizeWinnerClaim(competitionId);
     let sent = 0;
     let winners = 0;
     for (const entry of ranked) {
@@ -531,7 +532,6 @@ export class CompetitionNotifier {
 
       const prizeLines = entry.tradesCount > 0 ? winningByRank.get(entry.rank) : undefined;
       if (prizeLines && prizeLines.length) {
-        // Gagnant d'un lot → email dédié pour récupérer son adresse ERC20.
         await this.sendPrize(entry.email, {
           recipientName: entry.name,
           competitionTitle: title,
@@ -539,8 +539,34 @@ export class CompetitionNotifier {
           rankLabel: rankShortLabel(entry.rank),
           prizeLines,
           totalParticipants: total,
+          claimKind: claim?.kind ?? 'erc20',
+          signupUrl: claim?.signupUrl,
         });
         winners += 1;
+        sent += 1;
+        await sleep(SEND_SPACING_MS);
+        continue;
+      }
+
+      if (claim?.kind === 'blueberry-challenge') {
+        const placeLabel = entry.rank >= 1 ? rankShortLabel(entry.rank) : 'hors classement';
+        const next = this.competitionManager.getNextJoinableArena(competitionId);
+        const joinUrl = next ? joinArenaUrl(next.id) : undefined;
+        await sendBlueberryResultsEmail(entry.email, {
+          recipientName: entry.name,
+          title,
+          placeLabel,
+          signupUrl: claim.signupUrl || DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL,
+          offerTitle: claim.offerTitle || '-50 % sur vos challenges PRIMES',
+          offerCode: claim.offerCode || 'BTF50',
+          nextArena: next && joinUrl
+            ? {
+              title: next.title,
+              registrationLabel: `jusqu'au ${formatArenaDateTime(next.registrationEndsAt)}`,
+              joinUrl,
+            }
+            : null,
+        });
         sent += 1;
         await sleep(SEND_SPACING_MS);
         continue;

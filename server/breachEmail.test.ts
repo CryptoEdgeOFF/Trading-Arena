@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildBreachGiftOffers,
+  DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL,
   formatDrawdownPercentLabel,
   isMainBlueberryArena,
   shouldQueueBreachEmail,
@@ -40,6 +41,7 @@ test('main Blueberry arenas match title or sponsor, not blitz or staging', () =>
     title: 'Friday Night Arena',
     isPublic: true,
   }), false);
+  assert.match(DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL, /blueberryfunded\.com/);
 });
 
 test('gift offers fall back to the Blueberry promo codes', () => {
