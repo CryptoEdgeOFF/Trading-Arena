@@ -9,6 +9,7 @@ import {
   type EmailKind,
   type EmailSettings,
 } from './emailSettingsStore.js';
+import { DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL } from './breachEmail.js';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'BTF Trade <onboarding@resend.dev>';
@@ -250,12 +251,15 @@ export interface PrizeWinnerEmailOptions {
   /** Lignes de lots gagnés (ex. ["2 500 USDT", "MacBook Pro"]). */
   prizeLines: string[];
   totalParticipants: number;
+  /** Blueberry : inscription Funded + réponse email. Cash : payout ERC20. */
+  claimKind?: 'erc20' | 'blueberry-challenge';
+  signupUrl?: string;
 }
 
 /**
- * Email dédié aux GAGNANTS d'un lot : félicitations + demande de l'adresse
- * de réception ERC20 (réseau Ethereum) pour envoyer la récompense. Distinct de
- * l'email de résultats générique.
+ * Email dédié aux GAGNANTS d'un lot.
+ *  - cash : demande d'adresse ERC20
+ *  - Blueberry : inscription Funded + réponse avec l'email du compte
  */
 interface PrizeTexts {
   eyebrow: string;
@@ -272,7 +276,11 @@ export async function sendPrizeWinnerEmail(
   const settings = await getEmailSettingsCached().catch(() => undefined);
   const vars = { title: options.competitionTitle, rank: options.rankLabel };
   const T = (key: string) => resolveEmailText(settings, 'prize_winner', key, vars);
-  const subject = T('subject');
+  const isChallenge = options.claimKind === 'blueberry-challenge';
+  const prizeLabel = options.prizeLines[0] || 'lot';
+  const subject = isChallenge
+    ? `Félicitations ${options.recipientName} — tu gagnes un ${prizeLabel} Blueberry Funded`
+    : T('subject');
   const texts: PrizeTexts = {
     eyebrow: T('eyebrow'),
     claimTitle: T('claimTitle'),
@@ -280,8 +288,12 @@ export async function sendPrizeWinnerEmail(
     buttonLabel: T('buttonLabel'),
     warning: T('warning'),
   };
-  const html = renderPrizeWinnerHtml(options, texts);
-  const text = renderPrizeWinnerText(options, texts);
+  const html = isChallenge
+    ? renderPrizeWinnerChallengeHtml(options)
+    : renderPrizeWinnerHtml(options, texts);
+  const text = isChallenge
+    ? renderPrizeWinnerChallengeText(options)
+    : renderPrizeWinnerText(options, texts);
 
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[mailer] prize-winner "${options.competitionTitle}" (#${options.rank}) -> ${to}`);
@@ -382,6 +394,111 @@ function renderPrizeWinnerHtml(o: PrizeWinnerEmailOptions, texts: PrizeTexts): s
 </html>`;
 }
 
+function blueberrySignupUrl(options: PrizeWinnerEmailOptions): string {
+  const url = String(options.signupUrl || '').trim();
+  return url || DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL;
+}
+
+function renderPrizeWinnerChallengeText(o: PrizeWinnerEmailOptions): string {
+  const signupUrl = blueberrySignupUrl(o);
+  const lines: string[] = [];
+  lines.push(`Felicitations ${o.recipientName} !`, '');
+  lines.push(`Tu termines ${o.rankLabel} de "${o.competitionTitle}" sur ${o.totalParticipants} participants et tu remportes :`);
+  for (const prize of o.prizeLines) lines.push(`- ${prize}`);
+  lines.push('');
+  lines.push('Ton challenge Blueberry Funded t\'attend. Pour qu\'on puisse l\'activer, il y a 2 etapes.');
+  lines.push('');
+  lines.push('1. Inscris-toi sur Blueberry Funded');
+  lines.push('Clique sur ce lien (obligatoire, c\'est le lien partenaire BTF Arena) :');
+  lines.push(signupUrl);
+  lines.push('');
+  lines.push('2. Reponds a cet email');
+  lines.push('Envoie-nous, en reponse, l\'adresse email avec laquelle tu viens de t\'inscrire sur Blueberry Funded. Blueberry activera ton challenge la semaine prochaine.');
+  lines.push('');
+  lines.push('Tant que tu n\'as pas repondu avec cette adresse, ton lot ne peut pas etre credite.');
+  return lines.join('\n');
+}
+
+function renderPrizeWinnerChallengeHtml(o: PrizeWinnerEmailOptions): string {
+  const C = {
+    page: '#050507',
+    card: '#0a0c12',
+    tile: '#13151d',
+    border: '#23262f',
+    red: '#ff3344',
+    redBtn: '#e11d2a',
+    white: '#ffffff',
+    text: '#aab0c0',
+    faint: '#6b7180',
+    gold: '#ffd166',
+    green: '#34d399',
+  };
+  const signupUrl = blueberrySignupUrl(o);
+  const prizeRows = o.prizeLines
+    .map((prize, i) => `
+      <tr>
+        <td width="40" style="padding:12px 0 12px 16px;font-size:20px;line-height:1;">${i === 0 ? '🏆' : '🎁'}</td>
+        <td style="padding:12px 16px 12px 0;font-size:16px;color:${C.white};font-weight:700;${i > 0 ? `border-top:1px solid ${C.border};` : ''}">${escapeHtml(prize)}</td>
+      </tr>`)
+    .join('');
+
+  return `<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark only" />
+    <meta name="supported-color-schemes" content="dark only" />
+  </head>
+  <body style="margin:0;padding:0;background-color:${C.page};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e5e7eb;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.page}" style="background-color:${C.page};padding:24px 0;">
+      <tr><td align="center" bgcolor="${C.page}" style="background-color:${C.page};">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:600px;max-width:100%;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;overflow:hidden;">
+          ${bannerRowHtml()}
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:30px 30px 4px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;">🏆 Tu as gagné un lot</div>
+            <h1 style="margin:14px 0 6px;font-size:30px;line-height:1.08;color:${C.white};font-weight:900;letter-spacing:-0.5px;">Félicitations, ${escapeHtml(o.recipientName)} !</h1>
+            <div style="font-size:15px;font-weight:700;color:${C.red};letter-spacing:0.5px;">${escapeHtml(o.rankLabel)} sur ${o.totalParticipants} · ${escapeHtml(o.competitionTitle)}</div>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;margin:8px 0 10px;">▍ Ton lot</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.tile}" style="background-color:${C.tile};border:1px solid ${C.border};border-radius:14px;">
+              ${prizeRows}
+            </table>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.green};font-weight:800;margin:8px 0 10px;">▍ Comment récupérer ton challenge</div>
+            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:${C.text};">Ton challenge Blueberry Funded t’attend. Pour qu’on puisse l’activer, il y a 2 étapes.</p>
+            <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:${C.white};font-weight:700;">1. Inscris-toi sur Blueberry Funded</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.text};">Clique sur le bouton ci-dessous (obligatoire, c’est le lien partenaire BTF Arena).</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" align="left" style="margin:2px 0 6px;">
+              <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
+                <a href="${escapeHtml(signupUrl)}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">S’inscrire sur Blueberry Funded ▸</a>
+              </td></tr>
+            </table>
+            <div style="clear:both;"></div>
+            <p style="margin:20px 0 8px;font-size:14px;line-height:1.6;color:${C.white};font-weight:700;">2. Réponds à cet email</p>
+            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:${C.text};">Envoie-nous, en réponse, l’adresse email avec laquelle tu viens de t’inscrire sur Blueberry Funded. Blueberry activera ton challenge la semaine prochaine.</p>
+            <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${C.faint};">⚠️ Tant que tu n’as pas répondu avec cette adresse, ton lot ne peut pas être crédité.</p>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:14px 30px 30px;">
+            <p style="margin:0;font-size:12px;line-height:1.6;color:${C.faint};">Une question ? Réponds directement à cet email ou écris-nous à <a href="mailto:${PRIZE_CONTACT_EMAIL}" style="color:${C.red};text-decoration:underline;">${PRIZE_CONTACT_EMAIL}</a>.</p>
+          </td></tr>
+
+          <tr><td bgcolor="#08090e" style="background-color:#08090e;border-top:1px solid ${C.border};padding:18px 30px;text-align:center;">
+            <div style="font-size:13px;font-weight:900;letter-spacing:4px;color:${C.white};text-transform:uppercase;">BTF<span style="color:${C.red};">·</span>ARENA</div>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}
+
 export interface NotificationEmailOptions {
   /** Petit texte au-dessus du titre (ex. "Kraken Cup"). */
   eyebrow?: string;
@@ -399,6 +516,142 @@ export interface NotificationEmailOptions {
  * de fin). Même thème sombre que la plateforme. Best-effort : ne throw jamais,
  * retourne delivered=false en cas d'échec.
  */
+export interface BlueberryResultsEmailOptions {
+  recipientName: string;
+  title: string;
+  placeLabel: string;
+  signupUrl: string;
+  offerTitle: string;
+  offerCode: string;
+  nextArena?: {
+    title: string;
+    registrationLabel: string;
+    joinUrl: string;
+  } | null;
+}
+
+export async function sendBlueberryResultsEmail(
+  to: string,
+  options: BlueberryResultsEmailOptions,
+): Promise<SendOtpResult> {
+  const subject = `Dommage, tu termines ${options.placeLabel} — ${options.title}`;
+  const html = renderBlueberryResultsHtml(options);
+  const text = renderBlueberryResultsText(options);
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[mailer] blueberry-results "${options.title}" (${options.placeLabel}) -> ${to}`);
+  }
+
+  return dispatch({ kind: 'arena_results', to, subject, html, text });
+}
+
+function renderBlueberryResultsText(o: BlueberryResultsEmailOptions): string {
+  const lines = [
+    `Dommage, tu termines ${o.placeLabel}.`,
+    '',
+    `Salut ${o.recipientName},`,
+    `Pas de cadeau pour toi cette fois. On a quand même un cadeau pendant quelques jours : tes challenges propfirms beaucoup moins cher.`,
+    '',
+    `${o.offerTitle}`,
+    `Code : ${o.offerCode}`,
+    o.signupUrl,
+  ];
+  if (o.nextArena) {
+    lines.push(
+      '',
+      `Retente ta chance la semaine prochaine dans l'arène ${o.nextArena.title}.`,
+      `Les inscriptions sont ouvertes ${o.nextArena.registrationLabel}.`,
+      o.nextArena.joinUrl,
+    );
+  }
+  return lines.join('\n');
+}
+
+function renderBlueberryResultsHtml(o: BlueberryResultsEmailOptions): string {
+  const C = {
+    page: '#050507',
+    card: '#0a0c12',
+    tile: '#13151d',
+    border: '#23262f',
+    red: '#ff3344',
+    redBtn: '#e11d2a',
+    white: '#ffffff',
+    text: '#aab0c0',
+    faint: '#6b7180',
+    gold: '#ffd166',
+    green: '#34d399',
+  };
+  const nextBlock = o.nextArena
+    ? `
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;margin:8px 0 10px;">▍ Retente ta chance</div>
+            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:${C.text};">Retente ta chance la semaine prochaine dans l’arène <strong style="color:${C.white};">${escapeHtml(o.nextArena.title)}</strong>. Les inscriptions sont ouvertes ${escapeHtml(o.nextArena.registrationLabel)}.</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" align="left" style="margin:2px 0 6px;">
+              <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
+                <a href="${escapeHtml(o.nextArena.joinUrl)}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">Rejoindre ${escapeHtml(o.nextArena.title)} ▸</a>
+              </td></tr>
+            </table>
+            <div style="clear:both;"></div>
+          </td></tr>`
+    : '';
+
+  return `<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark only" />
+    <meta name="supported-color-schemes" content="dark only" />
+  </head>
+  <body style="margin:0;padding:0;background-color:${C.page};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e5e7eb;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.page}" style="background-color:${C.page};padding:24px 0;">
+      <tr><td align="center" bgcolor="${C.page}" style="background-color:${C.page};">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${C.card}" style="width:600px;max-width:100%;background-color:${C.card};border:1px solid ${C.border};border-radius:16px;overflow:hidden;">
+          ${bannerRowHtml()}
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:30px 30px 4px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.gold};font-weight:800;">${escapeHtml(o.title)}</div>
+            <h1 style="margin:14px 0 6px;font-size:30px;line-height:1.08;color:${C.white};font-weight:900;letter-spacing:-0.5px;">Dommage, tu termines ${escapeHtml(o.placeLabel)}.</h1>
+            <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:${C.text};">Salut ${escapeHtml(o.recipientName)},</p>
+            <p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:${C.text};">Pas de cadeau pour toi cette fois. On a quand même un cadeau pendant quelques jours : tes challenges propfirms beaucoup moins cher.</p>
+          </td></tr>
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:18px 30px 8px;">
+            <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;color:${C.green};font-weight:800;margin:8px 0 10px;">▍ Ton cadeau</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${C.tile}" style="background-color:${C.tile};border:1px solid ${C.border};border-radius:14px;">
+              <tr>
+                <td style="padding:16px 16px 12px;">
+                  <div style="font-size:16px;font-weight:800;color:${C.white};">${escapeHtml(o.offerTitle)}</div>
+                  <div style="margin-top:10px;display:inline-block;padding:7px 10px;border:1px dashed #3a2c12;border-radius:8px;color:${C.gold};font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:13px;font-weight:700;letter-spacing:0.08em;">${escapeHtml(o.offerCode)}</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:0 16px 16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0">
+                    <tr><td align="center" bgcolor="${C.redBtn}" style="background-color:${C.redBtn};border-radius:12px;border:2px solid #000000;">
+                      <a href="${escapeHtml(o.signupUrl)}" style="display:block;background-color:${C.redBtn};color:#ffffff;text-decoration:none;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;padding:15px 34px;border-radius:10px;">Profiter de l’offre ▸</a>
+                    </td></tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          ${nextBlock}
+
+          <tr><td bgcolor="${C.card}" style="background-color:${C.card};padding:14px 30px 30px;">
+            <p style="margin:0;font-size:12px;line-height:1.6;color:${C.faint};">Une question ? Écris-nous à <a href="mailto:${PRIZE_CONTACT_EMAIL}" style="color:${C.red};text-decoration:underline;">${PRIZE_CONTACT_EMAIL}</a>.</p>
+          </td></tr>
+
+          <tr><td bgcolor="#08090e" style="background-color:#08090e;border-top:1px solid ${C.border};padding:18px 30px;text-align:center;">
+            <div style="font-size:13px;font-weight:900;letter-spacing:4px;color:${C.white};text-transform:uppercase;">BTF<span style="color:${C.red};">·</span>ARENA</div>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}
+
 export async function sendNotificationEmail(
   to: string,
   subject: string,

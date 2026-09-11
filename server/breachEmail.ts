@@ -9,6 +9,8 @@
 export const DEFAULT_BLUEBERRY_GIFT_SUBTITLE = 'Réservé aux traders BTF Arena pendant 1 semaine';
 export const DEFAULT_BLUEBERRY_GIFT_CTA = 'Ouvrir les offres';
 export const DEFAULT_BLUEBERRY_GIFT_PATH = '/compete/bonus';
+export const DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL =
+  'https://affiliates.blueberryfunded.com/Tracking/click/?affid=2566&campaign=1348&product_id=1&t_type=HomePage&t_lang=EN';
 
 export const DEFAULT_BLUEBERRY_OFFERS: Array<{ title: string; code: string }> = [
   { title: '-50 % sur vos challenges PRIMES', code: 'BTF50' },

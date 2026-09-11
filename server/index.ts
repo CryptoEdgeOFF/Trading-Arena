@@ -26,7 +26,7 @@ import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine
 import { CompetitionManager, inferSeasonStatus } from './competitionManager.js';
 import { CompetitionNotifier } from './competitionNotifications.js';
 import { computeTradeStats, type TradeStats } from './tradeStats.js';
-import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail, sendBreachEmail, sendPayoutRequestSubmittedEmail, sendPayoutRequestAdminEmail, sendPayoutApprovedEmail, PRIZE_CONTACT_EMAIL, isEmailTestFilterActive } from './mailer.js';
+import { sendOtpEmail, sendNotificationEmail, sendNewArenaEmail, sendPrizeWinnerEmail, sendBlueberryResultsEmail, sendBreachEmail, sendPayoutRequestSubmittedEmail, sendPayoutRequestAdminEmail, sendPayoutApprovedEmail, PRIZE_CONTACT_EMAIL, isEmailTestFilterActive } from './mailer.js';
 import {
   getEmailSettings,
   updateEmailSettings,
@@ -72,7 +72,7 @@ import { countryFromPhone } from './phoneCountry.js';
 import { ensureScheduledArenas } from './arenaScheduler.js';
 import { renderPublicSpectatePage } from './publicSpectatePage.js';
 import { buildTradingPushPayload, shouldNotifyCompletedLimit, shouldSendNewsPush, tradingClosePushKind } from './notificationRules.js';
-import { shouldQueueBreachEmail } from './breachEmail.js';
+import { DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL, shouldQueueBreachEmail } from './breachEmail.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -1727,11 +1727,12 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
     } else if (kind === 'prize_winner') {
       result = await sendPrizeWinnerEmail(to, {
         recipientName: 'Trader Test',
-        competitionTitle: 'Arène de démonstration',
+        competitionTitle: 'BTF x BLUEBERRY',
         rank: 1,
-        rankLabel: '1ʳᵉ place',
-        prizeLines: ['2 500 USDT', 'MacBook Pro'],
-        totalParticipants: 128,
+        rankLabel: '1er',
+        prizeLines: ['100 000 $ Challenge Prime'],
+        totalParticipants: 390,
+        claimKind: 'blueberry-challenge',
       });
     } else if (kind === 'arena_breach') {
       result = await sendBreachEmail(to, {
@@ -1762,15 +1763,28 @@ app.post('/api/admin/emails/test', requireAdmin, async (req, res) => {
         prizeBreakdown: ['1er · 2 500', '2e · 1 500', '3e · 1 000'],
         ctaUrl: (process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim(),
       });
+    } else if (kind === 'arena_results') {
+      result = await sendBlueberryResultsEmail(to, {
+        recipientName: 'Trader Test',
+        title: 'BTF x BLUEBERRY',
+        placeLabel: '47e',
+        signupUrl: DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL,
+        offerTitle: '-50 % sur vos challenges PRIMES',
+        offerCode: 'BTF50',
+        nextArena: {
+          title: 'Ninja Trader Cup #4',
+          registrationLabel: 'jusqu’au lundi 14 septembre à 07:59',
+          joinUrl: `${(process.env.APP_PUBLIC_URL || 'https://btfarena.com').trim().replace(/\/$/, '')}/?arena=a816a382-2fac-4b27-855c-2582a6c4e29f&join=1`,
+        },
+      });
     } else {
-      // arena_start_soon | rappels | podium | résultats → notification générique
+      // arena_start_soon | rappels | podium → notification générique
       const headings: Record<string, string> = {
         arena_start_soon: "L'arène démarre bientôt",
         arena_register_reminder_24h: "L'arène démarre dans 24 heures",
         arena_register_reminder_1h: "L'arène démarre dans 1 heure",
         arena_no_trade_reminder: "L'arène a commencé il y a 2 jours",
         arena_podium_lost: 'On t’a pris ta place sur le podium !',
-        arena_results: "Résultats — Arène de démonstration",
       };
       result = await sendNotificationEmail(
         to,

@@ -11,6 +11,7 @@ import {
   DEFAULT_BLUEBERRY_GIFT_CTA,
   DEFAULT_BLUEBERRY_GIFT_PATH,
   DEFAULT_BLUEBERRY_GIFT_SUBTITLE,
+  DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL,
   isMainBlueberryArena,
   type BreachEmailClaim,
 } from './breachEmail.js';
@@ -3990,6 +3991,58 @@ export class CompetitionManager {
   /** Dotation d'une arène (cash + lots), pour déterminer les gagnants à la fin. */
   getCompetitionCashPrize(competitionId: string): CashPrize | null {
     return this.competitions.get(competitionId)?.cashPrize ?? null;
+  }
+
+  /**
+   * Comment le gagnant réclame son lot :
+   *  - arène main Blueberry → inscription Funded + réponse email (pas d'ERC20)
+   *  - sinon → payout ERC20 classique
+   */
+  getPrizeWinnerClaim(competitionId: string): {
+    kind: 'erc20' | 'blueberry-challenge';
+    signupUrl: string;
+    offerTitle: string;
+    offerCode: string;
+  } | null {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) return null;
+    if (isMainBlueberryArena(competition)) {
+      const signupUrl = String(competition.sponsorReferralUrl || competition.promoHref || '').trim()
+        || DEFAULT_BLUEBERRY_FUNDED_SIGNUP_URL;
+      return {
+        kind: 'blueberry-challenge',
+        signupUrl,
+        offerTitle: String(competition.promoOffer1 || '').trim() || '-50 % sur vos challenges PRIMES',
+        offerCode: String(competition.promoCode1 || '').trim() || 'BTF50',
+      };
+    }
+    return { kind: 'erc20', signupUrl: '', offerTitle: '', offerCode: '' };
+  }
+
+  /** Prochaine arène publique rejoignable (hors blitz / staging), pour le mail de fin. */
+  getNextJoinableArena(excludeId: string, now = Date.now()): {
+    id: string;
+    title: string;
+    startAt: number;
+    registrationEndsAt: number;
+  } | null {
+    const next = Array.from(this.competitions.values())
+      .filter((competition) => {
+        if (competition.id === excludeId) return false;
+        if (!competition.isPublic) return false;
+        if (competition.format === 'blitz') return false;
+        if (/^(STAGING|MOBILE STAGING)\b/i.test(competition.title)) return false;
+        const status = inferCompetitionStatus(competition, now);
+        return status === 'registration' || status === 'starting_soon';
+      })
+      .sort((a, b) => a.startAt - b.startAt)[0];
+    if (!next) return null;
+    return {
+      id: next.id,
+      title: next.title,
+      startAt: next.startAt,
+      registrationEndsAt: getRegistrationEndsAt(next),
+    };
   }
 
   /** Marque une notification comme envoyée (persisté, anti-doublon). */

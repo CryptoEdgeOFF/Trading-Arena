@@ -83,7 +83,7 @@ export const EMAIL_CATALOG: EmailKindMeta[] = [
   {
     kind: 'prize_winner',
     label: 'Gagnant — réclamation du lot',
-    description: 'Envoyé aux gagnants pour les inviter à demander leur payout sur la plateforme.',
+    description: 'Envoyé aux gagnants à la clôture. Blueberry : inscription Funded + réponse email. Autres arènes cash : payout ERC20.',
     fields: [
       { key: 'subject', label: 'Sujet', default: '🏆 Tu as gagné un lot — {title}', vars: '{title}, {rank}' },
       { key: 'eyebrow', label: 'Sur-titre', default: '🏆 Tu as gagné un lot' },
@@ -126,7 +126,7 @@ export const EMAIL_CATALOG: EmailKindMeta[] = [
   {
     kind: 'arena_results',
     label: 'Arène — résultats de fin',
-    description: 'Notification automatique des résultats à la clôture d’une arène. Texte dynamique (non éditable).',
+    description: 'Notification automatique à la clôture. Blueberry : place + offre BTF50 + prochaine arène. Autres arènes : résultats classiques.',
     fields: [],
   },
   {
