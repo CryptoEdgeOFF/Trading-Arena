@@ -14,6 +14,7 @@ export function useWebSocket(
     onArenaPatch?: (payload: any) => void;
     subscribePairs?: string[];
     watchList?: boolean;
+    focusUserId?: string | null;
     onOpen?: () => void;
     onClose?: () => void;
   } = {},
@@ -30,6 +31,7 @@ export function useWebSocket(
   const onCloseRef = useRef(options.onClose);
   const subscribePairsRef = useRef(options.subscribePairs || []);
   const watchListRef = useRef(Boolean(options.watchList));
+  const focusUserIdRef = useRef(options.focusUserId || '');
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
@@ -75,6 +77,13 @@ export function useWebSocket(
   }, [options.watchList]);
 
   useEffect(() => {
+    focusUserIdRef.current = options.focusUserId || '';
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !focusUserIdRef.current) return;
+    ws.send(JSON.stringify({ type: 'arena:focus', userId: focusUserIdRef.current }));
+  }, [options.focusUserId]);
+
+  useEffect(() => {
     if (!enabled) return;
     let closedByEffect = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -97,6 +106,9 @@ export function useWebSocket(
         }
         if (watchListRef.current) {
           ws.send(JSON.stringify({ type: 'market:watch-subscribe', enabled: true }));
+        }
+        if (focusUserIdRef.current) {
+          ws.send(JSON.stringify({ type: 'arena:focus', userId: focusUserIdRef.current }));
         }
       };
 

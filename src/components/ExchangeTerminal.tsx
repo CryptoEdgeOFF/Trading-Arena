@@ -3349,9 +3349,11 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       if (prev.competition.id !== payload.competitionId) return prev;
       const upserts = Array.isArray(payload.upserts) ? payload.upserts : [];
       const removed: string[] = Array.isArray(payload.removed) ? payload.removed : [];
+      const dropped: string[] = Array.isArray(payload.dropped) ? payload.dropped : [];
       const byUserId = new Map<string, LeaderboardRow>();
       for (const row of prev.leaderboard) byUserId.set(row.userId, row);
       for (const id of removed) byUserId.delete(id);
+      for (const id of dropped) byUserId.delete(id);
       for (const upsert of upserts) {
         if (!upsert?.userId) continue;
         const existing = byUserId.get(upsert.userId);
@@ -3388,6 +3390,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     watchList: watchListOpen,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
+    focusUserId: competitionContext?.userId,
     onOpen: () => { paperWsConnectedRef.current = true; },
     onClose: () => { paperWsConnectedRef.current = false; },
   });
@@ -3780,7 +3783,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     // frequency (30s) so the UI recovers if the socket drops.
     async function tick() {
       try {
-        const response = await fetch(`/api/competition/leaderboard/${competitionId}`);
+        const params = new URLSearchParams({ limit: '20' });
+        if (competitionContext?.userId) params.set('userId', competitionContext.userId);
+        const response = await fetch(`/api/competition/leaderboard/${competitionId}?${params}`);
         const payload = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(payload.error || 'Leaderboard indisponible');
@@ -3798,7 +3803,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [competitionContext?.id, demoMode]);
+  }, [competitionContext?.id, competitionContext?.userId, demoMode]);
 
   async function login() {
     if (!liveMode || terminalPlatform !== 'live') return;

@@ -3776,7 +3776,9 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     // frequency (30s) so the UI recovers if the socket drops.
     async function tick() {
       try {
-        const response = await fetch(`/api/competition/leaderboard/${competitionId}`);
+        const params = new URLSearchParams({ limit: '20' });
+        if (competitionContext?.userId) params.set('userId', competitionContext.userId);
+        const response = await fetch(`/api/competition/leaderboard/${competitionId}?${params}`);
         const payload = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(payload.error || 'Leaderboard indisponible');

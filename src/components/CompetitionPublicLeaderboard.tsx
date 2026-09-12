@@ -99,6 +99,8 @@ interface LeaderboardResponse {
     promoCode2?: string | null;
   };
   leaderboard: LeaderboardRow[];
+  totalRanked?: number;
+  truncated?: boolean;
 }
 
 function fmtDate(value: number): string {
@@ -270,6 +272,7 @@ export default function CompetitionPublicLeaderboard() {
   const { id } = useParams();
   const [visibleRanked, setVisibleRanked] = useState(LIST_INITIAL);
   const [visibleEnrolled, setVisibleEnrolled] = useState(LIST_INITIAL);
+  const [rankedOffset, setRankedOffset] = useState(LIST_INITIAL);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [error, setError] = useState('');
   const [paused, setPaused] = useState(false);
@@ -293,12 +296,20 @@ export default function CompetitionPublicLeaderboard() {
     if (!payload?.competition || !Array.isArray(payload.leaderboard)) return;
     setData((current) => {
       const previousRows = new Map((current?.leaderboard || []).map((row) => [row.userId, row]));
+      const nextRows = payload.leaderboard.map((row: LeaderboardRow) => ({
+        ...previousRows.get(row.userId),
+        ...row,
+      }));
+      const incomingIds = new Set(nextRows.map((row: LeaderboardRow) => row.userId));
+      for (const row of current?.leaderboard || []) {
+        if (!incomingIds.has(row.userId) && row.rank > (payload.windowLimit || LIST_INITIAL)) {
+          nextRows.push(row);
+        }
+      }
       return {
         competition: { ...(current?.competition || {}), ...payload.competition },
-        leaderboard: payload.leaderboard.map((row: LeaderboardRow) => ({
-          ...previousRows.get(row.userId),
-          ...row,
-        })),
+        leaderboard: nextRows.sort((a: LeaderboardRow, b: LeaderboardRow) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
+        totalRanked: payload.totalRanked ?? current?.totalRanked ?? nextRows.length,
       } as LeaderboardResponse;
     });
     setError('');
@@ -309,7 +320,15 @@ export default function CompetitionPublicLeaderboard() {
     setData((current) => {
       if (!current || current.competition.id !== payload.competitionId) return current;
       const rows = new Map(current.leaderboard.map((row) => [row.userId, row]));
+      const windowLimit = Number(payload.windowLimit) || LIST_INITIAL;
+      const hasExpanded = [...rows.values()].some((row) => row.rank > windowLimit);
       for (const userId of Array.isArray(payload.removed) ? payload.removed : []) rows.delete(userId);
+      if (!hasExpanded) {
+        for (const userId of Array.isArray(payload.dropped) ? payload.dropped : []) {
+          const row = rows.get(userId);
+          if (row && row.rank > 0 && row.rank <= windowLimit) rows.delete(userId);
+        }
+      }
       for (const patch of Array.isArray(payload.upserts) ? payload.upserts : []) {
         if (!patch?.userId) continue;
         const previous = rows.get(patch.userId);
@@ -332,12 +351,14 @@ export default function CompetitionPublicLeaderboard() {
       return {
         competition: payload.competition || current.competition,
         leaderboard: [...rows.values()].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
+        totalRanked: payload.totalRanked ?? current.totalRanked,
       };
     });
   }, []);
 
   useWebSocket(Boolean(id), {
     arenaId: id || null,
+    focusUserId: currentUserId,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
     onOpen: () => setWsConnected(true),
@@ -356,12 +377,22 @@ export default function CompetitionPublicLeaderboard() {
         return;
       }
       try {
-        const response = await fetch(`/api/competition/leaderboard/${id}`);
+        const params = new URLSearchParams({ limit: String(LIST_INITIAL) });
+        if (currentUserId) params.set('userId', currentUserId);
+        const response = await fetch(`/api/competition/leaderboard/${id}?${params}`);
         const payload = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(payload.error || t('leaderboard.unavailable'));
         const next = payload as LeaderboardResponse;
-        setData(next);
+        setData((current) => {
+          if (!current?.leaderboard?.length) return next;
+          const incoming = new Map(next.leaderboard.map((row) => [row.userId, row]));
+          const extras = current.leaderboard.filter((row) => !incoming.has(row.userId) && row.rank > LIST_INITIAL);
+          return {
+            ...next,
+            leaderboard: [...next.leaderboard, ...extras].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
+          };
+        });
         setError('');
         if (next.competition.status === 'live' && id) {
           applyPnlSnapshot(id, next.leaderboard);
@@ -381,7 +412,7 @@ export default function CompetitionPublicLeaderboard() {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [id, t, wsConnected]);
+  }, [id, t, wsConnected, currentUserId]);
 
   const applyPnlSnapshot = (competitionId: string, rows: LeaderboardRow[], moments?: PnlMoment[]) => {
     const rankedRows = rows.filter((row) => row.rank > 0).sort((a, b) => a.rank - b.rank).slice(0, 40);
@@ -496,11 +527,15 @@ export default function CompetitionPublicLeaderboard() {
   useEffect(() => {
     setVisibleRanked(LIST_INITIAL);
     setVisibleEnrolled(LIST_INITIAL);
+    setRankedOffset(LIST_INITIAL);
   }, [id]);
 
   const visibleListRows = listRows.slice(0, visibleRanked);
   const visibleNotTraded = notTraded.slice(0, visibleEnrolled);
-  const hasMoreRanked = visibleListRows.length < listRows.length;
+  const totalRanked = data?.totalRanked ?? ranked.length;
+  const hiddenLocalRanked = Math.max(0, listRows.length - visibleListRows.length);
+  const hiddenServerRanked = Math.max(0, totalRanked - ranked.length);
+  const hasMoreRanked = hiddenLocalRanked > 0 || hiddenServerRanked > 0;
   const hasMoreEnrolled = visibleNotTraded.length < notTraded.length;
 
   const targetCountdown = data ? (data.competition.status === 'live' ? data.competition.endAt : data.competition.startAt) : Date.now();
@@ -643,9 +678,9 @@ export default function CompetitionPublicLeaderboard() {
                       <div>
                         <div className="lb-panel__title">{t('leaderboard.liveRanking')}</div>
                       </div>
-                      {ranked.length > 0 && (
+                      {totalRanked > 0 && (
                         <span className="num text-[11px] text-[#6f6f7a]">
-                          {ranked.length} · {t('leaderboard.thTrader')}
+                          {totalRanked} · {t('leaderboard.thTrader')}
                         </span>
                       )}
                     </div>
@@ -686,9 +721,39 @@ export default function CompetitionPublicLeaderboard() {
                       <button
                         type="button"
                         className="lb-more"
-                        onClick={() => setVisibleRanked((count) => count + LIST_STEP)}
+                        onClick={async () => {
+                          if (hiddenLocalRanked > 0) {
+                            setVisibleRanked((count) => count + LIST_STEP);
+                            return;
+                          }
+                          if (!id) return;
+                          try {
+                            const params = new URLSearchParams({
+                              limit: String(LIST_STEP),
+                              offset: String(rankedOffset),
+                            });
+                            if (currentUserId) params.set('userId', currentUserId);
+                            const response = await fetch(`/api/competition/leaderboard/${id}?${params}`);
+                            const payload = await response.json() as LeaderboardResponse;
+                            if (!response.ok || !Array.isArray(payload.leaderboard)) return;
+                            setData((current) => {
+                              if (!current) return payload;
+                              const seen = new Set(current.leaderboard.map((row) => row.userId));
+                              const extras = payload.leaderboard.filter((row) => !seen.has(row.userId));
+                              return {
+                                ...current,
+                                totalRanked: payload.totalRanked ?? current.totalRanked,
+                                leaderboard: [...current.leaderboard, ...extras].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
+                              };
+                            });
+                            setRankedOffset((offset) => offset + LIST_STEP);
+                            setVisibleRanked((count) => count + LIST_STEP);
+                          } catch {
+                            // keep the compact live window
+                          }
+                        }}
                       >
-                        {t('leaderboard.loadMore')} · {listRows.length - visibleListRows.length}
+                        {t('leaderboard.loadMore')} · {hiddenLocalRanked + hiddenServerRanked}
                       </button>
                     )}
                   </section>
