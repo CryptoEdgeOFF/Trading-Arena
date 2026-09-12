@@ -711,7 +711,7 @@ function renderBreachText(o: BreachEmailOptions): string {
     '',
     `Salut ${o.recipientName},`,
     `Tu as atteint la limite de drawdown de cette arène : tu as perdu plus de ${pct} % aujourd'hui. Tes positions ont été coupées. Tu ne peux plus trader ici.`,
-    'Attention : être éliminé te fait perdre des points au classement BTF Rating.',
+    'Être éliminé ne retire pas de points au classement BTF Rating.',
   ];
   if (o.ratingRank != null) lines.push(`Tu es actuellement #${o.ratingRank}.`);
   lines.push('', 'Profite quand même d’un cadeau');
@@ -737,8 +737,8 @@ function renderBreachHtml(o: BreachEmailOptions): string {
     ? `<div style="font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:26px;font-weight:700;color:#fbbf24;background:#15100a;border:1px solid #3a2c12;border-radius:12px;padding:16px;text-align:center;margin:8px 0 20px;">#${escapeHtml(String(o.ratingRank))}</div>`
     : '';
   const rankLine = o.ratingRank != null
-    ? 'Attention : être éliminé te fait perdre des points au classement BTF Rating. Tu es actuellement'
-    : 'Attention : être éliminé te fait perdre des points au classement BTF Rating.';
+    ? 'Être éliminé ne retire pas de points au classement BTF Rating. Tu es actuellement'
+    : 'Être éliminé ne retire pas de points au classement BTF Rating.';
   const offerRows = o.gift.offers.map((offer) => `
                   <tr>
                     <td style="padding:0 16px 12px;">

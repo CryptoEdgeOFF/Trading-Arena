@@ -81,7 +81,7 @@ export const fr: typeof en = {
     title: 'Comment marchent les divisions',
     linkHint: 'Barème et divisions expliqués',
     close: 'Fermer',
-    intro: 'Chaque arène terminée te rapporte (ou te coûte) des Arena Points selon ton classement final. Ton total détermine ta division — les premières se franchissent vite, le sommet se mérite.',
+    intro: 'Chaque arène terminée te rapporte des Arena Points selon ton classement final. Ton total détermine ta division — les premières se franchissent vite, le sommet se mérite. Tu ne perds jamais de points.',
     scoringTitle: 'Gagner des points',
     rows: {
       win: 'Gagner l’arène',
@@ -96,7 +96,7 @@ export const fr: typeof en = {
     sizeBonus: 'Les résultats positifs ont un petit bonus selon la taille de l’arène : battre 100 traders rapporte plus que d’en battre 8.',
     divisionsTitle: 'Les divisions',
     tiersNote: 'La barre indique ta progression directe vers la division suivante.',
-    floorNote: 'Tu peux perdre des points sur une mauvaise semaine, mais ton total ne descend jamais sous 0 — impossible de sortir de Bronze par le bas.',
+    floorNote: 'Une arène ratée ou une élimination rapporte 0 point. Ton total ne descend jamais sous 0 — impossible de sortir de Bronze par le bas.',
   },
   spectate: {
     kicker: 'SPECTATE',

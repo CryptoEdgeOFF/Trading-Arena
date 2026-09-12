@@ -79,7 +79,7 @@ export const en = {
     title: 'How divisions work',
     linkHint: 'Scoring and divisions explained',
     close: 'Close',
-    intro: 'Every finished arena earns (or costs) you Arena Points based on your final rank. Your total decides your division — early divisions are quick to climb, the summit takes grinding.',
+    intro: 'Every finished arena earns Arena Points based on your final rank. Your total decides your division — early divisions are quick to climb, the summit takes grinding. You never lose points.',
     scoringTitle: 'Earning points',
     rows: {
       win: 'Win the arena',
@@ -94,7 +94,7 @@ export const en = {
     sizeBonus: 'Positive results get a small bonus based on arena size: beating 100 traders pays more than beating 8.',
     divisionsTitle: 'The divisions',
     tiersNote: 'The bar shows your direct progress toward the next division.',
-    floorNote: 'You can lose points on a bad week, but your total never drops below 0 — you can’t fall out of Bronze.',
+    floorNote: 'A weak finish or elimination awards 0 points. Your total never drops below 0 — you can’t fall out of Bronze.',
   },
   spectate: {
     kicker: 'SPECTATE',
