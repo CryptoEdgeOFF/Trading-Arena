@@ -720,18 +720,20 @@ export async function backfillRange(
 const inflightScrollBackfills = new Map<string, Promise<void>>();
 const deepenInflight = new Set<string>();
 
-async function countBarsBefore(pair: string, intervalMin: number, toSec: number): Promise<number> {
+async function countBarsBefore(pair: string, intervalMin: number, toSec: number, exclusive = false): Promise<number> {
   if (pool) {
     await schemaReady;
     const result = await pool.query<{ n: string }>(
-      'SELECT COUNT(*)::bigint AS n FROM itick_candles WHERE pair = $1 AND timeframe = $2 AND bar_time <= $3',
+      exclusive
+        ? 'SELECT COUNT(*)::bigint AS n FROM itick_candles WHERE pair = $1 AND timeframe = $2 AND bar_time < $3'
+        : 'SELECT COUNT(*)::bigint AS n FROM itick_candles WHERE pair = $1 AND timeframe = $2 AND bar_time <= $3',
       [pair, intervalMin, toSec],
     );
     return Number(result.rows[0]?.n ?? 0);
   }
   const series = memorySeries.get(seriesKey(pair, intervalMin));
   if (!series) return 0;
-  return [...series.bars.values()].filter((bar) => bar.time <= toSec).length;
+  return [...series.bars.values()].filter((bar) => (exclusive ? bar.time < toSec : bar.time <= toSec)).length;
 }
 
 async function oldestBarTime(pair: string, intervalMin: number): Promise<number | null> {
@@ -784,32 +786,25 @@ async function fetchOneHistoryPage(pair: string, intervalMin: number, endTs?: nu
 }
 
 /**
- * Premier rendu : si la DB a déjà des barres, on ne bloque pas.
- * Série vide : une page récente. Scroll au-delà de l'oldest : une page plus ancienne.
+ * On page vers le passé dès qu'il n'y a pas assez de barres STRICTEMENT
+ * avant `to`. TradingView envoie souvent `from` >= oldest déjà chargé :
+ * l'ancienne logique prenait ça pour « historique complet » et arrêtait
+ * le scroll au 10 septembre.
  */
 async function ensureScrollHistory(
   pair: string,
   intervalMin: number,
   toSec: number,
-  _countBack: number,
-  fromSec: number | null,
+  countBack: number,
 ): Promise<void> {
   if (!findByPair(pair) || !isLiveMarketNeeded()) return;
-
-  if (fromSec == null) {
-    const available = await countBarsBefore(pair, intervalMin, toSec);
-    if (available > 0) return;
-    await fetchOneHistoryPage(pair, intervalMin, toSec * 1000);
-    return;
-  }
+  const needed = Math.max(1, Math.min(ITICK_PAGE_SIZE, countBack));
+  const haveBefore = await countBarsBefore(pair, intervalMin, toSec, true);
+  if (haveBefore >= needed) return;
 
   const oldest = await oldestBarTime(pair, intervalMin);
-  if (oldest != null && oldest <= fromSec) return;
-  await fetchOneHistoryPage(
-    pair,
-    intervalMin,
-    oldest != null ? oldest * 1000 - 1 : toSec * 1000,
-  );
+  const endSec = oldest != null ? Math.min(oldest, toSec) : toSec;
+  await fetchOneHistoryPage(pair, intervalMin, endSec * 1000 - 1);
 }
 
 /** Remplit l'historique en arrière-plan, une page à la fois, sans bloquer le GET. */
@@ -878,9 +873,10 @@ export async function getCandles(
     opts.countBack && opts.countBack > 0 ? Math.floor(opts.countBack) : 500,
   );
   const fromSec = opts.from && opts.from > 0 ? Math.floor(opts.from) : null;
+  const scrollLeft = fromSec != null || toSec < nowSec - safeInterval * 60 * 2;
 
-  await ensureScrollHistory(pair, safeInterval, toSec, targetCount, fromSec);
-  if (fromSec == null) scheduleHistoryDeepen(pair, safeInterval);
+  await ensureScrollHistory(pair, safeInterval, toSec, targetCount);
+  scheduleHistoryDeepen(pair, safeInterval);
 
   if (pool) {
     await schemaReady;
@@ -891,13 +887,12 @@ export async function getCandles(
          FROM itick_candles
          WHERE pair = $1
            AND timeframe = $2
-           AND bar_time <= $3
-           AND ($4::bigint IS NULL OR bar_time >= $4)
+           AND ${scrollLeft ? 'bar_time < $3' : 'bar_time <= $3'}
          ORDER BY bar_time DESC
-         LIMIT $5
+         LIMIT $4
        ) recent
        ORDER BY bar_time ASC`,
-      [pair, safeInterval, toSec, fromSec, targetCount],
+      [pair, safeInterval, toSec, targetCount],
     );
     return result.rows.map((row) => ({
       time: Number(row.time),
@@ -911,9 +906,8 @@ export async function getCandles(
   const series = memorySeries.get(seriesKey(pair, safeInterval));
   if (!series || series.bars.size === 0) return [];
   let bars = [...series.bars.values()]
-    .filter((bar) => bar.time <= toSec)
+    .filter((bar) => (scrollLeft ? bar.time < toSec : bar.time <= toSec))
     .sort((a, b) => a.time - b.time);
-  if (fromSec != null) bars = bars.filter((bar) => bar.time >= fromSec);
   if (bars.length <= targetCount) return bars;
   return bars.slice(bars.length - targetCount);
 }

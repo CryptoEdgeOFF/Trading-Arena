@@ -414,7 +414,7 @@ class MobileBtfDatafeed {
     symbolInfo: { ticker?: string; name: string },
     resolution: string,
     period: { from: number; to: number; firstDataRequest: boolean; countBack: number },
-    onResult: (bars: TvBar[], meta: { noData: boolean }) => void,
+    onResult: (bars: TvBar[], meta: { noData: boolean; nextTime?: number }) => void,
     onError: (reason: string) => void,
   ) {
     const pair = symbolInfo.ticker || symbolInfo.name
@@ -452,7 +452,6 @@ class MobileBtfDatafeed {
       to: String(Math.floor(period.to)),
       countBack: String(Math.max(period.countBack || 0, SCROLL_CANDLE_BARS)),
     })
-    if (period.from > 0) params.set('from', String(Math.floor(period.from)))
     try {
       const payload = await fetchJsonWithTimeout(
         `${API_BASE_URL}/api/paper/candles?${params.toString()}`,
@@ -462,10 +461,14 @@ class MobileBtfDatafeed {
         .filter((item: TvBar) => Number.isFinite(item.time) && Number.isFinite(item.close))
         .map((item: TvBar) => ({ ...item, time: item.time * 1000 }))
         .sort((a: TvBar, b: TvBar) => a.time - b.time)
-      if (bars.length) this.latestBars.set(`${pair}@${interval}`, bars[bars.length - 1])
-      if (bars.length) this.onBarsReady(pair)
-      else this.onBarsError(pair, 'Aucune bougie disponible')
-      onResult(bars, { noData: false })
+      const older = bars.filter((item: TvBar) => item.time / 1000 < period.to)
+      if (older.length) this.latestBars.set(`${pair}@${interval}`, older[older.length - 1])
+      if (older.length) this.onBarsReady(pair)
+      if (older.length === 0) {
+        onResult([], { noData: false, nextTime: Math.floor(period.to) - interval * 60 })
+        return
+      }
+      onResult(older, { noData: false })
     } catch (error) {
       const message = error instanceof Error && error.name !== 'AbortError'
         ? error.message

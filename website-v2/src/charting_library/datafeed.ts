@@ -217,7 +217,7 @@ export class BtfDatafeed implements IBasicDataFeed {
   ): Promise<void> {
     const pair = symbolInfo.ticker || symbolInfo.name;
     const intervalMin = RESOLUTION_TO_INTERVAL[String(resolution)] ?? 1;
-    const { from, to, firstDataRequest, countBack } = periodParams;
+    const { from: _from, to, firstDataRequest, countBack } = periodParams;
     const fetchCountBack = firstDataRequest
       ? Math.max(countBack || 0, FIRST_LOAD_BARS)
       : Math.max(countBack || 0, SCROLL_LOAD_BARS);
@@ -232,9 +232,6 @@ export class BtfDatafeed implements IBasicDataFeed {
       // Scroll vers le passé : on transmet `from` pour cibler la tranche
       // manquante et permettre un backfill plus précis côté serveur.
       if (Number.isFinite(to) && to > 0) params.set('to', String(Math.floor(to)));
-      if (!firstDataRequest && Number.isFinite(from) && from > 0) {
-        params.set('from', String(Math.floor(from)));
-      }
       params.set('countBack', String(Math.floor(fetchCountBack)));
 
       const response = await fetch(`/api/paper/candles?${params.toString()}`);
@@ -268,7 +265,14 @@ export class BtfDatafeed implements IBasicDataFeed {
         .sort((a, b) => a.time - b.time);
 
       if (bars.length === 0) {
-        onResult([], { noData: true });
+        if (firstDataRequest) {
+          onResult([], { noData: true });
+          return;
+        }
+        const nextTime = Number.isFinite(to) && to > 0
+          ? Math.floor(to) - intervalMin * 60
+          : undefined;
+        onResult([], { noData: false, nextTime });
         return;
       }
 
