@@ -265,3 +265,46 @@ export function buildCompeteTradeUrl(competition: {
   params.set('competitionMode', competition.executionMode === 'real' ? 'real' : 'paper');
   return `/trade?${params.toString()}`;
 }
+
+export function readCompeteAccountToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem('btf-comp-session');
+}
+
+export async function ensureCompetePaperSession(competitionId: string): Promise<{
+  token: string;
+  player: unknown;
+  competition?: unknown;
+  market?: unknown;
+  canTrade?: boolean;
+}> {
+  const accountToken = readCompeteAccountToken();
+  if (!accountToken) {
+    throw new Error('NOT_LOGGED_IN');
+  }
+  const response = await fetch('/api/competition/trade/session', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accountToken}`,
+    },
+    body: JSON.stringify({ competitionId }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.token) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'SESSION_DENIED');
+  }
+  writePaperSessionToken('compete', data.token);
+  if (data.player) {
+    writePaperBootstrapCache({
+      token: data.token,
+      player: data.player,
+      platform: 'compete',
+      competitionId,
+      competition: data.competition || null,
+      market: data.market || null,
+      canTrade: typeof data.canTrade === 'boolean' ? data.canTrade : null,
+    });
+  }
+  return data;
+}
