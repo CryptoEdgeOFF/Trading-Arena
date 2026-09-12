@@ -4449,14 +4449,16 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     const body = Number.isFinite(limit) && limit > 0
       ? (() => {
         const pageSize = Math.min(100, Math.floor(limit));
-        if (section === 'breached') {
-          const page = breached.slice(offset, offset + pageSize);
+        if (section === 'breached' || section === 'enrolled') {
+          const source = section === 'breached' ? breached : enrolled;
+          const page = source.slice(offset, offset + pageSize);
           return {
             ...decorated,
             leaderboard: page,
             totalRanked: ranked.length,
             totalBreached: breached.length,
-            truncated: breached.length > offset + pageSize,
+            totalEnrolled: enrolled.length,
+            truncated: source.length > offset + pageSize,
             windowLimit: pageSize,
           };
         }
@@ -4467,7 +4469,7 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
           : undefined;
         if (extra && !ids.has(extra.userId)) page.push(extra);
         const side = offset === 0
-          ? [...breached.slice(0, 5), ...enrolled.slice(0, 40)]
+          ? [...breached.slice(0, 5), ...enrolled.slice(0, 5)]
           : [];
         const rows = [...page];
         for (const row of side) {
@@ -4478,11 +4480,12 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
           leaderboard: rows,
           totalRanked: ranked.length,
           totalBreached: breached.length,
+          totalEnrolled: enrolled.length,
           truncated: ranked.length > offset + pageSize,
           windowLimit: pageSize,
         };
       })()
-      : { ...decorated, totalRanked: ranked.length, totalBreached: breached.length, truncated: false };
+      : { ...decorated, totalRanked: ranked.length, totalBreached: breached.length, totalEnrolled: enrolled.length, truncated: false };
     res.set(
       'Cache-Control',
       data.competition.status === 'live'
