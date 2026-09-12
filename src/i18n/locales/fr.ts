@@ -1176,7 +1176,7 @@ export const fr: TranslationResources = {
     you: 'Toi',
     ladderKicker: 'Divisions',
     ladderTitle: 'De Bronze à Legend',
-    ladderLead: "Tes résultats en arène te font gagner des Arena Points. Ta division reflète ton vrai niveau — pas ton volume de trades. Le total ne descend jamais sous 0.",
+    ladderLead: "Tes résultats en arène te font gagner ou perdre des Arena Points. Ta division reflète ton vrai niveau — pas ton volume de trades. Le total ne descend jamais sous 0.",
     ladderIntro: 'Grimpe dans le classement et collecte les badges',
     worldKicker: 'BTF Rating · Permanent · Non qualificatif',
     worldTitle: 'Classement de niveau permanent',

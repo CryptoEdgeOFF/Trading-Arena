@@ -2,10 +2,10 @@ import crypto from 'node:crypto';
 import { Pool } from 'pg';
 
 /**
- * BTF Rating : Arena Points visibles gagnés selon le résultat final de
- * chaque arène terminée. Jamais de score négatif (plancher 0). Les
- * événements sont idempotents (une seule écriture par arène et par user),
- * avec Postgres si DATABASE_URL est présent, fallback mémoire sinon.
+ * BTF Rating : Arena Points visibles gagnés/perdus selon le résultat final
+ * de chaque arène terminée. Les malus existent, mais le total affiché ne
+ * descend jamais sous 0. Événements idempotents (une écriture par arène
+ * et par user). Postgres si DATABASE_URL, sinon mémoire.
  */
 
 export interface RatingEvent {
@@ -60,7 +60,6 @@ const DIVISIONS: Array<{ id: string; label: string; floor: number; ceiling: numb
 
 let pool: Pool | null = null;
 let ready: Promise<void> | null = null;
-let negativesPurged = false;
 const memory = new Map<string, Map<string, RatingEvent>>();
 
 function getPool(): Pool | null {
@@ -97,21 +96,17 @@ async function ensureTable(): Promise<void> {
     });
   }
   await ready;
-  if (!negativesPurged) {
-    negativesPurged = true;
-    await db.query('delete from comp_rating_ledger where points < 0');
-    snapshotsCache = null;
-  }
 }
 
 /**
  * Barème d'une arène terminée, par percentile de rang :
- * podium fixe, puis top 10 % / 25 % / 50 %. Hors top 50 % ou éliminé
- * (drawdown) : 0 — le total ne descend jamais. Bonus logarithmique
- * selon la taille du champ pour les résultats positifs.
+ * podium fixe, puis top 10 % / 25 % / 50 %, malus pour la moitié basse,
+ * malus renforcé si le compte a été éliminé (drawdown). Bonus logarithmique
+ * selon la taille du champ pour les résultats positifs. Le total joueur
+ * est ensuite borné à 0 (pas de score négatif affiché).
  */
 export function arenaResultPoints(rank: number, participants: number, breached: boolean): number {
-  if (breached) return 0;
+  if (breached) return -25;
   if (!Number.isFinite(rank) || rank < 1 || participants < 1) return 0;
   let base: number;
   if (rank === 1) base = 100;
@@ -119,9 +114,9 @@ export function arenaResultPoints(rank: number, participants: number, breached: 
   else if (rank === 3) base = 65;
   else {
     const percentile = rank / participants;
-    base = percentile <= 0.10 ? 45 : percentile <= 0.25 ? 25 : percentile <= 0.50 ? 10 : 0;
+    base = percentile <= 0.10 ? 45 : percentile <= 0.25 ? 25 : percentile <= 0.50 ? 10 : -10;
   }
-  if (base <= 0) return 0;
+  if (base <= 0) return base;
   return base + Math.max(0, Math.floor(Math.log2(Math.max(1, participants))));
 }
 
@@ -142,9 +137,8 @@ export function divisionForPoints(totalPoints: number): { division: RatingDivisi
 }
 
 async function awardRating(userId: string, eventKey: string, points: number, label: string): Promise<void> {
-  const safePoints = Math.max(0, Math.floor(Number(points) || 0));
-  if (safePoints <= 0) return;
-  const event: RatingEvent = { id: crypto.randomUUID(), points: safePoints, label, createdAt: Date.now() };
+  if (!Number.isFinite(points) || points === 0) return;
+  const event: RatingEvent = { id: crypto.randomUUID(), points: Math.trunc(points), label, createdAt: Date.now() };
   const db = getPool();
   if (!db) {
     const ledger = memory.get(userId) || new Map<string, RatingEvent>();
@@ -158,7 +152,7 @@ async function awardRating(userId: string, eventKey: string, points: number, lab
     insert into comp_rating_ledger (id, user_id, event_key, points, label, created_at)
     values ($1,$2,$3,$4,$5,$6)
     on conflict (user_id, event_key) do nothing
-  `, [event.id, userId, eventKey, points, label, event.createdAt]);
+  `, [event.id, userId, eventKey, event.points, label, event.createdAt]);
 }
 
 export async function deleteUserRating(userId: string): Promise<void> {
