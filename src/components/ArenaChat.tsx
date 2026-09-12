@@ -361,6 +361,17 @@ export default function ArenaChat({
                   : <span>{message.name.slice(0, 2).toUpperCase()}</span>}
               </button>
               <div>
+                {!isMobileWeb && (
+                  <button
+                    type="button"
+                    className="arena-chat-reply-btn"
+                    onClick={() => startReply(message)}
+                    aria-label={t('arenaChat.reply')}
+                    title={t('arenaChat.reply')}
+                  >
+                    <ReplyGlyph />
+                  </button>
+                )}
                 <header>
                   <strong>{message.name}</strong>
                   <time>{new Date(message.createdAt).toLocaleTimeString(i18n.resolvedLanguage === 'fr' ? 'fr-FR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
@@ -391,17 +402,6 @@ export default function ArenaChat({
                   </button>
                 )}
                 {message.body && <p>{message.body}</p>}
-                {!isMobileWeb && (
-                  <button
-                    type="button"
-                    className="arena-chat-reply-btn"
-                    onClick={() => startReply(message)}
-                    aria-label={t('arenaChat.reply')}
-                    title={t('arenaChat.reply')}
-                  >
-                    <ReplyGlyph />
-                  </button>
-                )}
               </div>
             </article>
           );
