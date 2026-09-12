@@ -149,7 +149,7 @@ export function computeDueOccurrences(now: number, exists: (scheduleKey: string)
 }
 
 /** Drawdown standardisé des arènes ranked programmées (règles identiques pour tous). */
-const SCHEDULED_ARENA_DRAWDOWN_PERCENT = null;
+const SCHEDULED_ARENA_DRAWDOWN_PERCENT = 5;
 
 export async function ensureScheduledArenas(manager: CompetitionManager): Promise<number> {
   // Production ne doit pas inventer d'arènes. Activer uniquement en staging

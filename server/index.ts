@@ -2996,7 +2996,7 @@ async function ensureMobileStagingTradingTest(userId?: string, options?: { persi
         startAt: now - 5 * 60_000,
         endAt: now + 30 * 24 * 60 * 60_000,
         registrationEndsAt: now - 5 * 60_000,
-        dailyDrawdownPercent: null,
+        dailyDrawdownPercent: 5,
         isPublic: true,
       }),
       status: 'live',
@@ -3005,8 +3005,8 @@ async function ensureMobileStagingTradingTest(userId?: string, options?: { persi
     };
     changed = true;
   }
-  if ((competition.dailyDrawdownPercent ?? 0) > 0) {
-    competitionManager.disableDailyDrawdown(competition.id);
+  if ((competition.dailyDrawdownPercent ?? 0) !== 5) {
+    competitionManager.updateCompetition(competition.id, { dailyDrawdownPercent: 5 });
     changed = true;
   }
   competitionManager.markCompetitionNotified(competition.id, 'newArena');
@@ -3036,6 +3036,19 @@ async function ensureMobileStagingTradingTest(userId?: string, options?: { persi
 }
 
 const STAGING_TEST_RESET_BALANCE = 100_000;
+const STAGING_TEST_DRAWDOWN_PERCENT = 5;
+
+function restoreStagingLiveDrawdown(percent = STAGING_TEST_DRAWDOWN_PERCENT): number {
+  if (!MOBILE_STAGING_TEST_MODE) return 0;
+  let updated = 0;
+  for (const competition of competitionManager.listAdminCompetitions()) {
+    if (competition.status !== 'live') continue;
+    if ((competition.dailyDrawdownPercent ?? 0) === percent) continue;
+    competitionManager.updateCompetition(competition.id, { dailyDrawdownPercent: percent });
+    updated += 1;
+  }
+  return updated;
+}
 
 async function resetTraderOnLiveArenas(userId: string, balance = STAGING_TEST_RESET_BALANCE): Promise<Array<{
   competitionId: string;
@@ -3043,7 +3056,6 @@ async function resetTraderOnLiveArenas(userId: string, balance = STAGING_TEST_RE
   paperPlayerId: string | null;
   clearedBreach: boolean;
   resetBalance: boolean;
-  disabledDrawdown: boolean;
 }>> {
   const report: Array<{
     competitionId: string;
@@ -3051,14 +3063,9 @@ async function resetTraderOnLiveArenas(userId: string, balance = STAGING_TEST_RE
     paperPlayerId: string | null;
     clearedBreach: boolean;
     resetBalance: boolean;
-    disabledDrawdown: boolean;
   }> = [];
   const live = competitionManager.findLiveEntriesForUser(userId);
   for (const { competition, entry } of live) {
-    const disabledDrawdown = (competition.dailyDrawdownPercent ?? 0) > 0;
-    if (disabledDrawdown) {
-      competitionManager.disableDailyDrawdown(competition.id);
-    }
     const clearedBreach = Boolean(entry.breachedAt);
     if (clearedBreach) {
       competitionManager.clearParticipantBreach(competition.id, userId);
@@ -3077,7 +3084,6 @@ async function resetTraderOnLiveArenas(userId: string, balance = STAGING_TEST_RE
       paperPlayerId: entry.paperPlayerId || null,
       clearedBreach,
       resetBalance,
-      disabledDrawdown,
     });
   }
   return report;
@@ -3091,10 +3097,10 @@ async function repairStagingTestTraderAccounts(): Promise<void> {
       testers.set(user.id, user);
     }
   }
-  let changed = false;
+  let changed = restoreStagingLiveDrawdown() > 0;
   for (const user of testers.values()) {
     const report = await resetTraderOnLiveArenas(user.id, STAGING_TEST_RESET_BALANCE);
-    if (report.some((item) => item.clearedBreach || item.resetBalance || item.disabledDrawdown)) {
+    if (report.some((item) => item.clearedBreach || item.resetBalance)) {
       changed = true;
       console.log(`[staging] reset test trader ${user.id}:`, report);
     }
@@ -3113,6 +3119,7 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
     const result = await competitionManager.loginTestAccount(String(username || ''));
     const testCompetitionId = await ensureMobileStagingTradingTest(result.user.id);
     if (MOBILE_STAGING_TEST_MODE) {
+      restoreStagingLiveDrawdown();
       await resetTraderOnLiveArenas(result.user.id, STAGING_TEST_RESET_BALANCE);
       await competitionManager.persist();
     }
