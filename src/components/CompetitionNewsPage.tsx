@@ -72,7 +72,7 @@ function RichText({ text }: { text: string }) {
           return (
             <img
               key={`${index}-${trimmed.slice(-24)}`}
-              src={trimmed}
+              src={resolveMediaUrl(trimmed) || trimmed}
               alt=""
               className="w-full rounded-xl border border-white/10"
             />
@@ -80,9 +80,9 @@ function RichText({ text }: { text: string }) {
         }
         return (
           <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap text-[15px] leading-7 text-[#d4d4dc]">
-            {paragraph.split(/((?:https?:\/\/|\/api\/)[^\s]+)/g).map((part, partIndex) => (
+            {paragraph.split(/((?:https?:\/\/|\/(?:api|news)\/)[^\s]+)/g).map((part, partIndex) => (
               isNewsImageUrl(part)
-                ? <img key={partIndex} src={part} alt="" className="mt-3 w-full rounded-xl border border-white/10" />
+                ? <img key={partIndex} src={resolveMediaUrl(part) || part} alt="" className="mt-3 w-full rounded-xl border border-white/10" />
                 : /^https?:\/\//.test(part)
                   ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer" className="text-[#ff6275] underline">{part}</a>
                   : part

@@ -26,18 +26,46 @@ function formatDate(timestamp: number, locale: string) {
   return new Date(timestamp).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function isNewsImageUrl(value: string): boolean {
+  return /\/api\/prize-images\//.test(value)
+    || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value);
+}
+
 function RichText({ text }: { text: string }) {
   return (
     <div className="grid gap-4">
-      {text.split(/\n{2,}/).map((paragraph, index) => (
-        <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap text-[15px] leading-7 text-[#d4d4dc]">
-          {paragraph.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => (
-            /^https?:\/\//.test(part)
-              ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer" className="text-[#ff6275] underline">{part}</a>
-              : part
-          ))}
-        </p>
-      ))}
+      {text.split(/\n{2,}/).map((paragraph, index) => {
+        const trimmed = paragraph.trim();
+        const heading = trimmed.match(/^#{1,3}\s+(.+)$/);
+        if (heading) {
+          return (
+            <h2 key={`${index}-${heading[1]}`} className="pt-2 text-xl font-black uppercase tracking-[0.08em] text-white">
+              {heading[1]}
+            </h2>
+          );
+        }
+        if (isNewsImageUrl(trimmed) && !/\s/.test(trimmed)) {
+          return (
+            <img
+              key={`${index}-${trimmed.slice(-24)}`}
+              src={resolveMediaUrl(trimmed) || trimmed}
+              alt=""
+              className="w-full rounded-xl border border-white/10"
+            />
+          );
+        }
+        return (
+          <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap text-[15px] leading-7 text-[#d4d4dc]">
+            {paragraph.split(/((?:https?:\/\/|\/(?:api|news)\/)[^\s]+)/g).map((part, partIndex) => (
+              isNewsImageUrl(part)
+                ? <img key={partIndex} src={resolveMediaUrl(part) || part} alt="" className="mt-3 w-full rounded-xl border border-white/10" />
+                : /^https?:\/\//.test(part)
+                  ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer" className="text-[#ff6275] underline">{part}</a>
+                  : part
+            ))}
+          </p>
+        );
+      })}
     </div>
   );
 }
