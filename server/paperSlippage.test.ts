@@ -74,9 +74,32 @@ test('walks the visible iTick levels to calculate the average fill', () => {
     },
   );
 
-  assert.equal(quote.executionPrice, 100.15);
-  assert.ok(Math.abs(quote.slippageBps - 15) < 1e-9);
+  assert.equal(quote.executionPrice, 100.05);
+  assert.ok(Math.abs(quote.slippageBps - 5) < 1e-9);
   assert.equal(quote.source, 'itick-l5');
+});
+
+test('book impact is anchored to the requested mark, not the raw book price', () => {
+  const quote = applyPaperSlippage(
+    'BTC/USD',
+    77_309.23,
+    1.2,
+    'sell',
+    'slippage-v1',
+    {
+      bids: [
+        { price: 77_275.2, volume: 13 },
+        { price: 77_275.1, volume: 2 },
+      ],
+      asks: [{ price: 77_275.3, volume: 4 }],
+      source: 'binance-depth',
+    },
+  );
+
+  assert.equal(quote.source, 'binance-depth');
+  assert.ok(quote.executionPrice <= 77_309.23);
+  assert.ok(quote.slippageBps < 0.2);
+  assert.ok(Math.abs(quote.executionPrice - 77_309.23) < 1);
 });
 
 test('binance-depth book keeps its source on the fill quote', () => {

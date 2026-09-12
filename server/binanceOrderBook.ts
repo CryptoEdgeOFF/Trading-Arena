@@ -141,6 +141,8 @@ export function getBinanceOrderBookStatus() {
     symbol: book.symbol,
     synced: book.synced,
     levels: (book.snapshot?.bids.length || 0) + (book.snapshot?.asks.length || 0),
+    bestBid: book.snapshot?.bids[0]?.price ?? null,
+    bestAsk: book.snapshot?.asks[0]?.price ?? null,
     ageMs: book.ts ? Date.now() - book.ts : null,
     resyncs: book.resyncs,
     lastError: book.lastError,
