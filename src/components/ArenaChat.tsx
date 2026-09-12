@@ -26,7 +26,22 @@ type ArenaChatMessage = {
 function mergeMessages(current: ArenaChatMessage[], incoming: ArenaChatMessage[]) {
   const byId = new Map(current.map((message) => [message.id, message]));
   for (const message of incoming) byId.set(message.id, message);
-  return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt).slice(-200);
+  const next = [...byId.values()].sort((a, b) => a.createdAt - b.createdAt).slice(-200);
+  if (
+    next.length === current.length
+    && next.every((message, index) => (
+      message.id === current[index].id
+      && message.body === current[index].body
+      && message.imageUrl === current[index].imageUrl
+    ))
+  ) {
+    return current;
+  }
+  return next;
+}
+
+function isNearBottom(el: HTMLElement) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 96;
 }
 
 function lastSeenKey(competitionId: string, userId?: string | null) {
@@ -69,7 +84,8 @@ export default function ArenaChat({
   const [preview, setPreview] = useState('');
   const [viewer, setViewer] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLElement>(null);
+  const stickToBottomRef = useRef(true);
   const primedSeenRef = useRef(false);
   const token = window.localStorage.getItem(COMPETE_SESSION_KEY);
   const user = readCachedCompeteUser() as CompeteSessionUser | null;
@@ -155,7 +171,15 @@ export default function ArenaChat({
 
   useEffect(() => {
     if (!open) return;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    stickToBottomRef.current = true;
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !stickToBottomRef.current) return;
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages, open]);
 
   function choosePhoto(file?: File | null) {
@@ -204,6 +228,7 @@ export default function ArenaChat({
       });
       const payload = await response.json() as { message?: ArenaChatMessage; error?: string };
       if (!response.ok || !payload.message) throw new Error(payload.error || t('arenaChat.sendFailed'));
+      stickToBottomRef.current = true;
       setMessages((current) => mergeMessages(current, [payload.message!]));
       setBody('');
       clearPhoto();
@@ -227,7 +252,15 @@ export default function ArenaChat({
       </header>
       <div className="arena-chat-notice">{t('arenaChat.notice')}</div>
 
-      <section className="arena-chat-messages" aria-live="polite">
+      <section
+        ref={listRef}
+        className="arena-chat-messages"
+        aria-live="polite"
+        onScroll={() => {
+          const el = listRef.current;
+          if (el) stickToBottomRef.current = isNearBottom(el);
+        }}
+      >
         {loading ? (
           <div className="arena-chat-state">{t('common.loading')}</div>
         ) : messages.length === 0 ? (
@@ -259,7 +292,6 @@ export default function ArenaChat({
             </article>
           );
         })}
-        <div ref={bottomRef} />
       </section>
 
       {error && <div className="arena-chat-error">{error}</div>}
