@@ -80,11 +80,15 @@
   color: #ddd7df; font-size: 8px; font-weight: 900;
 }
 .arena-chat-messages article > div {
+  position: relative;
   max-width: 88%;
   padding: 8px 10px 9px;
   border: 1px solid #242129;
   border-radius: 6px 13px 13px 13px;
   background: #151219;
+}
+@media (min-width: 768px) {
+  .arena-chat-messages article > div { padding-right: 28px; }
 }
 .arena-chat-messages article.is-mine > div {
   border-color: rgba(225,29,56,.3);
@@ -110,12 +114,14 @@
 .arena-chat-quote strong { color: #ff8695; font-size: 9px; font-weight: 800; }
 .arena-chat-quote small { color: #8c8791; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arena-chat-reply-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
-  margin-top: 6px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -123,7 +129,6 @@
   color: #6f6a73;
 }
 .arena-chat-reply-btn:hover { color: #ff8695; background: rgba(255, 255, 255, .06); }
-.arena-chat-messages article.is-mine .arena-chat-reply-btn { margin-left: auto; }
 .arena-chat-replying {
   display: grid;
   grid-template-columns: 1fr 24px;
