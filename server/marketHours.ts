@@ -5,10 +5,10 @@ export type { MarketSessionInfo };
 
 /** Session d'ouverture pour une pair paper (crypto / iTick). */
 export function getMarketSessionForPair(pair: string, now?: Date): MarketSessionInfo {
-  if (!isItickPair(pair)) {
+  const inst = findByPair(pair);
+  if (!isItickPair(pair) || inst?.category === 'crypto' || inst?.asset === 'crypto') {
     return getMarketSession(pair, { category: 'crypto' }, now);
   }
-  const inst = findByPair(pair);
   const category = inst?.category === 'commodity'
     ? 'commodities'
     : inst?.category === 'index'

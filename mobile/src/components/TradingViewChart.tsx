@@ -201,7 +201,7 @@ const TIMEFRAME_OPTIONS = [
 ]
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js'
 let scriptPromise: Promise<void> | null = null
-const INITIAL_CANDLE_BARS = 700
+const INITIAL_CANDLE_BARS = 4000
 const SCROLL_CANDLE_BARS = 2_000
 const CANDLE_CACHE_TTL_MS = 15 * 60_000
 const CANDLE_REFRESH_AFTER_MS = 20_000
@@ -465,7 +465,7 @@ class MobileBtfDatafeed {
       if (bars.length) this.latestBars.set(`${pair}@${interval}`, bars[bars.length - 1])
       if (bars.length) this.onBarsReady(pair)
       else this.onBarsError(pair, 'Aucune bougie disponible')
-      onResult(bars, { noData: bars.length === 0 })
+      onResult(bars, { noData: false })
     } catch (error) {
       const message = error instanceof Error && error.name !== 'AbortError'
         ? error.message

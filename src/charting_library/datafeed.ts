@@ -49,7 +49,7 @@ const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as Resol
  * et peut bloquer plusieurs viewers sur un backfill. On charge vite le viewport
  * récent, puis le scroll demande l'historique par tranches.
  */
-const FIRST_LOAD_BARS = 2000;
+const FIRST_LOAD_BARS = 4000;
 const SCROLL_LOAD_BARS = 4000;
 
 interface Subscription {
@@ -117,6 +117,8 @@ function buildSymbolInfo(
     has_daily: true,
     has_weekly_and_monthly: false,
     supported_resolutions: SUPPORTED_RESOLUTIONS,
+    intraday_multipliers: ['1', '5', '15', '30', '60', '240'],
+    daily_multipliers: ['1'],
     volume_precision: 2,
     data_status: 'streaming',
   };
@@ -275,7 +277,10 @@ export class BtfDatafeed implements IBasicDataFeed {
       const visible = bars.filter((bar) => bar.time / 1000 < visibleTo);
 
       if (visible.length === 0) {
-        onResult([], { noData: true, nextTime: bars[0].time });
+        // Il reste des bougies, mais hors de la fenêtre demandée. Si on
+        // envoie noData=true, TradingView arrête définitivement le scroll
+        // gauche — c'est ce qui cassait le 1 min.
+        onResult([], { noData: false, nextTime: Math.floor(bars[0].time / 1000) });
         return;
       }
 
@@ -302,7 +307,7 @@ export class BtfDatafeed implements IBasicDataFeed {
       // Ne signaler « plus d'historique » que si la réponse est vide : sinon
       // TradingView arrête le scroll gauche même quand il reste de la donnée
       // en amont (backfill lazy encore en cours).
-      onResult(visible, { noData: visible.length === 0 && raw.length === 0 });
+      onResult(visible, { noData: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Historique indisponible';
       onError(message);

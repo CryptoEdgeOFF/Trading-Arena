@@ -1,6 +1,6 @@
 /**
  * Store de bougies iTick — source unique pour les pairs
- * forex / commodities / indices.
+ * forex / commodities / indices / crypto enregistré.
  *
  * Pipeline :
  *   1. Au boot : backfill historique via REST iTick (kline) pour chaque

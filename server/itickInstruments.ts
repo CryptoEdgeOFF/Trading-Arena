@@ -14,7 +14,7 @@ export interface ItickInstrument {
   asset: ItickAssetClass;
   code: string;
   /** Catégorie côté UI / paper engine. */
-  category: 'forex' | 'commodity' | 'index';
+  category: 'forex' | 'commodity' | 'index' | 'crypto';
   pricescale: number;
   label: string;
   /** Symbol Hyperliquid (`xyz:GOLD`, `xyz:SP500`, …) utilisé en fallback
@@ -63,19 +63,30 @@ for (const inst of ITICK_INSTRUMENTS) {
 
 /**
  * Registre crypto séparé (code iTick ↔ pair interne). Les pairs crypto
- * vivent dans `exchangePaperEngine.PAPER_PAIRS` (source kraken_futures pour
- * le failover), pas dans `ITICK_INSTRUMENTS`. On les enregistre au boot via
- * `registerItickCrypto()` pour que le bridge iTick → paper engine sache
- * mapper un tick crypto (`BTCUSDT`) vers notre pair (`BTC/USD`).
+ * vivent dans `exchangePaperEngine.PAPER_PAIRS`, pas dans `ITICK_INSTRUMENTS`
+ * (pour ne pas les inclure dans `backfillAll()` au boot — trop de quota).
+ * On les enregistre via `registerItickCrypto()` : ticks live, lectures
+ * d'historique et scroll utilisent ensuite le même store iTick.
  */
 const CRYPTO_PAIR_BY_CODE = new Map<string, string>();
 const CRYPTO_CODE_BY_PAIR = new Map<string, string>();
 
-/** "BTC/USD" → "BTCUSDT" (code crypto iTick, aligné Binance spot). */
+/** "BTC/USD" → "BTCUSDT" (code iTick cluster crypto). */
 function pairToCryptoCode(pair: string): string | null {
   const base = pair.split('/')[0]?.trim().toUpperCase();
   if (!base) return null;
   return `${base}USDT`;
+}
+
+function makeCryptoInstrument(pair: string, code: string): ItickInstrument {
+  return {
+    pair,
+    asset: 'crypto',
+    code,
+    category: 'crypto',
+    pricescale: 100,
+    label: pair,
+  };
 }
 
 export function registerItickCrypto(pairs: string[]): void {
@@ -98,15 +109,27 @@ export function cryptoCodes(): string[] {
 }
 
 export function findByPair(pair: string): ItickInstrument | undefined {
-  return BY_PAIR.get(pair.trim().toUpperCase());
+  const key = pair.trim().toUpperCase();
+  const known = BY_PAIR.get(key);
+  if (known) return known;
+  const code = CRYPTO_CODE_BY_PAIR.get(key);
+  return code ? makeCryptoInstrument(key, code) : undefined;
 }
 
 export function findByCode(asset: ItickAssetClass, code: string): ItickInstrument | undefined {
-  return BY_CODE.get(`${asset}:${code.trim().toUpperCase()}`);
+  const normalized = code.trim().toUpperCase();
+  const known = BY_CODE.get(`${asset}:${normalized}`);
+  if (known) return known;
+  if (asset === 'crypto') {
+    const pair = CRYPTO_PAIR_BY_CODE.get(normalized);
+    if (pair) return makeCryptoInstrument(pair, normalized);
+  }
+  return undefined;
 }
 
 export function isItickPair(pair: string): boolean {
-  return BY_PAIR.has(pair.trim().toUpperCase());
+  const key = pair.trim().toUpperCase();
+  return BY_PAIR.has(key) || CRYPTO_CODE_BY_PAIR.has(key);
 }
 
 /** Symbols groupés par cluster, prêt pour `itickFeed.setSubscriptions()`. */

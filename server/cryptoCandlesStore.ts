@@ -13,7 +13,7 @@
  *     RAM pour que la dernière bougie soit fraîche avant le flush).
  *   - Backfill à la demande : si la DB n'a pas assez de barres avant la date
  *     demandée (premier chargement ou scroll gauche), on télécharge UNE page
- *     en amont (chaîne Binance → iTick → Bybit → Kraken via cryptoCandles),
+ *     en amont (chaîne iTick → repli via cryptoCandles),
  *     on la persiste, puis les lectures suivantes sont servies depuis la DB.
  *   - Live : `updateLiveCandle()` (branché sur les ticks du paper engine)
  *     met à jour la bougie courante en RAM, flushée en Postgres toutes les ~2s.

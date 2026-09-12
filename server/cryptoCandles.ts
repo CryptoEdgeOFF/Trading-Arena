@@ -5,20 +5,9 @@ import * as itick from './itick.js';
 import * as kraken from './kraken.js';
 
 /**
- * Source unique d'historique OHLC pour les pairs crypto, avec une chaîne
- * de fallback explicite et ordonnée :
- *
- *   1. Binance Spot      — même venue que le live iTick (region BA). Tick
- *                          plus fin sur les alts type TRX (0,00001 vs perp).
- *   2. Binance Futures   — fallback si le spot est géo-bloqué / vide.
- *   3. iTick (region BA) — fallback aligné sur notre flux live, mais soumis
- *                          au quota REST iTick (`code=1 your request is too much`).
- *   4. Bybit V5          — venue indépendante, dernier recours toujours up.
- *   5. Kraken Spot       — fallback anti-écran vide quand Railway est bloqué
- *                          par Binance 451 + Bybit 403 + cooldown iTick.
- *
- * On passe au maillon suivant dès qu'un fournisseur échoue OU renvoie zéro
- * bougie. Le premier qui répond avec des données gagne.
+ * Fallback d'historique OHLC crypto quand le store iTick n'a rien.
+ * Source principale : iTick (même flux que le live). Les autres venues
+ * ne sont utilisées que si iTick est vide / en cooldown.
  */
 
 export type CryptoCandleSource = 'binance' | 'binance-futures' | 'itick' | 'bybit' | 'kraken';
@@ -39,9 +28,8 @@ function itickRowsToOhlc(rows: { time: number; open: number; high: number; low: 
 }
 
 /**
- * Récupère l'historique crypto en parcourant la chaîne Binance → iTick →
- * Bybit. Lève une erreur uniquement si AUCUN maillon n'a pu fournir de
- * données.
+ * Récupère l'historique crypto : iTick d'abord, puis repli.
+ * Lève une erreur uniquement si AUCUN maillon n'a pu fournir de données.
  */
 export async function getCryptoOhlc(
   pair: string,
@@ -49,6 +37,13 @@ export async function getCryptoOhlc(
   opts: OhlcQueryOptions = {},
 ): Promise<CryptoCandleResult> {
   const providers: Provider[] = [
+    {
+      name: 'itick',
+      enabled: itick.isConfigured() && !itick.isRestInCooldown(),
+      fetch: async () => itickRowsToOhlc(
+        await itick.getCryptoKline(pair, interval, { countBack: opts.countBack, to: opts.to }),
+      ),
+    },
     {
       name: 'binance',
       enabled: true,
@@ -58,13 +53,6 @@ export async function getCryptoOhlc(
       name: 'binance-futures',
       enabled: true,
       fetch: () => binance.getOhlcCandles(pair, interval, opts),
-    },
-    {
-      name: 'itick',
-      enabled: itick.isConfigured() && !itick.isRestInCooldown(),
-      fetch: async () => itickRowsToOhlc(
-        await itick.getCryptoKline(pair, interval, { countBack: opts.countBack, to: opts.to }),
-      ),
     },
     {
       name: 'bybit',
@@ -91,7 +79,7 @@ export async function getCryptoOhlc(
     try {
       const candles = await provider.fetch();
       if (candles.length > 0) {
-        if (provider.name !== 'binance') {
+        if (provider.name !== 'itick') {
           console.warn(`[cryptoCandles] ${pair} ${interval}m servi par ${provider.name} (fallback)`);
         }
         return { candles, source: provider.name };

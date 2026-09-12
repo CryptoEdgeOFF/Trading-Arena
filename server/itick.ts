@@ -1,7 +1,6 @@
 /**
- * Wrapper de l'API iTick (https://docs.itick.org/) — utilisé en source
- * principale pour les paires forex / indices / commodities. Le crypto
- * reste sur Binance avec fallback Hyperliquid (cf. engineCandlesCache).
+ * Wrapper de l'API iTick (https://docs.itick.org/) — source principale
+ * pour forex / indices / commodities / crypto (live WS + kline REST).
  *
  * Architecture :
  *   - Un `ItickClusterManager` par asset class (forex / indices / …).
@@ -18,6 +17,8 @@ import { EventEmitter } from 'node:events';
 
 const BASE_URL = 'https://api0.itick.org';
 const DEFAULT_REGION = 'GB';
+/** Cluster crypto iTick. Surchargeable via `ITICK_CRYPTO_REGION` (ex: `BT`). */
+const CRYPTO_REGION = process.env.ITICK_CRYPTO_REGION?.trim().toUpperCase() || 'BA';
 
 export type ItickAssetClass = 'forex' | 'indices' | 'crypto' | 'stock';
 
@@ -202,14 +203,15 @@ export async function getKline(
   limit: number,
   endTs?: number,
   asset: ItickAssetClass = 'forex',
-  region = DEFAULT_REGION,
+  region?: string,
 ): Promise<ItickKlineRow[]> {
   const kType = intervalToKType(intervalMin);
   if (kType == null) {
     throw new Error(`Interval non supporté par iTick: ${intervalMin}m`);
   }
+  const resolvedRegion = region || (asset === 'crypto' ? CRYPTO_REGION : DEFAULT_REGION);
   const params: Record<string, string | number> = {
-    region,
+    region: resolvedRegion,
     code,
     kType,
     // iTick caps each /kline call at 500 bars regardless of `limit`
@@ -259,15 +261,7 @@ export function isConfigured(): boolean {
 /*                          Crypto kline (region BA)                          */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Région crypto iTick = marché agrégé source. `BA` (Binance) par défaut :
- * iTick proxifie la data Binance depuis ses serveurs non géo-bloqués, ce
- * qui en fait un excellent relais quand Binance est inaccessible chez nous.
- * Surchargeable via `ITICK_CRYPTO_REGION` (ex: `BT`).
- */
-const CRYPTO_REGION = process.env.ITICK_CRYPTO_REGION?.trim().toUpperCase() || 'BA';
-
-/** "BTC/USD" → "BTCUSDT" (code crypto iTick, aligné sur Binance). */
+/** "BTC/USD" → "BTCUSDT" (code iTick cluster crypto). */
 export function pairToCryptoCode(pair: string): string | null {
   const base = pair.split('/')[0]?.trim().toUpperCase();
   if (!base) return null;

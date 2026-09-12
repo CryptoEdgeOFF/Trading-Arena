@@ -347,7 +347,7 @@ app.use('/api', (req, res, next) => {
   globalApiLimiter(req, res, next);
 });
 
-const MAX_PUBLIC_CANDLES = 4000;
+const MAX_PUBLIC_CANDLES = 8000;
 function parseCandleLimit(raw: unknown, fallback = 500): number {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return fallback;
@@ -790,6 +790,10 @@ const CRYPTO_PREWARM_PAIRS = [
   { pair: 'BNB/USD', source: 'binance' as const },
   { pair: 'TRX/USD', source: 'binance' as const },
 ];
+
+// Enregistre les codes crypto dès le boot pour que /api/paper/candles
+// route BTC/ETH/… vers le store iTick, même avant l'armement des feeds.
+registerItickCrypto(CRYPTO_LIVE_PAIRS);
 
 let marketFeedsArmed = false;
 let itickHistoricalBackfillStarted = false;
@@ -2507,8 +2511,9 @@ app.get('/api/paper/candles', async (req, res) => {
     let candles;
     let source: 'itick' | 'hyperliquid' | 'binance' | 'kraken' = 'kraken';
 
-    // Pair iTick (forex / commodity / index) → store local Postgres.
-    // Si vide, backfill REST iTick (avec fallback Hyperliquid xyz si dispo).
+    // Pair iTick (forex / commodity / index / crypto enregistré) → store
+    // Postgres. Si vide, backfill REST iTick (Hyperliquid xyz en repli
+    // pour les paires non-crypto).
     if (isItickPair(pair)) {
       // getCandles backfill lazy (scroll gauche) via ensureScrollHistory.
       let itickBars = await itickCandles.getCandles(pair, interval, candleOpts);
@@ -2527,13 +2532,24 @@ app.get('/api/paper/candles', async (req, res) => {
         candles = itickBars;
         source = 'itick';
       } else if (isLiveMarketNeeded()) {
-        // Dernier recours : Hyperliquid direct si on a un coin xyz pour
-        // cette pair. Évite une 400 si iTick est complètement injoignable.
-        try {
-          candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
-          source = 'hyperliquid';
-        } catch {
-          candles = [];
+        const inst = findItickByPair(pair);
+        if (inst?.asset === 'crypto') {
+          try {
+            candles = await itick.getCryptoKline(pair, interval, {
+              countBack: candleOpts.countBack,
+              to: candleOpts.to,
+            });
+            source = 'itick';
+          } catch {
+            candles = [];
+          }
+        } else {
+          try {
+            candles = await hyperliquid.getOhlcCandles(pair, interval, candleOpts);
+            source = 'hyperliquid';
+          } catch {
+            candles = [];
+          }
         }
       } else {
         candles = [];
@@ -2545,13 +2561,12 @@ app.get('/api/paper/candles', async (req, res) => {
       // Comme le datafeed web n'envoie pas `from` au premier rendu, on sert
       // immédiatement son cache rapide. Le scroll historique (avec `from`)
       // continue d'utiliser le store Postgres profond.
-      candles = candleOpts.from == null
-        ? await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts)
-        : await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
+      // Store persistant pour le 1er rendu ET le scroll gauche. Le cache RAM
+      // seul ne pagine pas assez le 1m (Spot s'arrête à 1000 barres) et le
+      // datafeed prenait ça pour la fin de l'historique.
+      candles = await cryptoCandlesStore.getCandles(pair, interval, candleOpts);
       source = 'binance';
       if (candles.length === 0) {
-        // Repli : si le store n'a encore rien (ex. backfill upstream KO),
-        // on retombe sur le cache RAM historique pour ne pas vider le chart.
         candles = await engineCandlesCache.getCachedCandles(pair, interval, 'binance', candleOpts);
       }
     } else if (manager.getMarketDataSource() === 'binance') {
