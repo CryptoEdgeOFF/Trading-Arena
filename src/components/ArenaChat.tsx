@@ -96,7 +96,7 @@ export default function ArenaChat({
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), open ? 12_000 : 20_000);
+    const timer = window.setInterval(() => void load(), open ? 30_000 : 45_000);
     return () => window.clearInterval(timer);
   }, [load, open]);
 

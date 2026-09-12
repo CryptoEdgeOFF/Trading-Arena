@@ -1705,8 +1705,10 @@ function LeaderboardScreen({
     let stopped = false
     let socket: WebSocket | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let reconnectDelay = 1_000
     const connect = () => {
       socket = new WebSocket(`${API_WS_URL}/ws?arenaId=${encodeURIComponent(competitionId)}`)
+      socket.onopen = () => { reconnectDelay = 1_000 }
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(String(event.data))
@@ -1729,7 +1731,10 @@ function LeaderboardScreen({
         } catch { /* message invalide ignoré */ }
       }
       socket.onclose = () => {
-        if (!stopped) reconnectTimer = setTimeout(connect, 1000)
+        if (!stopped) {
+          reconnectTimer = setTimeout(connect, reconnectDelay)
+          reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
+        }
       }
       socket.onerror = () => socket?.close()
     }

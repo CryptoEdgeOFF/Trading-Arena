@@ -29,7 +29,7 @@ import PnlRaceChart, {
   type PnlMoment,
 } from './PnlRaceChart';
 
-const REFRESH_MS = 2000;
+const REFRESH_MS = 15_000;
 const SESSION_KEY = 'btf-comp-session';
 
 interface LeaderboardRow {
@@ -234,7 +234,7 @@ export default function CompetitionPublicLeaderboard() {
     }
 
     void loadHistory();
-    const timer = window.setInterval(() => void loadHistory(), 10_000);
+    const timer = window.setInterval(() => void loadHistory(), 20_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);

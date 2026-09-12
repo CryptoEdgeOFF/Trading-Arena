@@ -79,6 +79,8 @@ export function useWebSocket(
     let closedByEffect = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+    let reconnectDelay = 1_000;
+
     function connect() {
       const query = new URLSearchParams();
       if (options.paperToken) query.set('paperToken', options.paperToken);
@@ -88,6 +90,7 @@ export function useWebSocket(
       wsRef.current = ws;
 
       ws.onopen = () => {
+        reconnectDelay = 1_000;
         onOpenRef.current?.();
         if (subscribePairsRef.current.length > 0) {
           ws.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }));
@@ -128,7 +131,10 @@ export function useWebSocket(
 
       ws.onclose = () => {
         onCloseRef.current?.();
-        if (!closedByEffect) reconnectTimer = setTimeout(connect, 1000);
+        if (!closedByEffect) {
+          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+        }
       };
 
       ws.onerror = () => {

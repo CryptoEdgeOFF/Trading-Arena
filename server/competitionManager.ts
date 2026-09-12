@@ -816,6 +816,11 @@ export class CompetitionManager {
   private localAdminTokens = new Set<string>();
   private pool: Pool | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private mtmSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private pnlRaceDirty = new Set<string>();
+  private pnlRaceTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly MTM_SAVE_MS = Math.max(10_000, Number(process.env.COMP_MTM_SAVE_MS) || 20_000);
+  private static readonly PNL_RACE_SAVE_MS = Math.max(15_000, Number(process.env.COMP_PNL_RACE_SAVE_MS) || 60_000);
   readonly ready: Promise<void>;
 
   constructor() {
@@ -1355,9 +1360,15 @@ export class CompetitionManager {
   private currentStore(): CompetitionStore {
     // Le blob ne contient plus que users + competitions. Les sessions, OTPs
     // et trader sessions ont leurs propres tables (Postgres) ou Maps locales.
+    // pnlRace vit dans `comp_pnl_races` : le réécrire ici à chaque MTM
+    // envoyait ~5 Mo vers Neon toutes les 4 s.
     const payload: CompetitionStore = {
       users: Array.from(this.users.values()),
-      competitions: Array.from(this.competitions.values()),
+      competitions: Array.from(this.competitions.values()).map((competition) => {
+        const { pnlRace, ...rest } = competition;
+        void pnlRace;
+        return rest;
+      }),
       seasons: Array.from(this.seasons.values()),
       payouts: Array.from(this.payouts.values()),
       teams: Array.from(this.teams.values()),
@@ -1472,15 +1483,18 @@ export class CompetitionManager {
   }
 
   async persist(): Promise<void> {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
+    this.clearSaveTimers();
     if (this.pool) {
       await this.saveToDb();
       return;
     }
     this.save();
+  }
+
+  /** Flush store + courses PnL avant SIGTERM. */
+  async flushPendingPersistence(): Promise<void> {
+    await this.flushPnlRaces();
+    await this.persist();
   }
 
   /**
@@ -1567,6 +1581,13 @@ export class CompetitionManager {
         team_id text primary key,
         mime text not null,
         data bytea not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
+    await this.pool.query(`
+      create table if not exists comp_pnl_races (
+        competition_id text primary key,
+        data jsonb not null,
         updated_at timestamptz not null default now()
       )
     `);
@@ -1730,6 +1751,7 @@ export class CompetitionManager {
           const parsed = result.rows[0].value as CompetitionStore;
           this.applyStore(parsed);
           await this.migrateLegacySessions(parsed);
+          await this.syncPnlRacesFromDb();
           console.log('Competition store loaded from Postgres');
           return;
         }
@@ -1739,6 +1761,7 @@ export class CompetitionManager {
           const parsed = JSON.parse(raw) as CompetitionStore;
           this.applyStore(parsed);
           await this.migrateLegacySessions(parsed);
+          await this.syncPnlRacesFromDb();
           await this.saveToDb();
           console.log('Competition store imported from JSON into Postgres');
           return;
@@ -1757,8 +1780,23 @@ export class CompetitionManager {
     }
   }
 
+  private clearSaveTimers(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (this.mtmSaveTimer) {
+      clearTimeout(this.mtmSaveTimer);
+      this.mtmSaveTimer = null;
+    }
+  }
+
   private save(): void {
     if (this.pool) {
+      if (this.mtmSaveTimer) {
+        clearTimeout(this.mtmSaveTimer);
+        this.mtmSaveTimer = null;
+      }
       if (this.saveTimer) return;
       this.saveTimer = setTimeout(() => {
         this.saveTimer = null;
@@ -2562,8 +2600,87 @@ export class CompetitionManager {
       moments: snapshot.moments || [],
       lastSampleAt: snapshot.lastSampleAt,
     };
-    if (this.pool) void this.persist();
-    else this.save();
+    this.schedulePnlRaceSave(competitionId);
+  }
+
+  private schedulePnlRaceSave(competitionId: string): void {
+    this.pnlRaceDirty.add(competitionId);
+    if (!this.pool) {
+      this.save();
+      return;
+    }
+    if (this.pnlRaceTimer) return;
+    this.pnlRaceTimer = setTimeout(() => {
+      this.pnlRaceTimer = null;
+      void this.flushPnlRaces();
+    }, CompetitionManager.PNL_RACE_SAVE_MS);
+    if (typeof this.pnlRaceTimer.unref === 'function') this.pnlRaceTimer.unref();
+  }
+
+  private async upsertPnlRaceRow(
+    competitionId: string,
+    snapshot: NonNullable<Competition['pnlRace']>,
+  ): Promise<void> {
+    if (!this.pool) return;
+    await this.pool.query(
+      `insert into comp_pnl_races (competition_id, data, updated_at)
+       values ($1, $2::jsonb, now())
+       on conflict (competition_id) do update set data = excluded.data, updated_at = now()`,
+      [competitionId, JSON.stringify(snapshot)],
+    );
+  }
+
+  private async flushPnlRaces(): Promise<void> {
+    if (this.pnlRaceTimer) {
+      clearTimeout(this.pnlRaceTimer);
+      this.pnlRaceTimer = null;
+    }
+    if (!this.pool) return;
+    const ids = Array.from(this.pnlRaceDirty);
+    this.pnlRaceDirty.clear();
+    for (const id of ids) {
+      const race = this.competitions.get(id)?.pnlRace;
+      if (!race?.samples?.length) continue;
+      try {
+        await this.upsertPnlRaceRow(id, race);
+      } catch (error) {
+        this.pnlRaceDirty.add(id);
+        console.error(`[pnl-race] persist ${id} failed:`, error);
+      }
+    }
+  }
+
+  private async syncPnlRacesFromDb(): Promise<void> {
+    if (!this.pool) return;
+    const result = await this.pool.query('select competition_id, data from comp_pnl_races');
+    const seen = new Set<string>();
+    for (const row of result.rows) {
+      const id = String(row.competition_id || '');
+      const data = row.data as Competition['pnlRace'];
+      if (!id || !data?.samples?.length) continue;
+      seen.add(id);
+      const competition = this.competitions.get(id);
+      if (competition) competition.pnlRace = data;
+      hydratePnlHistory(id, data);
+    }
+    for (const competition of this.competitions.values()) {
+      if (competition.pnlRace?.samples?.length && !seen.has(competition.id)) {
+        await this.upsertPnlRaceRow(competition.id, competition.pnlRace);
+      }
+    }
+  }
+
+  private saveMarkToMarket(): void {
+    if (!this.pool) {
+      this.save();
+      return;
+    }
+    if (this.saveTimer || this.mtmSaveTimer) return;
+    this.mtmSaveTimer = setTimeout(() => {
+      this.mtmSaveTimer = null;
+      void this.saveToDb();
+    }, CompetitionManager.MTM_SAVE_MS);
+    if (typeof this.mtmSaveTimer.unref === 'function') this.mtmSaveTimer.unref();
   }
 
   getPaperPlayerIdsForCompetition(competitionId: string): string[] {
@@ -3055,7 +3172,8 @@ export class CompetitionManager {
       }
     }
 
-    if (changed) this.save();
+    if (updateEvent?.newlyBreached) this.save();
+    else if (changed) this.saveMarkToMarket();
     return updateEvent;
   }
 

@@ -434,6 +434,7 @@ export function TradingTerminal({
     const activePaperToken = paperToken
     let timer: ReturnType<typeof setTimeout> | undefined
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let reconnectDelay = 1_000
     let socket: WebSocket | null = null
     let socketOpen = false
     let stopped = false
@@ -449,6 +450,7 @@ export function TradingTerminal({
       socketRef.current = socket
       socket.onopen = () => {
         socketOpen = true
+        reconnectDelay = 1_000
         if (subscribePairsRef.current.length > 0) {
           socket?.send(JSON.stringify({ type: 'market:subscribe', pairs: subscribePairsRef.current }))
         }
@@ -541,7 +543,10 @@ export function TradingTerminal({
       socket.onclose = () => {
         socketOpen = false
         if (socketRef.current === socket) socketRef.current = null
-        if (!stopped) reconnectTimer = setTimeout(connect, 1000)
+        if (!stopped) {
+          reconnectTimer = setTimeout(connect, reconnectDelay)
+          reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
+        }
       }
       socket.onerror = () => socket?.close()
     }

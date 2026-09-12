@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AvatarImage } from './OptimizedImage';
 import { fmtAgo, getInitials } from '../utils/formatters';
 
-const POLL_MS = 8000;
+const POLL_MS = 20_000;
 const MAX_VISIBLE = 8;
 
 type ActivityEvent = {

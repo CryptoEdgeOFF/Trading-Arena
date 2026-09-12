@@ -55,7 +55,7 @@ function schedulePersist(competitionId: string): void {
       });
     }
     persistDirty.clear();
-  }, 8_000);
+  }, 30_000);
 }
 
 function detectMoments(competitionId: string, previous: PnlSample | undefined, next: PnlSample): void {
@@ -135,7 +135,15 @@ export function maybeRecordPnlSample(
 
   let history = histories.get(competitionId) || [];
   const startAt = options?.startAt;
-  if (history.length === 0 && startAt && startAt < now) {
+  // Un 0 % au startAt officiel n'est utile que si l'échantillonnage commence
+  // vraiment au départ. Sinon la courbe reste plate à gauche et n'occupe
+  // que le bord droit de l'écran.
+  if (
+    history.length === 0
+    && startAt
+    && startAt < now
+    && now - startAt <= MIN_SAMPLE_INTERVAL_MS * 2
+  ) {
     history = [{
       t: startAt,
       rows: current.map((row) => ({ userId: row.userId, pnlPercent: 0 })),
