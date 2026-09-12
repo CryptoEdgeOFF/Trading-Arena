@@ -8,7 +8,7 @@ import OptimizedImage from './OptimizedImage';
 import { markNewsRead } from '../lib/newsRead';
 import { localizeNews } from '../lib/newsLocale';
 import { youtubeVideoId } from '../lib/youtube';
-import { newsCoverUrl } from '../utils/imageUrl';
+import { newsCoverUrl, resolveMediaUrl } from '../utils/imageUrl';
 import { fetchPublicNews } from '../lib/publicNews';
 
 type NewsArticle = {
@@ -48,18 +48,44 @@ function YouTubeEmbed({ id }: { id: string }) {
   );
 }
 
+function isNewsImageUrl(value: string): boolean {
+  return /\/api\/prize-images\//.test(value)
+    || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value);
+}
+
 function RichText({ text }: { text: string }) {
   return (
     <div className="grid gap-4">
       {text.split(/\n{2,}/).map((paragraph, index) => {
-        const youtubeId = youtubeVideoId(paragraph.trim());
+        const trimmed = paragraph.trim();
+        const youtubeId = youtubeVideoId(trimmed);
         if (youtubeId) return <YouTubeEmbed key={`${index}-${youtubeId}`} id={youtubeId} />;
+        const heading = trimmed.match(/^#{1,3}\s+(.+)$/);
+        if (heading) {
+          return (
+            <h2 key={`${index}-${heading[1]}`} className="pt-2 text-xl font-black uppercase tracking-[0.08em] text-white">
+              {heading[1]}
+            </h2>
+          );
+        }
+        if (isNewsImageUrl(trimmed) && !/\s/.test(trimmed)) {
+          return (
+            <img
+              key={`${index}-${trimmed.slice(-24)}`}
+              src={trimmed}
+              alt=""
+              className="w-full rounded-xl border border-white/10"
+            />
+          );
+        }
         return (
           <p key={`${index}-${paragraph.slice(0, 12)}`} className="whitespace-pre-wrap text-[15px] leading-7 text-[#d4d4dc]">
-            {paragraph.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => (
-              /^https?:\/\//.test(part)
-                ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer" className="text-[#ff6275] underline">{part}</a>
-                : part
+            {paragraph.split(/((?:https?:\/\/|\/api\/)[^\s]+)/g).map((part, partIndex) => (
+              isNewsImageUrl(part)
+                ? <img key={partIndex} src={part} alt="" className="mt-3 w-full rounded-xl border border-white/10" />
+                : /^https?:\/\//.test(part)
+                  ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer" className="text-[#ff6275] underline">{part}</a>
+                  : part
             ))}
           </p>
         );
@@ -158,15 +184,10 @@ export default function CompetitionNewsPage() {
                 ‹ {t('news.back')}
               </button>
               {visibleArticle.coverUrl && (
-                <OptimizedImage
-                  src={visibleArticle.coverUrl}
+                <img
+                  src={resolveMediaUrl(visibleArticle.coverUrl) || visibleArticle.coverUrl}
                   alt={visibleArticle.title}
-                  displayWidth={1400}
-                  width={1600}
-                  height={900}
-                  sizes="(max-width: 896px) 100vw, 896px"
-                  priority
-                  className="mb-6 h-56 w-full rounded-2xl border border-white/[0.08] object-cover md:h-72"
+                  className="mb-6 block h-auto w-full rounded-2xl border border-white/[0.08]"
                 />
               )}
               <div className="micro text-[10px] text-[#dc2626]">
