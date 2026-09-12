@@ -3,6 +3,7 @@ import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import http from 'http';
+import zlib from 'node:zlib';
 import crypto from 'crypto';
 import multer from 'multer';
 import path from 'path';
@@ -105,7 +106,7 @@ const chatWss = new WebSocketServer({ noServer: true });
 const WS_SKIP_CRITICAL_BYTES = Math.max(64 * 1024, Number(process.env.WS_MAX_BUFFERED_BYTES) || 1024 * 1024);
 const WS_SKIP_NORMAL_BYTES = Math.max(16 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 4));
 const WS_SKIP_LOW_BYTES = Math.max(8 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 16));
-const ARENA_BROADCAST_MS = Math.max(250, Number(process.env.ARENA_BROADCAST_MS) || 1000);
+const ARENA_BROADCAST_MS = Math.max(1000, Number(process.env.ARENA_BROADCAST_MS) || 3000);
 
 type WsPriority = 'critical' | 'normal' | 'low';
 
@@ -264,6 +265,34 @@ if (CORS_ORIGINS.length > 0) {
   app.use(cors());
 }
 app.use(express.json());
+app.use((req, res, next) => {
+  if (!/\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''))) {
+    next();
+    return;
+  }
+  const sendJson = res.json.bind(res);
+  res.json = ((body: unknown) => {
+    try {
+      const json = JSON.stringify(body ?? null);
+      if (json.length < 1500) return sendJson(body);
+      zlib.gzip(json, { level: 5 }, (err, compressed) => {
+        if (err) {
+          sendJson(body);
+          return;
+        }
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Vary', 'Accept-Encoding');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Length', String(compressed.length));
+        res.end(compressed);
+      });
+      return res;
+    } catch {
+      return sendJson(body);
+    }
+  }) as express.Response['json'];
+  next();
+});
 
 /**
  * Rate limiter en mémoire (fenêtre glissante) par IP + clé de route.
@@ -450,7 +479,9 @@ type PaperClientSubscription = {
 const paperClients = new Map<WebSocket, PaperClientSubscription>();
 const marketSubscriptions = new Map<WebSocket, Set<string>>();
 const marketWatchers = new Set<WebSocket>();
-const MARKET_WATCH_MS = 2_000;
+const MARKET_WATCH_MS = 4_000;
+const lastBroadcastTickSig = new Map<string, string>();
+const lastMarketWatchSig = new Map<string, string>();
 // Per-competition shard: every paperClient is also tracked under its
 // competitionId so we can broadcast a leaderboard diff only to the
 // traders of that arena, not to every connected client.
@@ -683,9 +714,18 @@ function applyMarketSubscribe(ws: WebSocket, pairs: unknown): void {
   sendMarketTicks(ws, buildMarketTicks([...next]));
 }
 
+function tickSignature(tick: MarketTick): string {
+  return `${tick.markPrice}|${tick.bidPrice ?? ''}|${tick.askPrice ?? ''}`;
+}
+
 function broadcastMarketTicks(pairs: string[]): void {
   if (pairs.length === 0 || clients.size === 0) return;
-  const ticks = buildMarketTicks(pairs);
+  const ticks = buildMarketTicks(pairs).filter((tick) => {
+    const signature = tickSignature(tick);
+    if (lastBroadcastTickSig.get(tick.pair) === signature) return false;
+    lastBroadcastTickSig.set(tick.pair, signature);
+    return true;
+  });
   if (ticks.length === 0) return;
   const allMsg = JSON.stringify({ type: 'market:tick', data: { ticks } });
   clients.forEach((ws) => {
@@ -725,7 +765,12 @@ function applyMarketWatchSubscribe(ws: WebSocket, enabled: unknown): void {
 
 function broadcastMarketWatch(): void {
   if (marketWatchers.size === 0) return;
-  const quotes = buildMarketWatchQuotes();
+  const quotes = buildMarketWatchQuotes().filter((quote) => {
+    const signature = `${quote.markPrice}|${quote.change24h ?? ''}|${quote.marketOpen ? 1 : 0}`;
+    if (lastMarketWatchSig.get(quote.pair) === signature) return false;
+    lastMarketWatchSig.set(quote.pair, signature);
+    return true;
+  });
   if (quotes.length === 0) return;
   const msg = JSON.stringify({ type: 'market:watch', data: { quotes } });
   marketWatchers.forEach((ws) => sendWs(ws, msg));
@@ -1428,22 +1473,20 @@ function computeArenaPatch(
   for (const entry of data.leaderboard) {
     next.set(entry.userId, entry);
     const prev = previous.get(entry.userId);
-    if (
-      !prev ||
-      prev.rank !== entry.rank ||
-      prev.pnlPercent !== entry.pnlPercent ||
-      prev.pnlUsd !== entry.pnlUsd ||
-      prev.tradesCount !== entry.tradesCount ||
-      prev.updatedAt !== entry.updatedAt ||
-      (prev.avatarUrl ?? null) !== (entry.avatarUrl ?? null)
-    ) {
+    const nextPct = Math.round(entry.pnlPercent * 100) / 100;
+    const nextUsd = Math.round(entry.pnlUsd);
+    const rankChanged = !prev || prev.rank !== entry.rank;
+    const pnlChanged = !prev || prev.pnlPercent !== nextPct || prev.pnlUsd !== nextUsd;
+    const tradesChanged = !prev || prev.tradesCount !== entry.tradesCount;
+    const avatarChanged = !prev || (prev.avatarUrl ?? null) !== (entry.avatarUrl ?? null);
+    if (!prev || rankChanged || pnlChanged || tradesChanged || avatarChanged) {
       const diff: ArenaPatchEntry = { userId: entry.userId };
       if (!prev) diff.name = entry.name;
-      if (!prev || (prev.avatarUrl ?? null) !== (entry.avatarUrl ?? null)) diff.avatarUrl = entry.avatarUrl ?? null;
-      if (!prev || prev.rank !== entry.rank) diff.rank = entry.rank;
-      if (!prev || prev.pnlPercent !== entry.pnlPercent) diff.pnlPercent = entry.pnlPercent;
-      if (!prev || prev.pnlUsd !== entry.pnlUsd) diff.pnlUsd = entry.pnlUsd;
-      if (!prev || prev.tradesCount !== entry.tradesCount) diff.tradesCount = entry.tradesCount;
+      if (avatarChanged) diff.avatarUrl = entry.avatarUrl ?? null;
+      if (rankChanged) diff.rank = entry.rank;
+      if (!prev || prev.pnlPercent !== nextPct) diff.pnlPercent = nextPct;
+      if (!prev || prev.pnlUsd !== nextUsd) diff.pnlUsd = nextUsd;
+      if (tradesChanged) diff.tradesCount = entry.tradesCount;
       if (!prev || prev.updatedAt !== entry.updatedAt) diff.updatedAt = entry.updatedAt;
       upserts.push(diff);
     }
@@ -1458,8 +1501,8 @@ function computeArenaPatch(
     new Map(
       Array.from(next.entries()).map(([k, v]) => [k, {
         rank: v.rank,
-        pnlPercent: v.pnlPercent,
-        pnlUsd: v.pnlUsd,
+        pnlPercent: Math.round(v.pnlPercent * 100) / 100,
+        pnlUsd: Math.round(v.pnlUsd),
         tradesCount: v.tradesCount,
         updatedAt: v.updatedAt,
         avatarUrl: v.avatarUrl ?? null,
@@ -1516,8 +1559,8 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
     for (const entry of init.leaderboard) {
       baseline.set(entry.userId, {
         rank: entry.rank,
-        pnlPercent: entry.pnlPercent,
-        pnlUsd: entry.pnlUsd,
+        pnlPercent: Math.round(entry.pnlPercent * 100) / 100,
+        pnlUsd: Math.round(entry.pnlUsd),
         tradesCount: entry.tradesCount,
         updatedAt: entry.updatedAt,
         avatarUrl: entry.avatarUrl ?? null,
@@ -1560,7 +1603,7 @@ wss.on('connection', (ws, req) => {
   // Send a full snapshot to the freshly connected client. Subsequent
   // updates arrive as small diffs (`state:patch`), which keeps a 500-trader
   // competition under a few KB per broadcast.
-  if (!arenaOnly) {
+  if (!arenaOnly && !paperToken) {
     const initialState = manager.getStateInit();
     sendWs(ws, JSON.stringify({ type: 'state:init', data: initialState }));
   }
@@ -4194,6 +4237,12 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     if (data.competition.status === 'live') {
       maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
     }
+    res.set(
+      'Cache-Control',
+      data.competition.status === 'live'
+        ? 'public, max-age=2, s-maxage=3, stale-while-revalidate=10'
+        : 'public, max-age=30, s-maxage=120, stale-while-revalidate=600',
+    );
     res.json(await decoratePublicLeaderboard(competitionId, data));
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
@@ -4331,7 +4380,7 @@ app.get('/api/competition/leaderboard/:id/pnl-history', async (req, res) => {
  * quel marché.
  */
 const activityResponseCache = new Map<string, { at: number; body: unknown }>();
-const ACTIVITY_CACHE_MS = 4_000;
+const ACTIVITY_CACHE_MS = 10_000;
 const ACTIVITY_LIMIT = 25;
 type PublicArenaActivity = {
   id: string;
@@ -4349,6 +4398,7 @@ app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
     const competitionId = String(req.params.id || '');
     const cached = activityResponseCache.get(competitionId);
     if (cached && Date.now() - cached.at < ACTIVITY_CACHE_MS) {
+      res.set('Cache-Control', 'public, max-age=5, s-maxage=10, stale-while-revalidate=20');
       res.json(cached.body);
       return;
     }
@@ -4388,6 +4438,7 @@ app.get('/api/competition/leaderboard/:id/activity', async (req, res) => {
       })),
     };
     activityResponseCache.set(competitionId, { at: Date.now(), body });
+    res.set('Cache-Control', 'public, max-age=5, s-maxage=10, stale-while-revalidate=20');
     res.json(body);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Activité introuvable' });
@@ -5146,7 +5197,7 @@ if (!process.env.NETLIFY) {
           await Promise.race([
             Promise.all([
               manager.flushPendingPersistence(),
-              competitionManager.persist(),
+              competitionManager.flushPendingPersistence(),
             ]),
             new Promise<void>((_, reject) => {
               setTimeout(() => reject(new Error('flush timeout')), 5000);

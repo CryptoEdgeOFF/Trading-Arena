@@ -72,7 +72,7 @@ export function useWebSocket(
       };
 
       ws.onclose = () => {
-        if (!closedByEffect) reconnectTimer = setTimeout(connect, 1000);
+        if (!closedByEffect) reconnectTimer = setTimeout(connect, 5_000);
       };
 
       ws.onerror = () => {

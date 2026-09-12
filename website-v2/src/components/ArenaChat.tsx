@@ -68,7 +68,7 @@ export default function ArenaChat({
     if (!open) return;
     setLoading(messages.length === 0);
     void load();
-    const timer = window.setInterval(() => void load(), 12_000);
+    const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
   }, [load, messages.length, open]);
 

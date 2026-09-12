@@ -140,6 +140,9 @@ export class PlayerManager {
   private mutatedPaperPlayerIds = new Set<string>();
   private rosterFlushTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly ROSTER_FLUSH_INTERVAL = 2000;
+  private static readonly MTM_FLUSH_INTERVAL = Math.max(8_000, Number(process.env.PAPER_MTM_FLUSH_MS) || 20_000);
+  private mtmDirtyPlayerIds = new Set<string>();
+  private lastMtmFlushAt = 0;
   // Throttle outbound WebSocket state broadcasts so we never push more than
   // getBroadcastInterval() ms apart, even during a market spike. The
   // interval is computed dynamically based on the number of active traders
@@ -242,11 +245,7 @@ export class PlayerManager {
         // comptes paper. Évite de réécrire des milliers de lignes inchangées
         // toutes les 2s sous fort débit de ticks.
         const trackedIds = this.paperEngine.getTrackedPlayerIds();
-        if (trackedIds.length > 0) {
-          for (const id of trackedIds) this.markRosterDirty(id);
-        } else {
-          this.markRosterDirty();
-        }
+        for (const id of trackedIds) this.markMtmDirty(id);
         this.broadcastState();
       },
       (pairs) => {
@@ -269,6 +268,10 @@ export class PlayerManager {
     }
   }
 
+  private markMtmDirty(playerId: string): void {
+    this.mtmDirtyPlayerIds.add(playerId);
+  }
+
   private startRosterFlushLoop(): void {
     if (this.rosterFlushTimer || !this.pool) return;
     this.rosterFlushTimer = setInterval(() => {
@@ -279,6 +282,12 @@ export class PlayerManager {
 
   private async flushDirtyPlayers(): Promise<void> {
     if (!this.pool) return;
+    const now = Date.now();
+    if (now - this.lastMtmFlushAt >= PlayerManager.MTM_FLUSH_INTERVAL) {
+      for (const id of this.mtmDirtyPlayerIds) this.dirtyPlayerIds.add(id);
+      this.mtmDirtyPlayerIds.clear();
+      this.lastMtmFlushAt = now;
+    }
     if (this.dirtyPlayerIds.size === 0) return;
     const ids = Array.from(this.dirtyPlayerIds);
     this.dirtyPlayerIds.clear();
@@ -637,6 +646,8 @@ export class PlayerManager {
   /** Flush best-effort avant arrêt Railway (SIGTERM) — ne touche pas au moteur de trading. */
   async flushPendingPersistence(): Promise<void> {
     if (!this.pool) return;
+    for (const id of this.mtmDirtyPlayerIds) this.dirtyPlayerIds.add(id);
+    this.mtmDirtyPlayerIds.clear();
     this.markRosterDirty();
     await this.flushDirtyPlayers();
     await this.dbWriteQueue;
@@ -655,8 +666,8 @@ export class PlayerManager {
     }
 
     // Moteur en mémoire = source de vérité. On marque dirty pour le flush
-    // roster (2s) au lieu d'écrire Postgres sur le clic : ça libère le pool
-    // et l'event loop pour ACK l'ordre tout de suite.
+    // roster (2s, trades/ordres) au lieu d'écrire Postgres sur le clic.
+    // Le mark-to-market part sur un flush séparé (~20s).
     this.markRosterDirty(playerId);
     return Promise.resolve();
   }

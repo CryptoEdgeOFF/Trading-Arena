@@ -35,8 +35,8 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import './SpectateBroadcast.css';
 import './ArenaLeaderboard.css';
 
-const WS_RECONCILE_MS = 30_000;
-const HTTP_FALLBACK_MS = 5_000;
+const WS_RECONCILE_MS = 45_000;
+const HTTP_FALLBACK_MS = 12_000;
 const SESSION_KEY = 'btf-comp-session';
 
 interface LeaderboardRow {
@@ -476,7 +476,7 @@ export default function CompetitionPublicLeaderboard() {
     }
 
     void loadHistory();
-    const timer = isLive ? window.setInterval(() => void loadHistory(), 10_000) : 0;
+    const timer = isLive ? window.setInterval(() => void loadHistory(), 20_000) : 0;
     return () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
