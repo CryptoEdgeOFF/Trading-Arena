@@ -1100,7 +1100,8 @@ export class PaperTradingEngine {
 
   /**
    * Clôture forcée (drawdown / fin d'arène) : ignore les horaires de marché
-   * et le ticker manquant. Le PnL ne doit plus flotter après ça.
+   * et le ticker manquant. On réalise le PnL latent au mark (même prix que
+   * l'équité qui a déclenché le breach) — jamais de simple suppression.
    */
   async forceFlattenPlayer(
     player: Player,
@@ -1112,24 +1113,76 @@ export class PaperTradingEngine {
       }
       for (const position of [...player.openPositions]) {
         if (!player.openPositions.includes(position)) continue;
-        const ticker = this.market[position.pair];
-        const liveExit = isUsableTicker(ticker)
-          ? (position.side === 'long' ? ticker.bidPrice : ticker.askPrice)
-          : NaN;
-        const exitPrice = isValidQuotePrice(liveExit)
-          ? liveExit
-          : (isValidQuotePrice(position.markPrice) ? position.markPrice : position.entryPrice);
-        this.closePositionAtPrice(player, position, exitPrice, undefined, reason, false);
+        this.realizePositionForFlatten(player, position, reason);
       }
-      if (player.openPositions.length > 0) {
+      for (const leftover of [...player.openPositions]) {
         console.warn(
-          `[paper] forceFlatten leftover ${player.name}: `
-          + player.openPositions.map((item) => item.pair).join(','),
+          `[paper] forceFlatten leftover ${player.name}: ${leftover.pair} — realizing marked PnL`,
         );
-        player.openPositions = [];
-        this.updatePlayerEquity(player);
+        this.realizeOrphanPosition(player, leftover, reason);
       }
     });
+  }
+
+  /** Prix de coupe = mark d'équité, pour que le PnL figé = le chiffre du breach. */
+  private resolveFlattenExitPrice(position: Position): number | null {
+    const ticker = this.market[position.pair];
+    if (isValidQuotePrice(ticker?.markPrice ?? NaN)) return ticker!.markPrice;
+    if (isValidQuotePrice(position.markPrice)) return position.markPrice;
+    if (isValidQuotePrice(position.entryPrice) && Number.isFinite(position.pnl) && position.size > 0) {
+      const inferred = position.side === 'long'
+        ? position.entryPrice + position.pnl / position.size
+        : position.entryPrice - position.pnl / position.size;
+      if (isValidQuotePrice(inferred)) return inferred;
+    }
+    if (isValidQuotePrice(position.entryPrice)) return position.entryPrice;
+    return null;
+  }
+
+  private realizePositionForFlatten(
+    player: Player,
+    position: Position,
+    reason: 'drawdown' | 'liquidation',
+  ): Trade | null {
+    const exitPrice = this.resolveFlattenExitPrice(position);
+    if (exitPrice != null) {
+      const trade = this.closePositionAtPrice(player, position, exitPrice, undefined, reason, false);
+      if (trade) return trade;
+    }
+    return this.realizeOrphanPosition(player, position, reason);
+  }
+
+  /** Dernier recours : on fige `position.pnl` dans le journal, on ne jette rien. */
+  private realizeOrphanPosition(
+    player: Player,
+    existing: Position,
+    reason: 'drawdown' | 'liquidation',
+  ): Trade {
+    const realizedPnl = Number.isFinite(existing.pnl) ? existing.pnl : 0;
+    const exitPrice = isValidQuotePrice(existing.markPrice)
+      ? existing.markPrice
+      : (isValidQuotePrice(existing.entryPrice) ? existing.entryPrice : 0);
+    const trade: Trade = {
+      id: `${player.id}-${existing.pair}-flatten-${Date.now()}`,
+      playerName: player.name,
+      playerColor: player.color,
+      pair: existing.pair,
+      side: existing.side,
+      size: existing.size,
+      price: exitPrice,
+      entryPrice: existing.entryPrice,
+      fee: 0,
+      leverage: existing.leverage,
+      orderType: 'market',
+      pnl: realizedPnl,
+      time: Date.now(),
+      action: 'close',
+      closeReason: reason,
+    };
+    this.appendTrade(player, trade);
+    player.openPositions = player.openPositions.filter((position) => position !== existing);
+    this.updatePlayerEquity(player);
+    return trade;
   }
 
   private async closePositionLocked(player: Player, positionRef: string, partialSize?: number): Promise<PaperOrderResult> {

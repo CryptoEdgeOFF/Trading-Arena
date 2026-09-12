@@ -1089,15 +1089,36 @@ async function refreshCompetitionStoreIfServerless(): Promise<void> {
 
 async function finalizeBreachedPaperPlayer(playerId: string): Promise<void> {
   try {
+    const before = manager.getPlayerById(playerId);
+    if (!before) return;
+    const frozen = {
+      pnlUsd: before.pnl,
+      pnlPercent: before.pnlPercent,
+      tradesCount: before.tradeCount,
+      equity: before.currentBalance,
+      openCount: before.openPositions?.length ?? 0,
+    };
     await manager.finalizeCompetitionPaperPlayer(playerId);
     const after = manager.getPlayerById(playerId);
     if (!after) return;
-    competitionManager.updatePaperResultByPlayerId(after.id, {
-      pnlUsd: after.pnl,
-      pnlPercent: after.pnlPercent,
-      tradesCount: after.tradeCount,
-      equity: after.currentBalance,
-    }, { evenIfBreached: true });
+    const recordedClose = after.trades.some((trade) => trade.action === 'close' && trade.closeReason === 'drawdown');
+    const wipedLatent = frozen.openCount > 0
+      && !recordedClose
+      && Math.abs(after.pnl) + 1 < Math.abs(frozen.pnlUsd);
+    const snapshot = wipedLatent
+      ? {
+          pnlUsd: frozen.pnlUsd,
+          pnlPercent: frozen.pnlPercent,
+          tradesCount: Math.max(after.tradeCount, frozen.tradesCount),
+          equity: frozen.equity,
+        }
+      : {
+          pnlUsd: after.pnl,
+          pnlPercent: after.pnlPercent,
+          tradesCount: after.tradeCount,
+          equity: after.currentBalance,
+        };
+    competitionManager.updatePaperResultByPlayerId(after.id, snapshot, { evenIfBreached: true });
   } catch (err) {
     console.error('[drawdown] breach finalize failed:', (err as Error)?.message);
   }
@@ -3959,8 +3980,8 @@ app.get('/api/competition/global-leaderboard', async (req, res) => {
     });
     rows.sort((a, b) => {
       if (!lite) {
-        const aActive = a.stats && a.stats.closedTrades > 0 ? 1 : 0;
-        const bActive = b.stats && b.stats.closedTrades > 0 ? 1 : 0;
+        const aActive = (a.stats && a.stats.closedTrades > 0) || Math.abs(a.pnlUsd) > 0.005 ? 1 : 0;
+        const bActive = (b.stats && b.stats.closedTrades > 0) || Math.abs(b.pnlUsd) > 0.005 ? 1 : 0;
         if (aActive !== bActive) return bActive - aActive;
       }
       return b.pnlUsd - a.pnlUsd;
