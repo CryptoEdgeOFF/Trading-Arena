@@ -53,6 +53,8 @@ type LocalBook = {
   ts: number;
   snapshot: PaperOrderBook | null;
   resyncs: number;
+  lastError: string | null;
+  snapshotInflight: boolean;
 };
 
 export function isBinanceOrderBookEnabled(): boolean {
@@ -149,6 +151,7 @@ export function getBinanceOrderBookStatus() {
     levels: (book.snapshot?.bids.length || 0) + (book.snapshot?.asks.length || 0),
     ageMs: book.ts ? Date.now() - book.ts : null,
     resyncs: book.resyncs,
+    lastError: book.lastError,
   }));
   return {
     enabled: isBinanceOrderBookEnabled(),
@@ -157,13 +160,23 @@ export function getBinanceOrderBookStatus() {
     limit: binanceBookLimit(),
     books: rows,
     synced: rows.filter((row) => row.synced).length,
+    lastError: rows.find((row) => row.lastError)?.lastError || null,
   };
 }
 
 async function fetchSnapshot(symbol: string): Promise<BinanceDepthSnapshot> {
   const url = `${FUTURES_REST}/fapi/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=${binanceBookLimit()}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Binance depth ${response.status} ${symbol}`);
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0 (compatible; BTFArena/1.0)',
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Binance depth ${response.status} ${symbol} ${body.slice(0, 80)}`);
+  }
   const payload = await response.json() as BinanceDepthSnapshot;
   if (!Number.isFinite(Number(payload.lastUpdateId))) {
     throw new Error(`Binance depth invalide ${symbol}`);
@@ -171,13 +184,29 @@ async function fetchSnapshot(symbol: string): Promise<BinanceDepthSnapshot> {
   return payload;
 }
 
-function enqueueSnapshot(book: LocalBook): void {
+function enqueueSnapshot(book: LocalBook, delayMs = SNAPSHOT_GAP_MS): void {
+  if (book.snapshotInflight) return;
+  book.snapshotInflight = true;
   snapshotQueue = snapshotQueue
     .catch(() => undefined)
     .then(async () => {
-      await new Promise((resolve) => setTimeout(resolve, SNAPSHOT_GAP_MS));
-      await syncBook(book);
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        await syncBook(book);
+      } finally {
+        book.snapshotInflight = false;
+      }
     });
+}
+
+function tryStartFromEvent(book: LocalBook, event: BinanceDepthEvent): boolean {
+  const last = Number(event.u);
+  if (!Number.isFinite(last) || last < book.lastUpdateId) return false;
+  if (shouldAcceptFirstDepthEvent(event, book.lastUpdateId) || isContiguousDepthEvent(event, book.lastUpdateId)) {
+    applyDepthEvent(book, event);
+    return true;
+  }
+  return false;
 }
 
 async function syncBook(book: LocalBook): Promise<void> {
@@ -190,34 +219,30 @@ async function syncBook(book: LocalBook): Promise<void> {
     book.lastUpdateId = Number(snapshot.lastUpdateId);
     book.ts = Date.now();
     book.synced = false;
+    book.lastError = null;
+    publishSnapshot(book);
 
     const pending = book.buffer;
     book.buffer = [];
-    let started = false;
     for (const event of pending) {
-      const last = Number(event.u);
-      if (last < book.lastUpdateId) continue;
-      if (!started) {
-        if (!shouldAcceptFirstDepthEvent(event, book.lastUpdateId)) continue;
-        started = true;
-      } else if (!isContiguousDepthEvent(event, book.lastUpdateId)) {
+      if (!book.synced) {
+        tryStartFromEvent(book, event);
+        continue;
+      }
+      if (!isContiguousDepthEvent(event, book.lastUpdateId)) {
         book.resyncs += 1;
         resetBook(book);
-        enqueueSnapshot(book);
+        enqueueSnapshot(book, 1_000);
         return;
       }
       applyDepthEvent(book, event);
     }
-    if (started) {
-      book.synced = true;
-      publishSnapshot(book);
-    } else {
-      publishSnapshot(book);
-    }
   } catch (error) {
-    console.warn(`[binanceBook] snapshot ${book.symbol} KO:`, (error as Error).message);
+    const message = (error as Error).message;
+    book.lastError = message;
     book.resyncs += 1;
-    setTimeout(() => enqueueSnapshot(book), 2_000);
+    console.warn(`[binanceBook] snapshot ${book.symbol} KO:`, message);
+    enqueueSnapshot(book, message.includes('429') ? 8_000 : 3_000);
   }
 }
 
@@ -240,7 +265,9 @@ function handleDepthEvent(event: BinanceDepthEvent): void {
     return;
   }
   if (!book.synced) {
+    if (tryStartFromEvent(book, event)) return;
     book.buffer.push(event);
+    if (book.buffer.length > 200) book.buffer.splice(0, book.buffer.length - 200);
     return;
   }
   if (!isContiguousDepthEvent(event, book.lastUpdateId)) {
@@ -319,6 +346,8 @@ export function startBinanceOrderBooks(pairs: string[]): void {
       ts: 0,
       snapshot: null,
       resyncs: 0,
+      lastError: null,
+      snapshotInflight: false,
     };
     books.set(normalized, book);
     booksBySymbol.set(symbol, book);

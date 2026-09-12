@@ -25,11 +25,13 @@ export default function FillDetailsModal({
   const fr = i18n.language.toLowerCase().startsWith('fr');
   const bookFills = (trade.fillDetails || []).filter((fill) => fill.source === 'book' && fill.size > 0);
   const hasEstimatedLiquidity = (trade.fillDetails || []).some((fill) => fill.source === 'estimated');
-  const sourceLabel = trade.slippageSource === 'itick-l5'
-    ? 'iTick L5'
-    : trade.slippageSource === 'model'
-      ? (fr ? 'Estimation de marché' : 'Market estimate')
-      : (fr ? 'Exécution standard' : 'Standard execution');
+  const sourceLabel = trade.slippageSource === 'binance-depth'
+    ? (fr ? 'Carnet Binance' : 'Binance order book')
+    : trade.slippageSource === 'itick-l5'
+      ? 'iTick L5'
+      : trade.slippageSource === 'model'
+        ? (fr ? 'Estimation de marché' : 'Market estimate')
+        : (fr ? 'Exécution standard' : 'Standard execution');
 
   return createPortal(
     <div
