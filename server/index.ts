@@ -22,6 +22,7 @@ import * as itick from './itick.js';
 import * as itickCandles from './itickCandles.js';
 import { ITICK_INSTRUMENTS, findByPair as findItickByPair, symbolsByAsset as itickSymbolsByAsset, isItickPair, registerItickCrypto, cryptoCodes as itickCryptoCodes } from './itickInstruments.js';
 import { startItickToPaperBridge } from './itickToPaperBridge.js';
+import { getBinanceOrderBookStatus } from './binanceOrderBook.js';
 import { configureLiveMarketNeed, isLiveMarketNeeded } from './liveMarketNeeded.js';
 import { getPaperPairDefinition, CRYPTO_LIVE_PAIRS } from './exchangePaperEngine.js';
 import { CompetitionManager, inferSeasonStatus } from './competitionManager.js';
@@ -5010,6 +5011,7 @@ app.get('/api/staging/runtime-metrics', (_req, res) => {
       chat: chatWss.clients.size,
     },
     wsMaxBufferedBytes: WS_SKIP_CRITICAL_BYTES,
+    binanceOrderBook: getBinanceOrderBookStatus(),
   });
 });
 

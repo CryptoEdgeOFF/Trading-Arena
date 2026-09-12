@@ -79,6 +79,26 @@ test('walks the visible iTick levels to calculate the average fill', () => {
   assert.equal(quote.source, 'itick-l5');
 });
 
+test('binance-depth book keeps its source on the fill quote', () => {
+  const quote = applyPaperSlippage(
+    'BTC/USD',
+    100,
+    2,
+    'buy',
+    'slippage-v1',
+    {
+      asks: [
+        { price: 100, volume: 1 },
+        { price: 100.2, volume: 1 },
+      ],
+      bids: [],
+      source: 'binance-depth',
+    },
+  );
+  assert.equal(quote.source, 'binance-depth');
+  assert.equal(quote.executionPrice, 100.1);
+});
+
 test('extrapolates adverse impact after exhausting iTick L5', () => {
   const quote = applyPaperSlippage(
     'TRX/USD',
