@@ -84,6 +84,30 @@ export function estimatePaperSlippageBps(pair: string, notionalUsd: number): num
   return Math.min(50, Math.max(floorBps, impact));
 }
 
+/**
+ * Impact du reliquat après le carnet visible (L5 / depth20).
+ *
+ * Le top 20 est le bout fin du book. Extrapoler sa densité 1:1, puis
+ * réappliquer le modèle entier depuis le dernier niveau, empile deux
+ * fois l'impact (18 bps sur un TRX 970 k$ alors que le walk visible
+ * n'était que ~3 bps). On continue en racine carrée, avec un book
+ * caché plus épais que le tip.
+ */
+export function estimateBookOverflowBps(
+  pair: string,
+  remainingNotional: number,
+  visibleNotional: number,
+  visibleSpanBps: number,
+): number {
+  const remaining = Math.max(0, remainingNotional);
+  if (remaining <= 0) return 0;
+  const visible = Math.max(visibleNotional, 1);
+  const tipSpan = Math.max(visibleSpanBps, 0.25);
+  const extra = tipSpan * (Math.sqrt(1 + remaining / visible) - 1) / 2.5;
+  const floorBps = estimatePaperSlippageBps(pair, remaining) * 0.35;
+  return Math.min(40, Math.max(floorBps, extra));
+}
+
 export function applyPaperSlippage(
   pair: string,
   requestedPrice: number,
@@ -142,7 +166,17 @@ export function applyPaperSlippage(
   }
 
   if (remaining > 0 && bookUsable && totalValue > 0) {
-    const overflowBps = estimatePaperSlippageBps(pair, requestedPrice * remaining);
+    const visibleSize = size - remaining;
+    const visibleNotional = visibleSize > 0 ? totalValue : 0;
+    const visibleSpanBps = requestedPrice > 0
+      ? Math.abs(lastPrice / requestedPrice - 1) * 10_000
+      : 0;
+    const overflowBps = estimateBookOverflowBps(
+      pair,
+      requestedPrice * remaining,
+      visibleNotional,
+      visibleSpanBps,
+    );
     const overflowPrice = direction === 'buy'
       ? lastPrice * (1 + overflowBps / 10_000)
       : lastPrice * (1 - overflowBps / 10_000);
