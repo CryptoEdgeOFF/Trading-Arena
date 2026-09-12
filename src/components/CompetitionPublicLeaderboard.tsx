@@ -37,6 +37,7 @@ import './ArenaLeaderboard.css';
 
 const WS_RECONCILE_MS = 45_000;
 const HTTP_FALLBACK_MS = 12_000;
+const EXPANDED_LIVE_MS = 3_000;
 const SESSION_KEY = 'btf-comp-session';
 
 interface LeaderboardRow {
@@ -340,13 +341,10 @@ export default function CompetitionPublicLeaderboard() {
       if (!current || current.competition.id !== payload.competitionId) return current;
       const rows = new Map(current.leaderboard.map((row) => [row.userId, row]));
       const windowLimit = Number(payload.windowLimit) || LIST_INITIAL;
-      const hasExpanded = [...rows.values()].some((row) => row.rank > windowLimit);
       for (const userId of Array.isArray(payload.removed) ? payload.removed : []) rows.delete(userId);
-      if (!hasExpanded) {
-        for (const userId of Array.isArray(payload.dropped) ? payload.dropped : []) {
-          const row = rows.get(userId);
-          if (row && row.rank > 0 && row.rank <= windowLimit) rows.delete(userId);
-        }
+      for (const userId of Array.isArray(payload.dropped) ? payload.dropped : []) {
+        const row = rows.get(userId);
+        if (row && row.rank > 0 && row.rank <= windowLimit) rows.delete(userId);
       }
       for (const patch of Array.isArray(payload.upserts) ? payload.upserts : []) {
         if (!patch?.userId) continue;
@@ -378,6 +376,7 @@ export default function CompetitionPublicLeaderboard() {
   useWebSocket(Boolean(id), {
     arenaId: id || null,
     focusUserId: currentUserId,
+    windowLimit: rankedOffset,
     onArenaInit: applyArenaInit,
     onArenaPatch: applyArenaPatch,
     onOpen: () => setWsConnected(true),
@@ -391,12 +390,18 @@ export default function CompetitionPublicLeaderboard() {
 
     async function tick() {
       if (cancelled) return;
+      const liveWindow = Math.max(LIST_INITIAL, rankedOffset);
+      const refreshMs = !wsConnected
+        ? HTTP_FALLBACK_MS
+        : liveWindow > LIST_INITIAL
+          ? EXPANDED_LIVE_MS
+          : WS_RECONCILE_MS;
       if (pausedRef.current) {
-        timer = setTimeout(tick, wsConnected ? WS_RECONCILE_MS : HTTP_FALLBACK_MS);
+        timer = setTimeout(tick, refreshMs);
         return;
       }
       try {
-        const params = new URLSearchParams({ limit: String(LIST_INITIAL) });
+        const params = new URLSearchParams({ limit: String(liveWindow) });
         if (currentUserId) params.set('userId', currentUserId);
         const response = await fetch(`/api/competition/leaderboard/${id}?${params}`);
         const payload = await response.json();
@@ -406,7 +411,7 @@ export default function CompetitionPublicLeaderboard() {
         setData((current) => {
           if (!current?.leaderboard?.length) return next;
           const incoming = new Map(next.leaderboard.map((row) => [row.userId, row]));
-          const extras = current.leaderboard.filter((row) => !incoming.has(row.userId) && row.rank > LIST_INITIAL);
+          const extras = current.leaderboard.filter((row) => !incoming.has(row.userId) && row.rank > liveWindow);
           return {
             ...next,
             leaderboard: [...next.leaderboard, ...extras].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
@@ -419,7 +424,7 @@ export default function CompetitionPublicLeaderboard() {
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : t('common.unknownError'));
       } finally {
-        if (!cancelled) timer = setTimeout(tick, wsConnected ? WS_RECONCILE_MS : HTTP_FALLBACK_MS);
+        if (!cancelled) timer = setTimeout(tick, refreshMs);
       }
     }
 
@@ -431,7 +436,7 @@ export default function CompetitionPublicLeaderboard() {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [id, t, wsConnected, currentUserId]);
+  }, [id, t, wsConnected, currentUserId, rankedOffset]);
 
   const applyPnlSnapshot = (competitionId: string, rows: LeaderboardRow[], moments?: PnlMoment[]) => {
     const rankedRows = rows.filter((row) => row.rank > 0).sort((a, b) => a.rank - b.rank).slice(0, 40);

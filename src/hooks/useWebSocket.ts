@@ -15,6 +15,7 @@ export function useWebSocket(
     subscribePairs?: string[];
     watchList?: boolean;
     focusUserId?: string | null;
+    windowLimit?: number | null;
     onOpen?: () => void;
     onClose?: () => void;
   } = {},
@@ -32,6 +33,7 @@ export function useWebSocket(
   const subscribePairsRef = useRef(options.subscribePairs || []);
   const watchListRef = useRef(Boolean(options.watchList));
   const focusUserIdRef = useRef(options.focusUserId || '');
+  const windowLimitRef = useRef(options.windowLimit || 0);
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
@@ -84,6 +86,13 @@ export function useWebSocket(
   }, [options.focusUserId]);
 
   useEffect(() => {
+    windowLimitRef.current = options.windowLimit || 0;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !windowLimitRef.current) return;
+    ws.send(JSON.stringify({ type: 'arena:window', limit: windowLimitRef.current }));
+  }, [options.windowLimit]);
+
+  useEffect(() => {
     if (!enabled) return;
     let closedByEffect = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -109,6 +118,9 @@ export function useWebSocket(
         }
         if (focusUserIdRef.current) {
           ws.send(JSON.stringify({ type: 'arena:focus', userId: focusUserIdRef.current }));
+        }
+        if (windowLimitRef.current) {
+          ws.send(JSON.stringify({ type: 'arena:window', limit: windowLimitRef.current }));
         }
       };
 
