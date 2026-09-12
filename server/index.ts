@@ -108,6 +108,7 @@ const WS_SKIP_NORMAL_BYTES = Math.max(16 * 1024, Math.floor(WS_SKIP_CRITICAL_BYT
 const WS_SKIP_LOW_BYTES = Math.max(8 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 16));
 const ARENA_BROADCAST_MS = Math.max(1000, Number(process.env.ARENA_BROADCAST_MS) || 3000);
 const ARENA_LIVE_LIMIT = Math.max(10, Math.min(50, Number(process.env.ARENA_LIVE_LIMIT) || 20));
+const ARENA_WINDOW_MAX = Math.max(ARENA_LIVE_LIMIT, Math.min(400, Number(process.env.ARENA_WINDOW_MAX) || 200));
 
 type WsPriority = 'critical' | 'normal' | 'low';
 
@@ -500,6 +501,7 @@ const arenaSnapshots = new Map<string, Map<string, {
 }>>();
 const arenaCompetitionSnapshots = new Map<string, string>();
 const arenaFocusUser = new Map<WebSocket, string>();
+const arenaWindowLimit = new Map<WebSocket, number>();
 
 // --- Admin auth (single shared code, configurable via env) ---
 // Aucun fallback en dur : si ADMIN_CODE n'est pas défini, l'accès admin est
@@ -1571,6 +1573,49 @@ function computeArenaPatch(
   };
 }
 
+function socketWindowLimit(ws: WebSocket): number {
+  return arenaWindowLimit.get(ws) || ARENA_LIVE_LIMIT;
+}
+
+function extraLiveUpserts(
+  leaderboard: ArenaLeaderboardEntry[],
+  from: number,
+  to: number,
+): ArenaPatchEntry[] {
+  const extras = liveRankedEntries(leaderboard).slice(from, to);
+  const upserts: ArenaPatchEntry[] = [];
+  for (const entry of extras) {
+    const diff = toArenaPatchEntry(entry);
+    if (diff) upserts.push(diff);
+  }
+  return upserts;
+}
+
+function customizeArenaPatch(
+  ws: WebSocket,
+  data: NonNullable<ReturnType<typeof competitionManager.getLiveLeaderboard>>,
+  publicPatch: Omit<NonNullable<ReturnType<typeof computeArenaPatch>>, 'windowIds'>,
+  windowIds: Set<string>,
+): typeof publicPatch {
+  const limit = socketWindowLimit(ws);
+  const focus = arenaFocusUser.get(ws);
+  let upserts = publicPatch.upserts;
+  let dropped = publicPatch.dropped;
+  if (limit > ARENA_LIVE_LIMIT) {
+    const extras = liveRankedEntries(data.leaderboard as ArenaLeaderboardEntry[]).slice(ARENA_LIVE_LIMIT, limit);
+    const extraIds = new Set(extras.map((entry) => entry.userId));
+    const extraUpserts = extraLiveUpserts(data.leaderboard as ArenaLeaderboardEntry[], ARENA_LIVE_LIMIT, limit);
+    upserts = [...upserts, ...extraUpserts];
+    dropped = dropped.filter((userId) => !extraIds.has(userId));
+  }
+  if (focus && !windowIds.has(focus) && !upserts.some((entry) => entry.userId === focus)) {
+    const row = (data.leaderboard as ArenaLeaderboardEntry[]).find((entry) => entry.userId === focus);
+    const extra = row ? toArenaPatchEntry(row) : null;
+    if (extra) upserts = [...upserts, extra];
+  }
+  return { ...publicPatch, upserts, dropped, windowLimit: limit };
+}
+
 function broadcastArenaPatches(): void {
   if (arenaClients.size === 0) return;
   for (const [competitionId, sockets] of arenaClients) {
@@ -1587,19 +1632,17 @@ function broadcastArenaPatches(): void {
     const { windowIds, ...publicPatch } = patch;
     const baseMsg = JSON.stringify({ type: 'arena:patch', data: publicPatch });
     sockets.forEach((ws) => {
+      const limit = socketWindowLimit(ws);
       const focus = arenaFocusUser.get(ws);
-      if (focus && !windowIds.has(focus)) {
-        const row = (data.leaderboard as ArenaLeaderboardEntry[]).find((entry) => entry.userId === focus);
-        const extra = row ? toArenaPatchEntry(row) : null;
-        if (extra) {
-          sendWs(ws, JSON.stringify({
-            type: 'arena:patch',
-            data: { ...publicPatch, upserts: [...publicPatch.upserts, extra] },
-          }), 'low');
-          return;
-        }
+      const needsCustom = limit > ARENA_LIVE_LIMIT || Boolean(focus && !windowIds.has(focus));
+      if (!needsCustom) {
+        sendWs(ws, baseMsg, 'low');
+        return;
       }
-      sendWs(ws, baseMsg, 'low');
+      sendWs(ws, JSON.stringify({
+        type: 'arena:patch',
+        data: customizeArenaPatch(ws, data, publicPatch, windowIds),
+      }), 'low');
     });
   }
 }
@@ -1636,6 +1679,35 @@ function attachArenaClient(ws: WebSocket, competitionId: string, extraUserId?: s
   }
 }
 
+function applyArenaWindow(ws: WebSocket, limit: unknown): void {
+  const next = Math.max(
+    ARENA_LIVE_LIMIT,
+    Math.min(ARENA_WINDOW_MAX, Math.floor(Number(limit) || ARENA_LIVE_LIMIT)),
+  );
+  arenaWindowLimit.set(ws, next);
+  if (next <= ARENA_LIVE_LIMIT) return;
+  for (const [competitionId, sockets] of arenaClients) {
+    if (!sockets.has(ws)) continue;
+    const data = competitionManager.getLiveLeaderboard(competitionId);
+    if (!data) return;
+    const ranked = liveRankedEntries(data.leaderboard as ArenaLeaderboardEntry[]);
+    const extras = extraLiveUpserts(data.leaderboard as ArenaLeaderboardEntry[], ARENA_LIVE_LIMIT, next);
+    if (extras.length === 0) return;
+    sendWs(ws, JSON.stringify({
+      type: 'arena:patch',
+      data: {
+        competitionId,
+        upserts: extras,
+        removed: [],
+        dropped: [],
+        totalRanked: ranked.length,
+        windowLimit: next,
+      },
+    }), 'low');
+    return;
+  }
+}
+
 function applyArenaFocus(ws: WebSocket, userId: unknown): void {
   const next = String(userId || '').trim();
   if (!next) return;
@@ -1657,7 +1729,7 @@ function applyArenaFocus(ws: WebSocket, userId: unknown): void {
         removed: [],
         dropped: [],
         totalRanked: window.totalRanked,
-        windowLimit: ARENA_LIVE_LIMIT,
+        windowLimit: socketWindowLimit(ws),
       },
     }), 'low');
     return;
@@ -1666,6 +1738,7 @@ function applyArenaFocus(ws: WebSocket, userId: unknown): void {
 
 function detachArenaClient(ws: WebSocket): void {
   arenaFocusUser.delete(ws);
+  arenaWindowLimit.delete(ws);
   for (const [competitionId, sockets] of arenaClients) {
     if (sockets.delete(ws) && sockets.size === 0) {
       arenaClients.delete(competitionId);
@@ -1725,6 +1798,7 @@ wss.on('connection', (ws, req) => {
       if (msg?.type === 'market:subscribe') applyMarketSubscribe(ws, msg.pairs);
       if (msg?.type === 'market:watch-subscribe') applyMarketWatchSubscribe(ws, msg.enabled);
       if (msg?.type === 'arena:focus') applyArenaFocus(ws, msg.userId);
+      if (msg?.type === 'arena:window') applyArenaWindow(ws, msg.limit);
     } catch {
       // ignore malformed client frames
     }
