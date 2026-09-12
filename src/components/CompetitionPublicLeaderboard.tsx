@@ -523,7 +523,7 @@ export default function CompetitionPublicLeaderboard() {
     data && currentUserId ? data.leaderboard.find((row) => row.userId === currentUserId) || null : null
   ), [currentUserId, data]);
   const top3 = useMemo(() => ranked.slice(0, 3), [ranked]);
-  // Le classement liste les rangs 4+ ; ma ligne est épinglée en bas, jamais dupliquée.
+  // Le classement liste les rangs 4+ ; ma ligne est épinglée en haut, jamais dupliquée.
   const listRows = useMemo(
     () => ranked.slice(3).filter((row) => !myRow || row.userId !== myRow.userId),
     [myRow, ranked],
@@ -697,9 +697,6 @@ export default function CompetitionPublicLeaderboard() {
                     ) : (
                       <div className="lb-table">
                         <RankHeader />
-                        {visibleListRows.map((row) => (
-                          <RankRow key={row.userId} row={row} isMe={row.userId === currentUserId} />
-                        ))}
                         {myRow && (
                           <RankRow
                             row={myRow}
@@ -720,6 +717,9 @@ export default function CompetitionPublicLeaderboard() {
                             }
                           />
                         )}
+                        {visibleListRows.map((row) => (
+                          <RankRow key={row.userId} row={row} isMe={row.userId === currentUserId} />
+                        ))}
                       </div>
                     )}
                     {hasMoreRanked && (
@@ -1011,7 +1011,7 @@ function RankHeader() {
   );
 }
 
-/** Ligne de classement. `pinned` = ma position, épinglée en bas du tableau. */
+/** Ligne de classement. `pinned` = ma position, épinglée en haut du tableau. */
 function RankRow({
   row,
   isMe = false,
