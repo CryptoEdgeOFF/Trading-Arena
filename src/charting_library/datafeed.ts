@@ -49,8 +49,8 @@ const SUPPORTED_RESOLUTIONS = ['1', '5', '15', '30', '60', '240', '1D'] as Resol
  * et peut bloquer plusieurs viewers sur un backfill. On charge vite le viewport
  * récent, puis le scroll demande l'historique par tranches.
  */
-const FIRST_LOAD_BARS = 4000;
-const SCROLL_LOAD_BARS = 4000;
+const FIRST_LOAD_BARS = 1000;
+const SCROLL_LOAD_BARS = 500;
 
 interface Subscription {
   pair: string;

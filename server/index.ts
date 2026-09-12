@@ -2536,7 +2536,7 @@ app.get('/api/paper/candles', async (req, res) => {
         if (inst?.asset === 'crypto') {
           try {
             candles = await itick.getCryptoKline(pair, interval, {
-              countBack: candleOpts.countBack,
+              countBack: Math.min(500, candleOpts.countBack ?? 500),
               to: candleOpts.to,
             });
             source = 'itick';

@@ -201,8 +201,8 @@ const TIMEFRAME_OPTIONS = [
 ]
 const SCRIPT_PATH = '/charting_library/charting_library.standalone.js'
 let scriptPromise: Promise<void> | null = null
-const INITIAL_CANDLE_BARS = 4000
-const SCROLL_CANDLE_BARS = 2_000
+const INITIAL_CANDLE_BARS = 1000
+const SCROLL_CANDLE_BARS = 500
 const CANDLE_CACHE_TTL_MS = 15 * 60_000
 const CANDLE_REFRESH_AFTER_MS = 20_000
 const CANDLE_STORAGE_PREFIX = 'btf.mobile.candles.'

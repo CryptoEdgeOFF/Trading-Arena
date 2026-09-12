@@ -718,6 +718,7 @@ export async function backfillRange(
 
 /** Backfills lazy au scroll gauche (dédupliqués par requête). */
 const inflightScrollBackfills = new Map<string, Promise<void>>();
+const deepenInflight = new Set<string>();
 
 async function countBarsBefore(pair: string, intervalMin: number, toSec: number): Promise<number> {
   if (pool) {
@@ -733,50 +734,118 @@ async function countBarsBefore(pair: string, intervalMin: number, toSec: number)
   return [...series.bars.values()].filter((bar) => bar.time <= toSec).length;
 }
 
-/** Étend l'historique en DB si le scroll demande plus de barres que stockées. */
+async function oldestBarTime(pair: string, intervalMin: number): Promise<number | null> {
+  if (pool) {
+    await schemaReady;
+    const result = await pool.query<{ t: string | null }>(
+      'SELECT MIN(bar_time)::bigint AS t FROM itick_candles WHERE pair = $1 AND timeframe = $2',
+      [pair, intervalMin],
+    );
+    const time = Number(result.rows[0]?.t);
+    return Number.isFinite(time) && time > 0 ? time : null;
+  }
+  const series = memorySeries.get(seriesKey(pair, intervalMin));
+  if (!series || series.bars.size === 0) return null;
+  return Math.min(...series.bars.keys());
+}
+
+/**
+ * Une seule page iTick (500 barres). Le premier rendu et le scroll ne
+ * doivent jamais attendre 6×1500 barres — ça bloquait le chart 4–20s.
+ */
+async function fetchOneHistoryPage(pair: string, intervalMin: number, endTs?: number): Promise<void> {
+  const inst = findByPair(pair);
+  if (!inst) return;
+  const dedupeKey = `${pair}:${intervalMin}:${endTs ?? 'now'}`;
+  const existing = inflightScrollBackfills.get(dedupeKey);
+  if (existing) {
+    await existing;
+    return;
+  }
+  const job = (async () => {
+    try {
+      await backfillSeries(inst, {
+        intervalMin,
+        limit: ITICK_PAGE_SIZE,
+        endTs,
+        upsert: false,
+      });
+    } catch (err) {
+      console.warn(
+        `[itickCandles] page ${pair} ${intervalMin}m KO:`,
+        (err as Error).message,
+      );
+    } finally {
+      inflightScrollBackfills.delete(dedupeKey);
+    }
+  })();
+  inflightScrollBackfills.set(dedupeKey, job);
+  await job;
+}
+
+/**
+ * Premier rendu : si la DB a déjà des barres, on ne bloque pas.
+ * Série vide : une page récente. Scroll au-delà de l'oldest : une page plus ancienne.
+ */
 async function ensureScrollHistory(
   pair: string,
   intervalMin: number,
   toSec: number,
-  countBack: number,
+  _countBack: number,
   fromSec: number | null,
 ): Promise<void> {
   if (!findByPair(pair) || !isLiveMarketNeeded()) return;
-  const intervalSec = intervalMin * 60;
-  const required = fromSec != null
-    ? Math.max(countBack, Math.ceil((toSec - fromSec) / intervalSec) + 2)
-    : countBack;
-  const maxAttempts = 6;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  if (fromSec == null) {
     const available = await countBarsBefore(pair, intervalMin, toSec);
-    if (available >= required) return;
-
-    const prevAvailable = available;
-    const stillMissing = required - available + 200;
-    const fetchFrom = Math.max(0, toSec - stillMissing * intervalSec);
-    const dedupeKey = `${pair}:${intervalMin}:${toSec}:${attempt}`;
-    let job = inflightScrollBackfills.get(dedupeKey);
-    if (!job) {
-      job = (async () => {
-        try {
-          await backfillRange(pair, intervalMin, fetchFrom, toSec);
-        } catch (err) {
-          console.warn(
-            `[itickCandles] scroll backfill ${pair} ${intervalMin}m KO:`,
-            (err as Error).message,
-          );
-        } finally {
-          inflightScrollBackfills.delete(dedupeKey);
-        }
-      })();
-      inflightScrollBackfills.set(dedupeKey, job);
-    }
-    await job;
-
-    const after = await countBarsBefore(pair, intervalMin, toSec);
-    if (after <= prevAvailable) break;
+    if (available > 0) return;
+    await fetchOneHistoryPage(pair, intervalMin, toSec * 1000);
+    return;
   }
+
+  const oldest = await oldestBarTime(pair, intervalMin);
+  if (oldest != null && oldest <= fromSec) return;
+  await fetchOneHistoryPage(
+    pair,
+    intervalMin,
+    oldest != null ? oldest * 1000 - 1 : toSec * 1000,
+  );
+}
+
+/** Remplit l'historique en arrière-plan, une page à la fois, sans bloquer le GET. */
+function scheduleHistoryDeepen(pair: string, intervalMin: number): void {
+  const key = `${pair}:${intervalMin}`;
+  if (deepenInflight.has(key) || !isLiveMarketNeeded()) return;
+  const inst = findByPair(pair);
+  if (!inst) return;
+  deepenInflight.add(key);
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const target = HISTORY_DEPTH[intervalMin] ?? 1000;
+        for (let page = 0; page < 4; page += 1) {
+          if (itick.isRestInCooldown() || isItickInCooldown()) break;
+          const existing = await countPersistedBars(pair, intervalMin);
+          if (existing >= target) break;
+          const oldest = await oldestBarTime(pair, intervalMin);
+          await backfillSeries(inst, {
+            intervalMin,
+            limit: ITICK_PAGE_SIZE,
+            endTs: oldest != null ? oldest * 1000 - 1 : undefined,
+            upsert: false,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+      } catch (err) {
+        console.warn(
+          `[itickCandles] deepen ${pair} ${intervalMin}m KO:`,
+          (err as Error).message,
+        );
+      } finally {
+        deepenInflight.delete(key);
+      }
+    })();
+  }, 50);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -806,11 +875,12 @@ export async function getCandles(
   const toSec = opts.to && opts.to > 0 ? Math.floor(opts.to) : nowSec;
   const targetCount = Math.min(
     MAX_HISTORY_BARS,
-    opts.countBack && opts.countBack > 0 ? Math.floor(opts.countBack) : 5000,
+    opts.countBack && opts.countBack > 0 ? Math.floor(opts.countBack) : 500,
   );
   const fromSec = opts.from && opts.from > 0 ? Math.floor(opts.from) : null;
 
   await ensureScrollHistory(pair, safeInterval, toSec, targetCount, fromSec);
+  if (fromSec == null) scheduleHistoryDeepen(pair, safeInterval);
 
   if (pool) {
     await schemaReady;
