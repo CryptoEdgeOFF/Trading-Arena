@@ -4442,10 +4442,24 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     const limit = Number(req.query.limit);
     const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
     const focusUserId = String(req.query.userId || '').trim();
+    const section = String(req.query.section || '').trim();
     const ranked = decorated.leaderboard.filter((row) => row.rank > 0);
+    const breached = decorated.leaderboard.filter((row) => row.breached);
+    const enrolled = decorated.leaderboard.filter((row) => row.rank === 0 && !row.breached);
     const body = Number.isFinite(limit) && limit > 0
       ? (() => {
         const pageSize = Math.min(100, Math.floor(limit));
+        if (section === 'breached') {
+          const page = breached.slice(offset, offset + pageSize);
+          return {
+            ...decorated,
+            leaderboard: page,
+            totalRanked: ranked.length,
+            totalBreached: breached.length,
+            truncated: breached.length > offset + pageSize,
+            windowLimit: pageSize,
+          };
+        }
         const page = ranked.slice(offset, offset + pageSize);
         const ids = new Set(page.map((row) => row.userId));
         const extra = focusUserId
@@ -4453,7 +4467,7 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
           : undefined;
         if (extra && !ids.has(extra.userId)) page.push(extra);
         const side = offset === 0
-          ? decorated.leaderboard.filter((row) => row.breached || (row.rank === 0 && !row.breached)).slice(0, 40)
+          ? [...breached.slice(0, 5), ...enrolled.slice(0, 40)]
           : [];
         const rows = [...page];
         for (const row of side) {
@@ -4463,11 +4477,12 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
           ...decorated,
           leaderboard: rows,
           totalRanked: ranked.length,
+          totalBreached: breached.length,
           truncated: ranked.length > offset + pageSize,
           windowLimit: pageSize,
         };
       })()
-      : { ...decorated, totalRanked: ranked.length, truncated: false };
+      : { ...decorated, totalRanked: ranked.length, totalBreached: breached.length, truncated: false };
     res.set(
       'Cache-Control',
       data.competition.status === 'live'

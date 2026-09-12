@@ -101,6 +101,7 @@ interface LeaderboardResponse {
   };
   leaderboard: LeaderboardRow[];
   totalRanked?: number;
+  totalBreached?: number;
   truncated?: boolean;
 }
 
@@ -267,12 +268,14 @@ function ArenaHeroBanner({
 
 const LIST_INITIAL = 20;
 const LIST_STEP = 20;
+const BREACHED_INITIAL = 5;
 
 export default function CompetitionPublicLeaderboard() {
   const { t } = useTranslation();
   const { id } = useParams();
   const [visibleRanked, setVisibleRanked] = useState(LIST_INITIAL);
   const [visibleEnrolled, setVisibleEnrolled] = useState(LIST_INITIAL);
+  const [visibleBreached, setVisibleBreached] = useState(BREACHED_INITIAL);
   const [rankedOffset, setRankedOffset] = useState(LIST_INITIAL);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [error, setError] = useState('');
@@ -303,7 +306,7 @@ export default function CompetitionPublicLeaderboard() {
       }));
       const incomingIds = new Set(nextRows.map((row: LeaderboardRow) => row.userId));
       for (const row of current?.leaderboard || []) {
-        if (!incomingIds.has(row.userId) && row.rank > (payload.windowLimit || LIST_INITIAL)) {
+        if (!incomingIds.has(row.userId) && (row.rank > (payload.windowLimit || LIST_INITIAL) || row.breached || row.rank === 0)) {
           nextRows.push(row);
         }
       }
@@ -311,6 +314,7 @@ export default function CompetitionPublicLeaderboard() {
         competition: { ...(current?.competition || {}), ...payload.competition },
         leaderboard: nextRows.sort((a: LeaderboardRow, b: LeaderboardRow) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
         totalRanked: payload.totalRanked ?? current?.totalRanked ?? nextRows.length,
+        totalBreached: payload.totalBreached ?? current?.totalBreached,
       } as LeaderboardResponse;
     });
     setError('');
@@ -350,6 +354,7 @@ export default function CompetitionPublicLeaderboard() {
         competition: payload.competition || current.competition,
         leaderboard: [...rows.values()].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
         totalRanked: payload.totalRanked ?? current.totalRanked,
+        totalBreached: payload.totalBreached ?? current.totalBreached,
       };
     });
   }, []);
@@ -392,7 +397,10 @@ export default function CompetitionPublicLeaderboard() {
         setData((current) => {
           if (!current?.leaderboard?.length) return next;
           const incoming = new Map(next.leaderboard.map((row) => [row.userId, row]));
-          const extras = current.leaderboard.filter((row) => !incoming.has(row.userId) && row.rank > liveWindow);
+          const extras = current.leaderboard.filter((row) => {
+            if (incoming.has(row.userId)) return false;
+            return row.rank > liveWindow || row.breached || row.rank === 0;
+          });
           return {
             ...next,
             leaderboard: [...next.leaderboard, ...extras].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
@@ -532,12 +540,18 @@ export default function CompetitionPublicLeaderboard() {
   useEffect(() => {
     setVisibleRanked(LIST_INITIAL);
     setVisibleEnrolled(LIST_INITIAL);
+    setVisibleBreached(BREACHED_INITIAL);
     setRankedOffset(LIST_INITIAL);
   }, [id]);
 
   const visibleListRows = listRows.slice(0, visibleRanked);
   const visibleNotTraded = notTraded.slice(0, visibleEnrolled);
+  const visibleBreachedRows = breachedRows.slice(0, visibleBreached);
   const totalRanked = data?.totalRanked ?? ranked.length;
+  const totalBreached = data?.totalBreached ?? breachedRows.length;
+  const hiddenLocalBreached = Math.max(0, breachedRows.length - visibleBreachedRows.length);
+  const hiddenServerBreached = Math.max(0, totalBreached - breachedRows.length);
+  const hasMoreBreached = hiddenLocalBreached > 0 || hiddenServerBreached > 0;
   const hiddenLocalRanked = Math.max(0, listRows.length - visibleListRows.length);
   const hiddenServerRanked = Math.max(0, totalRanked - ranked.length);
   const hasMoreRanked = hiddenLocalRanked > 0 || hiddenServerRanked > 0;
@@ -763,21 +777,59 @@ export default function CompetitionPublicLeaderboard() {
                     )}
                   </section>
 
-                  {breachedRows.length > 0 && (
+                  {visibleBreachedRows.length > 0 && (
                     <section className="lb-panel lb-panel--danger">
                       <div className="lb-panel__head">
                         <div>
                           <div className="lb-panel__title text-[#fca5a5]">{t('leaderboard.breachedSectionTitle')}</div>
                           <div className="lb-panel__sub">{t('leaderboard.breachedSectionHint')}</div>
                         </div>
-                        <span className="num text-[11px] text-[#6f6f7a]">{breachedRows.length}</span>
+                        <span className="num text-[11px] text-[#6f6f7a]">{totalBreached}</span>
                       </div>
                       <div className="lb-table">
                         <RankHeader />
-                        {breachedRows.map((row) => (
+                        {visibleBreachedRows.map((row) => (
                           <RankRow key={row.userId} row={row} isMe={row.userId === currentUserId} />
                         ))}
                       </div>
+                      {hasMoreBreached && (
+                        <button
+                          type="button"
+                          className="lb-more"
+                          onClick={async () => {
+                            if (hiddenLocalBreached > 0) {
+                              setVisibleBreached((count) => count + LIST_STEP);
+                              return;
+                            }
+                            if (!id) return;
+                            try {
+                              const params = new URLSearchParams({
+                                section: 'breached',
+                                limit: String(LIST_STEP),
+                                offset: String(breachedRows.length),
+                              });
+                              const response = await fetch(`/api/competition/leaderboard/${id}?${params}`);
+                              const payload = await response.json() as LeaderboardResponse;
+                              if (!response.ok || !Array.isArray(payload.leaderboard)) return;
+                              setData((current) => {
+                                if (!current) return payload;
+                                const seen = new Set(current.leaderboard.map((row) => row.userId));
+                                const extras = payload.leaderboard.filter((row) => !seen.has(row.userId));
+                                return {
+                                  ...current,
+                                  totalBreached: payload.totalBreached ?? current.totalBreached,
+                                  leaderboard: [...current.leaderboard, ...extras],
+                                };
+                              });
+                              setVisibleBreached((count) => count + LIST_STEP);
+                            } catch {
+                              // keep the compact breached list
+                            }
+                          }}
+                        >
+                          {t('leaderboard.loadMore')} · {hiddenLocalBreached + hiddenServerBreached}
+                        </button>
+                      )}
                     </section>
                   )}
 
