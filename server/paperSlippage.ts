@@ -6,7 +6,7 @@ export interface PaperSlippageQuote {
   requestedPrice: number;
   executionPrice: number;
   slippageBps: number;
-  source: 'legacy' | 'model' | 'itick-l5';
+  source: 'legacy' | 'model' | 'itick-l5' | 'binance-depth';
   fills: PaperFillDetail[];
 }
 
@@ -24,8 +24,9 @@ export interface PaperOrderBookLevel {
 export interface PaperOrderBook {
   asks: PaperOrderBookLevel[];
   bids: PaperOrderBookLevel[];
-  /** Timestamp du snapshot iTick utilisé par le moteur (optionnel en tests). */
+  /** Timestamp du snapshot utilisé par le moteur (optionnel en tests). */
   ts?: number;
+  source?: 'itick-l5' | 'binance-depth';
 }
 
 export interface PaperLimitFillQuote {
@@ -150,7 +151,7 @@ export function applyPaperSlippage(
       requestedPrice,
       executionPrice,
       slippageBps: Math.abs(executionPrice / requestedPrice - 1) * 10_000,
-      source: 'itick-l5',
+      source: orderBook?.source || 'itick-l5',
       fills,
     };
   }

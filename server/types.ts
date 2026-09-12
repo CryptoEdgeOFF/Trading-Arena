@@ -109,7 +109,7 @@ export interface Trade {
   /** Impact en basis points ; négatif lorsqu'un limit bénéficie d'une amélioration. */
   slippageBps?: number;
   /** Origine du calcul : formule seule ou carnet iTick L5 + extrapolation. */
-  slippageSource?: 'legacy' | 'model' | 'itick-l5';
+  slippageSource?: 'legacy' | 'model' | 'itick-l5' | 'binance-depth';
   /** Niveaux de carnet réellement parcourus et éventuelle portion estimée. */
   fillDetails?: Array<{
     price: number;

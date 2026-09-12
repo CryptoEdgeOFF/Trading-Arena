@@ -18,6 +18,7 @@ import {
   type PaperOrderBook,
   type PaperExecutionModel,
 } from './paperSlippage.js';
+import { getBinanceOrderBook, startBinanceOrderBooks } from './binanceOrderBook.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -215,7 +216,12 @@ function getItickOrderBook(pair: string): PaperOrderBook | undefined {
     asks: depth.asks.map((level) => ({ price: level.price, volume: level.volume })),
     bids: depth.bids.map((level) => ({ price: level.price, volume: level.volume })),
     ts: depth.ts,
+    source: 'itick-l5',
   };
+}
+
+function getLiveOrderBook(pair: string): PaperOrderBook | undefined {
+  return getBinanceOrderBook(pair) || getItickOrderBook(pair);
 }
 
 const pairToDefinition = new Map(PAPER_PAIRS.map((item) => [item.pair, item]));
@@ -464,7 +470,7 @@ export class PaperTradingEngine {
   constructor(
     onTick: () => void,
     onMarketPairsUpdated?: (pairs: string[]) => void,
-    orderBookProvider: (pair: string) => PaperOrderBook | undefined = getItickOrderBook,
+    orderBookProvider: (pair: string) => PaperOrderBook | undefined = getLiveOrderBook,
   ) {
     this.onTick = onTick;
     this.onMarketPairsUpdated = onMarketPairsUpdated ?? null;
@@ -485,6 +491,7 @@ export class PaperTradingEngine {
     }
     this.startMarketFeed();
     this.startMarketFeedFallback();
+    startBinanceOrderBooks(CRYPTO_LIVE_PAIRS);
     // Bybit en FAILOVER : démarre la WS, mais le flush n'écrit pas dans
     // `this.market` tant que Binance pousse normalement (cf.
     // `flushBybitPending` + `BYBIT_TAKEOVER_MS`). Garde le chart vivant
@@ -2335,7 +2342,7 @@ export class PaperTradingEngine {
       // Un limit amélioré porte un bps négatif (favorable), jamais un impact
       // positif au-delà du plafond/plancher demandé.
       slippageBps: signedSlippageBps,
-      slippageSource: 'itick-l5',
+      slippageSource: this.orderBookProvider(order.pair)?.source || 'itick-l5',
       fillDetails: fills,
     };
     this.appendTrade(player, trade);
