@@ -16,6 +16,7 @@ export function useWebSocket(
     watchList?: boolean;
     focusUserId?: string | null;
     windowLimit?: number | null;
+    ignoreDashboardState?: boolean;
     onOpen?: () => void;
     onClose?: () => void;
   } = {},
@@ -34,6 +35,7 @@ export function useWebSocket(
   const watchListRef = useRef(Boolean(options.watchList));
   const focusUserIdRef = useRef(options.focusUserId || '');
   const windowLimitRef = useRef(options.windowLimit || 0);
+  const ignoreDashboardStateRef = useRef(Boolean(options.ignoreDashboardState));
 
   useEffect(() => {
     onPaperUpdateRef.current = options.onPaperUpdate;
@@ -62,6 +64,10 @@ export function useWebSocket(
   useEffect(() => {
     onCloseRef.current = options.onClose;
   }, [options.onClose]);
+
+  useEffect(() => {
+    ignoreDashboardStateRef.current = Boolean(options.ignoreDashboardState);
+  }, [options.ignoreDashboardState]);
 
   const subscribeKey = (options.subscribePairs || []).join('|');
   useEffect(() => {
@@ -128,11 +134,9 @@ export function useWebSocket(
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'state:init' || msg.type === 'state') {
-            // Full snapshot delivered on connect / fallback for legacy clients.
-            updateState(msg.data);
+            if (!ignoreDashboardStateRef.current) updateState(msg.data);
           } else if (msg.type === 'state:patch') {
-            // Incremental diff: only changed players, market pairs and trades.
-            applyStatePatch(msg.data);
+            if (!ignoreDashboardStateRef.current) applyStatePatch(msg.data);
           } else if (msg.type === 'paper:init' || msg.type === 'paper:update') {
             onPaperUpdateRef.current?.(msg.data);
           } else if (msg.type === 'paper:patch') {

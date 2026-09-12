@@ -215,7 +215,7 @@ export function renderPublicSpectatePage(input: {
     async function refresh(){
       try{
         const [leaderboardResult,historyResult]=await Promise.all([
-          arenaSocketOpen?Promise.resolve(null):fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)).then(r=>r.json()),
+          arenaSocketOpen?Promise.resolve(null):fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)+'?limit=20').then(r=>r.json()),
           fetch('/api/competition/leaderboard/'+encodeURIComponent(competitionId)+'/pnl-history'+(historyCursor?'?after='+encodeURIComponent(historyCursor):'')).then(r=>r.json())
         ]);
         if(leaderboardResult?.competition){state=leaderboardResult;renderRows();renderStatus()}

@@ -1078,7 +1078,6 @@ async function syncCompetitionResultsForCompetition(competitionId: string): Prom
       for (const playerId of playerIds) {
         await syncCompetitionResultForPlayer(playerId, { persist: false });
       }
-      void competitionManager.persist();
       state.lastAt = Date.now();
     } finally {
       state.inflight = null;
@@ -2475,6 +2474,7 @@ app.get('/api/paper/meta', async (_req, res) => {
   const market = IS_SERVERLESS
     ? await manager.refreshPaperMarketSnapshot()
     : manager.getChartMarketSnapshot();
+  res.set('Cache-Control', 'public, max-age=5, s-maxage=10, stale-while-revalidate=20');
   res.json({
     enabled: manager.getPlatformMode() === 'paper',
     eventStarted: manager.isStarted(),
@@ -2752,10 +2752,8 @@ app.get('/api/paper/me', async (req, res) => {
   }
   const competitionStatus = competitionId ? competitionManager.getCompetitionStatus(competitionId) : null;
   const breached = competitionId ? competitionManager.isPaperPlayerBreached(competitionId, player.id) : false;
-  const { apiKey: _k, apiSecret: _s, ...publicPlayer } = player;
-
   res.json({
-    player: publicPlayer,
+    player: publicPaperPlayer(player),
     market: manager.getChartMarketSnapshot(),
     fees: manager.getPaperFeeRates(),
     pairs: manager.getSupportedPaperPairs(),
@@ -4184,6 +4182,12 @@ app.get('/api/competition/bootstrap', async (req, res) => {
     : null;
   const claimablePayouts = user ? competitionManager.countClaimablePayoutsForUser(user.id) : 0;
   const myTeam = user ? competitionManager.getUserTeam(user.id) : null;
+  res.set(
+    'Cache-Control',
+    user
+      ? 'private, max-age=10, stale-while-revalidate=30'
+      : 'public, max-age=15, s-maxage=30, stale-while-revalidate=60',
+  );
   res.json({
     user,
     publicCompetitions,
@@ -4492,12 +4496,24 @@ app.post('/api/competition/trade/session', async (req, res) => {
 function lastPaperTradeAt(paperPlayerId?: string | null): number | null {
   if (!paperPlayerId) return null;
   const player = manager.getPlayerById(paperPlayerId);
-  let last = 0;
-  for (const trade of player?.trades || []) {
-    const time = Number(trade.time) || 0;
-    if (time > last) last = time;
+  const trades = player?.trades;
+  if (trades?.length) {
+    const time = Number(trades[trades.length - 1]?.time) || 0;
+    if (time > 0) return time;
   }
-  return last || null;
+  return Number(player?.lastUpdate) || null;
+}
+
+const PAPER_ME_TRADE_WINDOW = 80;
+
+function publicPaperPlayer(player: { apiKey?: string; apiSecret?: string; trades?: unknown[] }) {
+  const { apiKey: _k, apiSecret: _s, ...rest } = player;
+  const trades = Array.isArray(rest.trades) ? rest.trades : [];
+  return {
+    ...rest,
+    trades: trades.length > PAPER_ME_TRADE_WINDOW ? trades.slice(-PAPER_ME_TRADE_WINDOW) : trades,
+    tradesTotal: trades.length,
+  };
 }
 
 async function decoratePublicLeaderboard(
@@ -4531,21 +4547,22 @@ async function decoratePublicLeaderboard(
 app.get('/api/competition/leaderboard/:id', async (req, res) => {
   try {
     const competitionId = String(req.params.id || '');
-    await syncCompetitionResultsForCompetition(competitionId);
+    if (IS_SERVERLESS) await syncCompetitionResultsForCompetition(competitionId);
+    else void maybeFinalizeEndedCompetitions();
     const data = competitionManager.getPublicLeaderboard(competitionId);
     if (data.competition.status === 'live') {
       maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
     }
     const decorated = await decoratePublicLeaderboard(competitionId, data);
-    const limit = Number(req.query.limit);
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 20;
     const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
     const focusUserId = String(req.query.userId || '').trim();
     const section = String(req.query.section || '').trim();
     const ranked = decorated.leaderboard.filter((row) => row.rank > 0);
     const breached = decorated.leaderboard.filter((row) => row.breached);
     const enrolled = decorated.leaderboard.filter((row) => row.rank === 0 && !row.breached);
-    const body = Number.isFinite(limit) && limit > 0
-      ? (() => {
+    const body = (() => {
         const pageSize = Math.min(100, Math.floor(limit));
         if (section === 'breached' || section === 'enrolled') {
           const source = section === 'breached' ? breached : enrolled;
@@ -4582,8 +4599,7 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
           truncated: ranked.length > offset + pageSize,
           windowLimit: pageSize,
         };
-      })()
-      : { ...decorated, totalRanked: ranked.length, totalBreached: breached.length, totalEnrolled: enrolled.length, truncated: false };
+      })();
     res.set(
       'Cache-Control',
       data.competition.status === 'live'

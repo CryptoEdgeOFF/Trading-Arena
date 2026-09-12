@@ -1,37 +1,42 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Outlet, Routes, Route, useLocation } from 'react-router-dom';
 import { MobileWebProvider, useIsMobileWeb } from './lib/mobileWeb';
 import MobileWebShell from './components/MobileWebShell';
-import ExchangeTerminal from './components/ExchangeTerminal';
-import ExchangeTerminalRedesign from './components/ExchangeTerminalRedesign';
-import DemoTradingPage from './components/DemoTradingPage';
-import PlayerTerminalReview from './components/PlayerTerminalReview';
-import Dashboard from './components/Dashboard';
-import LiveAccessGate from './components/LiveAccessGate';
-import CompetitionPlatform from './components/CompetitionPlatform';
-import CompetitionLivePage from './components/CompetitionLivePage';
-import CompetitionPublicLeaderboard from './components/CompetitionPublicLeaderboard';
-import TradeLiveBonus from './components/TradeLiveBonus';
-import CompetitionTradeJournal from './components/CompetitionTradeJournal';
-import CompetitionPlayerProfile from './components/CompetitionPlayerProfile';
-import CompetitionRankPage from './components/CompetitionRankPage';
-import CompetitionNewsPage from './components/CompetitionNewsPage';
-import CompetitionSettings from './components/CompetitionSettings';
-import CompetitionPayouts from './components/CompetitionPayouts';
-import CompetitionAdmin from './components/CompetitionAdmin';
-import PromotionsAdmin from './components/PromotionsAdmin';
-import NewsAdmin from './components/NewsAdmin';
-import PayoutsAdmin from './components/PayoutsAdmin';
-import PayoutRequestsAdmin from './components/PayoutRequestsAdmin';
-import EmailAdminPage from './components/EmailAdminPage';
-import AdminPanel from './components/AdminPanel';
-import ReplayViewer from './components/ReplayViewer';
-import ReplayLeaderboardPreview from './components/ReplayLeaderboardPreview';
-import FeedTest from './components/FeedTest';
 import LegalFooter from './components/LegalFooter';
 import { LegalPage } from './components/LegalPages';
 import { ADMIN_ENABLED, ADMIN_PATH, ADMIN_PATH_REGEX, TERMINAL_REVIEW_PATH } from './lib/adminPath';
 import { trackPageView } from './lib/analytics';
+
+const ExchangeTerminal = lazy(() => import('./components/ExchangeTerminal'));
+const ExchangeTerminalRedesign = lazy(() => import('./components/ExchangeTerminalRedesign'));
+const DemoTradingPage = lazy(() => import('./components/DemoTradingPage'));
+const PlayerTerminalReview = lazy(() => import('./components/PlayerTerminalReview'));
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const LiveAccessGate = lazy(() => import('./components/LiveAccessGate'));
+const CompetitionPlatform = lazy(() => import('./components/CompetitionPlatform'));
+const CompetitionLivePage = lazy(() => import('./components/CompetitionLivePage'));
+const CompetitionPublicLeaderboard = lazy(() => import('./components/CompetitionPublicLeaderboard'));
+const TradeLiveBonus = lazy(() => import('./components/TradeLiveBonus'));
+const CompetitionTradeJournal = lazy(() => import('./components/CompetitionTradeJournal'));
+const CompetitionPlayerProfile = lazy(() => import('./components/CompetitionPlayerProfile'));
+const CompetitionRankPage = lazy(() => import('./components/CompetitionRankPage'));
+const CompetitionNewsPage = lazy(() => import('./components/CompetitionNewsPage'));
+const CompetitionSettings = lazy(() => import('./components/CompetitionSettings'));
+const CompetitionPayouts = lazy(() => import('./components/CompetitionPayouts'));
+const CompetitionAdmin = lazy(() => import('./components/CompetitionAdmin'));
+const PromotionsAdmin = lazy(() => import('./components/PromotionsAdmin'));
+const NewsAdmin = lazy(() => import('./components/NewsAdmin'));
+const PayoutsAdmin = lazy(() => import('./components/PayoutsAdmin'));
+const PayoutRequestsAdmin = lazy(() => import('./components/PayoutRequestsAdmin'));
+const EmailAdminPage = lazy(() => import('./components/EmailAdminPage'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const ReplayViewer = lazy(() => import('./components/ReplayViewer'));
+const ReplayLeaderboardPreview = lazy(() => import('./components/ReplayLeaderboardPreview'));
+const FeedTest = lazy(() => import('./components/FeedTest'));
+
+function RouteFallback() {
+  return <div className="min-h-dvh bg-[#07060b]" aria-hidden />;
+}
 
 const ADMIN_SEG = ADMIN_PATH_REGEX ? `|${ADMIN_PATH_REGEX}` : '';
 const SCROLL_LOCK_PATTERN = new RegExp(`^/(trade|trade-v2|trade-demo|trade-review|trader|live-dashboard|btf-live-arena-2026|feed-test|replay-lb-preview${ADMIN_SEG})(/|$)`);
@@ -104,6 +109,7 @@ function AppRoutes() {
 
   return (
     <>
+      <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to="/compete" replace />} />
         {ADMIN_ENABLED && <Route path={`/${ADMIN_PATH}`} element={<AdminPanel />} />}
@@ -148,6 +154,7 @@ function AppRoutes() {
         <Route path="/delete-account" element={<LegalPage type="deleteAccount" />} />
         <Route path="*" element={<Navigate to="/compete" replace />} />
       </Routes>
+      </Suspense>
       {!hideFooter && <LegalFooter />}
     </>
   );
