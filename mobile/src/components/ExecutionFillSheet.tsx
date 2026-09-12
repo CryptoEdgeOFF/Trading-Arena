@@ -25,11 +25,13 @@ export default function ExecutionFillSheet({
 
   const visibleFills = (trade.fillDetails || []).filter((fill) => fill.source === 'book' && fill.size > 0)
   const includesAdditionalLiquidity = (trade.fillDetails || []).some((fill) => fill.source === 'estimated')
-  const source = trade.slippageSource === 'itick-l5'
-    ? 'Carnet iTick L5'
-    : trade.slippageSource === 'model'
-      ? 'Estimation de marché'
-      : 'Exécution standard'
+  const source = trade.slippageSource === 'binance-depth'
+    ? 'Carnet Binance'
+    : trade.slippageSource === 'itick-l5'
+      ? 'Carnet iTick L5'
+      : trade.slippageSource === 'model'
+        ? 'Estimation de marché'
+        : 'Exécution standard'
 
   return createPortal(
     <div className="execution-fill-layer">

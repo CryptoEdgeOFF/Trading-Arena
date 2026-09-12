@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   applyDepthLevels,
   isContiguousDepthEvent,
+  replaceBookLevels,
   shouldAcceptFirstDepthEvent,
 } from './binanceOrderBook.js';
 
@@ -22,4 +23,18 @@ test('qty 0 removes a level and positive qty upserts it', () => {
   applyDepthLevels(side, [['100', '0'], ['101', '2.5'], ['bad', 'x']]);
   assert.equal(side.has('100'), false);
   assert.equal(side.get('101'), 2.5);
+});
+
+test('partial depth events replace the whole top of book', () => {
+  const bids = new Map<string, number>([['99', 3], ['98', 1]]);
+  const asks = new Map<string, number>([['101', 2]]);
+  const counts = replaceBookLevels(bids, asks, {
+    b: [['100', '5'], ['99.5', '1']],
+    a: [['100.5', '4']],
+  });
+  assert.equal(counts.bidCount, 2);
+  assert.equal(counts.askCount, 1);
+  assert.equal(bids.has('98'), false);
+  assert.equal(bids.get('100'), 5);
+  assert.equal(asks.get('100.5'), 4);
 });

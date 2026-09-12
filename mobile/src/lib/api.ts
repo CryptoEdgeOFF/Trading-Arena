@@ -430,7 +430,7 @@ export type PaperTrade = {
   entryPrice?: number
   requestedPrice?: number
   slippageBps?: number
-  slippageSource?: 'legacy' | 'model' | 'itick-l5'
+  slippageSource?: 'legacy' | 'model' | 'itick-l5' | 'binance-depth'
   fillDetails?: Array<{
     price: number
     size: number
