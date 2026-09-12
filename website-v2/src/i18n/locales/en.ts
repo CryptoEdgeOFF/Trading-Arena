@@ -1085,7 +1085,7 @@ export const en = {
     you: 'You',
     ladderKicker: 'Divisions',
     ladderTitle: 'From Bronze to Legend',
-    ladderLead: 'Your arena results earn Arena Points. Your division reflects your real skill — not your trade volume. Your total never drops below 0.',
+    ladderLead: 'Your arena results earn or cost you Arena Points. Your division reflects your real skill — not your trade volume. Your total never drops below 0.',
     ladderIntro: 'Climb the ranking and collect the badges',
     worldKicker: 'BTF Rating · Permanent · Non-qualifying',
     worldTitle: 'Permanent skill ranking',
