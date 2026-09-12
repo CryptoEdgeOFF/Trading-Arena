@@ -3252,6 +3252,38 @@ export class CompetitionManager {
     return [...ids];
   }
 
+  /** Lève l'élimination drawdown d'un participant (redevient tradable). */
+  clearParticipantBreach(competitionId: string, userId: string): CompetitionEntry {
+    const competition = this.competitions.get(competitionId);
+    if (!competition) throw new Error('Competition introuvable');
+    const entry = competition.entries.find((item) => item.userId === userId);
+    if (!entry) throw new Error('Participant introuvable');
+    entry.breachedAt = null;
+    entry.dailyBaselineDayKey = null;
+    entry.dailyBaselineEquity = null;
+    entry.dailyDrawdownWarnedDayKey = null;
+    entry.updatedAt = Date.now();
+    this.competitions.set(competition.id, competition);
+    this.save();
+    return entry;
+  }
+
+  disableDailyDrawdown(competitionId: string): Competition {
+    return this.updateCompetition(competitionId, { dailyDrawdownPercent: null });
+  }
+
+  findLiveEntriesForUser(userId: string): Array<{ competition: Competition; entry: CompetitionEntry }> {
+    const out: Array<{ competition: Competition; entry: CompetitionEntry }> = [];
+    const now = Date.now();
+    for (const competition of this.competitions.values()) {
+      if (competition.finalizedAt) continue;
+      if (inferCompetitionStatus(competition, now) !== 'live') continue;
+      const entry = competition.entries.find((item) => item.userId === userId);
+      if (entry) out.push({ competition, entry });
+    }
+    return out;
+  }
+
   listUserCompetitions(userId: string): Array<{
     id: string;
     title: string;

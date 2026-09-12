@@ -42,6 +42,7 @@ interface AdminCompetitionEntry {
   tradesCount: number;
   updatedAt: number;
   sponsorAccountId?: string | null;
+  breachedAt?: number | null;
   user: {
     id: string;
     email: string;
@@ -674,6 +675,29 @@ export default function CompetitionAdmin() {
     }
   }
 
+  async function resetTrader(competition: AdminCompetition, entry: AdminCompetitionEntry) {
+    const name = entry.user?.name || entry.userId;
+    const ok = window.confirm(
+      `Réintégrer ${name} sur « ${competition.title} » ?\nCompte remis à 100 000 $, breach levé, règle de drawdown retirée.`,
+    );
+    if (!ok) return;
+    setError('');
+    setInfo('');
+    try {
+      const res = await adminFetch(`/api/admin/competitions/${competition.id}/reset-trader`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: entry.userId, balance: 100000, disableDrawdown: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Reset trader impossible');
+      setInfo(`${name} réintégré à 100 000 $`);
+      await fetchCompetitions();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
   async function deleteCompetition(competition: AdminCompetition) {
     const ok = window.confirm(`Supprimer définitivement l'arène « ${competition.title} » ?\nLes participants seront retirés.`);
     if (!ok) return;
@@ -1176,6 +1200,7 @@ export default function CompetitionAdmin() {
                                   <th className="px-3 py-2 font-medium text-right">Trades</th>
                                   {competition.sponsor && <th className="px-3 py-2 font-medium">Sponsor ID</th>}
                                   <th className="px-3 py-2 font-medium">Inscrit</th>
+                                  <th className="px-3 py-2 font-medium"></th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1184,7 +1209,14 @@ export default function CompetitionAdmin() {
                                   .map((entry, idx) => (
                                     <tr key={entry.userId} className="border-t border-slate-800/60">
                                       <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
-                                      <td className="px-3 py-2 font-medium text-white">{entry.user?.name || '—'}</td>
+                                      <td className="px-3 py-2 font-medium text-white">
+                                        {entry.user?.name || '—'}
+                                        {entry.breachedAt ? (
+                                          <span className="ml-2 rounded-full border border-rose-500/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-rose-300">
+                                            Breach
+                                          </span>
+                                        ) : null}
+                                      </td>
                                       <td className="px-3 py-2 text-slate-400">{entry.user?.email || '—'}</td>
                                       <td className={`px-3 py-2 text-right ${entry.pnlPercent > 0 ? 'text-emerald-300' : entry.pnlPercent < 0 ? 'text-rose-300' : 'text-slate-300'}`}>
                                         {formatUsd(entry.pnlPercent)}%
@@ -1197,6 +1229,15 @@ export default function CompetitionAdmin() {
                                         <td className="px-3 py-2 font-mono text-xs text-amber-200">{entry.sponsorAccountId || '—'}</td>
                                       )}
                                       <td className="px-3 py-2 text-slate-400">{formatDate(entry.joinedAt)}</td>
+                                      <td className="px-3 py-2 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() => resetTrader(competition, entry)}
+                                          className="rounded-lg border border-amber-500/40 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-200 hover:border-amber-400 hover:text-amber-100"
+                                        >
+                                          100k + unbreach
+                                        </button>
+                                      </td>
                                     </tr>
                                   ))}
                               </tbody>

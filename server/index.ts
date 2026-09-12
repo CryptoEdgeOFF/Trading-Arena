@@ -2996,13 +2996,17 @@ async function ensureMobileStagingTradingTest(userId?: string, options?: { persi
         startAt: now - 5 * 60_000,
         endAt: now + 30 * 24 * 60 * 60_000,
         registrationEndsAt: now - 5 * 60_000,
-        dailyDrawdownPercent: 10,
+        dailyDrawdownPercent: null,
         isPublic: true,
       }),
       status: 'live',
       participants: 0,
       entriesDetailed: [],
     };
+    changed = true;
+  }
+  if ((competition.dailyDrawdownPercent ?? 0) > 0) {
+    competitionManager.disableDailyDrawdown(competition.id);
     changed = true;
   }
   competitionManager.markCompetitionNotified(competition.id, 'newArena');
@@ -3031,6 +3035,73 @@ async function ensureMobileStagingTradingTest(userId?: string, options?: { persi
   return competition.id;
 }
 
+const STAGING_TEST_RESET_BALANCE = 100_000;
+
+async function resetTraderOnLiveArenas(userId: string, balance = STAGING_TEST_RESET_BALANCE): Promise<Array<{
+  competitionId: string;
+  title: string;
+  paperPlayerId: string | null;
+  clearedBreach: boolean;
+  resetBalance: boolean;
+  disabledDrawdown: boolean;
+}>> {
+  const report: Array<{
+    competitionId: string;
+    title: string;
+    paperPlayerId: string | null;
+    clearedBreach: boolean;
+    resetBalance: boolean;
+    disabledDrawdown: boolean;
+  }> = [];
+  const live = competitionManager.findLiveEntriesForUser(userId);
+  for (const { competition, entry } of live) {
+    const disabledDrawdown = (competition.dailyDrawdownPercent ?? 0) > 0;
+    if (disabledDrawdown) {
+      competitionManager.disableDailyDrawdown(competition.id);
+    }
+    const clearedBreach = Boolean(entry.breachedAt);
+    if (clearedBreach) {
+      competitionManager.clearParticipantBreach(competition.id, userId);
+    }
+    let resetBalance = false;
+    if (entry.paperPlayerId && clearedBreach) {
+      const player = await manager.resetCompetitionPaperAccount(entry.paperPlayerId, balance);
+      if (player) {
+        resetBalance = true;
+        await syncCompetitionResultForPlayer(player.id);
+      }
+    }
+    report.push({
+      competitionId: competition.id,
+      title: competition.title,
+      paperPlayerId: entry.paperPlayerId || null,
+      clearedBreach,
+      resetBalance,
+      disabledDrawdown,
+    });
+  }
+  return report;
+}
+
+async function repairStagingTestTraderAccounts(): Promise<void> {
+  if (!MOBILE_STAGING_TEST_MODE) return;
+  const testers = new Map<string, { id: string }>();
+  for (const query of ['artemtest', 'artem test', CompetitionManager.TEST_ACCOUNT_USERNAME]) {
+    for (const user of competitionManager.searchUsers(query, 50)) {
+      testers.set(user.id, user);
+    }
+  }
+  let changed = false;
+  for (const user of testers.values()) {
+    const report = await resetTraderOnLiveArenas(user.id, STAGING_TEST_RESET_BALANCE);
+    if (report.some((item) => item.clearedBreach || item.resetBalance || item.disabledDrawdown)) {
+      changed = true;
+      console.log(`[staging] reset test trader ${user.id}:`, report);
+    }
+  }
+  if (changed) await competitionManager.persist();
+}
+
 app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 1000, max: 10, key: 'test-login' }), async (req, res) => {
   if (!ALLOW_TEST_LOGIN) {
     res.status(404).json({ error: 'Indisponible' });
@@ -3041,6 +3112,10 @@ app.post('/api/competition/auth/test-login', rateLimit({ windowMs: 10 * 60 * 100
     await refreshCompetitionStoreIfServerless();
     const result = await competitionManager.loginTestAccount(String(username || ''));
     const testCompetitionId = await ensureMobileStagingTradingTest(result.user.id);
+    if (MOBILE_STAGING_TEST_MODE) {
+      await resetTraderOnLiveArenas(result.user.id, STAGING_TEST_RESET_BALANCE);
+      await competitionManager.persist();
+    }
     res.json({ ...result, testCompetitionId });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Connexion test impossible' });
@@ -5275,6 +5350,52 @@ app.patch('/api/admin/competitions/:id', requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/admin/competitions/:id/reset-trader', requireAdmin, async (req, res) => {
+  const competitionId = String(req.params.id || '').trim();
+  const userId = String(req.body?.userId || '').trim();
+  const name = String(req.body?.name || '').trim();
+  const balanceRaw = Number(req.body?.balance);
+  const balance = Number.isFinite(balanceRaw) && balanceRaw > 0 ? Math.floor(balanceRaw) : STAGING_TEST_RESET_BALANCE;
+  const disableDrawdown = req.body?.disableDrawdown !== false;
+  try {
+    const user = userId
+      ? competitionManager.getUserById(userId)
+      : competitionManager.findUserByDisplayName(name);
+    if (!user) {
+      res.status(404).json({ error: `Joueur introuvable : ${userId || name}` });
+      return;
+    }
+    const disabledDrawdown = disableDrawdown
+      && (competitionManager.listAdminCompetitions().find((item) => item.id === competitionId)?.dailyDrawdownPercent ?? 0) > 0;
+    if (disabledDrawdown) {
+      competitionManager.disableDailyDrawdown(competitionId);
+    }
+    const { entry } = competitionManager.getCompetitionForUser(competitionId, user.id);
+    const clearedBreach = Boolean(entry.breachedAt);
+    if (clearedBreach) {
+      competitionManager.clearParticipantBreach(competitionId, user.id);
+    }
+    let resetBalance = false;
+    if (entry.paperPlayerId) {
+      const player = await manager.resetCompetitionPaperAccount(entry.paperPlayerId, balance);
+      resetBalance = Boolean(player);
+      if (player) await syncCompetitionResultForPlayer(player.id);
+    }
+    await competitionManager.persist();
+    res.json({
+      ok: true,
+      user: { id: user.id, name: user.name },
+      competitionId,
+      balance,
+      clearedBreach,
+      resetBalance,
+      disabledDrawdown,
+    });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Reset trader impossible' });
+  }
+});
+
 app.delete('/api/admin/competitions/:id/participants', requireAdmin, async (req, res) => {
   try {
     const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds.map(String) : [];
@@ -5540,6 +5661,7 @@ const serverReady = Promise.all([
         await ensureMobileStagingTradingTest(tester.id);
       }
     }
+    await repairStagingTestTraderAccounts();
   }
 });
 

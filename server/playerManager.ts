@@ -1615,6 +1615,48 @@ export class PlayerManager {
     this.broadcastState();
   }
 
+  /** Remet un compte paper d'arène à une balance propre (plus de positions / PnL). */
+  async resetCompetitionPaperAccount(playerId: string, balance: number): Promise<Player | null> {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+    const nextBalance = Math.floor(balance);
+    if (!Number.isFinite(nextBalance) || nextBalance <= 0) {
+      throw new Error('Balance de reset invalide');
+    }
+
+    await this.ensureCompetitionPaperRuntime(player);
+    if ((player.openPositions?.length ?? 0) > 0 || (player.openOrders?.length ?? 0) > 0) {
+      await this.paperEngine.forceFlattenPlayer(player, 'drawdown');
+    }
+    this.liveEquityCompetitionPlayerIds.delete(player.id);
+
+    player.initialBalance = nextBalance;
+    player.currentBalance = nextBalance;
+    player.availableMargin = nextBalance;
+    player.usedMargin = 0;
+    player.feesPaid = 0;
+    player.pnl = 0;
+    player.pnlPercent = 0;
+    player.pnlAdjustment = 0;
+    player.realizedPnlArchived = 0;
+    player.tradeCount = 0;
+    player.trades = [];
+    player.openPositions = [];
+    player.openOrders = [];
+    player.winStreak = 0;
+    player.longestPositionMinutes = 0;
+    player.biggestTradePnl = 0;
+    player.bestTradePercent = 0;
+    player.active = true;
+    player.connected = true;
+    player.lastUpdate = Date.now();
+
+    this.paperEngine.recalculateEquity(player);
+    await this.persistPlayer(player.id);
+    this.broadcastState();
+    return player;
+  }
+
   updatePaperPositionRisk(
     playerId: string,
     pair: string,
