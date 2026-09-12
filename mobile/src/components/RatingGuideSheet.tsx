@@ -20,8 +20,8 @@ const SCORING: Array<{ key: string; points: string; positive: boolean }> = [
   { key: 'top10', points: '+45', positive: true },
   { key: 'top25', points: '+25', positive: true },
   { key: 'top50', points: '+10', positive: true },
-  { key: 'bottomHalf', points: '−10', positive: false },
-  { key: 'breached', points: '−25', positive: false },
+  { key: 'bottomHalf', points: '0', positive: true },
+  { key: 'breached', points: '0', positive: true },
 ]
 
 function rangeLabel(id: string, locale: string): string {

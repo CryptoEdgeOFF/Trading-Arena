@@ -584,11 +584,11 @@ export default function CompetitionRankPage() {
           <dl className={`grid grid-cols-2 gap-x-8 gap-y-1 ${isMobileWeb ? 'text-[13px]' : 'text-sm'}`}>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-[#d4d4d8]">⬇ {t('rating.rulesBottom')}</dt>
-              <dd className="font-mono font-semibold text-[#fca5a5]">−10</dd>
+              <dd className="font-mono font-semibold text-[#a1a1aa]">0</dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-[#d4d4d8]">💀 {t('rating.rulesEliminated')}</dt>
-              <dd className="font-mono font-semibold text-[#f87171]">−25</dd>
+              <dd className="font-mono font-semibold text-[#a1a1aa]">0</dd>
             </div>
           </dl>
         </section>
