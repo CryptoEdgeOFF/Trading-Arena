@@ -103,6 +103,7 @@ interface LeaderboardResponse {
   leaderboard: LeaderboardRow[];
   totalRanked?: number;
   totalBreached?: number;
+  totalEnrolled?: number;
   truncated?: boolean;
 }
 
@@ -288,12 +289,13 @@ function ArenaHeroBanner({
 const LIST_INITIAL = 20;
 const LIST_STEP = 20;
 const BREACHED_INITIAL = 5;
+const ENROLLED_INITIAL = 5;
 
 export default function CompetitionPublicLeaderboard() {
   const { t } = useTranslation();
   const { id } = useParams();
   const [visibleRanked, setVisibleRanked] = useState(LIST_INITIAL);
-  const [visibleEnrolled, setVisibleEnrolled] = useState(LIST_INITIAL);
+  const [visibleEnrolled, setVisibleEnrolled] = useState(ENROLLED_INITIAL);
   const [visibleBreached, setVisibleBreached] = useState(BREACHED_INITIAL);
   const [rankedOffset, setRankedOffset] = useState(LIST_INITIAL);
   const [data, setData] = useState<LeaderboardResponse | null>(null);
@@ -334,6 +336,7 @@ export default function CompetitionPublicLeaderboard() {
         leaderboard: nextRows.sort((a: LeaderboardRow, b: LeaderboardRow) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
         totalRanked: payload.totalRanked ?? current?.totalRanked ?? nextRows.length,
         totalBreached: payload.totalBreached ?? current?.totalBreached,
+        totalEnrolled: payload.totalEnrolled ?? current?.totalEnrolled,
       } as LeaderboardResponse;
     });
     setError('');
@@ -374,6 +377,7 @@ export default function CompetitionPublicLeaderboard() {
         leaderboard: [...rows.values()].sort((a, b) => a.rank - b.rank || b.pnlPercent - a.pnlPercent),
         totalRanked: payload.totalRanked ?? current.totalRanked,
         totalBreached: payload.totalBreached ?? current.totalBreached,
+        totalEnrolled: payload.totalEnrolled ?? current.totalEnrolled,
       };
     });
   }, []);
@@ -558,7 +562,7 @@ export default function CompetitionPublicLeaderboard() {
 
   useEffect(() => {
     setVisibleRanked(LIST_INITIAL);
-    setVisibleEnrolled(LIST_INITIAL);
+    setVisibleEnrolled(ENROLLED_INITIAL);
     setVisibleBreached(BREACHED_INITIAL);
     setRankedOffset(LIST_INITIAL);
   }, [id]);
@@ -574,7 +578,10 @@ export default function CompetitionPublicLeaderboard() {
   const hiddenLocalRanked = Math.max(0, listRows.length - visibleListRows.length);
   const hiddenServerRanked = Math.max(0, totalRanked - ranked.length);
   const hasMoreRanked = hiddenLocalRanked > 0 || hiddenServerRanked > 0;
-  const hasMoreEnrolled = visibleNotTraded.length < notTraded.length;
+  const totalEnrolled = data?.totalEnrolled ?? notTraded.length;
+  const hiddenLocalEnrolled = Math.max(0, notTraded.length - visibleNotTraded.length);
+  const hiddenServerEnrolled = Math.max(0, totalEnrolled - notTraded.length);
+  const hasMoreEnrolled = hiddenLocalEnrolled > 0 || hiddenServerEnrolled > 0;
 
   const targetCountdown = data ? (data.competition.status === 'live' ? data.competition.endAt : data.competition.startAt) : Date.now();
   const countdown = useCountdownParts(targetCountdown);
@@ -876,7 +883,7 @@ export default function CompetitionPublicLeaderboard() {
                           <div className="lb-panel__title">{t('leaderboard.enrolledNoTrade')}</div>
                           <div className="lb-panel__sub">{t('leaderboard.enrolledNoTradeHint')}</div>
                         </div>
-                        <span className="num text-[11px] text-[#6f6f7a]">{notTraded.length}</span>
+                        <span className="num text-[11px] text-[#6f6f7a]">{totalEnrolled}</span>
                       </div>
                       <div className="lb-table">
                         {visibleNotTraded.map((row) => (
@@ -887,9 +894,38 @@ export default function CompetitionPublicLeaderboard() {
                         <button
                           type="button"
                           className="lb-more"
-                          onClick={() => setVisibleEnrolled((count) => count + LIST_STEP)}
+                          onClick={async () => {
+                            if (hiddenLocalEnrolled > 0) {
+                              setVisibleEnrolled((count) => count + LIST_STEP);
+                              return;
+                            }
+                            if (!id) return;
+                            try {
+                              const params = new URLSearchParams({
+                                section: 'enrolled',
+                                limit: String(LIST_STEP),
+                                offset: String(notTraded.length),
+                              });
+                              const response = await fetch(`/api/competition/leaderboard/${id}?${params}`);
+                              const payload = await response.json() as LeaderboardResponse;
+                              if (!response.ok || !Array.isArray(payload.leaderboard)) return;
+                              setData((current) => {
+                                if (!current) return payload;
+                                const seen = new Set(current.leaderboard.map((row) => row.userId));
+                                const extras = payload.leaderboard.filter((row) => !seen.has(row.userId));
+                                return {
+                                  ...current,
+                                  totalEnrolled: payload.totalEnrolled ?? current.totalEnrolled,
+                                  leaderboard: [...current.leaderboard, ...extras],
+                                };
+                              });
+                              setVisibleEnrolled((count) => count + LIST_STEP);
+                            } catch {
+                              // keep the compact enrolled list
+                            }
+                          }}
                         >
-                          {t('leaderboard.loadMore')} · {notTraded.length - visibleNotTraded.length}
+                          {t('leaderboard.loadMore')} · {hiddenLocalEnrolled + hiddenServerEnrolled}
                         </button>
                       )}
                     </section>
