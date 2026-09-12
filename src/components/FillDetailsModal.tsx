@@ -40,8 +40,8 @@ export default function FillDetailsModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#100b17] shadow-2xl shadow-black/60">
-        <header className="flex items-start justify-between border-b border-white/10 px-5 py-4">
+      <section className="flex max-h-[min(72dvh,560px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#100b17] shadow-2xl shadow-black/60">
+        <header className="flex shrink-0 items-start justify-between border-b border-white/10 px-5 py-4">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#a78bfa]">
               {fr ? 'Ordre exécuté' : 'Order filled'}
@@ -59,7 +59,7 @@ export default function FillDetailsModal({
           </button>
         </header>
 
-        <div className="space-y-4 p-5">
+        <div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-hidden p-5">
           <div className="grid grid-cols-2 gap-2">
             <Metric
               label={fr ? 'Prix demandé' : 'Requested price'}
@@ -88,11 +88,11 @@ export default function FillDetailsModal({
           </div>
 
           {bookFills.length > 0 && (
-            <div>
+            <div className="min-h-0 min-w-0">
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#777181]">
                 {fr ? 'Niveaux visibles exécutés' : 'Visible filled levels'}
               </div>
-              <div className="overflow-hidden rounded-xl border border-white/10">
+              <div className="max-h-[220px] overflow-y-auto overscroll-contain rounded-xl border border-white/10">
                 {bookFills.map((fill, index) => (
                   <div
                     key={`${fill.price}-${index}`}
