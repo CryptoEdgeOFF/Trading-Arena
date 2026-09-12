@@ -309,6 +309,24 @@ function validateRiskLevels(
   }
 }
 
+/**
+ * SL/TP : le graphique trace le mark. Déclencher sur le bid/ask synthétique
+ * faisait partir un SL long alors que le mark (donc la bougie) n'avait pas
+ * encore touché la ligne.
+ */
+export function isRiskLevelTriggered(
+  side: 'long' | 'short',
+  kind: 'sl' | 'tp',
+  level: number,
+  markPrice: number,
+): boolean {
+  if (!Number.isFinite(level) || level <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
+    return false;
+  }
+  if (side === 'long') return kind === 'sl' ? markPrice <= level : markPrice >= level;
+  return kind === 'sl' ? markPrice >= level : markPrice <= level;
+}
+
 /** Ordre limite passif : se déclenche quand le mark atteint le prix limite (pas d'exécution market immédiate). */
 function isRestingLimitTriggered(
   side: 'long' | 'short',
@@ -2060,17 +2078,15 @@ export class PaperTradingEngine {
         }
 
         let trigger: 'sl' | 'tp' | null = null;
-        if (position.side === 'long') {
-          if (position.stopLoss != null && ticker.bidPrice <= position.stopLoss) trigger = 'sl';
-          else if (position.takeProfit != null && ticker.bidPrice >= position.takeProfit) trigger = 'tp';
-        } else {
-          if (position.stopLoss != null && ticker.askPrice >= position.stopLoss) trigger = 'sl';
-          else if (position.takeProfit != null && ticker.askPrice <= position.takeProfit) trigger = 'tp';
+        if (position.stopLoss != null && isRiskLevelTriggered(position.side, 'sl', position.stopLoss, ticker.markPrice)) {
+          trigger = 'sl';
+        } else if (position.takeProfit != null && isRiskLevelTriggered(position.side, 'tp', position.takeProfit, ticker.markPrice)) {
+          trigger = 'tp';
         }
 
         if (!trigger) continue;
 
-        const exitPrice = position.side === 'long' ? ticker.bidPrice : ticker.askPrice;
+        const exitPrice = ticker.markPrice;
         const partialSize = trigger === 'tp' ? (position.takeProfitSize ?? null) : (position.stopLossSize ?? null);
 
         const reason: 'stop-loss' | 'take-profit' = trigger === 'tp' ? 'take-profit' : 'stop-loss';
