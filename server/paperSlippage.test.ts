@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyPaperSlippage, configuredPaperExecutionModel, estimatePaperSlippageBps, walkPaperLimitOrderBook } from './paperSlippage.js';
+import { applyPaperSlippage, configuredPaperExecutionModel, estimateBookOverflowBps, estimatePaperSlippageBps, walkPaperLimitOrderBook } from './paperSlippage.js';
 
 test('legacy execution never changes the requested price', () => {
   const quote = applyPaperSlippage('TRX/USD', 0.333, 4_000_000, 'buy', 'legacy');
@@ -120,6 +120,31 @@ test('binance-depth book keeps its source on the fill quote', () => {
   );
   assert.equal(quote.source, 'binance-depth');
   assert.equal(quote.executionPrice, 100.1);
+});
+
+test('TRX overflow past depth20 is milder than stacking the full model', () => {
+  const requested = 0.3395;
+  const levels = Array.from({ length: 20 }, (_, index) => ({
+    price: requested - index * 0.00001,
+    volume: 8_750,
+  }));
+  const size = 2_861_974;
+  const quote = applyPaperSlippage(
+    'TRX/USD',
+    requested,
+    size,
+    'sell',
+    'slippage-v1',
+    { bids: levels, asks: [], source: 'binance-depth' },
+  );
+
+  assert.equal(quote.source, 'binance-depth');
+  assert.ok(quote.fills.some((fill) => fill.source === 'estimated'));
+  assert.ok(quote.slippageBps > 4 && quote.slippageBps < 14);
+  assert.ok(
+    estimateBookOverflowBps('TRX/USD', 910_000, 60_000, 5.6)
+      < estimatePaperSlippageBps('TRX/USD', 910_000),
+  );
 });
 
 test('extrapolates adverse impact after exhausting iTick L5', () => {
