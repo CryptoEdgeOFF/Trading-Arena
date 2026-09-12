@@ -3403,15 +3403,18 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       return;
     }
 
+    let nextMarket: Record<string, MarketTicker> | null = null;
     setLiveMarket((prev) => {
       const { next, changed } = mergeTicks(prev);
-      if (changed && next) {
-        setLivePlayer((player) => (
-          player ? refreshPlayerPaperMetrics(player, next, meta.startingBalance) : player
-        ));
-      }
+      if (changed && next) nextMarket = next;
       return next ?? prev;
     });
+    if (nextMarket) {
+      const market = nextMarket;
+      setLivePlayer((player) => (
+        player ? refreshPlayerPaperMetrics(player, market, meta.startingBalance) : player
+      ));
+    }
   }, [demoMode, meta.startingBalance]);
 
   const applyArenaInit = useCallback((payload: any) => {
@@ -3464,6 +3467,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useWebSocket(true, {
     paperToken: demoMode ? null : (session?.token || null),
+    ignoreDashboardState: !liveMode,
     onPaperUpdate: applyPaperUpdate,
     onPaperPatch: applyPaperPatch,
     onMarketTick: applyMarketTick,
