@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -13,6 +13,14 @@ import {
 import { useIsMobileWeb } from '../lib/mobileWeb';
 import './ArenaChat.css';
 
+type ArenaChatReply = {
+  id: string;
+  userId: string;
+  name: string;
+  body: string;
+  imageUrl: string | null;
+};
+
 type ArenaChatMessage = {
   id: string;
   userId: string;
@@ -21,6 +29,7 @@ type ArenaChatMessage = {
   body: string;
   imageUrl: string | null;
   createdAt: number;
+  replyTo?: ArenaChatReply | null;
 };
 
 function mergeMessages(current: ArenaChatMessage[], incoming: ArenaChatMessage[]) {
@@ -33,6 +42,7 @@ function mergeMessages(current: ArenaChatMessage[], incoming: ArenaChatMessage[]
       message.id === current[index].id
       && message.body === current[index].body
       && message.imageUrl === current[index].imageUrl
+      && message.replyTo?.id === current[index].replyTo?.id
     ))
   ) {
     return current;
@@ -40,8 +50,21 @@ function mergeMessages(current: ArenaChatMessage[], incoming: ArenaChatMessage[]
   return next;
 }
 
+function replyPreview(message: Pick<ArenaChatReply, 'body' | 'imageUrl'>, photoLabel: string) {
+  return message.body || (message.imageUrl ? photoLabel : '');
+}
+
 function isNearBottom(el: HTMLElement) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+}
+
+function ReplyGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 17l-5-5 5-5" />
+      <path d="M4 12h11a5 5 0 0 1 5 5v1" />
+    </svg>
+  );
 }
 
 function lastSeenKey(competitionId: string, userId?: string | null) {
@@ -83,10 +106,15 @@ export default function ArenaChat({
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
   const [viewer, setViewer] = useState('');
+  const [replyTo, setReplyTo] = useState<ArenaChatMessage | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const primedSeenRef = useRef(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressOriginRef = useRef({ x: 0, y: 0 });
+  const suppressClickRef = useRef(false);
   const token = window.localStorage.getItem(COMPETE_SESSION_KEY);
   const user = readCachedCompeteUser() as CompeteSessionUser | null;
   const [lastSeen, setLastSeen] = useState<number | null>(() => readLastSeen(competitionId, user?.id));
@@ -107,6 +135,7 @@ export default function ArenaChat({
 
   useEffect(() => {
     primedSeenRef.current = false;
+    setReplyTo(null);
     setLastSeen(readLastSeen(competitionId, user?.id));
   }, [competitionId, user?.id]);
 
@@ -182,6 +211,48 @@ export default function ArenaChat({
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages, open]);
 
+  function startReply(message: ArenaChatMessage) {
+    if (!token || !user) {
+      navigate('/compete#signup');
+      return;
+    }
+    setReplyTo(message);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }
+
+  function cancelLongPress() {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function beginLongPress(event: ReactPointerEvent, message: ArenaChatMessage) {
+    if (!isMobileWeb) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    cancelLongPress();
+    longPressOriginRef.current = { x: event.clientX, y: event.clientY };
+    longPressTimerRef.current = window.setTimeout(() => {
+      suppressClickRef.current = true;
+      startReply(message);
+      longPressTimerRef.current = null;
+    }, 520);
+  }
+
+  function moveLongPress(event: ReactPointerEvent) {
+    const dx = event.clientX - longPressOriginRef.current.x;
+    const dy = event.clientY - longPressOriginRef.current.y;
+    if (Math.hypot(dx, dy) > 9) cancelLongPress();
+  }
+
+  function scrollToQuoted(id: string) {
+    const list = listRef.current;
+    const target = list?.querySelector(`#arena-chat-${id}`);
+    if (!list || !(target instanceof HTMLElement)) return;
+    const top = target.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+    list.scrollTo({ top: Math.max(0, top - 16), behavior: 'smooth' });
+  }
+
   function choosePhoto(file?: File | null) {
     if (!file?.type.startsWith('image/')) return;
     if (preview) URL.revokeObjectURL(preview);
@@ -224,13 +295,14 @@ export default function ArenaChat({
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ competitionId, body: text, imageUrl }),
+        body: JSON.stringify({ competitionId, body: text, imageUrl, replyToId: replyTo?.id }),
       });
       const payload = await response.json() as { message?: ArenaChatMessage; error?: string };
       if (!response.ok || !payload.message) throw new Error(payload.error || t('arenaChat.sendFailed'));
       stickToBottomRef.current = true;
       setMessages((current) => mergeMessages(current, [payload.message!]));
       setBody('');
+      setReplyTo(null);
       clearPhoto();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : t('arenaChat.sendFailed'));
@@ -250,7 +322,7 @@ export default function ArenaChat({
           {isMobileWeb ? '×' : '–'}
         </button>
       </header>
-      <div className="arena-chat-notice">{t('arenaChat.notice')}</div>
+      <div className="arena-chat-notice">{isMobileWeb ? t('arenaChat.noticeMobile') : t('arenaChat.notice')}</div>
 
       <section
         ref={listRef}
@@ -271,7 +343,18 @@ export default function ArenaChat({
         ) : messages.map((message) => {
           const mine = user?.id === message.userId;
           return (
-            <article key={message.id} className={mine ? 'is-mine' : ''}>
+            <article
+              key={message.id}
+              id={`arena-chat-${message.id}`}
+              className={mine ? 'is-mine' : ''}
+              onPointerDown={(event) => beginLongPress(event, message)}
+              onPointerMove={moveLongPress}
+              onPointerUp={cancelLongPress}
+              onPointerCancel={cancelLongPress}
+              onContextMenu={(event) => {
+                if (isMobileWeb) event.preventDefault();
+              }}
+            >
               <button type="button" onClick={() => navigate(`/compete/player/${message.userId}`)}>
                 {message.avatarUrl
                   ? <AvatarImage src={message.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" sizePx={32} />
@@ -282,12 +365,43 @@ export default function ArenaChat({
                   <strong>{message.name}</strong>
                   <time>{new Date(message.createdAt).toLocaleTimeString(i18n.resolvedLanguage === 'fr' ? 'fr-FR' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
                 </header>
+                {message.replyTo && (
+                  <button
+                    className="arena-chat-quote"
+                    type="button"
+                    onClick={() => scrollToQuoted(message.replyTo!.id)}
+                  >
+                    <strong>{t('arenaChat.replyTo', { name: message.replyTo.name })}</strong>
+                    <small>{replyPreview(message.replyTo, t('arenaChat.photo'))}</small>
+                  </button>
+                )}
                 {message.imageUrl && (
-                  <button className="arena-chat-photo" type="button" onClick={() => setViewer(resolveMediaUrl(message.imageUrl) || message.imageUrl || '')}>
+                  <button
+                    className="arena-chat-photo"
+                    type="button"
+                    onClick={() => {
+                      if (suppressClickRef.current) {
+                        suppressClickRef.current = false;
+                        return;
+                      }
+                      setViewer(resolveMediaUrl(message.imageUrl) || message.imageUrl || '');
+                    }}
+                  >
                     <img src={resolveMediaUrl(message.imageUrl)} alt={t('arenaChat.photo')} />
                   </button>
                 )}
                 {message.body && <p>{message.body}</p>}
+                {!isMobileWeb && (
+                  <button
+                    type="button"
+                    className="arena-chat-reply-btn"
+                    onClick={() => startReply(message)}
+                    aria-label={t('arenaChat.reply')}
+                    title={t('arenaChat.reply')}
+                  >
+                    <ReplyGlyph />
+                  </button>
+                )}
               </div>
             </article>
           );
@@ -300,7 +414,16 @@ export default function ArenaChat({
           {t('arenaChat.loginToWrite')}
         </button>
       ) : (
-        <form onSubmit={(event) => { event.preventDefault(); void send(); }}>
+        <form className={replyTo ? 'has-reply' : ''} onSubmit={(event) => { event.preventDefault(); void send(); }}>
+          {replyTo && (
+            <div className="arena-chat-replying">
+              <span>
+                <strong>{t('arenaChat.replyTo', { name: replyTo.name })}</strong>
+                <small>{replyPreview(replyTo, t('arenaChat.photo'))}</small>
+              </span>
+              <button type="button" onClick={() => setReplyTo(null)} aria-label={t('arenaChat.cancelReply')}>×</button>
+            </div>
+          )}
           {preview && (
             <div className="arena-chat-preview">
               <img src={preview} alt="" />
@@ -320,10 +443,11 @@ export default function ArenaChat({
               }}
             />
             <textarea
+              ref={textareaRef}
               rows={1}
               maxLength={600}
               value={body}
-              placeholder={t('arenaChat.placeholder')}
+              placeholder={replyTo ? t('arenaChat.replyTo', { name: replyTo.name }) : t('arenaChat.placeholder')}
               onChange={(event) => setBody(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
