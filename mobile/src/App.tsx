@@ -1648,6 +1648,7 @@ function LeaderboardScreen({
           setRows((current) => {
             const byUserId = new Map(current.map((row) => [row.userId, row]))
             for (const userId of message.data.removed || []) byUserId.delete(userId)
+            for (const userId of message.data.dropped || []) byUserId.delete(userId)
             for (const patch of message.data.upserts || []) {
               if (!patch?.userId) continue
               const previous = byUserId.get(patch.userId)

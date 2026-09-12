@@ -253,7 +253,9 @@ export default function CompetitionPublicLeaderboard() {
         return;
       }
       try {
-        const response = await fetch(`/api/competition/leaderboard/${id}`);
+        const params = new URLSearchParams({ limit: '20' });
+        if (currentUserId) params.set('userId', currentUserId);
+        const response = await fetch(`/api/competition/leaderboard/${id}?${params}`);
         const payload = await response.json();
         if (cancelled) return;
         if (!response.ok) throw new Error(payload.error || t('leaderboard.unavailable'));
@@ -279,7 +281,7 @@ export default function CompetitionPublicLeaderboard() {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [id, t]);
+  }, [id, t, currentUserId]);
 
   useEffect(() => {
     const token = window.localStorage.getItem(SESSION_KEY);

@@ -107,6 +107,7 @@ const WS_SKIP_CRITICAL_BYTES = Math.max(64 * 1024, Number(process.env.WS_MAX_BUF
 const WS_SKIP_NORMAL_BYTES = Math.max(16 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 4));
 const WS_SKIP_LOW_BYTES = Math.max(8 * 1024, Math.floor(WS_SKIP_CRITICAL_BYTES / 16));
 const ARENA_BROADCAST_MS = Math.max(1000, Number(process.env.ARENA_BROADCAST_MS) || 3000);
+const ARENA_LIVE_LIMIT = Math.max(10, Math.min(50, Number(process.env.ARENA_LIVE_LIMIT) || 20));
 
 type WsPriority = 'critical' | 'normal' | 'low';
 
@@ -497,6 +498,7 @@ const arenaSnapshots = new Map<string, Map<string, {
   avatarUrl: string | null;
 }>>();
 const arenaCompetitionSnapshots = new Map<string, string>();
+const arenaFocusUser = new Map<WebSocket, string>();
 
 // --- Admin auth (single shared code, configurable via env) ---
 // Aucun fallback en dur : si ADMIN_CODE n'est pas défini, l'accès admin est
@@ -1447,13 +1449,64 @@ type ArenaPatchEntry = {
   updatedAt?: number;
 };
 
-function buildArenaInit(competitionId: string) {
+function liveRankedEntries<T extends { rank: number; userId: string }>(leaderboard: T[]): T[] {
+  return leaderboard.filter((row) => row.rank > 0);
+}
+
+function arenaLiveWindow<T extends { rank: number; userId: string }>(
+  leaderboard: T[],
+  extraUserIds: string[] = [],
+  limit = ARENA_LIVE_LIMIT,
+): { rows: T[]; totalRanked: number; windowIds: Set<string> } {
+  const ranked = liveRankedEntries(leaderboard);
+  const rows = ranked.slice(0, limit);
+  const windowIds = new Set(rows.map((row) => row.userId));
+  for (const userId of extraUserIds) {
+    if (!userId || windowIds.has(userId)) continue;
+    const extra = leaderboard.find((row) => row.userId === userId);
+    if (!extra) continue;
+    rows.push(extra);
+    windowIds.add(userId);
+  }
+  return { rows, totalRanked: ranked.length, windowIds };
+}
+
+function toArenaPatchEntry(entry: ArenaLeaderboardEntry, previous?: {
+  rank: number;
+  pnlPercent: number;
+  pnlUsd: number;
+  tradesCount: number;
+  updatedAt: number;
+  avatarUrl: string | null;
+}): ArenaPatchEntry | null {
+  const nextPct = Math.round(entry.pnlPercent * 100) / 100;
+  const nextUsd = Math.round(entry.pnlUsd);
+  const rankChanged = !previous || previous.rank !== entry.rank;
+  const pnlChanged = !previous || previous.pnlPercent !== nextPct || previous.pnlUsd !== nextUsd;
+  const tradesChanged = !previous || previous.tradesCount !== entry.tradesCount;
+  const avatarChanged = !previous || (previous.avatarUrl ?? null) !== (entry.avatarUrl ?? null);
+  if (previous && !rankChanged && !pnlChanged && !tradesChanged && !avatarChanged) return null;
+  const diff: ArenaPatchEntry = { userId: entry.userId };
+  if (!previous) diff.name = entry.name;
+  if (avatarChanged) diff.avatarUrl = entry.avatarUrl ?? null;
+  if (rankChanged) diff.rank = entry.rank;
+  if (!previous || previous.pnlPercent !== nextPct) diff.pnlPercent = nextPct;
+  if (!previous || previous.pnlUsd !== nextUsd) diff.pnlUsd = nextUsd;
+  if (tradesChanged) diff.tradesCount = entry.tradesCount;
+  if (!previous || previous.updatedAt !== entry.updatedAt) diff.updatedAt = entry.updatedAt;
+  return diff;
+}
+
+function buildArenaInit(competitionId: string, extraUserIds: string[] = []) {
   const data = competitionManager.getLiveLeaderboard(competitionId);
   if (!data) return null;
+  const window = arenaLiveWindow(data.leaderboard as ArenaLeaderboardEntry[], extraUserIds);
   return {
     competitionId,
     competition: data.competition,
-    leaderboard: data.leaderboard as ArenaLeaderboardEntry[],
+    leaderboard: window.rows,
+    totalRanked: window.totalRanked,
+    windowLimit: ARENA_LIVE_LIMIT,
   };
 }
 
@@ -1465,37 +1518,29 @@ function computeArenaPatch(
   competition?: NonNullable<ReturnType<typeof competitionManager.getLiveLeaderboard>>['competition'];
   upserts: ArenaPatchEntry[];
   removed: string[];
+  dropped: string[];
+  totalRanked: number;
+  windowLimit: number;
+  windowIds: Set<string>;
 } | null {
   if (!data) return null;
+  const window = arenaLiveWindow(data.leaderboard as ArenaLeaderboardEntry[]);
   const previous = arenaSnapshots.get(competitionId) || new Map();
   const next = new Map<string, ArenaLeaderboardEntry>();
   const upserts: ArenaPatchEntry[] = [];
-  for (const entry of data.leaderboard) {
+  for (const entry of window.rows) {
     next.set(entry.userId, entry);
-    const prev = previous.get(entry.userId);
-    const nextPct = Math.round(entry.pnlPercent * 100) / 100;
-    const nextUsd = Math.round(entry.pnlUsd);
-    const rankChanged = !prev || prev.rank !== entry.rank;
-    const pnlChanged = !prev || prev.pnlPercent !== nextPct || prev.pnlUsd !== nextUsd;
-    const tradesChanged = !prev || prev.tradesCount !== entry.tradesCount;
-    const avatarChanged = !prev || (prev.avatarUrl ?? null) !== (entry.avatarUrl ?? null);
-    if (!prev || rankChanged || pnlChanged || tradesChanged || avatarChanged) {
-      const diff: ArenaPatchEntry = { userId: entry.userId };
-      if (!prev) diff.name = entry.name;
-      if (avatarChanged) diff.avatarUrl = entry.avatarUrl ?? null;
-      if (rankChanged) diff.rank = entry.rank;
-      if (!prev || prev.pnlPercent !== nextPct) diff.pnlPercent = nextPct;
-      if (!prev || prev.pnlUsd !== nextUsd) diff.pnlUsd = nextUsd;
-      if (tradesChanged) diff.tradesCount = entry.tradesCount;
-      if (!prev || prev.updatedAt !== entry.updatedAt) diff.updatedAt = entry.updatedAt;
-      upserts.push(diff);
-    }
+    const diff = toArenaPatchEntry(entry, previous.get(entry.userId));
+    if (diff) upserts.push(diff);
   }
+  const presentIds = new Set((data.leaderboard as ArenaLeaderboardEntry[]).map((row) => row.userId));
   const removed: string[] = [];
+  const dropped: string[] = [];
   for (const userId of previous.keys()) {
-    if (!next.has(userId)) removed.push(userId);
+    if (next.has(userId)) continue;
+    if (presentIds.has(userId)) dropped.push(userId);
+    else removed.push(userId);
   }
-  // Persist the new snapshot for the next diff computation.
   arenaSnapshots.set(
     competitionId,
     new Map(
@@ -1512,12 +1557,16 @@ function computeArenaPatch(
   const competitionSignature = JSON.stringify(data.competition);
   const competitionChanged = arenaCompetitionSnapshots.get(competitionId) !== competitionSignature;
   arenaCompetitionSnapshots.set(competitionId, competitionSignature);
-  if (upserts.length === 0 && removed.length === 0 && !competitionChanged) return null;
+  if (upserts.length === 0 && removed.length === 0 && dropped.length === 0 && !competitionChanged) return null;
   return {
     competitionId,
     ...(competitionChanged ? { competition: data.competition } : {}),
     upserts,
     removed,
+    dropped,
+    totalRanked: window.totalRanked,
+    windowLimit: ARENA_LIVE_LIMIT,
+    windowIds: window.windowIds,
   };
 }
 
@@ -1534,29 +1583,42 @@ function broadcastArenaPatches(): void {
     if (!data) continue;
     const patch = computeArenaPatch(competitionId, data);
     if (!patch) continue;
-    const msg = JSON.stringify({ type: 'arena:patch', data: patch });
+    const { windowIds, ...publicPatch } = patch;
+    const baseMsg = JSON.stringify({ type: 'arena:patch', data: publicPatch });
     sockets.forEach((ws) => {
-      sendWs(ws, msg, 'low');
+      const focus = arenaFocusUser.get(ws);
+      if (focus && !windowIds.has(focus)) {
+        const row = (data.leaderboard as ArenaLeaderboardEntry[]).find((entry) => entry.userId === focus);
+        const extra = row ? toArenaPatchEntry(row) : null;
+        if (extra) {
+          sendWs(ws, JSON.stringify({
+            type: 'arena:patch',
+            data: { ...publicPatch, upserts: [...publicPatch.upserts, extra] },
+          }), 'low');
+          return;
+        }
+      }
+      sendWs(ws, baseMsg, 'low');
     });
   }
 }
 
-function attachArenaClient(ws: WebSocket, competitionId: string): void {
+function attachArenaClient(ws: WebSocket, competitionId: string, extraUserId?: string | null): void {
   let bucket = arenaClients.get(competitionId);
   if (!bucket) {
     bucket = new Set();
     arenaClients.set(competitionId, bucket);
   }
   bucket.add(ws);
-  // Send full snapshot so the client can render the leaderboard immediately.
-  const init = buildArenaInit(competitionId);
+  if (extraUserId) arenaFocusUser.set(ws, extraUserId);
+  const init = buildArenaInit(competitionId, extraUserId ? [extraUserId] : []);
   if (init && ws.readyState === WebSocket.OPEN) {
     sendWs(ws, JSON.stringify({ type: 'arena:init', data: init }), 'low');
-    // Prime the diff baseline with the snapshot we just sent.
     const baseline = new Map<string, {
       rank: number; pnlPercent: number; pnlUsd: number; tradesCount: number; updatedAt: number; avatarUrl: string | null;
     }>();
-    for (const entry of init.leaderboard) {
+    for (const entry of init.leaderboard.slice(0, ARENA_LIVE_LIMIT)) {
+      if (entry.rank <= 0 || entry.rank > ARENA_LIVE_LIMIT) continue;
       baseline.set(entry.userId, {
         rank: entry.rank,
         pnlPercent: Math.round(entry.pnlPercent * 100) / 100,
@@ -1566,8 +1628,6 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
         avatarUrl: entry.avatarUrl ?? null,
       });
     }
-    // Only refresh the snapshot if we have nothing yet. Other concurrent
-    // shards may already keep their own up-to-date baseline.
     if (!arenaSnapshots.has(competitionId)) {
       arenaSnapshots.set(competitionId, baseline);
       arenaCompetitionSnapshots.set(competitionId, JSON.stringify(init.competition));
@@ -1575,7 +1635,36 @@ function attachArenaClient(ws: WebSocket, competitionId: string): void {
   }
 }
 
+function applyArenaFocus(ws: WebSocket, userId: unknown): void {
+  const next = String(userId || '').trim();
+  if (!next) return;
+  arenaFocusUser.set(ws, next);
+  for (const [competitionId, sockets] of arenaClients) {
+    if (!sockets.has(ws)) continue;
+    const data = competitionManager.getLiveLeaderboard(competitionId);
+    if (!data) return;
+    const window = arenaLiveWindow(data.leaderboard as ArenaLeaderboardEntry[]);
+    if (window.windowIds.has(next)) return;
+    const row = (data.leaderboard as ArenaLeaderboardEntry[]).find((entry) => entry.userId === next);
+    const extra = row ? toArenaPatchEntry(row) : null;
+    if (!extra) return;
+    sendWs(ws, JSON.stringify({
+      type: 'arena:patch',
+      data: {
+        competitionId,
+        upserts: [extra],
+        removed: [],
+        dropped: [],
+        totalRanked: window.totalRanked,
+        windowLimit: ARENA_LIVE_LIMIT,
+      },
+    }), 'low');
+    return;
+  }
+}
+
 function detachArenaClient(ws: WebSocket): void {
+  arenaFocusUser.delete(ws);
   for (const [competitionId, sockets] of arenaClients) {
     if (sockets.delete(ws) && sockets.size === 0) {
       arenaClients.delete(competitionId);
@@ -1620,7 +1709,12 @@ wss.on('connection', (ws, req) => {
       };
       paperClients.set(ws, sub);
       sendPaperUpdate(ws, sub);
-      if (info.competitionId && info.competitionId !== publicArenaId) attachArenaClient(ws, info.competitionId);
+      const focusUserId = competitionManager.getPushContextForPaperPlayer(info.playerId)?.userId || null;
+      if (info.competitionId && info.competitionId !== publicArenaId) {
+        attachArenaClient(ws, info.competitionId, focusUserId);
+      } else if (focusUserId) {
+        applyArenaFocus(ws, focusUserId);
+      }
     }).catch(() => undefined);
   }
 
@@ -1629,6 +1723,7 @@ wss.on('connection', (ws, req) => {
       const msg = JSON.parse(String(raw));
       if (msg?.type === 'market:subscribe') applyMarketSubscribe(ws, msg.pairs);
       if (msg?.type === 'market:watch-subscribe') applyMarketWatchSubscribe(ws, msg.enabled);
+      if (msg?.type === 'arena:focus') applyArenaFocus(ws, msg.userId);
     } catch {
       // ignore malformed client frames
     }
@@ -4237,13 +4332,43 @@ app.get('/api/competition/leaderboard/:id', async (req, res) => {
     if (data.competition.status === 'live') {
       maybeRecordPnlSample(competitionId, data.leaderboard, { startAt: data.competition.startAt });
     }
+    const decorated = await decoratePublicLeaderboard(competitionId, data);
+    const limit = Number(req.query.limit);
+    const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
+    const focusUserId = String(req.query.userId || '').trim();
+    const ranked = decorated.leaderboard.filter((row) => row.rank > 0);
+    const body = Number.isFinite(limit) && limit > 0
+      ? (() => {
+        const pageSize = Math.min(100, Math.floor(limit));
+        const page = ranked.slice(offset, offset + pageSize);
+        const ids = new Set(page.map((row) => row.userId));
+        const extra = focusUserId
+          ? decorated.leaderboard.find((row) => row.userId === focusUserId)
+          : undefined;
+        if (extra && !ids.has(extra.userId)) page.push(extra);
+        const side = offset === 0
+          ? decorated.leaderboard.filter((row) => row.breached || (row.rank === 0 && !row.breached)).slice(0, 40)
+          : [];
+        const rows = [...page];
+        for (const row of side) {
+          if (!rows.some((item) => item.userId === row.userId)) rows.push(row);
+        }
+        return {
+          ...decorated,
+          leaderboard: rows,
+          totalRanked: ranked.length,
+          truncated: ranked.length > offset + pageSize,
+          windowLimit: pageSize,
+        };
+      })()
+      : { ...decorated, totalRanked: ranked.length, truncated: false };
     res.set(
       'Cache-Control',
       data.competition.status === 'live'
         ? 'public, max-age=2, s-maxage=3, stale-while-revalidate=10'
         : 'public, max-age=30, s-maxage=120, stale-while-revalidate=600',
     );
-    res.json(await decoratePublicLeaderboard(competitionId, data));
+    res.json(body);
   } catch (error: any) {
     res.status(404).json({ error: error.message || 'Leaderboard introuvable' });
   }
