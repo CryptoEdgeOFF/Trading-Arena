@@ -11,6 +11,11 @@
 .terminal-head__metric { min-width: 0; display: grid; gap: 2px; }
 .terminal-head__metric small { color: #9a94a0; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .terminal-head__metric strong { color: #fff; font: 800 15px/1 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; }
+.terminal-head__metric.is-breach { min-width: 58px; }
+.terminal-head__metric.is-breach small { color: #fca5a5; }
+.terminal-head__metric.is-breach strong { color: #fca5a5; }
+.terminal-head__metric.is-breach.is-urgent { padding: 1px 4px; border-radius: 6px; background: rgba(244,63,110,.12); }
+.terminal-head__ddbar { display: block; height: 3px; margin-top: 2px; border-radius: 99px; background: #f87171; }
 .terminal-rank { min-width: 58px; min-height: 44px; padding: 4px 8px; display: grid; place-content: center; gap: 1px; border: 1px solid rgba(255,70,92,.35); border-radius: 10px; background: rgba(238,36,60,.12); color: inherit; }
 .terminal-rank small { color: #ff95a2; font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .terminal-rank strong { color: #fff; font: 800 18px/1 'Barlow Condensed', sans-serif; }
@@ -169,8 +174,11 @@
 .position-size-slider > div:first-child span { color: #8a848e; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .position-size-slider > div:first-child strong { color: #fff; font: 800 17px 'Barlow Condensed', sans-serif; }
 .position-size-slider > input { width: 100%; height: 24px; margin: 7px 0; accent-color: var(--red-bright); }
-.position-size-slider > div:last-child { color: #77717b; font-size: 7px; font-weight: 700; }
-.position-size-slider > div:last-child span:last-child { color: #ff8292; }
+.position-size-slider > div:nth-child(3) { color: #77717b; font-size: 7px; font-weight: 700; }
+.position-size-slider > div:nth-child(3) span:last-child { color: #ff8292; }
+.leverage-fixed { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid #3a3148; border-radius: 8px; background: #1c1828; }
+.leverage-fixed span { color: #c8c0d8; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.leverage-fixed strong { color: #fff; font: 800 18px 'Barlow Condensed', sans-serif; line-height: 1; }
 .size-presets { margin-top: 11px; display: flex; align-items: center; gap: 6px; }
 .size-presets span { margin-right: auto; color: #716c75; font-size: 7px; font-weight: 700; text-transform: uppercase; }
 .size-presets button { min-width: 40px; height: 28px; border: 1px solid var(--line); border-radius: 5px; background: #151317; color: #b8b3bb; font-size: 8px; font-weight: 700; }

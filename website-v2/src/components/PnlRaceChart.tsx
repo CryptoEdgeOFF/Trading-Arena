@@ -39,6 +39,23 @@ type Series = {
  * Moyenne par tranche de temps puis EMA : élimine le bruit des
  * échantillons ~10 s pour obtenir une courbe propre.
  */
+function trimLeadingIdleSamples(samples: PnlHistorySample[]): PnlHistorySample[] {
+  const next = [...samples];
+  while (next.length >= 2) {
+    const first = next[0];
+    const second = next[1];
+    const idle = first.rows.every((row) => Math.abs(row.pnlPercent) < 1e-6);
+    const gap = second.t - first.t;
+    const span = next[next.length - 1].t - first.t;
+    if (idle && gap > Math.max(20_000, span * 0.08)) {
+      next.shift();
+      continue;
+    }
+    break;
+  }
+  return next;
+}
+
 function resample(list: Array<{ t: number; value: number }>, t0: number, timeSpan: number): Array<{ t: number; value: number }> {
   if (list.length <= 3) return list;
   const buckets: Array<{ sum: number; count: number; t: number }> = [];
@@ -87,13 +104,15 @@ function buildChart(
     .slice(0, MAX_SERIES);
   if (ranked.length === 0 || samples.length < 2) return null;
 
-  const t0 = samples[0].t;
-  const t1 = samples[samples.length - 1].t;
+  const visible = trimLeadingIdleSamples([...samples].sort((a, b) => a.t - b.t));
+  if (visible.length < 2) return null;
+  const t0 = visible[0].t;
+  const t1 = visible[visible.length - 1].t;
   const timeSpan = Math.max(1, t1 - t0);
 
   const values = new Map<string, Array<{ t: number; value: number }>>();
   for (const trader of ranked) values.set(trader.userId, []);
-  for (const sample of samples) {
+  for (const sample of visible) {
     for (const row of sample.rows) {
       values.get(row.userId)?.push({ t: sample.t, value: row.pnlPercent });
     }

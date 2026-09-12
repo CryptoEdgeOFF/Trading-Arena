@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import Seo from './Seo';
 import CompeteHeader from './CompeteHeader';
 import OptimizedImage from './OptimizedImage';
+import { resolveMediaUrl } from '../utils/imageUrl';
 
 type NewsArticle = {
   id: string;
@@ -103,11 +104,10 @@ export default function CompetitionNewsPage() {
                 ‹ {t('news.back')}
               </button>
               {article.coverUrl && (
-                <OptimizedImage
-                  src={article.coverUrl}
+                <img
+                  src={resolveMediaUrl(article.coverUrl) || article.coverUrl}
                   alt=""
-                  displayWidth={1200}
-                  className="mb-6 h-56 w-full rounded-2xl border border-white/[0.08] object-cover md:h-72"
+                  className="mb-6 block h-auto w-full rounded-2xl border border-white/[0.08]"
                 />
               )}
               <div className="micro text-[10px] text-[#dc2626]">

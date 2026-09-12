@@ -463,6 +463,7 @@ export type PaperState = {
     spreadBps: number
     minLeverage: number
     maxLeverage: number
+    maxLeverageByCategory?: Record<string, number>
   }
   pairs: string[]
   startingBalance: number

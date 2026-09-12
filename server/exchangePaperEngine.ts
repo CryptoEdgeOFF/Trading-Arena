@@ -19,6 +19,12 @@ import {
   type PaperExecutionModel,
 } from './paperSlippage.js';
 import { getBinanceOrderBook, startBinanceOrderBooks } from './binanceOrderBook.js';
+import {
+  GLOBAL_MAX_LEVERAGE,
+  MAX_LEVERAGE_BY_CATEGORY,
+  MIN_LEVERAGE,
+  clampLeverage,
+} from './leverage.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -162,8 +168,7 @@ function resolveFeeRate(pair: string, type: 'taker' | 'maker'): number {
   }
   return type === 'maker' ? MAKER_FEE_RATE : TAKER_FEE_RATE;
 }
-const MAX_LEVERAGE = 50;
-const MIN_LEVERAGE = 1;
+const MAX_LEVERAGE = GLOBAL_MAX_LEVERAGE;
 /** Notional minimal d'un ordre (anti-spam de positions "dust"). */
 const MIN_ORDER_NOTIONAL = 0.01;
 const KRAKEN_FUTURES_WS = 'wss://futures.kraken.com/ws/v1';
@@ -366,9 +371,10 @@ function getOrderRemainingSize(order: Order): number {
   return Math.max(0, order.size - filledSize);
 }
 
-function clampLeverage(value: number): number {
-  if (!Number.isFinite(value)) return MIN_LEVERAGE;
-  return Math.max(MIN_LEVERAGE, Math.min(MAX_LEVERAGE, Math.floor(value)));
+function pairLeverageCategory(pair: string): string {
+  const inst = findByPair(pair);
+  if (inst?.category) return inst.category;
+  return 'crypto';
 }
 
 function asNumber(value: unknown): number | null {
@@ -786,6 +792,13 @@ export class PaperTradingEngine {
       spreadBps: SPREAD_BPS,
       minLeverage: MIN_LEVERAGE,
       maxLeverage: MAX_LEVERAGE,
+      maxLeverageByCategory: {
+        crypto: MAX_LEVERAGE_BY_CATEGORY.crypto,
+        actions: MAX_LEVERAGE_BY_CATEGORY.actions,
+        forex: MAX_LEVERAGE_BY_CATEGORY.forex,
+        indices: MAX_LEVERAGE_BY_CATEGORY.indices,
+        commodities: MAX_LEVERAGE_BY_CATEGORY.commodities,
+      },
     };
   }
 
@@ -922,8 +935,8 @@ export class PaperTradingEngine {
     const side = input.side;
     const size = Number(input.size);
     const orderType = input.orderType;
-    const leverage = clampLeverage(Number(input.leverage));
     const pairDefinition = pairToDefinition.get(pair);
+    const leverage = clampLeverage(Number(input.leverage), pairLeverageCategory(pair));
 
     // Trace tout placeOrder pour pouvoir corréler avec les logs Railway
     // si une position "fantôme" apparaît : on a la pair, le side, le size,
@@ -1087,7 +1100,8 @@ export class PaperTradingEngine {
 
   /**
    * Clôture forcée (drawdown / fin d'arène) : ignore les horaires de marché
-   * et le ticker manquant. Le PnL ne doit plus flotter après ça.
+   * et le ticker manquant. On réalise le PnL latent au mark (même prix que
+   * l'équité qui a déclenché le breach) — jamais de simple suppression.
    */
   async forceFlattenPlayer(
     player: Player,
@@ -1099,24 +1113,76 @@ export class PaperTradingEngine {
       }
       for (const position of [...player.openPositions]) {
         if (!player.openPositions.includes(position)) continue;
-        const ticker = this.market[position.pair];
-        const liveExit = isUsableTicker(ticker)
-          ? (position.side === 'long' ? ticker.bidPrice : ticker.askPrice)
-          : NaN;
-        const exitPrice = isValidQuotePrice(liveExit)
-          ? liveExit
-          : (isValidQuotePrice(position.markPrice) ? position.markPrice : position.entryPrice);
-        this.closePositionAtPrice(player, position, exitPrice, undefined, reason, false);
+        this.realizePositionForFlatten(player, position, reason);
       }
-      if (player.openPositions.length > 0) {
+      for (const leftover of [...player.openPositions]) {
         console.warn(
-          `[paper] forceFlatten leftover ${player.name}: `
-          + player.openPositions.map((item) => item.pair).join(','),
+          `[paper] forceFlatten leftover ${player.name}: ${leftover.pair} — realizing marked PnL`,
         );
-        player.openPositions = [];
-        this.updatePlayerEquity(player);
+        this.realizeOrphanPosition(player, leftover, reason);
       }
     });
+  }
+
+  /** Prix de coupe = mark d'équité, pour que le PnL figé = le chiffre du breach. */
+  private resolveFlattenExitPrice(position: Position): number | null {
+    const ticker = this.market[position.pair];
+    if (isValidQuotePrice(ticker?.markPrice ?? NaN)) return ticker!.markPrice;
+    if (isValidQuotePrice(position.markPrice)) return position.markPrice;
+    if (isValidQuotePrice(position.entryPrice) && Number.isFinite(position.pnl) && position.size > 0) {
+      const inferred = position.side === 'long'
+        ? position.entryPrice + position.pnl / position.size
+        : position.entryPrice - position.pnl / position.size;
+      if (isValidQuotePrice(inferred)) return inferred;
+    }
+    if (isValidQuotePrice(position.entryPrice)) return position.entryPrice;
+    return null;
+  }
+
+  private realizePositionForFlatten(
+    player: Player,
+    position: Position,
+    reason: 'drawdown' | 'liquidation',
+  ): Trade | null {
+    const exitPrice = this.resolveFlattenExitPrice(position);
+    if (exitPrice != null) {
+      const trade = this.closePositionAtPrice(player, position, exitPrice, undefined, reason, false);
+      if (trade) return trade;
+    }
+    return this.realizeOrphanPosition(player, position, reason);
+  }
+
+  /** Dernier recours : on fige `position.pnl` dans le journal, on ne jette rien. */
+  private realizeOrphanPosition(
+    player: Player,
+    existing: Position,
+    reason: 'drawdown' | 'liquidation',
+  ): Trade {
+    const realizedPnl = Number.isFinite(existing.pnl) ? existing.pnl : 0;
+    const exitPrice = isValidQuotePrice(existing.markPrice)
+      ? existing.markPrice
+      : (isValidQuotePrice(existing.entryPrice) ? existing.entryPrice : 0);
+    const trade: Trade = {
+      id: `${player.id}-${existing.pair}-flatten-${Date.now()}`,
+      playerName: player.name,
+      playerColor: player.color,
+      pair: existing.pair,
+      side: existing.side,
+      size: existing.size,
+      price: exitPrice,
+      entryPrice: existing.entryPrice,
+      fee: 0,
+      leverage: existing.leverage,
+      orderType: 'market',
+      pnl: realizedPnl,
+      time: Date.now(),
+      action: 'close',
+      closeReason: reason,
+    };
+    this.appendTrade(player, trade);
+    player.openPositions = player.openPositions.filter((position) => position !== existing);
+    this.updatePlayerEquity(player);
+    return trade;
   }
 
   private async closePositionLocked(player: Player, positionRef: string, partialSize?: number): Promise<PaperOrderResult> {

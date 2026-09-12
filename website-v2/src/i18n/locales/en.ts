@@ -641,6 +641,9 @@ export const en = {
     competitionUpcoming: 'Competition upcoming',
     paperTrading: 'Paper trading',
     balance: 'Balance',
+    equityBreachLimit: 'Equity breach',
+    equityFloorShort: 'Breach',
+    equityFloorLeft: '{{amount}} left',
     remaining: 'End',
     logout: 'Log out',
     home: 'Home',
@@ -660,6 +663,7 @@ export const en = {
 
     margin: 'Margin',
     leverage: 'Leverage',
+    leverageFixed: '{{market}} leverage',
     maxBuyingPower: 'Max buying power',
     usedByOrder: 'Used by order: {{amount}} USD',
     marketClosedBanner: 'Market closed — trading unavailable outside market hours',

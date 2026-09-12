@@ -20,6 +20,7 @@ import { chartTradeMarkers, snapBarTime, timeSecToPlotX, type ChartTradeMarker }
 import { createTvSettingsAdapter, hasSavedTvChartProperties, loadTvChartLayout, persistTvChartLayout } from '../lib/tvChartSettings'
 import { TerminalChartSettingsMenu } from './TerminalChartSettings'
 import { useTerminalSoundEnabled } from '../hooks/useTerminalSoundEnabled'
+import { ddLimitPriceForPair } from '../lib/ddLimitPrice'
 
 type TvBar = {
   time: number
@@ -122,7 +123,7 @@ export type MobileOrderPreview = {
   takeProfit: number | null
 }
 
-type OverlayKind = 'pe' | 'sl' | 'tp' | 'order'
+type OverlayKind = 'pe' | 'sl' | 'tp' | 'order' | 'dd'
 
 type MobileOverlayLine = {
   key: string
@@ -144,6 +145,7 @@ const OVERLAY_COLORS: Record<OverlayKind, string> = {
   order: '#409cff',
   sl: '#ff5066',
   tp: '#38df8a',
+  dd: '#f43f6e',
 }
 
 function potentialRiskPnl(line: MobileOverlayLine, targetPrice: number, pair: string): number | null {
@@ -542,6 +544,8 @@ export function TradingViewChart({
   onPreviewRiskChange,
   toolbarLeading,
   settingsUserId = null,
+  accountEquity = null,
+  dailyLimitEquity = null,
 }: {
   pair: string
   pairs: string[]
@@ -551,6 +555,8 @@ export function TradingViewChart({
   orders: PaperOrder[]
   trades?: PaperTrade[]
   orderPreview: MobileOrderPreview | null
+  accountEquity?: number | null
+  dailyLimitEquity?: number | null
   onPairChange: (pair: string) => void
   onUpdatePositionRisk: (
     positionId: string,
@@ -950,8 +956,38 @@ export function TradingViewChart({
         })
       }
     }
+
+    const visiblePositions = positions.filter((item) => item.pair === pair)
+    const markForDd = (market[pair]?.markPrice && market[pair].markPrice > 0)
+      ? market[pair].markPrice
+      : (visiblePositions[0]?.markPrice || orderPreview?.entryPrice || 0)
+    const ddPrice = dailyLimitEquity != null && accountEquity != null
+      ? ddLimitPriceForPair({
+        pair,
+        markPrice: markForDd,
+        equity: accountEquity,
+        dailyLimitEquity,
+        exposures: visiblePositions.map((pos) => ({
+          pair: pos.pair,
+          side: pos.side,
+          size: pos.size,
+          entryPrice: pos.entryPrice,
+        })),
+      })
+      : null
+    if (ddPrice != null) {
+      next.push({
+        key: 'dd:limit',
+        kind: 'dd',
+        price: ddPrice,
+        label: 'DD LIMIT',
+        draggable: false,
+        side: visiblePositions[0]?.side || orderPreview?.side || 'long',
+        referencePrice: markForDd,
+      })
+    }
     return next
-  }, [orderPreview, orders, pair, positions])
+  }, [accountEquity, dailyLimitEquity, market, orderPreview, orders, pair, positions])
 
   useEffect(() => {
     if (!chartReady) return
@@ -1469,7 +1505,7 @@ export function TradingViewChart({
                     onClick={(event) => event.preventDefault()}>TP</button>}
                 </span>
               )}
-              {(line.kind === 'sl' || line.kind === 'tp' || (!line.preview && line.kind === 'order') || (line.kind === 'pe' && Boolean(line.positionId))) && (
+              {(line.kind !== 'dd' && (line.kind === 'sl' || line.kind === 'tp' || (!line.preview && line.kind === 'order') || (line.kind === 'pe' && Boolean(line.positionId)))) && (
                 <button className="chart-trade-chip__close" type="button"
                   aria-label={line.kind === 'pe' ? 'Fermer la position' : 'Supprimer'}
                   onPointerDown={(event) => event.stopPropagation()}

@@ -13,14 +13,27 @@ test('records equity from arena start including latent PnL', () => {
   maybeRecordPnlSample(
     'arena-1',
     [{ userId: 'trader-a', rank: 1, pnlPercent: 4.2 }],
-    { startAt: 1_000, now: 20_000 },
+    { startAt: 5_000, now: 20_000 },
   );
   const history = getPnlHistory('arena-1');
   assert.equal(history.length, 2);
-  assert.equal(history[0].t, 1_000);
+  assert.equal(history[0].t, 5_000);
   assert.equal(history[0].rows[0]?.pnlPercent, 0);
   assert.equal(history[1].t, 20_000);
   assert.equal(history[1].rows[0]?.pnlPercent, 4.2);
+});
+
+test('does not invent a zero sample minutes before the first live tick', () => {
+  resetPnlHistoryStoreForTests();
+  maybeRecordPnlSample(
+    'arena-1b',
+    [{ userId: 'trader-a', rank: 1, pnlPercent: 4.2 }],
+    { startAt: 1_000, now: 5 * 60_000 },
+  );
+  const history = getPnlHistory('arena-1b');
+  assert.equal(history.length, 1);
+  assert.equal(history[0].t, 5 * 60_000);
+  assert.equal(history[0].rows[0]?.pnlPercent, 4.2);
 });
 
 test('keeps previous traders when a later sample only has the new leader', () => {

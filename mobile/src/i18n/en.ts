@@ -604,6 +604,8 @@ export const en = {
     enableSound: 'Enable sound',
     chartSettings: 'Settings',
     home: 'Home',
+    balance: 'Balance',
+    equityFloorShort: 'Breach',
   },
   leaderboard: {
     kicker: 'COMPETITION',

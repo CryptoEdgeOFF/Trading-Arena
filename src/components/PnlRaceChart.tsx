@@ -39,6 +39,24 @@ type Series = {
  * Moyenne par tranche de temps puis EMA : élimine le bruit des
  * échantillons ~10 s pour obtenir une courbe propre.
  */
+/** Ignore un 0 % synthétique trop loin du premier vrai tick (courbe collée à droite). */
+function trimLeadingIdleSamples(samples: PnlHistorySample[]): PnlHistorySample[] {
+  const next = [...samples];
+  while (next.length >= 2) {
+    const first = next[0];
+    const second = next[1];
+    const idle = first.rows.every((row) => Math.abs(row.pnlPercent) < 1e-6);
+    const gap = second.t - first.t;
+    const span = next[next.length - 1].t - first.t;
+    if (idle && gap > Math.max(20_000, span * 0.08)) {
+      next.shift();
+      continue;
+    }
+    break;
+  }
+  return next;
+}
+
 function resample(list: Array<{ t: number; value: number }>, t0: number, timeSpan: number): Array<{ t: number; value: number }> {
   const sorted = [...list].sort((a, b) => a.t - b.t);
   if (sorted.length <= 3) return sorted;
@@ -112,7 +130,8 @@ function buildChart(
     .slice(0, MAX_SERIES);
   if (ranked.length === 0 || samples.length < 2) return null;
 
-  const ordered = [...samples].sort((a, b) => a.t - b.t);
+  const ordered = trimLeadingIdleSamples([...samples].sort((a, b) => a.t - b.t));
+  if (ordered.length < 2) return null;
   const t0 = ordered[0].t;
   const t1 = ordered[ordered.length - 1].t;
   const timeSpan = Math.max(1, t1 - t0);

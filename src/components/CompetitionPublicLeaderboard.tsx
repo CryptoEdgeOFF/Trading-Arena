@@ -31,6 +31,7 @@ import PnlRaceChart, {
   type PnlMoment,
 } from './PnlRaceChart';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { buildCompeteTradeUrl } from '../lib/paperSession';
 import './SpectateBroadcast.css';
 import './ArenaLeaderboard.css';
 
@@ -180,12 +181,14 @@ function ArenaHeroBanner({
   sponsorName,
   accent,
   bannerHref,
+  tradeUrl,
 }: {
   hostLogoUrl: string;
   sponsorLogoUrl?: string | null;
   sponsorName?: string | null;
   accent?: string;
   bannerHref?: string | null;
+  tradeUrl?: string | null;
 }) {
   const { t } = useTranslation();
   const color = accent || '#ef233c';
@@ -253,7 +256,7 @@ function ArenaHeroBanner({
             </>
           )}
         </div>
-        <Link to="/trade" className="lb-terminal">
+        <Link to={tradeUrl || '/trade'} className="lb-terminal">
           <span className="lb-terminal__ico">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M5 8l3.5 3.5L5 15M11 16h8" />
@@ -618,6 +621,10 @@ export default function CompetitionPublicLeaderboard() {
             sponsorName={brand?.name}
             accent={brand?.accent}
             bannerHref={brand?.bannerHref}
+            tradeUrl={buildCompeteTradeUrl({
+              id: data.competition.id,
+              title: data.competition.title,
+            })}
           />
         )}
 

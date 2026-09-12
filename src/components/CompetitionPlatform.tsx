@@ -40,6 +40,7 @@ import {
   LEGACY_PAPER_SESSION_KEY,
   writePaperBootstrapCache,
   writePaperSessionToken,
+  buildCompeteTradeUrl,
 } from '../lib/paperSession';
 import {
   COMPETE_SESSION_KEY,
@@ -1075,7 +1076,16 @@ export default function CompetitionPlatform() {
           onRefresh={() => { void refreshData(); }}
           onTrade={(competitionId) => {
             const competition = myCompetitions.find((entry) => entry.id === competitionId);
-            if (competition) void startCompetitionTrading(competition);
+            if (competition) {
+              void startCompetitionTrading(competition);
+              return;
+            }
+            const pub = publicCompetitions.find((entry) => entry.id === competitionId);
+            navigate(buildCompeteTradeUrl({
+              id: competitionId,
+              title: pub?.title,
+              executionMode: pub?.executionMode,
+            }));
           }}
           onJoin={(competitionId) => {
             const competition = publicCompetitions.find((entry) => entry.id === competitionId);

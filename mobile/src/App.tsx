@@ -513,6 +513,10 @@ function ArenaChatOverlay({
   onAuth: () => void
   onOpenPlayer: (userId: string) => void
 }) {
+  const onLatestSeen = useCallback((timestamp: number) => {
+    if (user?.id) writeChatSeen(user.id, timestamp, competitionId)
+  }, [competitionId, user?.id])
+
   return createPortal(
     <div className="arena-chat-overlay">
       <GlobalChat
@@ -522,9 +526,7 @@ function ArenaChatOverlay({
         title={title}
         onClose={onClose}
         onAuth={onAuth}
-        onLatestSeen={(timestamp) => {
-          if (user?.id) writeChatSeen(user.id, timestamp, competitionId)
-        }}
+        onLatestSeen={onLatestSeen}
         onOpenPlayer={onOpenPlayer}
       />
     </div>,

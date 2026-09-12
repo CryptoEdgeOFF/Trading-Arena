@@ -298,7 +298,7 @@ export default function ArenaSwitcher({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex max-w-[220px] items-center gap-2 rounded-xl border border-[#241e30] bg-[#15121f] px-2.5 py-1.5 text-left transition-colors hover:border-[#dc2626]/45"
+        className="flex max-w-[min(140px,32vw)] items-center gap-1.5 rounded-xl border border-[#241e30] bg-[#15121f] px-2 py-1 text-left transition-colors hover:border-[#dc2626]/45 md:max-w-[220px] md:gap-2 md:px-2.5 md:py-1.5"
       >
         <span className={`mt-px h-1.5 w-1.5 shrink-0 rounded-full ${current?.status === 'live' ? 'bg-[#f87171]' : 'bg-[#fbbf24]'}`} />
         <span className="min-w-0">

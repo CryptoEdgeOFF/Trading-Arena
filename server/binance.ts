@@ -3,6 +3,9 @@ import type { OhlcCandle, OhlcQueryOptions } from './kraken.js';
 const FUTURES_REST_BASE = 'https://fapi.binance.com';
 const SPOT_REST_BASE = 'https://api.binance.com';
 const MAX_CANDLES = 50000;
+/** Spot plafonne à 1000 klines même si on demande 1500. Futures accepte 1500. */
+const SPOT_PAGE_LIMIT = 1000;
+const FUTURES_PAGE_LIMIT = 1500;
 const DEFAULT_LOOKBACK_DAYS = 30;
 const INTRADAY_DEFAULT_BARS = 10000;
 
@@ -125,9 +128,10 @@ async function fetchKlines(
   const { intervalKey, fromSec, toSec, targetCount } = resolveKlineWindow(interval, opts);
   const byTime = new Map<number, OhlcCandle>();
   let endMs = toSec * 1000 - 1;
+  const pageLimit = base.includes('fapi.binance.com') ? FUTURES_PAGE_LIMIT : SPOT_PAGE_LIMIT;
 
   while (byTime.size < targetCount && endMs > fromSec * 1000) {
-    const limit = Math.min(1500, targetCount - byTime.size);
+    const limit = Math.min(pageLimit, targetCount - byTime.size);
     const rows = await requestJson<unknown[]>(
       `${path}?symbol=${encodeURIComponent(symbol)}&interval=${intervalKey}&limit=${limit}&endTime=${endMs}`,
       base,

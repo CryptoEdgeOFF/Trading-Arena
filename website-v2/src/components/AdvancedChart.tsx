@@ -8,6 +8,7 @@ import type {
 } from '../charting_library/charting_library';
 import type { MarketTicker, Position } from '../stores/useGameStore';
 import { fmtMarketPrice, isValidRiskPrice, roundPriceForCategory } from '../utils/positionSizing';
+import { ddLimitPriceForPair } from '../utils/ddLimitPrice';
 import { pnlToAccountCcy } from '../utils/positionPnl';
 import {
   createTvSettingsAdapter,
@@ -120,6 +121,8 @@ export interface AdvancedChartProps {
   isMobile?: boolean;
   /** Optional bridge for high-frequency market:tick WS events (bypasses React market state). */
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
+  accountEquity?: number | null;
+  dailyLimitEquity?: number | null;
 }
 
 const TV_RESOLUTION_TO_MIN: Record<string, number> = {
@@ -133,7 +136,7 @@ const TV_RESOLUTION_TO_MIN: Record<string, number> = {
   D: 1440,
 };
 
-type LineKind = 'pe' | 'sl' | 'tp' | 'order';
+type LineKind = 'pe' | 'sl' | 'tp' | 'order' | 'dd';
 
 interface LineMeta {
   kind: LineKind;
@@ -153,6 +156,7 @@ const LINE_COLORS: Record<LineKind, string> = {
   sl: 'rgba(255, 71, 87, 0.85)',
   tp: 'rgba(46, 213, 115, 0.85)',
   order: 'rgba(64, 156, 255, 0.6)',
+  dd: 'rgba(255, 71, 87, 0.85)',
 };
 
 const LINE_PRICE_BG: Record<LineKind, string> = {
@@ -160,6 +164,7 @@ const LINE_PRICE_BG: Record<LineKind, string> = {
   sl: 'rgba(220, 38, 56, 0.95)',
   tp: 'rgba(28, 168, 86, 0.95)',
   order: 'rgba(37, 117, 220, 0.85)',
+  dd: 'rgba(220, 38, 56, 0.95)',
 };
 
 const LINE_STYLES: Record<LineKind, number> = {
@@ -167,6 +172,7 @@ const LINE_STYLES: Record<LineKind, number> = {
   sl: 2,
   tp: 2,
   order: 0,
+  dd: 2,
 };
 
 const LINE_WIDTH: Record<LineKind, number> = {
@@ -174,6 +180,7 @@ const LINE_WIDTH: Record<LineKind, number> = {
   sl: 1,
   tp: 1,
   order: 1,
+  dd: 1,
 };
 
 const INVALID_DRAG_COLOR = 'rgba(255, 71, 87, 0.95)';
@@ -376,6 +383,8 @@ export default function AdvancedChart({
   onCancelOrder,
   onClosePosition,
   isMobile = false,
+  accountEquity = null,
+  dailyLimitEquity = null,
   chartLiveTickRef,
 }: AdvancedChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1117,6 +1126,34 @@ export default function AdvancedChart({
       }
     }
 
+    const markForDd = (ticker?.markPrice && ticker.markPrice > 0)
+      ? ticker.markPrice
+      : (visiblePositions[0]?.markPrice || visiblePreview?.entryPrice || 0);
+    const ddExposures = visiblePositions.map((pos) => ({
+      pair: pos.pair,
+      side: pos.side,
+      size: pos.size,
+      entryPrice: pos.entryPrice,
+    }));
+    const ddPrice = dailyLimitEquity != null && accountEquity != null
+      ? ddLimitPriceForPair({
+        pair,
+        markPrice: markForDd,
+        equity: accountEquity,
+        dailyLimitEquity,
+        exposures: ddExposures,
+      })
+      : null;
+    if (ddPrice != null) {
+      const key = 'dd:limit';
+      desired.set(key, {
+        meta: { kind: 'dd', key },
+        price: ddPrice,
+        label: 'DD LIMIT',
+        draggable: false,
+      });
+    }
+
     const previousKeys = new Set(lineByKeyRef.current.keys());
     const desiredKeys = new Set(desired.keys());
 
@@ -1372,7 +1409,7 @@ export default function AdvancedChart({
       });
     }
     // Stable order: PE first, then SL/TP, then orders. Within each kind, by key.
-    const kindOrder: Record<LineKind, number> = { pe: 0, order: 1, tp: 2, sl: 3 };
+    const kindOrder: Record<LineKind, number> = { pe: 0, order: 1, tp: 2, sl: 3, dd: 4 };
     nextButtons.sort((a, b) => {
       const k = kindOrder[a.meta.kind] - kindOrder[b.meta.kind];
       if (k !== 0) return k;
@@ -1395,7 +1432,7 @@ export default function AdvancedChart({
       }
       return prev;
     });
-  }, [pair, position, positions, pendingOrders, orderPreview, intervalMinutes, chartReady, riskPlacement]);
+  }, [pair, position, positions, pendingOrders, orderPreview, intervalMinutes, chartReady, riskPlacement, ticker, accountEquity, dailyLimitEquity]);
 
   // ---- Coordinate conversion price ↔ pixel Y in container space ----
   // TradingView Charting Library Standalone renders the chart inside an

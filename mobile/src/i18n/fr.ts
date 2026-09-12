@@ -606,6 +606,8 @@ export const fr: typeof en = {
     enableSound: 'Activer le son',
     chartSettings: 'Paramètres',
     home: 'Accueil',
+    balance: 'Solde',
+    equityFloorShort: 'Breach',
   },
   leaderboard: {
     kicker: 'COMPÉTITION',

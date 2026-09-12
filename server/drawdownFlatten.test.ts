@@ -113,6 +113,18 @@ test('force flatten still works when the market quote disappears', async () => {
     takeProfit: null,
     openedAt: Date.now(),
   });
+  engine.recalculateEquity(player);
+  const latent = player.pnl;
+  assert.ok(latent < 0);
+
   await engine.forceFlattenPlayer(player, 'drawdown');
   assert.equal(player.openPositions.length, 0);
+  assert.equal(player.openOrders.length, 0);
+  const close = player.trades.find((trade) => trade.action === 'close' && trade.closeReason === 'drawdown');
+  assert.ok(close, 'latent position must become a realized close');
+  assert.ok(close.pnl < 0, `expected realized loss, got ${close.pnl}`);
+  assert.ok(
+    Math.abs(player.pnl - latent) < 1,
+    `breach PnL must stay coherent (before ${latent}, after ${player.pnl})`,
+  );
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { getNewsArticle, getNewsPage, newsCoverAssetUrl, type NewsArticle } from '../lib/api'
+import { apiAssetUrl, getNewsArticle, getNewsPage, newsCoverAssetUrl, type NewsArticle } from '../lib/api'
 import { useI18n } from '../i18n'
 import './NewsScreen.css'
 
@@ -40,9 +40,14 @@ function youtubeVideoId(url: string): string | null {
   return null
 }
 
+function isNewsImageUrl(value: string): boolean {
+  return /\/api\/prize-images\//.test(value) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value)
+}
+
 function RichText({ text }: { text: string }) {
   return <div className="news-detail__body">{text.split(/\n{2,}/).map((paragraph, index) => {
-    const youtubeId = youtubeVideoId(paragraph.trim())
+    const trimmed = paragraph.trim()
+    const youtubeId = youtubeVideoId(trimmed)
     if (youtubeId) {
       return (
         <div key={`${index}-${youtubeId}`} className="news-embed">
@@ -55,11 +60,20 @@ function RichText({ text }: { text: string }) {
         </div>
       )
     }
+    const heading = trimmed.match(/^#{1,3}\s+(.+)$/)
+    if (heading) {
+      return <h3 key={`${index}-${heading[1]}`}>{heading[1]}</h3>
+    }
+    if (isNewsImageUrl(trimmed) && !/\s/.test(trimmed)) {
+      return <img key={`${index}-${trimmed.slice(-24)}`} src={apiAssetUrl(trimmed)} alt="" />
+    }
     return (
-      <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/(https?:\/\/[^\s]+)/g).map((part, partIndex) => (
-        /^https?:\/\//.test(part)
-          ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer">{part}</a>
-          : part
+      <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/((?:https?:\/\/|\/api\/)[^\s]+)/g).map((part, partIndex) => (
+        isNewsImageUrl(part)
+          ? <img key={partIndex} src={apiAssetUrl(part)} alt="" />
+          : /^https?:\/\//.test(part)
+            ? <a key={partIndex} href={part} target="_blank" rel="noopener noreferrer">{part}</a>
+            : part
       ))}</p>
     )
   })}</div>

@@ -2,14 +2,27 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { Trade } from '../stores/useGameStore';
 
-function formatPrice(value: number): string {
+function formatLocaleNumber(
+  value: number,
+  locale: string,
+  options: Intl.NumberFormatOptions,
+): string {
   if (!Number.isFinite(value)) return '—';
-  const digits = value >= 1_000 ? 2 : value >= 1 ? 5 : 8;
-  return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return value
+    .toLocaleString(locale, options)
+    .replace(/\u202f|\u00a0/g, ' ');
 }
 
-function formatSize(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+function formatPrice(value: number, locale: string): string {
+  const digits = value >= 1_000 ? 2 : value >= 1 ? 5 : 8;
+  return formatLocaleNumber(value, locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatSize(value: number, locale: string): string {
+  return formatLocaleNumber(value, locale, { maximumFractionDigits: 6 });
 }
 
 export default function FillDetailsModal({
@@ -23,6 +36,7 @@ export default function FillDetailsModal({
   if (!trade || typeof document === 'undefined') return null;
 
   const fr = i18n.language.toLowerCase().startsWith('fr');
+  const locale = fr ? 'fr-FR' : 'en-US';
   const bookFills = (trade.fillDetails || []).filter((fill) => fill.source === 'book' && fill.size > 0);
   const hasEstimatedLiquidity = (trade.fillDetails || []).some((fill) => fill.source === 'estimated');
   const sourceLabel = trade.slippageSource === 'binance-depth'
@@ -35,39 +49,39 @@ export default function FillDetailsModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/70 p-3 backdrop-blur-sm sm:items-center"
+      className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/80 p-3 sm:items-center"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="flex max-h-[min(72dvh,560px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#100b17] shadow-2xl shadow-black/60">
-        <header className="flex shrink-0 items-start justify-between border-b border-white/10 px-5 py-4">
-          <div>
+      <section className="flex max-h-[min(88dvh,680px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#100b17] shadow-2xl shadow-black/60">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+          <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#a78bfa]">
               {fr ? 'Ordre exécuté' : 'Order filled'}
             </div>
-            <div className="mt-1 text-lg font-bold text-white">
+            <div className="mt-1 truncate text-lg font-bold text-white">
               {trade.pair} · {trade.side === 'long' ? 'Long' : 'Short'}
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-[#aaa4b3] hover:bg-white/5 hover:text-white"
+            className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-[#aaa4b3] hover:bg-white/5 hover:text-white"
           >
             {fr ? 'Fermer' : 'Close'}
           </button>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-hidden p-5">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-5">
           <div className="grid grid-cols-2 gap-2">
             <Metric
               label={fr ? 'Prix demandé' : 'Requested price'}
-              value={formatPrice(trade.requestedPrice ?? trade.price)}
+              value={formatPrice(trade.requestedPrice ?? trade.price, locale)}
             />
             <Metric
               label={fr ? 'Prix moyen exécuté' : 'Average fill'}
-              value={formatPrice(trade.price)}
+              value={formatPrice(trade.price, locale)}
               emphasized
             />
             <Metric
@@ -76,30 +90,32 @@ export default function FillDetailsModal({
             />
             <Metric
               label={fr ? 'Frais' : 'Fees'}
-              value={`${trade.fee.toLocaleString(undefined, { maximumFractionDigits: 4 })} USD`}
+              value={`${formatLocaleNumber(trade.fee, locale, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD`}
             />
           </div>
 
-          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-[#777181]">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-[#777181]">
               {fr ? 'Source du prix' : 'Price source'}
             </span>
-            <span className="text-xs font-semibold text-[#ddd7e5]">{sourceLabel}</span>
+            <span className="truncate text-right text-xs font-semibold text-[#ddd7e5]">{sourceLabel}</span>
           </div>
 
           {bookFills.length > 0 && (
-            <div className="min-h-0 min-w-0">
+            <div>
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#777181]">
                 {fr ? 'Niveaux visibles exécutés' : 'Visible filled levels'}
               </div>
-              <div className="max-h-[220px] overflow-y-auto overscroll-contain rounded-xl border border-white/10">
+              <div className="overflow-hidden rounded-xl border border-white/10">
                 {bookFills.map((fill, index) => (
                   <div
                     key={`${fill.price}-${index}`}
-                    className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2.5 text-xs last:border-b-0"
+                    className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-3 py-2.5 text-xs last:border-b-0"
                   >
-                    <span className="text-[#aaa4b3]">{formatSize(fill.size)}</span>
-                    <span className="font-mono font-semibold text-white">@ {formatPrice(fill.price)}</span>
+                    <span className="min-w-0 truncate font-mono tabular-nums text-[#aaa4b3]">{formatSize(fill.size, locale)}</span>
+                    <span className="shrink-0 font-mono font-semibold tabular-nums text-white">
+                      @ {formatPrice(fill.price, locale)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -130,11 +146,11 @@ function Metric({
   emphasized?: boolean;
 }) {
   return (
-    <div className={`rounded-xl border px-3 py-3 ${
+    <div className={`min-w-0 rounded-xl border px-3 py-3 ${
       emphasized ? 'border-violet-400/25 bg-violet-400/[0.08]' : 'border-white/10 bg-white/[0.03]'
     }`}>
-      <div className="text-[9px] uppercase tracking-[0.14em] text-[#777181]">{label}</div>
-      <div className={`mt-1 font-mono text-sm font-semibold ${emphasized ? 'text-violet-200' : 'text-white'}`}>
+      <div className="truncate text-[9px] uppercase tracking-[0.14em] text-[#777181]">{label}</div>
+      <div className={`mt-1 truncate font-mono text-sm font-semibold tabular-nums whitespace-nowrap ${emphasized ? 'text-violet-200' : 'text-white'}`}>
         {value}
       </div>
     </div>

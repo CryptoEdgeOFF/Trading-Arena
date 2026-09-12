@@ -29,7 +29,7 @@ const ENABLE_BACKGROUND_FILL = process.env.CANDLE_BACKGROUND_FILL === 'true';
  * 1500 = 1 seul call Binance/Hyperliquid (~300 ms) — couvre largement le
  * premier rendu TradingView (typiquement 300-500 bars demandés).
  */
-const FAST_PATH_BARS = Number(process.env.CANDLE_FAST_PATH_BARS) || 1500;
+const FAST_PATH_BARS = Number(process.env.CANDLE_FAST_PATH_BARS) || 4000;
 /** After this delay a background refresh is fired on the next read. */
 const STALE_REFRESH_MS = 10 * 60 * 1000;
 

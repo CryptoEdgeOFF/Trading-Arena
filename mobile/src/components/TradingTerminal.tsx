@@ -18,6 +18,7 @@ import {
   type PaperTrade,
   type Position,
 } from '../lib/api'
+import { leverageCategoryLabel, maxLeverageForCategory } from '../lib/leverage'
 import {
   clearPaperSessionToken,
   readPaperSessionToken,
@@ -105,9 +106,11 @@ function drawdownRule(context: PaperState['competition'], fallback?: MyCompetiti
   const nested = context && 'competition' in context ? context.competition : context
   const percent = nested?.dailyDrawdownPercent ?? fallback?.dailyDrawdownPercent ?? null
   const limitEquity = context && 'competition' in context ? context.dailyLimitEquity ?? null : null
+  const baselineEquity = context && 'competition' in context ? context.dailyBaselineEquity ?? null : null
   return {
     percent: percent != null && percent > 0 ? percent : null,
     limitEquity,
+    baselineEquity,
   }
 }
 
@@ -344,7 +347,6 @@ export function TradingTerminal({
   const [tpUsdDraft, setTpUsdDraft] = useState('')
   const [slUsdFocused, setSlUsdFocused] = useState(false)
   const [tpUsdFocused, setTpUsdFocused] = useState(false)
-  const leverage = 10
   const [panel, setPanel] = useState<'positions' | 'orders' | 'history'>('positions')
   const [riskEditor, setRiskEditor] = useState<{
     positionId: string
@@ -413,21 +415,45 @@ export function TradingTerminal({
 
   useEffect(() => {
     let cancelled = false
+    async function openStoredOrRequested(stored: string | null) {
+      if (stored) {
+        try {
+          const next = await refresh(stored)
+          if (cancelled) return true
+          const currentId = competitionSummary(next.competition)?.id || ''
+          if (initialCompetitionId && currentId && currentId !== initialCompetitionId) {
+            return false
+          }
+          setPaperToken(stored)
+          return true
+        } catch {
+          await clearPaperSessionToken()
+        }
+      }
+      return false
+    }
     void Promise.all([readPaperSessionToken(), getPaperMeta().catch(() => null)]).then(async ([stored, nextMeta]) => {
       if (cancelled) return
       setMeta(nextMeta)
-      if (stored) {
+      const restored = await openStoredOrRequested(stored)
+      if (!cancelled && !restored && initialCompetitionId) {
         try {
-          await refresh(stored)
-          if (!cancelled) setPaperToken(stored)
-        } catch {
-          await clearPaperSessionToken()
+          const session = await createPaperSession(accountToken, initialCompetitionId)
+          if (cancelled) return
+          setCompetitionId(initialCompetitionId)
+          await writePaperSessionToken(session.token)
+          setPaperToken(session.token)
+          await refresh(session.token)
+        } catch (nextError) {
+          if (!cancelled) {
+            setError(nextError instanceof Error ? nextError.message : 'Terminal indisponible')
+          }
         }
       }
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
-  }, [refresh])
+  }, [accountToken, initialCompetitionId, refresh])
 
   useEffect(() => {
     if (!paperToken) return
@@ -586,6 +612,7 @@ export function TradingTerminal({
 
   const ticker = state?.market[selectedPair] || meta?.market[selectedPair]
   const selectedCategory = meta?.marketMetadata?.[selectedPair]?.category
+  const leverage = maxLeverageForCategory(selectedCategory)
   const contract = CONTRACT_SIZE[selectedPair] || 1
   const limitEntry = Number(limitPrice)
   const markPrice = ticker?.markPrice || 0
@@ -696,7 +723,14 @@ export function TradingTerminal({
   const accountBreached = isBreached(state?.competition ?? null)
   const canTradeNow = Boolean(state?.canTrade) && !accountBreached && ticker?.marketOpen !== false
   const selectedCompetition = competitions.find((item) => item.id === (activeCompetition?.id || competitionId))
-  const { percent: dailyDrawdownPercent, limitEquity: dailyLimitEquity } = drawdownRule(state?.competition ?? null, selectedCompetition)
+  const { percent: dailyDrawdownPercent, limitEquity: dailyLimitEquity, baselineEquity: dailyBaselineEquity } = drawdownRule(state?.competition ?? null, selectedCompetition)
+  const ddRoom = dailyLimitEquity != null && dailyBaselineEquity != null && dailyBaselineEquity > dailyLimitEquity
+    ? dailyBaselineEquity - dailyLimitEquity
+    : null
+  const ddSafeRatio = ddRoom != null && ddRoom > 0 && dailyLimitEquity != null
+    ? Math.min(1, Math.max(0, ((state?.player.currentBalance ?? 0) - dailyLimitEquity) / ddRoom))
+    : null
+  const ddUrgent = ddSafeRatio != null && ddSafeRatio <= 0.2
 
   function applyQty(value: string) {
     setSizeMode('qty')
@@ -983,13 +1017,22 @@ export function TradingTerminal({
         </button>
         <div className="terminal-head__stats">
           <div className="terminal-head__metric">
-            <small>Équité</small>
+            <small>{t('terminal.balance')}</small>
             <strong>{money(state.player.currentBalance)}</strong>
           </div>
           <div className={`terminal-head__metric ${state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}`}>
             <small>PnL</small>
             <strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)}</strong>
           </div>
+          {dailyLimitEquity != null && (
+            <div className={`terminal-head__metric is-breach${ddUrgent ? ' is-urgent' : ''}`}>
+              <small>{t('terminal.equityFloorShort')}</small>
+              <strong>{money(dailyLimitEquity)}</strong>
+              {ddSafeRatio != null && (
+                <i className="terminal-head__ddbar" style={{ width: `${Math.round(ddSafeRatio * 100)}%` }} />
+              )}
+            </div>
+          )}
         </div>
         <div className="terminal-head__nav">
           {onHome && (
@@ -1046,6 +1089,8 @@ export function TradingTerminal({
             if ('stopLoss' in patch) setStopLoss(patch.stopLoss == null ? '' : String(patch.stopLoss))
             if ('takeProfit' in patch) setTakeProfit(patch.takeProfit == null ? '' : String(patch.takeProfit))
           }}
+          accountEquity={state.player.currentBalance}
+          dailyLimitEquity={dailyLimitEquity}
           toolbarLeading={(
             <PairSelectorMenu
               selectedPair={selectedPair}
@@ -1081,7 +1126,10 @@ export function TradingTerminal({
             }} />
           <div>
             <span>Marge {money(selectedMargin)} $</span>
-            <span>Levier ×10</span>
+          </div>
+          <div className="leverage-fixed">
+            <span>Levier {leverageCategoryLabel(selectedCategory)}</span>
+            <strong>{leverage}x</strong>
           </div>
         </div>
         <div className="ticket-grid">

@@ -56,6 +56,26 @@ function replyPreview(message: Pick<GlobalChatMessage, 'body' | 'imageUrl'>, pho
   return message.body || (message.imageUrl ? photoLabel : '')
 }
 
+function isNearBottom(el: HTMLElement, threshold = 96) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+}
+
+function sameMessageList(current: GlobalChatMessage[], next: GlobalChatMessage[]) {
+  if (current === next) return true
+  if (current.length !== next.length) return false
+  for (let index = 0; index < current.length; index += 1) {
+    const a = current[index]
+    const b = next[index]
+    if (a.id !== b.id || a.body !== b.body || a.imageUrl !== b.imageUrl || a.createdAt !== b.createdAt) return false
+  }
+  return true
+}
+
+function applyMessages(current: GlobalChatMessage[], incoming: GlobalChatMessage[]) {
+  const next = mergeMessages(current, incoming)
+  return sameMessageList(current, next) ? current : next
+}
+
 export function GlobalChat({
   token,
   user,
@@ -95,11 +115,13 @@ export function GlobalChat({
   const [moderationOpen, setModerationOpen] = useState(false)
   const [moderationBusy, setModerationBusy] = useState(false)
   const [moderationStatus, setModerationStatus] = useState('')
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const socketRef = useRef<WebSocket | null>(null)
-  const initializedRef = useRef(false)
+  const primedRef = useRef(false)
+  const stickToBottomRef = useRef(true)
+  const lastAutoScrollIdRef = useRef<string | null>(null)
   const longPressTimerRef = useRef<number | null>(null)
   const longPressOriginRef = useRef({ x: 0, y: 0 })
   const suppressPhotoClickRef = useRef(false)
@@ -107,7 +129,7 @@ export function GlobalChat({
   const loadLatest = useCallback(async () => {
     try {
       const next = await getGlobalChatMessages(token, undefined, competitionId)
-      setMessages((current) => mergeMessages(current, next))
+      setMessages((current) => applyMessages(current, next))
       setError('')
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Chat indisponible')
@@ -157,7 +179,7 @@ export function GlobalChat({
             data?: GlobalChatMessage & { error?: string; clientId?: string }
           }
           if (payload.type === 'chat:message' && payload.data) {
-            setMessages((current) => mergeMessages(current, [payload.data!]))
+            setMessages((current) => applyMessages(current, [payload.data!]))
           }
           if (payload.type === 'chat:error' && payload.data) {
             setMessages((current) => current.filter((message) => message.clientId !== payload.data?.clientId))
@@ -191,13 +213,37 @@ export function GlobalChat({
   }, [messages, viewerId, competitionId])
 
   useEffect(() => {
+    primedRef.current = false
+    lastAutoScrollIdRef.current = null
+    stickToBottomRef.current = true
+  }, [competitionId, viewerId])
+
+  useEffect(() => {
     if (!messages.length) return
-    onLatestSeen(messages.at(-1)!.createdAt)
-    if (!initializedRef.current || messages.at(-1)?.userId === viewerId) {
-      initializedRef.current = true
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    onLatestSeen(messages[messages.length - 1].createdAt)
+  }, [messages, onLatestSeen])
+
+  useEffect(() => {
+    const last = messages.at(-1)
+    if (!last) return
+    if (lastAutoScrollIdRef.current === last.id) return
+
+    const firstPaint = !primedRef.current
+    const ownMessage = last.userId === viewerId
+    if (!firstPaint && !ownMessage && !stickToBottomRef.current) {
+      lastAutoScrollIdRef.current = last.id
+      return
     }
-  }, [messages, onLatestSeen, viewerId])
+
+    primedRef.current = true
+    lastAutoScrollIdRef.current = last.id
+    const el = listRef.current
+    if (!el) return
+    requestAnimationFrame(() => {
+      if (firstPaint) el.scrollTop = el.scrollHeight
+      else el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    })
+  }, [messages, viewerId])
 
   async function loadOlder() {
     const before = messages[0]?.createdAt
@@ -205,7 +251,7 @@ export function GlobalChat({
     setLoadingOlder(true)
     try {
       const older = await getGlobalChatMessages(token, before, competitionId)
-      setMessages((current) => mergeMessages(older, current))
+      setMessages((current) => applyMessages(current, older))
     } finally {
       setLoadingOlder(false)
     }
@@ -272,7 +318,8 @@ export function GlobalChat({
         imageUrl: replyTo.imageUrl,
       } : null,
     }
-    setMessages((current) => mergeMessages(current, [optimistic]))
+    stickToBottomRef.current = true
+    setMessages((current) => applyMessages(current, [optimistic]))
     setBody('')
     setReplyTo(null)
     setPendingPhoto(null)
@@ -291,7 +338,7 @@ export function GlobalChat({
         }))
       } else {
         const message = await sendGlobalChatMessage(token, value, replyToId, imageUrl, competitionId)
-        setMessages((current) => mergeMessages(current.filter((item) => item.clientId !== clientId), [message]))
+        setMessages((current) => applyMessages(current.filter((item) => item.clientId !== clientId), [message]))
       }
     } catch (nextError) {
       setMessages((current) => current.filter((message) => message.clientId !== clientId))
@@ -327,7 +374,11 @@ export function GlobalChat({
   }
 
   function scrollToMessage(id: string) {
-    document.getElementById(`chat-message-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const list = listRef.current
+    const node = document.getElementById(`chat-message-${id}`)
+    if (!list || !node) return
+    const nextTop = list.scrollTop + node.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientHeight / 2 + node.clientHeight / 2
+    list.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
   }
 
   function openPhoto(url: string) {
@@ -431,7 +482,15 @@ export function GlobalChat({
       </header>
       <div className="global-chat__notice">{competitionId ? t('chat.arenaNotice') : t('chat.notice')}</div>
 
-      <section className="global-chat__messages" aria-live="polite">
+      <section
+        ref={listRef}
+        className="global-chat__messages"
+        aria-live="polite"
+        onScroll={() => {
+          const el = listRef.current
+          if (el) stickToBottomRef.current = isNearBottom(el)
+        }}
+      >
         {visibleMessages.length > 0 && <button className="global-chat__older" type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? t('common.loading') : t('chat.older')}</button>}
         {loading ? <div className="global-chat__state">{t('chat.loading')}</div>
           : !visibleMessages.length ? <div className="global-chat__state"><strong>{t('chat.emptyTitle')}</strong><span>{t('chat.emptyLead')}</span></div>
@@ -474,7 +533,6 @@ export function GlobalChat({
                   }}>•••</button>}
               </article>
             })}
-        <div ref={bottomRef} />
       </section>
 
       {error && <div className="global-chat__error">{error}</div>}
