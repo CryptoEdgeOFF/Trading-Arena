@@ -108,32 +108,40 @@ export function applyPaperSlippage(
     };
   }
 
-  const levels = direction === 'buy'
-    ? [...(orderBook?.asks || [])].sort((a, b) => a.price - b.price)
-    : [...(orderBook?.bids || [])].sort((a, b) => b.price - a.price);
+  const levels = (direction === 'buy' ? orderBook?.asks || [] : orderBook?.bids || [])
+    .filter((level) => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.volume) && level.volume > 0)
+    .sort((a, b) => (direction === 'buy' ? a.price - b.price : b.price - a.price));
+  const touch = levels[0]?.price;
+  // Le mark paper et le carnet Binance peuvent diverger de quelques bps.
+  // On ne reprend que la *forme* du book (impact hors touch). Un écart
+  // absurde (> 80 bps) = mauvais carnet, on retombe sur le modèle.
+  const bookUsable = Number.isFinite(touch)
+    && touch > 0
+    && Math.abs(touch / requestedPrice - 1) * 10_000 <= 80;
+
   let remaining = size;
   let totalValue = 0;
   let lastPrice = requestedPrice;
   const fills: PaperFillDetail[] = [];
 
-  for (const level of levels) {
-    if (remaining <= 0) break;
-    if (!Number.isFinite(level.price) || level.price <= 0 || !Number.isFinite(level.volume) || level.volume <= 0) {
-      continue;
+  if (bookUsable) {
+    for (const level of levels) {
+      if (remaining <= 0) break;
+      const offset = direction === 'buy'
+        ? Math.max(0, level.price - touch)
+        : Math.max(0, touch - level.price);
+      const fillPrice = direction === 'buy'
+        ? requestedPrice + offset
+        : Math.max(Number.EPSILON, requestedPrice - offset);
+      const filled = Math.min(remaining, level.volume);
+      totalValue += filled * fillPrice;
+      remaining -= filled;
+      lastPrice = fillPrice;
+      fills.push({ price: fillPrice, size: filled, source: 'book' });
     }
-    // Un snapshot légèrement en retard ne doit jamais créer une amélioration
-    // artificielle par rapport au bid/ask qui a déclenché l'exécution.
-    const adversePrice = direction === 'buy'
-      ? Math.max(requestedPrice, level.price)
-      : Math.min(requestedPrice, level.price);
-    const filled = Math.min(remaining, level.volume);
-    totalValue += filled * adversePrice;
-    remaining -= filled;
-    lastPrice = adversePrice;
-    fills.push({ price: adversePrice, size: filled, source: 'book' });
   }
 
-  if (remaining > 0) {
+  if (remaining > 0 && bookUsable && totalValue > 0) {
     const overflowBps = estimatePaperSlippageBps(pair, requestedPrice * remaining);
     const overflowPrice = direction === 'buy'
       ? lastPrice * (1 + overflowBps / 10_000)
@@ -142,7 +150,7 @@ export function applyPaperSlippage(
     fills.push({ price: overflowPrice, size: remaining, source: 'estimated' });
   }
 
-  if (levels.length > 0 && totalValue > 0) {
+  if (bookUsable && totalValue > 0) {
     const rawAverage = totalValue / size;
     const executionPrice = direction === 'buy'
       ? Math.max(requestedPrice, rawAverage)
