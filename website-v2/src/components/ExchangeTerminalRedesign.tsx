@@ -22,6 +22,7 @@ import {
   priceToInputString,
   sizeUnitLabel,
 } from '../utils/positionSizing';
+import { leverageCategoryLabelKey, maxLeverageForCategory } from '../utils/leverage';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
@@ -34,11 +35,13 @@ import FillDetailsModal from './FillDetailsModal';
 import {
   clearAllPaperSessions,
   clearPaperSessionToken,
+  ensureCompetePaperSession,
   extractPaperCompetitionContext,
   getCompetitionIdFromUrl,
   getTerminalPlatformFromUrl,
   isPaperBootstrapCacheValid,
   paperSessionMatchesPlatform,
+  readCompeteAccountToken,
   readPaperBootstrapCache,
   readPaperSessionToken,
   type TerminalPlatform,
@@ -1143,8 +1146,13 @@ function OrderForm(props: OrderFormProps) {
         <div className="mt-2.5 rounded-xl border border-[#241e30] bg-[#15121f] px-2.5 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
             <span className="text-[#9498a4]">{t('terminal.margin')} <span className="num text-white">{fmt(available, 0)} USD</span></span>
-            <span className="text-[#9498a4]">{t('terminal.leverage')} <span className="num text-white">{leverage}x</span></span>
             <span className="text-[#9498a4]">{t('terminal.maxBuyingPower')} <span className="num font-semibold text-[#67dd88]">{fmt(maxNotional, 0)} USD</span></span>
+          </div>
+          <div className="mt-2 flex items-center justify-between rounded-lg border border-[#3a3148] bg-[#1c1828] px-2.5 py-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#c8c0d8]">
+              {t('terminal.leverageFixed', { market: t(leverageCategoryLabelKey(category)) })}
+            </span>
+            <span className="num text-[18px] font-extrabold leading-none text-white">{leverage}x</span>
           </div>
           <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-[#282333]">
             <div className="h-full" style={{ width: `${(1 - usedRatio) * 100}%`, background: BUY }} />
@@ -3070,7 +3078,10 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
   // simply sees a loading state instead of a brief error popup.
   const [bootstrapping, setBootstrapping] = useState(() => {
     if (demoMode) return false;
-    return Boolean(readPaperSessionToken(getTerminalPlatformFromUrl()));
+    const platform = getTerminalPlatformFromUrl();
+    const competitionId = getCompetitionIdFromUrl();
+    if (readPaperSessionToken(platform)) return true;
+    return platform === 'compete' && Boolean(competitionId && readCompeteAccountToken());
   });
   const [accessCode, setAccessCode] = useState('');
   const [selectedPair, setSelectedPair] = useState('BTC/USD');
@@ -3078,7 +3089,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [size, setSize] = useState('0.00005');
   const [limitPrice, setLimitPrice] = useState('');
-  const [leverage, setLeverage] = useState(10);
+  const leverage = maxLeverageForCategory(meta.marketMetadata[selectedPair]?.category);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fillDetailsTrade, setFillDetailsTrade] = useState<Trade | null>(null);
@@ -3600,57 +3611,88 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
 
   useEffect(() => {
     if (demoMode) return;
-    setFillDetailsTrade(null);
-    const token = readPaperSessionToken(terminalPlatform);
-    if (!token) {
+    let cancelled = false;
+
+    function resetSession() {
       setSession(null);
       setLivePlayer(null);
       setLiveMarket(null);
       setLiveCanTrade(null);
-      setBootstrapping(false);
-      return;
     }
 
-    setBootstrapping(true);
-
-    const cached = readPaperBootstrapCache();
-    if (cached && isPaperBootstrapCacheValid(cached, terminalPlatform, token, urlCompetitionId)) {
-      setLivePlayer(cached.player as Player);
-      if (cached.market) setLiveMarket(cached.market as Record<string, MarketTicker>);
-      if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
-      mergeCompetitionFromMe(cached.competition);
+    function applySession(token: string, data: any): boolean {
+      if (!data?.player) {
+        resetSession();
+        return false;
+      }
+      if (!reconcileTerminalSession(token, data)) {
+        resetSession();
+        return false;
+      }
+      setSession({ token, player: data.player });
+      setLivePlayer(reconcilePlayerWithPending(data.player as Player));
+      if (data.market) setLiveMarket(data.market);
+      if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
+      mergeCompetitionFromMe(data);
+      return true;
     }
 
-    fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (response) => {
-        if (!response.ok) {
+    async function hydrateFromPaperToken(token: string): Promise<boolean> {
+      const cached = readPaperBootstrapCache();
+      if (cached && isPaperBootstrapCacheValid(cached, terminalPlatform, token, urlCompetitionId)) {
+        setLivePlayer(cached.player as Player);
+        if (cached.market) setLiveMarket(cached.market as Record<string, MarketTicker>);
+        if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
+        mergeCompetitionFromMe(cached.competition);
+      }
+      const response = await fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) {
+        clearPaperSessionToken(terminalPlatform);
+        return false;
+      }
+      const data = await response.json();
+      return applySession(token, data);
+    }
+
+    async function boot() {
+      setFillDetailsTrade(null);
+      setBootstrapping(true);
+      const existing = readPaperSessionToken(terminalPlatform);
+      if (existing) {
+        try {
+          if (await hydrateFromPaperToken(existing)) {
+            if (!cancelled) setBootstrapping(false);
+            return;
+          }
+        } catch {
           clearPaperSessionToken(terminalPlatform);
-          return null;
         }
-        return response.json();
-      })
-      .then((data) => {
-        if (!data?.player) {
-          setSession(null);
-          setLivePlayer(null);
-          return;
+        if (cancelled) return;
+      }
+
+      if (terminalPlatform === 'compete' && urlCompetitionId && readCompeteAccountToken()) {
+        try {
+          const created = await ensureCompetePaperSession(urlCompetitionId);
+          if (cancelled) return;
+          applySession(created.token, created);
+        } catch {
+          if (!cancelled) resetSession();
+        } finally {
+          if (!cancelled) setBootstrapping(false);
         }
-        if (!reconcileTerminalSession(token, data)) {
-          setSession(null);
-          setLivePlayer(null);
-          setLiveMarket(null);
-          setLiveCanTrade(null);
-          return;
-        }
-        setSession({ token, player: data.player });
-        setLivePlayer(reconcilePlayerWithPending(data.player as Player));
-        if (data.market) setLiveMarket(data.market);
-        if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
-        mergeCompetitionFromMe(data);
-      })
-      .finally(() => {
+        return;
+      }
+
+      if (!cancelled) {
+        resetSession();
         setBootstrapping(false);
-      });
+      }
+    }
+
+    void boot();
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demoMode, terminalPlatform, urlCompetitionId, location.search]);
 
@@ -4363,7 +4405,7 @@ export default function ExchangeTerminalRedesign({ demoMode = false }: ExchangeT
       limitPrice={limitPrice}
       setLimitPrice={setLimitPrice}
       leverage={leverage}
-      setLeverage={setLeverage}
+      setLeverage={() => undefined}
       ticker={ticker}
       player={player}
       busy={busy}

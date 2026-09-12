@@ -25,6 +25,7 @@ import {
   sizeUnitLabel,
 } from '../utils/positionSizing';
 import { refreshPlayerPaperMetrics } from '../utils/positionPnl';
+import { MAX_LEVERAGE_BY_CATEGORY, leverageCategoryLabelKey, maxLeverageForCategory } from '../utils/leverage';
 import LiveEventTraderOverlay from './LiveEventTraderOverlay';
 import EventEndOverlay from './EventEndOverlay';
 import { useLiveEventEndSnapshot } from '../hooks/useLiveEventEndSnapshot';
@@ -36,11 +37,13 @@ import FillDetailsModal from './FillDetailsModal';
 import {
   clearAllPaperSessions,
   clearPaperSessionToken,
+  ensureCompetePaperSession,
   extractPaperCompetitionContext,
   getCompetitionIdFromUrl,
   getTerminalPlatformFromUrl,
   isPaperBootstrapCacheValid,
   paperSessionMatchesPlatform,
+  readCompeteAccountToken,
   readPaperBootstrapCache,
   readPaperSessionToken,
   type TerminalPlatform,
@@ -107,6 +110,7 @@ interface PaperMeta {
     spreadBps: number;
     minLeverage: number;
     maxLeverage: number;
+    maxLeverageByCategory?: Record<string, number>;
   };
 }
 
@@ -453,8 +457,18 @@ function TopBar({
   const remainingMs = eventEndTime != null ? Math.max(0, eventEndTime - now) : null;
   const compRemainingMs = compTarget != null ? Math.max(0, compTarget - now) : null;
   const balance = player?.currentBalance ?? 0;
+  const dailyLimitEquity = competition?.dailyLimitEquity ?? null;
+  const hasDdLimit = dailyLimitEquity != null && Number.isFinite(dailyLimitEquity);
+  const dailyBaseline = competition?.dailyBaselineEquity ?? null;
+  const ddRoom = hasDdLimit && dailyBaseline != null && dailyBaseline > dailyLimitEquity
+    ? dailyBaseline - dailyLimitEquity
+    : null;
+  const ddBuffer = hasDdLimit ? balance - dailyLimitEquity : null;
+  const ddSafeRatio = ddRoom != null && ddRoom > 0
+    ? Math.min(1, Math.max(0, (balance - dailyLimitEquity) / ddRoom))
+    : null;
+  const ddUrgent = ddSafeRatio != null && ddSafeRatio <= 0.2;
   const pnl = player?.pnl ?? 0;
-  const pnlPct = player?.pnlPercent ?? 0;
   const pnlPos = pnl >= 0;
   const rank = competition?.rank ?? player?.rank ?? null;
   const participants = competition?.participants ?? null;
@@ -464,13 +478,13 @@ function TopBar({
     : '/compete';
 
   return (
-    <header className="relative flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:px-3 md:py-1.5">
+    <header className="relative grid shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-1.5 rounded-2xl border border-[#2a2236] bg-[#0b0711]/95 px-2 py-1.5 [text-size-adjust:100%] shadow-[0_18px_60px_-45px_rgba(220,38,38,0.8)] backdrop-blur md:flex md:flex-wrap md:gap-x-2 md:px-3 md:py-1.5">
       {liveMode ? (
-        <div className="order-1 flex items-center gap-2 md:hidden">
-          <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-6 w-auto object-contain sm:h-7" />
+        <div className="flex min-w-0 items-center gap-1.5 md:hidden">
+          <img src="/assets/pictures/BTF_ARENA_logo.png" alt="BTF Arena" className="h-5 w-auto shrink-0 object-contain" />
         </div>
       ) : (
-        <div className="order-1 min-w-0 md:mr-2">
+        <div className="min-w-0 md:mr-2">
           <ArenaSwitcher variant="compact" currentId={competition?.id} />
         </div>
       )}
@@ -484,58 +498,40 @@ function TopBar({
 
       {/* Compte à rebours : collé au logo sur mobile, à droite sur desktop */}
       {((liveMode && remainingMs != null) || (!liveMode && (compRemainingMs != null || compEnded))) && (
-        <div className="order-2 flex items-center md:order-2">
+        <div className="flex min-w-0 items-center justify-center md:order-2 md:justify-start">
           {liveMode && remainingMs != null && (
-            <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
-              <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">{t('terminal.remaining')}</span>
-              <span className="num text-[12px] font-bold text-white">{formatDHMS(remainingMs, dayUnit)}</span>
+            <div className={`flex min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-lg border px-1.5 py-1 md:gap-1.5 md:px-2.5 md:py-1.5 ${remainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+              <span className="hidden text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090] md:inline">{t('terminal.remaining')}</span>
+              <span className="num truncate text-[11px] font-bold text-white md:text-[12px]">{formatDHMS(remainingMs, dayUnit)}</span>
             </div>
           )}
           {!liveMode && (compRemainingMs != null || compEnded) && (
-            <div className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 ${!compEnded && compRemainingMs != null && compRemainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
-              <span className="text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090]">
+            <div className={`flex min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-lg border px-1.5 py-1 md:gap-1.5 md:px-2.5 md:py-1.5 ${!compEnded && compRemainingMs != null && compRemainingMs <= 60_000 ? 'border-red-500/40 bg-red-500/10' : 'border-[#241e30] bg-[#181517]'}`}>
+              <span className="hidden text-[8px] font-semibold uppercase tracking-[0.12em] text-[#7a8090] md:inline">
                 {compEnded ? t('terminal.btnEventEnded') : compUpcoming ? t('terminal.startsIn') : t('terminal.remaining')}
               </span>
-              {!compEnded && <span className="num text-[12px] font-bold text-white">{formatDHMS(compRemainingMs ?? 0, dayUnit)}</span>}
+              {!compEnded && <span className="num truncate text-[11px] font-bold text-white md:text-[12px]">{formatDHMS(compRemainingMs ?? 0, dayUnit)}</span>}
+              {compEnded && <span className="truncate text-[10px] font-semibold uppercase text-[#7a8090] md:hidden">{t('terminal.btnEventEnded')}</span>}
             </div>
           )}
         </div>
       )}
 
-      <div className="order-4 grid w-full grid-cols-3 overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] md:order-1 md:mr-auto md:w-auto md:min-w-[360px]">
-        <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
-          <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.balance')}</div>
-          <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">{fmt(balance, 2)} <span className="text-[9px] text-[#7a8090] md:text-[10px]">USD</span></div>
-        </div>
-        <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
-          <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">PNL</div>
-          <span className="num block truncate text-[11px] font-semibold md:text-[13px]" style={{ color: pnlPos ? '#15c990' : '#f43f6e' }}>
-            {pnlPos ? '+' : ''}{pnl.toFixed(2)} <span className="hidden text-[10px] sm:inline">({pnlPos ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
-          </span>
-        </div>
-        <div className="px-2 py-1 md:px-3 md:py-1.5">
-          <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">Rank</div>
-          <div className="num truncate text-[11px] font-semibold text-white md:text-[13px]">
-            {rank ? `#${rank}` : '–'} {participants !== null && <span className="text-[10px] text-[#7a8090]">/ {participants}</span>}
-          </div>
-        </div>
-      </div>
-
-      <div className="order-3 ml-auto flex items-center gap-1.5 md:order-3 md:ml-0">
+      <div className="flex shrink-0 items-center gap-1 md:order-3 md:ml-0 md:gap-1.5">
         {liveMode ? (
           <button
             type="button"
             onClick={onLogout}
-            className="cursor-pointer whitespace-nowrap rounded-lg border border-[#241e30] bg-[#181517] px-2.5 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-red-500/50 hover:text-white"
+            className="cursor-pointer whitespace-nowrap rounded-lg border border-[#241e30] bg-[#181517] px-1.5 py-1 text-[10px] font-semibold text-[#e0e2ea] transition-colors hover:border-red-500/50 hover:text-white md:px-2.5 md:py-1.5 md:text-[11px]"
           >
             {t('terminal.logout')}
           </button>
         ) : (
           <>
-            <a href={homeHref} className="cursor-pointer whitespace-nowrap rounded-lg border border-[#241e30] bg-[#181517] px-2.5 py-1.5 text-[11px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white">
+            <a href={homeHref} className="cursor-pointer whitespace-nowrap rounded-lg border border-[#241e30] bg-[#181517] px-1.5 py-1 text-[10px] font-semibold text-[#e0e2ea] transition-colors hover:border-[#dc2626]/50 hover:text-white md:px-2.5 md:py-1.5 md:text-[11px]">
               {t('terminal.home')}
             </a>
-            <a href={leaderboardHref} className="cursor-pointer whitespace-nowrap rounded-lg border border-[#dc2626]/35 bg-[#dc2626]/15 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25">
+            <a href={leaderboardHref} className="cursor-pointer whitespace-nowrap rounded-lg border border-[#dc2626]/35 bg-[#dc2626]/15 px-1.5 py-1 text-[10px] font-semibold text-white transition-colors hover:border-[#ef4444] hover:bg-[#dc2626]/25 md:px-2.5 md:py-1.5 md:text-[11px]">
               {t('terminal.leaderboard')}
             </a>
           </>
@@ -552,6 +548,60 @@ function TopBar({
           )}
           <span className="max-w-[110px] truncate">{trader.name}</span>
         </div>
+      </div>
+
+      <div className="col-span-3 flex min-w-0 flex-col gap-1 md:order-1 md:col-auto md:mr-auto md:w-auto">
+        <div className={`grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] overflow-hidden rounded-xl border border-[#241e30] bg-[#15121f] ${hasDdLimit ? 'md:min-w-[480px] md:grid-cols-4' : 'md:min-w-[360px] md:grid-cols-3'}`}>
+          <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">{t('terminal.balance')}</div>
+            <div className="num truncate text-[12px] font-semibold text-white md:text-[13px]">{fmt(balance, 2)} <span className="text-[9px] text-[#7a8090] md:text-[10px]">USD</span></div>
+          </div>
+          {hasDdLimit && (
+            <div className="hidden border-r border-[#241e30] px-3 py-1.5 md:block">
+              <div className="text-[9px] uppercase tracking-[0.16em] text-[#fca5a5]">{t('terminal.equityBreachLimit')}</div>
+              <div className="num truncate text-[13px] font-semibold text-[#fca5a5]">{fmt(dailyLimitEquity, 2)} <span className="text-[10px] text-[#fca5a5]/70">USD</span></div>
+            </div>
+          )}
+          <div className="border-r border-[#241e30] px-2 py-1 md:px-3 md:py-1.5">
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">PNL</div>
+            <span className="num block truncate text-[12px] font-semibold md:text-[13px]" style={{ color: pnlPos ? '#15c990' : '#f43f6e' }}>
+              {pnlPos ? '+' : ''}{fmt(pnl, 2)} <span className="text-[9px] font-medium opacity-70">USD</span>
+            </span>
+          </div>
+          <div className="px-2 py-1 text-right md:px-3 md:py-1.5 md:text-left">
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#7a8090]">Rank</div>
+            <div className="num whitespace-nowrap text-[12px] font-semibold text-white md:text-[13px]">
+              {rank ? `#${rank}` : '–'}{participants !== null && <span className="text-[10px] text-[#7a8090]">/{participants}</span>}
+            </div>
+          </div>
+        </div>
+        {hasDdLimit && (
+          <div className={`md:hidden rounded-xl border px-2.5 py-1.5 ${ddUrgent ? 'border-red-500/40 bg-red-500/10' : 'border-[#3a2230] bg-[#1a1016]'}`}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 truncate text-[9px] font-semibold uppercase tracking-[0.14em] text-[#fca5a5]">
+                {t('terminal.equityFloorShort')}{' '}
+                <span className="num text-[12px] font-semibold tracking-normal">{fmt(dailyLimitEquity, 0)}</span>
+                <span className="ml-0.5 text-[9px] font-medium normal-case tracking-normal text-[#fca5a5]/70">USD</span>
+              </span>
+              {ddBuffer != null && (
+                <span className="shrink-0 text-[9px] text-[#9aa0ae]">
+                  {t('terminal.equityFloorLeft', { amount: `${fmt(Math.max(0, ddBuffer), 0)} USD` })}
+                </span>
+              )}
+            </div>
+            {ddSafeRatio != null && (
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#3a2230]">
+                <div
+                  className="h-full rounded-full transition-[width,background-color] duration-300"
+                  style={{
+                    width: `${Math.round(ddSafeRatio * 100)}%`,
+                    background: ddUrgent ? '#f43f6e' : '#f87171',
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );
@@ -692,7 +742,7 @@ function PairSelectorMenu({
         </button>
 
         {open && (
-          <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100dvh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
+          <div className="fixed inset-x-2 top-[max(10px,env(safe-area-inset-top))] z-50 flex max-h-[calc(100svh-16px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:inset-x-auto sm:left-0 sm:top-[calc(100%+8px)] sm:max-h-none sm:w-[430px]">
             <button
               type="button"
               aria-label="Fermer"
@@ -701,7 +751,7 @@ function PairSelectorMenu({
             >
               <Icon d={ICONS.close} size={14} />
             </button>
-            <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
+            <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
               {availableCategories.map((category) => (
                 <button
                   key={category.id}
@@ -718,7 +768,7 @@ function PairSelectorMenu({
               ))}
             </div>
 
-            <div className="border-b border-[#241e30] px-3 py-2">
+            <div className="shrink-0 border-b border-[#241e30] px-3 py-2">
               <div className="flex h-9 items-center gap-2 rounded-xl border border-[#30283d] bg-[#100c18] px-3 focus-within:border-[#dc2626]/60">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#746d82]">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />
@@ -733,12 +783,12 @@ function PairSelectorMenu({
               </div>
             </div>
 
-            <div className="grid grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
+            <div className="grid shrink-0 grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
               <span>{(() => { const c = MARKET_CATEGORIES.find((entry) => entry.id === activeCategory); return c ? t(c.labelKey) : t('terminal.markets'); })()}</span>
               <span className="text-right">{t('terminal.lastPrice')}</span>
             </div>
 
-            <div className="max-h-[calc(100dvh-270px)] overflow-y-auto py-1 sm:max-h-[360px]">
+            <div className="min-h-0 flex-1 overflow-y-auto py-1 sm:max-h-[360px] sm:flex-none">
               {filteredPairs.map((pair) => {
                 const baseLabel = pairBase(pair);
                 const quoteLabel = pair.split('/')[1] || 'USD';
@@ -1163,8 +1213,13 @@ function OrderForm(props: OrderFormProps) {
         <div className="mt-2.5 rounded-xl border border-[#241e30] bg-[#15121f] px-2.5 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
             <span className="text-[#9498a4]">{t('terminal.margin')} <span className="num text-white">{fmt(available, 0)} USD</span></span>
-            <span className="text-[#9498a4]">{t('terminal.leverage')} <span className="num text-white">{leverage}x</span></span>
             <span className="text-[#9498a4]">{t('terminal.maxBuyingPower')} <span className="num font-semibold text-[#67dd88]">{fmt(maxNotional, 0)} USD</span></span>
+          </div>
+          <div className="mt-2 flex items-center justify-between rounded-lg border border-[#3a3148] bg-[#1c1828] px-2.5 py-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#c8c0d8]">
+              {t('terminal.leverageFixed', { market: t(leverageCategoryLabelKey(category)) })}
+            </span>
+            <span className="num text-[18px] font-extrabold leading-none text-white">{leverage}x</span>
           </div>
           <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-[#282333]">
             <div className="h-full" style={{ width: `${(1 - usedRatio) * 100}%`, background: BUY }} />
@@ -1626,6 +1681,7 @@ function ChartArea({
   setInterval,
   isMobile = false,
   chartLiveTickRef,
+  dailyLimitEquity = null,
 }: {
   pair: string;
   pairs: string[];
@@ -1659,6 +1715,7 @@ function ChartArea({
   setInterval: (interval: number) => void;
   isMobile?: boolean;
   chartLiveTickRef?: React.MutableRefObject<ChartLiveTickHandler | null>;
+  dailyLimitEquity?: number | null;
 }) {
   const positions = player?.openPositions ?? [];
   const pendingOrders = (player?.openOrders ?? [])
@@ -1726,6 +1783,8 @@ function ChartArea({
           onClosePosition={(positionId) => onClosePosition(positionId)}
           isMobile={isMobile}
           chartLiveTickRef={chartLiveTickRef}
+          accountEquity={player ? refreshPlayerPaperMetrics(player, market || {}).currentBalance : null}
+          dailyLimitEquity={dailyLimitEquity}
         />
       </div>
     </section>
@@ -3084,7 +3143,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
     pairs: demoMode ? DEMO_PAIRS : [],
     market: demoMode ? demoMarket : {},
     marketMetadata: {},
-    fees: { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE, spreadBps: 1, minLeverage: 1, maxLeverage: 50 },
+    fees: { maker: DEMO_MAKER_FEE, taker: DEMO_TAKER_FEE, spreadBps: 1, minLeverage: 1, maxLeverage: 50, maxLeverageByCategory: MAX_LEVERAGE_BY_CATEGORY },
   }));
   // Initialize the session synchronously from the bootstrap cache deposited
   // by CompetitionPlatform when the user clicked "TRADER". This avoids the
@@ -3110,7 +3169,10 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   // simply sees a loading state instead of a brief error popup.
   const [bootstrapping, setBootstrapping] = useState(() => {
     if (demoMode) return false;
-    return Boolean(readPaperSessionToken(getTerminalPlatformFromUrl()));
+    const platform = getTerminalPlatformFromUrl();
+    const competitionId = getCompetitionIdFromUrl();
+    if (readPaperSessionToken(platform)) return true;
+    return platform === 'compete' && Boolean(competitionId && readCompeteAccountToken());
   });
   const [accessCode, setAccessCode] = useState('');
   const [selectedPair, setSelectedPair] = useState('BTC/USD');
@@ -3118,7 +3180,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [size, setSize] = useState('0.00005');
   const [limitPrice, setLimitPrice] = useState('');
-  const [leverage, setLeverage] = useState(10);
+  const leverage = maxLeverageForCategory(meta.marketMetadata[selectedPair]?.category);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fillDetailsTrade, setFillDetailsTrade] = useState<Trade | null>(null);
@@ -3640,57 +3702,88 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
 
   useEffect(() => {
     if (demoMode) return;
-    setFillDetailsTrade(null);
-    const token = readPaperSessionToken(terminalPlatform);
-    if (!token) {
+    let cancelled = false;
+
+    function resetSession() {
       setSession(null);
       setLivePlayer(null);
       setLiveMarket(null);
       setLiveCanTrade(null);
-      setBootstrapping(false);
-      return;
     }
 
-    setBootstrapping(true);
-
-    const cached = readPaperBootstrapCache();
-    if (cached && isPaperBootstrapCacheValid(cached, terminalPlatform, token, urlCompetitionId)) {
-      setLivePlayer(cached.player as Player);
-      if (cached.market) setLiveMarket(cached.market as Record<string, MarketTicker>);
-      if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
-      mergeCompetitionFromMe(cached.competition);
+    function applySession(token: string, data: any): boolean {
+      if (!data?.player) {
+        resetSession();
+        return false;
+      }
+      if (!reconcileTerminalSession(token, data)) {
+        resetSession();
+        return false;
+      }
+      setSession({ token, player: data.player });
+      setLivePlayer(reconcilePlayerWithPending(data.player as Player));
+      if (data.market) setLiveMarket(data.market);
+      if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
+      mergeCompetitionFromMe(data);
+      return true;
     }
 
-    fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (response) => {
-        if (!response.ok) {
+    async function hydrateFromPaperToken(token: string): Promise<boolean> {
+      const cached = readPaperBootstrapCache();
+      if (cached && isPaperBootstrapCacheValid(cached, terminalPlatform, token, urlCompetitionId)) {
+        setLivePlayer(cached.player as Player);
+        if (cached.market) setLiveMarket(cached.market as Record<string, MarketTicker>);
+        if (typeof cached.canTrade === 'boolean') setLiveCanTrade(cached.canTrade);
+        mergeCompetitionFromMe(cached.competition);
+      }
+      const response = await fetch('/api/paper/me', { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) {
+        clearPaperSessionToken(terminalPlatform);
+        return false;
+      }
+      const data = await response.json();
+      return applySession(token, data);
+    }
+
+    async function boot() {
+      setFillDetailsTrade(null);
+      setBootstrapping(true);
+      const existing = readPaperSessionToken(terminalPlatform);
+      if (existing) {
+        try {
+          if (await hydrateFromPaperToken(existing)) {
+            if (!cancelled) setBootstrapping(false);
+            return;
+          }
+        } catch {
           clearPaperSessionToken(terminalPlatform);
-          return null;
         }
-        return response.json();
-      })
-      .then((data) => {
-        if (!data?.player) {
-          setSession(null);
-          setLivePlayer(null);
-          return;
+        if (cancelled) return;
+      }
+
+      if (terminalPlatform === 'compete' && urlCompetitionId && readCompeteAccountToken()) {
+        try {
+          const created = await ensureCompetePaperSession(urlCompetitionId);
+          if (cancelled) return;
+          applySession(created.token, created);
+        } catch {
+          if (!cancelled) resetSession();
+        } finally {
+          if (!cancelled) setBootstrapping(false);
         }
-        if (!reconcileTerminalSession(token, data)) {
-          setSession(null);
-          setLivePlayer(null);
-          setLiveMarket(null);
-          setLiveCanTrade(null);
-          return;
-        }
-        setSession({ token, player: data.player });
-        setLivePlayer(reconcilePlayerWithPending(data.player as Player));
-        if (data.market) setLiveMarket(data.market);
-        if (typeof data.canTrade === 'boolean') setLiveCanTrade(data.canTrade);
-        mergeCompetitionFromMe(data);
-      })
-      .finally(() => {
+        return;
+      }
+
+      if (!cancelled) {
+        resetSession();
         setBootstrapping(false);
-      });
+      }
+    }
+
+    void boot();
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demoMode, terminalPlatform, urlCompetitionId, location.search]);
 
@@ -4403,7 +4496,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       limitPrice={limitPrice}
       setLimitPrice={setLimitPrice}
       leverage={leverage}
-      setLeverage={setLeverage}
+      setLeverage={() => undefined}
       ticker={ticker}
       player={player}
       busy={busy}
@@ -4468,6 +4561,7 @@ export default function ExchangeTerminal({ demoMode = false }: ExchangeTerminalP
       setInterval={setChartInterval}
       isMobile={isMobileViewport}
       chartLiveTickRef={chartLiveTickRef}
+      dailyLimitEquity={competitionContext?.dailyLimitEquity ?? null}
     />
   );
 

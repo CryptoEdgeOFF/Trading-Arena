@@ -169,8 +169,11 @@
 .position-size-slider > div:first-child span { color: #8a848e; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .position-size-slider > div:first-child strong { color: #fff; font: 800 17px 'Barlow Condensed', sans-serif; }
 .position-size-slider > input { width: 100%; height: 24px; margin: 7px 0; accent-color: var(--red-bright); }
-.position-size-slider > div:last-child { color: #77717b; font-size: 7px; font-weight: 700; }
-.position-size-slider > div:last-child span:last-child { color: #ff8292; }
+.position-size-slider > div:nth-child(3) { color: #77717b; font-size: 7px; font-weight: 700; }
+.position-size-slider > div:nth-child(3) span:last-child { color: #ff8292; }
+.leverage-fixed { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid #3a3148; border-radius: 8px; background: #1c1828; }
+.leverage-fixed span { color: #c8c0d8; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.leverage-fixed strong { color: #fff; font: 800 18px 'Barlow Condensed', sans-serif; line-height: 1; }
 .size-presets { margin-top: 11px; display: flex; align-items: center; gap: 6px; }
 .size-presets span { margin-right: auto; color: #716c75; font-size: 7px; font-weight: 700; text-transform: uppercase; }
 .size-presets button { min-width: 40px; height: 28px; border: 1px solid var(--line); border-radius: 5px; background: #151317; color: #b8b3bb; font-size: 8px; font-weight: 700; }

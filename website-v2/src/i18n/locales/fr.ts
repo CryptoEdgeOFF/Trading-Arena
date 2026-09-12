@@ -643,6 +643,9 @@ export const fr: TranslationResources = {
     competitionUpcoming: 'Compétition à venir',
     paperTrading: 'Paper trading',
     balance: 'Solde',
+    equityBreachLimit: 'Plancher equity',
+    equityFloorShort: 'Breach',
+    equityFloorLeft: 'reste {{amount}}',
     remaining: 'Fin',
     logout: 'Déconnexion',
     home: 'Accueil',
@@ -662,6 +665,7 @@ export const fr: TranslationResources = {
 
     margin: 'Marge',
     leverage: 'Levier',
+    leverageFixed: 'Levier {{market}}',
     maxBuyingPower: 'Pouvoir max',
     usedByOrder: "Utilisé par l'ordre : {{amount}} USD",
     marketClosedBanner: "Marché fermé — trading indisponible hors heures d'ouverture",

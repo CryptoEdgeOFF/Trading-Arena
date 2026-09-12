@@ -19,6 +19,12 @@ import {
   type PaperExecutionModel,
 } from './paperSlippage.js';
 import { getBinanceOrderBook, startBinanceOrderBooks } from './binanceOrderBook.js';
+import {
+  GLOBAL_MAX_LEVERAGE,
+  MAX_LEVERAGE_BY_CATEGORY,
+  MIN_LEVERAGE,
+  clampLeverage,
+} from './leverage.js';
 
 export interface PaperOrderInput {
   pair: string;
@@ -162,8 +168,7 @@ function resolveFeeRate(pair: string, type: 'taker' | 'maker'): number {
   }
   return type === 'maker' ? MAKER_FEE_RATE : TAKER_FEE_RATE;
 }
-const MAX_LEVERAGE = 50;
-const MIN_LEVERAGE = 1;
+const MAX_LEVERAGE = GLOBAL_MAX_LEVERAGE;
 /** Notional minimal d'un ordre (anti-spam de positions "dust"). */
 const MIN_ORDER_NOTIONAL = 0.01;
 const KRAKEN_FUTURES_WS = 'wss://futures.kraken.com/ws/v1';
@@ -366,9 +371,10 @@ function getOrderRemainingSize(order: Order): number {
   return Math.max(0, order.size - filledSize);
 }
 
-function clampLeverage(value: number): number {
-  if (!Number.isFinite(value)) return MIN_LEVERAGE;
-  return Math.max(MIN_LEVERAGE, Math.min(MAX_LEVERAGE, Math.floor(value)));
+function pairLeverageCategory(pair: string): string {
+  const inst = findByPair(pair);
+  if (inst?.category) return inst.category;
+  return 'crypto';
 }
 
 function asNumber(value: unknown): number | null {
@@ -786,6 +792,13 @@ export class PaperTradingEngine {
       spreadBps: SPREAD_BPS,
       minLeverage: MIN_LEVERAGE,
       maxLeverage: MAX_LEVERAGE,
+      maxLeverageByCategory: {
+        crypto: MAX_LEVERAGE_BY_CATEGORY.crypto,
+        actions: MAX_LEVERAGE_BY_CATEGORY.actions,
+        forex: MAX_LEVERAGE_BY_CATEGORY.forex,
+        indices: MAX_LEVERAGE_BY_CATEGORY.indices,
+        commodities: MAX_LEVERAGE_BY_CATEGORY.commodities,
+      },
     };
   }
 
@@ -922,8 +935,8 @@ export class PaperTradingEngine {
     const side = input.side;
     const size = Number(input.size);
     const orderType = input.orderType;
-    const leverage = clampLeverage(Number(input.leverage));
     const pairDefinition = pairToDefinition.get(pair);
+    const leverage = clampLeverage(Number(input.leverage), pairLeverageCategory(pair));
 
     // Trace tout placeOrder pour pouvoir corréler avec les logs Railway
     // si une position "fantôme" apparaît : on a la pair, le side, le size,

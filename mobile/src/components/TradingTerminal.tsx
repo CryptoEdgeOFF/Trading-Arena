@@ -18,6 +18,7 @@ import {
   type PaperTrade,
   type Position,
 } from '../lib/api'
+import { leverageCategoryLabel, maxLeverageForCategory } from '../lib/leverage'
 import {
   clearPaperSessionToken,
   readPaperSessionToken,
@@ -344,7 +345,6 @@ export function TradingTerminal({
   const [tpUsdDraft, setTpUsdDraft] = useState('')
   const [slUsdFocused, setSlUsdFocused] = useState(false)
   const [tpUsdFocused, setTpUsdFocused] = useState(false)
-  const leverage = 10
   const [panel, setPanel] = useState<'positions' | 'orders' | 'history'>('positions')
   const [riskEditor, setRiskEditor] = useState<{
     positionId: string
@@ -413,21 +413,45 @@ export function TradingTerminal({
 
   useEffect(() => {
     let cancelled = false
+    async function openStoredOrRequested(stored: string | null) {
+      if (stored) {
+        try {
+          const next = await refresh(stored)
+          if (cancelled) return true
+          const currentId = competitionSummary(next.competition)?.id || ''
+          if (initialCompetitionId && currentId && currentId !== initialCompetitionId) {
+            return false
+          }
+          setPaperToken(stored)
+          return true
+        } catch {
+          await clearPaperSessionToken()
+        }
+      }
+      return false
+    }
     void Promise.all([readPaperSessionToken(), getPaperMeta().catch(() => null)]).then(async ([stored, nextMeta]) => {
       if (cancelled) return
       setMeta(nextMeta)
-      if (stored) {
+      const restored = await openStoredOrRequested(stored)
+      if (!cancelled && !restored && initialCompetitionId) {
         try {
-          await refresh(stored)
-          if (!cancelled) setPaperToken(stored)
-        } catch {
-          await clearPaperSessionToken()
+          const session = await createPaperSession(accountToken, initialCompetitionId)
+          if (cancelled) return
+          setCompetitionId(initialCompetitionId)
+          await writePaperSessionToken(session.token)
+          setPaperToken(session.token)
+          await refresh(session.token)
+        } catch (nextError) {
+          if (!cancelled) {
+            setError(nextError instanceof Error ? nextError.message : 'Terminal indisponible')
+          }
         }
       }
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
-  }, [refresh])
+  }, [accountToken, initialCompetitionId, refresh])
 
   useEffect(() => {
     if (!paperToken) return
@@ -586,6 +610,7 @@ export function TradingTerminal({
 
   const ticker = state?.market[selectedPair] || meta?.market[selectedPair]
   const selectedCategory = meta?.marketMetadata?.[selectedPair]?.category
+  const leverage = maxLeverageForCategory(selectedCategory)
   const contract = CONTRACT_SIZE[selectedPair] || 1
   const limitEntry = Number(limitPrice)
   const markPrice = ticker?.markPrice || 0
@@ -969,7 +994,10 @@ export function TradingTerminal({
     )
   }
 
-  const historyTrades = (state.player.trades || []).filter((trade) => trade.action === 'close')
+  const historyTrades = (state.player.trades || [])
+    .filter((trade) => trade.action === 'close')
+    .slice()
+    .sort((a, b) => b.time - a.time)
 
   return (
     <div className="mobile-terminal">
@@ -1078,7 +1106,10 @@ export function TradingTerminal({
             }} />
           <div>
             <span>Marge {money(selectedMargin)} $</span>
-            <span>Levier ×10</span>
+          </div>
+          <div className="leverage-fixed">
+            <span>Levier {leverageCategoryLabel(selectedCategory)}</span>
+            <strong>{leverage}x</strong>
           </div>
         </div>
         <div className="ticket-grid">
