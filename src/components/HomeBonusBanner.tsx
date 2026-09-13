@@ -40,10 +40,7 @@ export default function HomeBonusBanner({ compact = false }: { compact?: boolean
             <em>{t('bonus.homeLive')}</em>
             <span>{t('bonus.homeKicker')}</span>
           </div>
-          <h2>
-            {t('bonus.homeTitleEm')}
-            <b>{t('bonus.title')}</b>
-          </h2>
+          <h2>{t('bonus.homeTitleEm')}</h2>
           <p>{t('bonus.homeSub')}</p>
           <ul>
             <li>{t('bonus.homePerkDeposit')}</li>

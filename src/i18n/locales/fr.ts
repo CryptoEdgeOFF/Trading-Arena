@@ -1290,6 +1290,7 @@ export const fr: TranslationResources = {
     competitions: 'COMPÉTITIONS',
     current: 'En cours',
     openForJoin: 'Inscriptions ouvertes',
+    upcomingArenas: 'Arènes à venir',
     startsIn: 'Commence dans',
     guestEyebrow: 'Compétition de trading',
     guestTitle: 'Entre dans',

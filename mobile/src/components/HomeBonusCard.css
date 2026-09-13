@@ -58,11 +58,6 @@
   margin: 10px 0 0;
   font: 900 26px/0.92 'Barlow Condensed', sans-serif;
   text-transform: uppercase;
-  color: #fff;
-}
-
-.home-bonus-card h2 b {
-  display: block;
   background: linear-gradient(90deg, #ffe7a3, #ffd257 40%, #ff4b4b);
   -webkit-background-clip: text;
   background-clip: text;
