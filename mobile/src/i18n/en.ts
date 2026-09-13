@@ -541,7 +541,7 @@ export const en = {
     start: 'Start',
     prize: 'Prize pool',
     dailyDrawdownRule: 'Daily drawdown limit of {{percent}}%',
-    dailyDrawdownRuleDesc: 'If your equity drops {{percent}}% below your start-of-day balance, your account is eliminated. Resets at 9:00 AM Paris time.',
+    dailyDrawdownRuleDesc: 'If your equity drops {{percent}}% below your start-of-day balance, your account is eliminated. Resets at 8:00 AM Paris time.',
     code: 'Arena code',
     codeHint: 'Leave empty if the arena is open.',
     sponsorHint: 'Required only by some partners.',
@@ -577,7 +577,7 @@ export const en = {
   terminal: {
     dailyDrawdownLabel: 'Daily loss limit ({{percent}}%)',
     dailyDrawdownValue: 'Floor {{amount}} $',
-    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today. Resets at 9:00 AM Paris time.',
+    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today. Resets at 8:00 AM Paris time.',
     pickArena: 'Choose your arena',
     pickArenaLead: 'Same account, same positions as on desktop.',
     switchArena: 'Switch arena',

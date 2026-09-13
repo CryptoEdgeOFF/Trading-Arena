@@ -543,7 +543,7 @@ export const fr: typeof en = {
     start: 'Début',
     prize: 'Dotation',
     dailyDrawdownRule: 'Limite de drawdown journalier de {{percent}} %',
-    dailyDrawdownRuleDesc: 'Si ton équité descend de {{percent}} % sous ton solde de début de journée, ton compte est éliminé. Reset à 9h00 Paris.',
+    dailyDrawdownRuleDesc: 'Si ton équité descend de {{percent}} % sous ton solde de début de journée, ton compte est éliminé. Reset à 8h00 Paris.',
     code: 'Code de l’arène',
     codeHint: 'Laisse vide si l’arène est ouverte.',
     sponsorHint: 'Requis uniquement par certains partenaires.',
@@ -579,7 +579,7 @@ export const fr: typeof en = {
   terminal: {
     dailyDrawdownLabel: 'Limite de perte journalière ({{percent}} %)',
     dailyDrawdownValue: 'Plancher {{amount}} $',
-    dailyDrawdownHint: 'Compte éliminé si ton équité atteint ce niveau aujourd’hui. Reset à 9h00 Paris.',
+    dailyDrawdownHint: 'Compte éliminé si ton équité atteint ce niveau aujourd’hui. Reset à 8h00 Paris.',
     pickArena: 'Choisis ton arène',
     pickArenaLead: 'Même compte, mêmes positions que sur ordinateur.',
     switchArena: 'Changer d’arène',

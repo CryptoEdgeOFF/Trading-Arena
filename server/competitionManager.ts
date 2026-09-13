@@ -109,14 +109,14 @@ export interface CompetitionEntry {
    * Règle de drawdown journalier (si l'arène en définit une).
    * - `dailyBaselineDayKey` : jour Paris ('YYYY-MM-DD') pour lequel la baseline
    *   ci-dessous est valable. La baseline est recapturée au premier calcul
-   *   d'équité après 09:00 heure de Paris.
+   *   d'équité après 08:00 heure de Paris.
    * - `dailyBaselineEquity` : équité (mark-to-market) de début de journée.
    * - `breachedAt` : timestamp d'élimination (drawdown atteint). Une fois posé,
    *   le joueur est éliminé DÉFINITIVEMENT de l'arène et ne peut plus trader.
    */
   dailyBaselineDayKey?: string | null;
   dailyBaselineEquity?: number | null;
-  /** Jour Paris (reset 09:00) où l'alerte des 80 % du drawdown a déjà été envoyée. */
+  /** Jour Paris (reset 08:00) où l'alerte des 80 % du drawdown a déjà été envoyée. */
   dailyDrawdownWarnedDayKey?: string | null;
   breachedAt?: number | null;
   /** Timestamp d'envoi de l'email d'élimination (anti-doublon, persisté). */
@@ -3117,7 +3117,7 @@ export class CompetitionManager {
       }
 
       // Règle de drawdown journalier : on n'évalue que pendant le live, avec
-      // une équité finie. La baseline se recapture au 1er échantillon après 09:00 Paris.
+      // une équité finie. La baseline se recapture au 1er échantillon après 08:00 Paris.
       const ddPercent = competition.dailyDrawdownPercent;
       const equity = Number(result.equity);
       if (!entry.breachedAt && ddPercent && ddPercent > 0 && Number.isFinite(equity)

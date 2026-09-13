@@ -580,7 +580,7 @@ export const fr: TranslationResources = {
     joinTeam: 'Inscrire mon équipe',
     rulesTitle: "Règles de l'arène",
     dailyDrawdownRule: 'Limite de drawdown journalier de {{percent}} %',
-    dailyDrawdownRuleDesc: "Si ton équité descend de {{percent}} % sous ton solde de début de journée, ton compte est éliminé et tu ne peux plus trader. Reset à 9h00 heure de Paris.",
+    dailyDrawdownRuleDesc: "Si ton équité descend de {{percent}} % sous ton solde de début de journée, ton compte est éliminé et tu ne peux plus trader. Reset à 8h00 heure de Paris.",
     teamRequired: 'Rejoins une équipe existante avec un code avant de t’inscrire.',
     teamMissing: 'Il faut 4 membres pour inscrire l’équipe à cette arène.',
     teamReady: '{{name}} est complète. Tu peux l’inscrire.',
@@ -777,7 +777,7 @@ export const fr: TranslationResources = {
     marginUsed: 'Marge utilisée pour cet ordre',
     dailyDrawdownLabel: 'Limite de perte journalière ({{percent}} %)',
     dailyDrawdownValue: 'Plancher {{amount}} USD',
-    dailyDrawdownHint: "Compte éliminé si ton équité atteint ce niveau aujourd'hui (reset 9h00 Paris).",
+    dailyDrawdownHint: "Compte éliminé si ton équité atteint ce niveau aujourd'hui (reset 8h00 Paris).",
     breachedBtn: 'Compte éliminé',
     breachedBanner: 'Compte éliminé — limite de drawdown journalier atteinte. Tu ne peux plus trader dans cette arène.',
 

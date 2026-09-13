@@ -540,7 +540,7 @@ export const en = {
     joinTeam: 'Register my team',
     rulesTitle: 'Arena rules',
     dailyDrawdownRule: 'Daily drawdown limit of {{percent}}%',
-    dailyDrawdownRuleDesc: 'If your equity drops {{percent}}% below your start-of-day balance, your account is eliminated and you can no longer trade. Resets at 9:00 AM Paris time.',
+    dailyDrawdownRuleDesc: 'If your equity drops {{percent}}% below your start-of-day balance, your account is eliminated and you can no longer trade. Resets at 8:00 AM Paris time.',
     teamRequired: 'Join an existing team with a code before registering.',
     teamMissing: 'A team needs 4 members to enter this arena.',
     teamReady: '{{name}} is complete. You can register it.',
@@ -689,7 +689,7 @@ export const en = {
     marginUsed: 'Margin used for this order',
     dailyDrawdownLabel: 'Daily loss limit ({{percent}}%)',
     dailyDrawdownValue: 'Floor {{amount}} USD',
-    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today (resets 9:00 AM Paris time).',
+    dailyDrawdownHint: 'Account eliminated if your equity falls to this level today (resets 8:00 AM Paris time).',
     breachedBtn: 'Account breached',
     breachedBanner: 'Account breached — daily drawdown limit reached. You can no longer trade in this arena.',
 
