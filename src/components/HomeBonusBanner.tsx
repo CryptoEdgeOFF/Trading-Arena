@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { resolveMediaUrl } from '../utils/imageUrl';
 import './HomeBonusBanner.css';
 
 type PromoPreview = {
@@ -52,7 +53,7 @@ export default function HomeBonusBanner({ compact = false }: { compact?: boolean
               {partners.map((partner) => (
                 <i key={partner.id} title={partner.name}>
                   {partner.photoUrl
-                    ? <img src={partner.photoUrl} alt="" />
+                    ? <img src={resolveMediaUrl(partner.photoUrl) || partner.photoUrl} alt="" />
                     : partner.name.slice(0, 2)}
                 </i>
               ))}

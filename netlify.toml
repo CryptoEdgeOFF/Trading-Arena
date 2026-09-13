@@ -3,14 +3,41 @@
   publish = "dist"
   functions = "netlify/functions"
 
+# Images must hit Railway: <img> does not use the JS fetch proxy, and the
+# Netlify function build of sharp breaks after a local CLI deploy.
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
+  from = "/api/avatars/*"
+  to = "https://trading-arena-api-production.up.railway.app/api/avatars/:splat"
   status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/roster/avatars/*"
+  to = "https://trading-arena-api-production.up.railway.app/api/roster/avatars/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/prize-images/*"
+  to = "https://trading-arena-api-production.up.railway.app/api/prize-images/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/team-images/*"
+  to = "https://trading-arena-api-production.up.railway.app/api/team-images/:splat"
+  status = 200
+  force = true
 
 [[redirects]]
   from = "/uploads/*"
-  to = "/.netlify/functions/api/uploads/:splat"
+  to = "https://trading-arena-api-production.up.railway.app/uploads/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
   status = 200
 
 [[redirects]]

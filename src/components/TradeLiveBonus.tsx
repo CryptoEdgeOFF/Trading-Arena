@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import Seo from './Seo';
 import CompeteHeader from './CompeteHeader';
 import { analytics } from '../lib/analytics';
+import { resolveMediaUrl } from '../utils/imageUrl';
 
 type PartnerCategory = 'exchange' | 'broker' | 'prop' | 'tool' | 'community';
 
@@ -42,7 +43,7 @@ function PartnerLogo({ partner, size = 'md' }: { partner: Partner; size?: 'md' |
   if (partner.photoUrl) {
     return (
       <span className={`flex ${dim} shrink-0 items-center justify-center overflow-hidden rounded-xl bg-transparent`}>
-        <img src={partner.photoUrl} alt={partner.name} className="h-full w-full object-contain" />
+        <img src={resolveMediaUrl(partner.photoUrl) || partner.photoUrl} alt={partner.name} className="h-full w-full object-contain" />
       </span>
     );
   }
