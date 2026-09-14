@@ -477,7 +477,7 @@ function TopBar({
   const ddRoom = hasDdLimit && dailyBaseline != null && dailyBaseline > dailyLimitEquity
     ? dailyBaseline - dailyLimitEquity
     : null;
-  const ddSafeRatio = ddRoom != null && ddRoom > 0
+  const ddSafeRatio = ddRoom != null && ddRoom > 0 && dailyLimitEquity != null
     ? Math.min(1, Math.max(0, (balance - dailyLimitEquity) / ddRoom))
     : null;
   const ddUrgent = ddSafeRatio != null && ddSafeRatio <= 0.2;
