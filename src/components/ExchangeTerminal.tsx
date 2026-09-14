@@ -673,6 +673,20 @@ interface OrderFormProps {
  * Keeps its own open / search / category state so multiple instances don't
  * fight over a shared store.
  */
+function useCompactPairSheet() {
+  const [sheet, setSheet] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches
+  ));
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)');
+    const sync = () => setSheet(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+  return sheet;
+}
+
 function PairSelectorMenu({
   selectedPair,
   pairs,
@@ -691,6 +705,7 @@ function PairSelectorMenu({
   className?: string;
 }) {
   const { t } = useTranslation();
+  const sheet = useCompactPairSheet();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -745,17 +760,134 @@ function PairSelectorMenu({
     });
   }, [activeCategory, marketMetadata, search, pairs]);
 
-  return (
-    <div className={`relative z-40 ${className}`}>
-      {open && (
+  const panel = (
+    <div className={sheet
+      ? 'fixed inset-x-2 top-[max(12px,env(safe-area-inset-top))] z-[4000] flex max-h-[calc(100svh-20px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)]'
+      : 'absolute left-0 top-[calc(100%+8px)] z-50 flex w-[430px] flex-col overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)]'}
+    >
+      {sheet && (
+        <div className="flex shrink-0 items-center justify-between gap-2 px-3 pt-3">
+          <span className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-[#c8c0d8]">{t('terminal.markets')}</span>
+          <button
+            type="button"
+            aria-label="Fermer"
+            onClick={() => setOpen(false)}
+            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#332b43] bg-[#1d1828] text-[#c8c0d8]"
+          >
+            <Icon d={ICONS.close} size={14} />
+          </button>
+        </div>
+      )}
+      {!sheet && (
         <button
           type="button"
-          aria-label="Fermer le menu des marches"
+          aria-label="Fermer"
           onClick={() => setOpen(false)}
-          className="fixed inset-0 z-30 cursor-default bg-transparent"
-          tabIndex={-1}
-        />
+          className="absolute right-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-[#332b43] bg-[#1d1828] text-[#c8c0d8] transition-colors hover:border-[#dc2626]/60 hover:text-white"
+        >
+          <Icon d={ICONS.close} size={14} />
+        </button>
       )}
+      <div className={`flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#241e30] px-2 py-2 sm:gap-2 sm:px-3 ${sheet ? '' : 'pr-12'}`}>
+        {availableCategories.map((category) => (
+          <button
+            key={category.id}
+            type="button"
+            onClick={() => setActiveCategory(category.id)}
+            className={`shrink-0 rounded-xl border px-3 py-2 text-[11px] font-bold transition-colors sm:px-4 sm:text-[12px] ${
+              activeCategory === category.id
+                ? 'border-white/10 bg-white text-[#171320] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]'
+                : 'border-[#332b43] bg-[#211b2b] text-[#c8c0d8] hover:border-[#4a405d]'
+            }`}
+          >
+            {t(category.labelKey)}
+          </button>
+        ))}
+      </div>
+
+      <div className="shrink-0 border-b border-[#241e30] px-3 py-2">
+        <div className="flex h-9 items-center gap-2 rounded-xl border border-[#30283d] bg-[#100c18] px-3 focus-within:border-[#dc2626]/60">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#746d82]">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t('terminal.searchPlaceholder')}
+            className="h-full w-full bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-[#5f586d]"
+          />
+        </div>
+      </div>
+
+      <div className="grid shrink-0 grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
+        <span>{(() => { const c = MARKET_CATEGORIES.find((entry) => entry.id === activeCategory); return c ? t(c.labelKey) : t('terminal.markets'); })()}</span>
+        <span className="text-right">{t('terminal.lastPrice')}</span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto py-1 sm:max-h-[360px] sm:flex-none">
+        {filteredPairs.map((pair) => {
+          const baseLabel = pairBase(pair);
+          const quoteLabel = pair.split('/')[1] || 'USD';
+          const metadata = marketMetadata[pair];
+          const fullName = metadata?.name || PAIR_NAME[baseLabel] || 'Crypto perpetual';
+          const marketTicker = market[pair];
+          const marketPrice = marketTicker?.markPrice;
+          const change24h = marketTicker?.change24h;
+          const changePositive = (change24h ?? 0) >= 0;
+          const category = metadata?.category || 'crypto';
+          const marketOpen = marketTicker?.marketOpen ?? getMarketSession(pair, { category }).open;
+          const active = pair === selectedPair;
+          return (
+            <button
+              key={pair}
+              type="button"
+              onClick={() => {
+                onChange(pair);
+                setOpen(false);
+                setSearch('');
+              }}
+              className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_92px] items-center gap-2 px-3 py-2.5 text-left transition-colors sm:grid-cols-[1fr_120px] sm:gap-3 sm:px-4 ${active ? 'bg-[#241d30]' : 'hover:bg-[#211a2b]'} ${!marketOpen ? 'opacity-60' : ''}`}
+            >
+              <span className="flex min-w-0 items-center gap-2.5">
+                <TokenIcon pair={pair} imageUrl={metadata?.imageUrl} />
+                <span className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
+                    {!marketOpen ? (
+                      <span className="shrink-0 rounded-md bg-[#3d2a14] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#fbbf24]">
+                        {t('terminal.marketClosed')}
+                      </span>
+                    ) : change24h != null && (
+                      <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
+                        {changePositive ? '+' : ''}{change24h.toFixed(2)}%
+                      </span>
+                    )}
+                  </span>
+                  <span className="block truncate text-[11px] text-[#746d82]">{fullName}</span>
+                </span>
+              </span>
+              <span className="num truncate text-right text-[11px] font-semibold text-[#ece8f5] sm:text-[12.5px]">
+                {!marketOpen
+                  ? '—'
+                  : marketPrice
+                    ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}`
+                    : '–'}
+              </span>
+            </button>
+          );
+        })}
+        {filteredPairs.length === 0 && (
+          <div className="px-4 py-8 text-center text-[12px] text-[#746d82]">
+            {t('terminal.noPairFound')}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={`relative z-40 ${className}`}>
       <div className="relative z-40">
         <button
           type="button"
@@ -769,115 +901,21 @@ function PairSelectorMenu({
           <span className="truncate">{selectedPair}</span>
           <span className="ml-auto text-[#7a8090]"><Icon d={ICONS.chevron} size={12} /></span>
         </button>
-
-        {open && (
-          <div className="fixed inset-x-2 top-[calc(env(safe-area-inset-top)+112px)] z-[200] flex max-h-[calc(100svh-128px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:inset-x-auto sm:left-0 sm:top-[calc(100%+8px)] sm:max-h-none sm:w-[430px]">
-            <button
-              type="button"
-              aria-label="Fermer"
-              onClick={() => setOpen(false)}
-              className="absolute right-2 top-2 z-10 flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-[#332b43] bg-[#1d1828] text-[#c8c0d8] transition-colors hover:border-[#dc2626]/60 hover:text-white"
-            >
-              <Icon d={ICONS.close} size={14} />
-            </button>
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
-              {availableCategories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  onClick={() => setActiveCategory(category.id)}
-                  className={`shrink-0 rounded-xl border px-3 py-2 text-[11px] font-bold transition-colors sm:px-4 sm:text-[12px] ${
-                    activeCategory === category.id
-                      ? 'border-white/10 bg-white text-[#171320] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]'
-                      : 'border-[#332b43] bg-[#211b2b] text-[#c8c0d8] hover:border-[#4a405d]'
-                  }`}
-                >
-                  {t(category.labelKey)}
-                </button>
-              ))}
-            </div>
-
-            <div className="shrink-0 border-b border-[#241e30] px-3 py-2">
-              <div className="flex h-9 items-center gap-2 rounded-xl border border-[#30283d] bg-[#100c18] px-3 focus-within:border-[#dc2626]/60">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#746d82]">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" />
-                </svg>
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t('terminal.searchPlaceholder')}
-                  className="h-full w-full bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-[#5f586d]"
-                />
-              </div>
-            </div>
-
-            <div className="grid shrink-0 grid-cols-[1fr_92px] border-b border-[#241e30] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#6f687f] sm:grid-cols-[1fr_120px] sm:px-4">
-              <span>{(() => { const c = MARKET_CATEGORIES.find((entry) => entry.id === activeCategory); return c ? t(c.labelKey) : t('terminal.markets'); })()}</span>
-              <span className="text-right">{t('terminal.lastPrice')}</span>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto py-1 sm:max-h-[360px] sm:flex-none">
-              {filteredPairs.map((pair) => {
-                const baseLabel = pairBase(pair);
-                const quoteLabel = pair.split('/')[1] || 'USD';
-                const metadata = marketMetadata[pair];
-                const fullName = metadata?.name || PAIR_NAME[baseLabel] || 'Crypto perpetual';
-                const marketTicker = market[pair];
-                const marketPrice = marketTicker?.markPrice;
-                const change24h = marketTicker?.change24h;
-                const changePositive = (change24h ?? 0) >= 0;
-                const category = metadata?.category || 'crypto';
-                const marketOpen = marketTicker?.marketOpen ?? getMarketSession(pair, { category }).open;
-                const active = pair === selectedPair;
-                return (
-                  <button
-                    key={pair}
-                    type="button"
-                    onClick={() => {
-                      onChange(pair);
-                      setOpen(false);
-                      setSearch('');
-                    }}
-                    className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_92px] items-center gap-2 px-3 py-2.5 text-left transition-colors sm:grid-cols-[1fr_120px] sm:gap-3 sm:px-4 ${active ? 'bg-[#241d30]' : 'hover:bg-[#211a2b]'} ${!marketOpen ? 'opacity-60' : ''}`}
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <TokenIcon pair={pair} imageUrl={metadata?.imageUrl} />
-                      <span className="min-w-0">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate text-[13px] font-bold text-white">{baseLabel}<span className="text-[#8b8498]">/{quoteLabel}</span></span>
-                          {!marketOpen ? (
-                            <span className="shrink-0 rounded-md bg-[#3d2a14] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#fbbf24]">
-                              {t('terminal.marketClosed')}
-                            </span>
-                          ) : change24h != null && (
-                            <span className={`num shrink-0 text-[11px] font-semibold ${changePositive ? 'text-[#15c990]' : 'text-[#f43f6e]'}`}>
-                              {changePositive ? '+' : ''}{change24h.toFixed(2)}%
-                            </span>
-                          )}
-                        </span>
-                        <span className="block truncate text-[11px] text-[#746d82]">{fullName}</span>
-                      </span>
-                    </span>
-                    <span className="num truncate text-right text-[11px] font-semibold text-[#ece8f5] sm:text-[12.5px]">
-                      {!marketOpen
-                        ? '—'
-                        : marketPrice
-                          ? `${fmt(marketPrice, marketPrice >= 100 ? 2 : 4)} ${quoteLabel}`
-                          : '–'}
-                    </span>
-                  </button>
-                );
-              })}
-              {filteredPairs.length === 0 && (
-                <div className="px-4 py-8 text-center text-[12px] text-[#746d82]">
-                  {t('terminal.noPairFound')}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {open && !sheet && panel}
       </div>
+      {open && sheet && createPortal(
+        <>
+          <button
+            type="button"
+            aria-label="Fermer le menu des marches"
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-[3990] cursor-default bg-black/55"
+            tabIndex={-1}
+          />
+          {panel}
+        </>,
+        document.body,
+      )}
     </div>
   );
 }
