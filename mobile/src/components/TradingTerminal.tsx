@@ -141,7 +141,7 @@ const MARKET_CATEGORIES: Array<{ id: MarketCategory; label: string }> = [
   { id: 'crypto', label: 'Crypto' },
   { id: 'actions', label: 'Actions' },
   { id: 'indices', label: 'Indices' },
-  { id: 'commodities', label: 'Matières premières' },
+  { id: 'commodities', label: 'Matières' },
   { id: 'forex', label: 'Forex' },
 ]
 
@@ -244,7 +244,10 @@ function PairSelectorMenu({
       <button className="market-selector-backdrop" type="button" aria-label="Fermer le menu des marchés"
         onClick={() => setOpen(false)} />
       <section className="market-selector-modal" role="dialog" aria-modal="true" aria-label="Sélectionner un marché">
-        <button className="market-selector-close" type="button" onClick={() => setOpen(false)} aria-label="Fermer">×</button>
+        <div className="market-selector-toolbar">
+          <span>Marchés</span>
+          <button className="market-selector-close" type="button" onClick={() => setOpen(false)} aria-label="Fermer">×</button>
+        </div>
         <div className="market-category-tabs">
           {availableCategories.map((category) => (
             <button key={category.id} type="button"
@@ -1011,41 +1014,43 @@ export function TradingTerminal({
   return (
     <div className="mobile-terminal">
       <header className="terminal-head">
-        <button className="terminal-head__arena" type="button" onClick={() => setPickerOpen(true)}>
-          <span>{activeCompetition?.title || 'BTF ARENA'}</span>
-          <strong>{state.player.name}</strong>
-        </button>
-        <div className="terminal-head__stats">
-          <div className="terminal-head__metric">
-            <small>{t('terminal.balance')}</small>
-            <strong>{money(state.player.currentBalance)}</strong>
-          </div>
-          <div className={`terminal-head__metric ${state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}`}>
-            <small>PnL</small>
-            <strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)}</strong>
-          </div>
-          {dailyLimitEquity != null && (
-            <div className={`terminal-head__metric is-breach${ddUrgent ? ' is-urgent' : ''}`}>
-              <small>{t('terminal.equityFloorShort')}</small>
-              <strong>{money(dailyLimitEquity)}</strong>
-              {ddSafeRatio != null && (
-                <i className="terminal-head__ddbar" style={{ width: `${Math.round(ddSafeRatio * 100)}%` }} />
-              )}
-            </div>
-          )}
-        </div>
-        <div className="terminal-head__nav">
-          {onHome && (
-            <button className="terminal-home" type="button" onClick={onHome}>
-              <small>{t('terminal.home')}</small>
-            </button>
-          )}
-          <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
-            onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
-            <small>Rang</small>
-            <strong>#{displayedRank ?? '—'}</strong>
+        <div className="terminal-head__row">
+          <button className="terminal-head__arena" type="button" onClick={() => setPickerOpen(true)}>
+            <span>{activeCompetition?.title || 'BTF ARENA'}</span>
+            <strong>{state.player.name}</strong>
           </button>
+          <div className="terminal-head__stats">
+            <div className="terminal-head__metric">
+              <small>{t('terminal.balance')}</small>
+              <strong>{money(state.player.currentBalance)}</strong>
+            </div>
+            <div className={`terminal-head__metric ${state.player.pnl >= 0 ? 'is-profit' : 'is-loss'}`}>
+              <small>PnL</small>
+              <strong>{state.player.pnl >= 0 ? '+' : ''}{money(state.player.pnl)}</strong>
+            </div>
+          </div>
+          <div className="terminal-head__nav">
+            {onHome && (
+              <button className="terminal-home" type="button" onClick={onHome}>
+                <small>{t('terminal.home')}</small>
+              </button>
+            )}
+            <button className="terminal-rank" type="button" disabled={!activeCompetition?.id}
+              onClick={() => activeCompetition?.id && onOpenLeaderboard(activeCompetition.id)}>
+              <small>Rang</small>
+              <strong>#{displayedRank ?? '—'}</strong>
+            </button>
+          </div>
         </div>
+        {dailyLimitEquity != null && (
+          <div className={`terminal-head__breach${ddUrgent ? ' is-urgent' : ''}`}>
+            <small>{t('terminal.equityFloorShort')}</small>
+            <strong>{money(dailyLimitEquity)}</strong>
+            {ddSafeRatio != null && (
+              <i className="terminal-head__ddbar" style={{ width: `${Math.round(ddSafeRatio * 100)}%` }} />
+            )}
+          </div>
+        )}
       </header>
       <ArenaPickerSheet
         open={pickerOpen}

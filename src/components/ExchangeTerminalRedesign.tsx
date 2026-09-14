@@ -705,7 +705,7 @@ function PairSelectorMenu({
         </button>
 
         {open && (
-          <div className="fixed left-2 right-2 top-[106px] z-50 max-h-[calc(100dvh-122px)] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
+          <div className="fixed left-2 right-2 top-[calc(env(safe-area-inset-top)+112px)] z-[200] max-h-[calc(100dvh-128px-env(safe-area-inset-top))] overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:left-0 sm:right-auto sm:top-[calc(100%+8px)] sm:w-[430px] sm:max-h-none">
             <button
               type="button"
               aria-label="Fermer"
@@ -714,7 +714,7 @@ function PairSelectorMenu({
             >
               <Icon d={ICONS.close} size={14} />
             </button>
-            <div className="flex items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
               {availableCategories.map((category) => (
                 <button
                   key={category.id}

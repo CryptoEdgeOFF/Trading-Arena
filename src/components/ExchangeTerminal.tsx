@@ -771,7 +771,7 @@ function PairSelectorMenu({
         </button>
 
         {open && (
-          <div className="fixed inset-x-2 top-[max(10px,env(safe-area-inset-top))] z-50 flex max-h-[calc(100svh-16px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:inset-x-auto sm:left-0 sm:top-[calc(100%+8px)] sm:max-h-none sm:w-[430px]">
+          <div className="fixed inset-x-2 top-[calc(env(safe-area-inset-top)+112px)] z-[200] flex max-h-[calc(100svh-128px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col overflow-hidden rounded-2xl border border-[#30283d] bg-[#171320] shadow-[0_22px_70px_-35px_rgba(0,0,0,0.95)] sm:absolute sm:inset-x-auto sm:left-0 sm:top-[calc(100%+8px)] sm:max-h-none sm:w-[430px]">
             <button
               type="button"
               aria-label="Fermer"
@@ -780,7 +780,7 @@ function PairSelectorMenu({
             >
               <Icon d={ICONS.close} size={14} />
             </button>
-            <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#241e30] px-2 py-2 pr-12 sm:gap-2 sm:px-3 sm:pr-12">
               {availableCategories.map((category) => (
                 <button
                   key={category.id}
